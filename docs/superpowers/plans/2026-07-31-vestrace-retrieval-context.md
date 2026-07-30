@@ -4,15 +4,15 @@
 
 **Goal:** Add real OpenAI-compatible extraction and embeddings, hybrid candidate retrieval, explainable fusion and reranking, temporal/conflict handling, graph expansion, token-bounded context packs, retrieval journaling and graceful degraded modes.
 
-**Architecture:** Retrieval is a staged application pipeline behind independent ports for exact, text, vector, structured, execution and graph channels. Candidate channels return ranked lists and explanations; Reciprocal Rank Fusion creates a common baseline before deterministic domain reranking. External models are optional enhancements: the system must continue through text and structured paths when generation, embeddings or reranking providers fail.
+**Architecture:** Retrieval is a staged application pipeline behind independent ports for exact, text, vector, structured, execution and graph channels. Candidate channels return ranked lists and explanations; Reciprocal Rank Fusion creates a common baseline before deterministic domain reranking. External models are optional enhancements: the system continues through text and structured paths when generation, embeddings or reranking providers fail.
 
-**Tech Stack:** Existing Foundation and Memory Core, Rust, Tokio, reqwest, Serde/Schemars, SQLx, PostgreSQL FTS, pg_trgm, pgvector, tracing, wiremock for provider contract tests.
+**Tech Stack:** Existing Foundation and Memory Core, Rust, Tokio, reqwest, Serde/Schemars, SQLx, PostgreSQL FTS, pg_trgm, pgvector, tracing, wiremock.
 
 ## Global Constraints
 
-- Complete Foundation and Memory Core plans first.
+- Complete Foundation and Memory Core first.
 - Hard workspace, security, status and time filters run before semantic ranking.
-- Current retrieval never presents superseded, expired, rejected or deleted memory as current fact.
+- Current retrieval never presents superseded, expired, rejected or deleted memory as a current fact.
 - RRF combines ranked channels; raw FTS and vector scores are never added directly.
 - A model reranker may reorder or reject supplied candidates but cannot invent facts.
 - Every context item retains provenance and inclusion explanation.
@@ -20,6 +20,7 @@
 - Retrieval works without an available embedding endpoint or model reranker.
 - Embeddings, search documents, summaries and context-pack caches are rebuildable.
 - OpenAI-compatible API is the only real AI provider protocol in v0.1.
+- Migration sequence is fixed: `0008_search_documents`, `0009_embedding_spaces`, `0010_structured_search_indexes`, `0011_retrieval_journal_and_context_packs`.
 
 ---
 
@@ -40,19 +41,24 @@ crates/vestrace-application/src/
   retrieval/mod.rs
   retrieval/request.rs
   retrieval/ports.rs
+  retrieval/embedding.rs
   retrieval/fusion.rs
   retrieval/temporal.rs
   retrieval/conflicts.rs
   retrieval/rerank.rs
   retrieval/context_builder.rs
   retrieval/explain.rs
+  retrieval/rebuild.rs
 
 crates/vestrace-infrastructure/src/
+  providers/mod.rs
   providers/openai_compatible.rs
   providers/dto.rs
   postgres/search_document_repository.rs
   postgres/text_retriever.rs
+  postgres/embedding_repository.rs
   postgres/vector_retriever.rs
+  postgres/exact_retriever.rs
   postgres/structured_retriever.rs
   postgres/execution_retriever.rs
   postgres/graph_repository.rs
@@ -61,7 +67,8 @@ crates/vestrace-infrastructure/src/
 migrations/
   0008_search_documents.sql
   0009_embedding_spaces.sql
-  0010_retrieval_journal_and_context_packs.sql
+  0010_structured_search_indexes.sql
+  0011_retrieval_journal_and_context_packs.sql
 
 tests/
   provider_contract.rs
@@ -73,6 +80,7 @@ tests/
   context_pack.rs
   degraded_retrieval.rs
   retrieval_e2e.rs
+  retrieval_rebuild.rs
 ```
 
 ---
@@ -90,9 +98,9 @@ tests/
 
 **Interfaces:**
 - Adds IDs `EmbeddingSpaceId`, `RetrievalRunId`, `ContextPackId`.
-- Produces `RetrievalIntent`, `TimePerspective`, `RetrievalCandidate`, `CandidateOrigin`, `CandidateExplanation`, `ContextPack`, `ContextSection`, `ContextItem`, `EmbeddingVector`.
+- Produces `RetrievalIntent`, `TimePerspective`, `RetrievalCandidate`, `CandidateOrigin`, `CandidateExplanation`, `ContextPack`, `ContextSection`, `ContextItem`, and `EmbeddingVector`.
 
-- [ ] **Step 1: Write failing domain tests**
+- [ ] **Step 1: Write failing tests**
 
 ```rust
 #[test]
@@ -133,7 +141,7 @@ pub enum TimePerspective {
 }
 ```
 
-- [ ] **Step 3: Implement candidate scores as components**
+- [ ] **Step 3: Implement explainable score components**
 
 ```rust
 pub struct ScoreComponents {
@@ -148,11 +156,9 @@ pub struct ScoreComponents {
 }
 ```
 
-Keep the final score derivation explicit and serializable for explanations.
+- [ ] **Step 4: Implement context representations**
 
-- [ ] **Step 4: Implement context item representations**
-
-Each `ContextItem` includes the authoritative object ID, selected representation level (`Full`, `Summary`, `Atomic`, `Reference`), rendered text, accounted tokens, source IDs, conflict state and inclusion explanation.
+Each `ContextItem` includes authoritative object ID, representation level (`Full`, `Summary`, `Atomic`, `Reference`), rendered text, accounted tokens, source IDs, conflict state and inclusion explanation.
 
 - [ ] **Step 5: Run and commit**
 
@@ -164,7 +170,7 @@ git commit -m "feat(retrieval): add retrieval and context domain types"
 
 ---
 
-### Task 2: Define provider ports and an OpenAI-compatible HTTP client
+### Task 2: Define provider ports and OpenAI-compatible HTTP client
 
 **Files:**
 - Create: `crates/vestrace-application/src/providers/mod.rs`
@@ -173,12 +179,12 @@ git commit -m "feat(retrieval): add retrieval and context domain types"
 - Create: `crates/vestrace-infrastructure/src/providers/dto.rs`
 - Create: `crates/vestrace-infrastructure/src/providers/openai_compatible.rs`
 - Create: `tests/provider_contract.rs`
-- Modify: workspace dependencies to add `reqwest`, `secrecy`, `wiremock`
+- Modify: workspace dependencies for `reqwest`, `secrecy`, and `wiremock`
 
 **Interfaces:**
-- Produces ports `TextGenerationProvider`, `EmbeddingProvider`, `ProviderHealth`.
+- Produces `TextGenerationProvider`, `EmbeddingProvider`, and `ProviderHealth` ports.
 - Produces `OpenAiCompatibleClient` supporting `/chat/completions`, `/embeddings`, timeouts and cancellation.
-- Every call accepts a stable `operation_key` and returns usage/latency metadata.
+- Every call accepts stable `operation_key` and returns usage/latency metadata.
 
 - [ ] **Step 1: Write failing wire-level generation test**
 
@@ -192,17 +198,15 @@ Use wiremock to expect:
 }
 ```
 
-Return a fixed OpenAI-compatible response and assert parsed content, token usage and model name.
+Return a fixed compatible response and assert content, usage and model name.
 
 - [ ] **Step 2: Define exact provider contracts**
 
 ```rust
 #[async_trait::async_trait]
 pub trait TextGenerationProvider: Send + Sync {
-    async fn generate(
-        &self,
-        request: GenerationRequest,
-    ) -> Result<GenerationResponse, ProviderError>;
+    async fn generate(&self, request: GenerationRequest)
+        -> Result<GenerationResponse, ProviderError>;
 }
 
 #[async_trait::async_trait]
@@ -212,17 +216,13 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 ```
 
-`ProviderError` distinguishes timeout, rate limit, unavailable, invalid response, policy and unknown completion state.
+`ProviderError` distinguishes timeout, rate limit, unavailable, invalid response, policy violation and unknown completion state.
 
-- [ ] **Step 3: Implement client request and response DTOs**
+- [ ] **Step 3: Implement DTO validation and retry boundaries**
 
-Accept OpenAI-compatible deviations only through narrowly scoped serde aliases. Reject missing embedding vectors, non-finite values and token usage with negative values.
+Reject missing vectors, non-finite values and invalid usage. The HTTP client performs no hidden unbounded retries; job handlers own retry policy.
 
-- [ ] **Step 4: Implement retry boundaries**
-
-The HTTP client performs no hidden unbounded retries. It may retry a connection failure only when no request body was accepted; all other retry decisions belong to the job handler.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test --test provider_contract
@@ -242,18 +242,14 @@ git commit -m "feat(providers): add OpenAI-compatible client"
 
 **Interfaces:**
 - Produces `OpenAiMemoryExtractor` implementing the existing `MemoryExtractor` port.
-- Produces `ExtractionPolicyVersion`, `PromptTemplateVersion`, `ExtractionResult` and strict JSON schema for candidate memories.
-- Candidate output cannot directly activate memory; it passes through `MemoryWritePolicy`.
+- Produces `ExtractionPolicyVersion`, `PromptTemplateVersion`, and strict JSON schema for candidate memories.
+- Candidate output passes through `MemoryWritePolicy`; it cannot self-activate.
 
-- [ ] **Step 1: Write failing valid-response test**
+- [ ] **Step 1: Write valid and invalid response tests**
 
-Feed a deterministic provider response with one preference and one constraint. Assert both map to typed `StructuredMemory`, source the original event and carry the configured extractor/prompt versions.
+A valid response with one preference and one constraint maps to typed memories with source event and prompt/extractor versions. Unknown kind, invalid confidence, missing content and secret-bearing output fail without partial writes.
 
-- [ ] **Step 2: Write failing invalid-response tests**
-
-Cover unknown memory kind, invalid confidence, missing content and output that attempts to include a secret value. Each must return a permanent schema/policy error without partial writes.
-
-- [ ] **Step 3: Define extraction schema**
+- [ ] **Step 2: Define extraction schema**
 
 ```rust
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -269,11 +265,11 @@ struct ExtractedCandidateDto {
 }
 ```
 
-- [ ] **Step 4: Implement extraction and persistence boundary**
+- [ ] **Step 3: Implement extraction and execution metadata seam**
 
-The job handler records `ModelExecution` metadata through a temporary execution port defined here; the formal model registry will replace its backing implementation in Plan 5 without changing extraction signatures.
+Record temporary `ModelExecution` metadata through an application port. Plan 5 replaces its persistence with the formal model registry without changing extraction signatures.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test --test extraction_pipeline
@@ -292,24 +288,24 @@ git commit -m "feat(extraction): extract typed memory candidates"
 - Create: `tests/text_retrieval.rs`
 
 **Interfaces:**
-- Produces rebuildable table `memory_search_documents` with revision ID, normalized content, `tsvector`, trigram text and update generation.
-- Produces `TextRetriever::search(context, request, limit) -> Vec<RankedCandidate>`.
+- Produces rebuildable `memory_search_documents` with revision ID, normalized content, `tsvector`, trigram text and projection version.
+- Produces `TextRetriever::search(context, request, limit)`.
 
 - [ ] **Step 1: Write failing FTS and typo tests**
 
-Insert a Russian decision containing `PostgreSQL` and `графовая проекция`. Assert exact-term FTS finds it and trigram fallback finds a configured typo without crossing workspace boundaries.
+Insert a Russian architecture decision. Assert exact term FTS and configured trigram typo lookup find it without crossing workspace boundaries.
 
-- [ ] **Step 2: Create search-document schema**
+- [ ] **Step 2: Create schema and indexes**
 
-Use a generated or explicitly maintained weighted `tsvector` built from content, structured subject/predicate and labels. Add GIN indexes for FTS and trigram search.
+Maintain weighted `tsvector` from content, structured subject/predicate and labels. Add GIN indexes for FTS and trigram search.
 
-- [ ] **Step 3: Implement transactional projection job**
+- [ ] **Step 3: Implement projection job**
 
-Handle `memory.revision.created` outbox-derived jobs. Upsert only when `(revision_id, content_hash, projection_version)` differs.
+Handle `memory.revision.created`. Upsert only when `(revision_id, content_hash, projection_version)` differs.
 
-- [ ] **Step 4: Implement text search with hard filters**
+- [ ] **Step 4: Implement hard-filtered text search**
 
-The SQL must filter workspace, allowed statuses, time perspective, kinds and scopes before applying rank limits.
+Filter workspace, allowed statuses, time perspective, kinds and scopes before rank/limit.
 
 - [ ] **Step 5: Run and commit**
 
@@ -326,22 +322,22 @@ git commit -m "feat(retrieval): add PostgreSQL text retrieval"
 **Files:**
 - Create: `migrations/0009_embedding_spaces.sql`
 - Create: `crates/vestrace-application/src/retrieval/embedding.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/vector_retriever.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/embedding_repository.rs`
+- Create: `crates/vestrace-infrastructure/src/postgres/vector_retriever.rs`
 - Create: `tests/vector_retrieval.rs`
 
 **Interfaces:**
 - Produces `embedding_spaces` and `memory_embeddings`.
 - An embedding space fixes provider/model, dimension, distance metric, normalization and version.
-- Stores `embedding vector` without a table-wide dimension typmod; creates a validated partial expression index per active embedding space using a cast to `vector(N)`.
+- Stores `embedding vector` without table-wide typmod; creates validated partial expression index per active space using `vector(N)` cast.
 
-- [ ] **Step 1: Write failing dimension and space-isolation tests**
+- [ ] **Step 1: Write dimension and space-isolation tests**
 
-Test that a 3-dimensional result cannot be inserted into a 4-dimensional space and that search in space A never compares vectors from space B.
+A 3D response cannot enter a 4D space. Search in space A never compares vectors from space B.
 
-- [ ] **Step 2: Create embedding schema**
+- [ ] **Step 2: Create schema**
 
-Store dimension and content hash. Unique key:
+Unique key:
 
 ```text
 memory_revision_id + embedding_space_id + content_hash
@@ -349,23 +345,18 @@ memory_revision_id + embedding_space_id + content_hash
 
 - [ ] **Step 3: Implement safe index creation**
 
-Create an administrative repository method:
-
 ```rust
-async fn ensure_vector_index(&self, space: &EmbeddingSpace) -> Result<(), InfrastructureError>;
+async fn ensure_vector_index(&self, space: &EmbeddingSpace)
+    -> Result<(), InfrastructureError>;
 ```
 
-Validate dimension against an allowed integer range, derive an identifier from the UUID, quote it safely, and create a partial HNSW index on `(embedding::vector(N)) WHERE embedding_space_id = '<uuid>'`.
+Validate dimension, derive a safe index name from UUID, quote identifiers and create partial HNSW index on `(embedding::vector(N)) WHERE embedding_space_id = '<uuid>'`.
 
-- [ ] **Step 4: Implement embedding job handler**
+- [ ] **Step 4: Implement embedding job and vector search**
 
-On provider failure, classify retryability. Existing embeddings remain usable. Never delete a previous valid space during a failed rebuild.
+Classify provider failures. Preserve previous valid spaces during failed rebuilds. Search filters by space and casts query/stored vectors to the same dimension.
 
-- [ ] **Step 5: Implement vector search**
-
-Filter by embedding space and cast both stored vector and query to the same dimension. Return rank, distance and origin explanation.
-
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test vector_retrieval
@@ -375,24 +366,23 @@ git commit -m "feat(retrieval): add embedding spaces and vector search"
 
 ---
 
-### Task 6: Define retrieval application ports and request normalization
+### Task 6: Define retrieval request normalization and channel ports
 
 **Files:**
 - Create: `crates/vestrace-application/src/retrieval/mod.rs`
 - Create: `crates/vestrace-application/src/retrieval/request.rs`
 - Create: `crates/vestrace-application/src/retrieval/ports.rs`
 - Modify: `crates/vestrace-application/src/lib.rs`
-- Test: inline unit tests
 
 **Interfaces:**
 - Produces `RetrievalRequest`, `NormalizedRetrievalRequest`, `RetrievalFilters`, `ScopeFilter`, `RetrievalPolicy`.
 - Produces ports `ExactRetriever`, `TextRetriever`, `VectorRetriever`, `StructuredRetriever`, `ExecutionRetriever`, `GraphRepository`, `RetrievalJournal`.
 
-- [ ] **Step 1: Write failing normalization tests**
+- [ ] **Step 1: Write normalization tests**
 
-Assert empty queries are rejected except explicit `Timeline` object queries. Assert `current` defaults to active statuses only. Assert requested workspace cannot differ from `RequestContext.workspace_id`.
+Reject empty queries except explicit timeline object queries. `Current` defaults to active only. Requested workspace cannot differ from `RequestContext.workspace_id`.
 
-- [ ] **Step 2: Implement exact request types**
+- [ ] **Step 2: Implement exact request type**
 
 ```rust
 pub struct RetrievalRequest {
@@ -405,9 +395,9 @@ pub struct RetrievalRequest {
 }
 ```
 
-- [ ] **Step 3: Implement deterministic intent defaults**
+- [ ] **Step 3: Implement versioned intent defaults**
 
-Map each intent to preferred memory kinds, channel limits, graph edge allowlist, recency weight and provenance requirements. Keep policy data versioned and serializable.
+Map intent to preferred kinds, channel limits, graph edge allowlist, recency weight and provenance requirements.
 
 - [ ] **Step 4: Run and commit**
 
@@ -419,36 +409,37 @@ git commit -m "feat(retrieval): define retrieval request pipeline"
 
 ---
 
-### Task 7: Add structured, execution and exact retrieval channels
+### Task 7: Add exact, structured and execution channels
 
 **Files:**
+- Create: `migrations/0010_structured_search_indexes.sql`
+- Create: `crates/vestrace-infrastructure/src/postgres/exact_retriever.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/structured_retriever.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/execution_retriever.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/exact_retriever.rs`
 - Create: `tests/hybrid_retrieval.rs`
 
 **Interfaces:**
-- Exact retrieval resolves UUIDs, stable names and structured subject/predicate/value triples.
-- Structured retrieval filters typed JSON payloads without relying on semantic similarity.
-- Execution retrieval returns existing event/tool/model/step outcomes available at this stage.
+- Exact retrieval resolves UUIDs, stable names and subject/predicate/value triples.
+- Structured retrieval filters typed JSON payloads.
+- Execution retrieval returns available event/tool/model/step outcomes.
 
-- [ ] **Step 1: Write failing exact-precedence test**
+- [ ] **Step 1: Write exact-precedence test**
 
-Given an exact structured fact and a semantically similar but different fact, assert exact lookup ranks first before fusion adjustments.
+Given an exact structured fact and a semantically similar different fact, exact lookup ranks first before fusion adjustments.
 
-- [ ] **Step 2: Add JSONB expression indexes**
+- [ ] **Step 2: Create `0010_structured_search_indexes.sql`**
 
-Add a new forward migration `0010_structured_search_indexes.sql` if `0010` is not already used; otherwise use the next sequence number. Index commonly queried `subject`, `predicate`, task state and decision choice fields by memory kind.
+Add JSONB expression indexes for subject, predicate, task state and decision choice, scoped by memory kind where useful. Commit this migration once and never edit it later.
 
 - [ ] **Step 3: Implement channels**
 
-Every result returns `channel_rank` and an explanation. Do not return unsupported statuses and apply RLS-scoped transaction context.
+Every result returns `channel_rank` and explanation. Apply RLS-scoped context and status/time filters.
 
 - [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test hybrid_retrieval
-git add migrations crates/vestrace-infrastructure tests/hybrid_retrieval.rs
+git add migrations/0010_structured_search_indexes.sql crates/vestrace-infrastructure tests/hybrid_retrieval.rs
 git commit -m "feat(retrieval): add exact and structured channels"
 ```
 
@@ -462,8 +453,8 @@ git commit -m "feat(retrieval): add exact and structured channels"
 - Test: unit tests beside modules
 
 **Interfaces:**
-- Produces `reciprocal_rank_fusion(channel_results, k) -> Vec<RetrievalCandidate>`.
-- Produces `DeterministicReranker::rerank(request, candidates) -> Vec<RetrievalCandidate>`.
+- Produces `reciprocal_rank_fusion(channel_results, k)`.
+- Produces `DeterministicReranker::rerank(request, candidates)`.
 
 - [ ] **Step 1: Write failing RRF test**
 
@@ -475,9 +466,9 @@ fn candidate_present_in_two_channels_outranks_single_channel_candidate() {
 }
 ```
 
-- [ ] **Step 2: Implement RRF exactly**
+- [ ] **Step 2: Implement RRF**
 
-For each channel rank starting at 1:
+For channel ranks starting at 1:
 
 ```text
 score += channel_weight / (k + rank)
@@ -485,15 +476,11 @@ score += channel_weight / (k + rank)
 
 Deduplicate by authoritative object/revision identity before adding contributions.
 
-- [ ] **Step 3: Implement deterministic score components**
+- [ ] **Step 3: Implement deterministic components and diversity**
 
-Apply scope, kind, importance, confidence, recency, validity and provenance weights from the versioned retrieval policy. Apply redundancy and unresolved-conflict penalties explicitly.
+Apply scope, kind, importance, confidence, recency, validity, provenance and redundancy components from versioned policy. Limit near-duplicates, one-session domination and excessive derived summaries while preserving hard constraints.
 
-- [ ] **Step 4: Add diversity selection**
-
-Limit near-duplicates, one-session domination and excessive derived summaries while preserving hard constraints and critical decisions.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test -p vestrace-application retrieval::fusion retrieval::rerank
@@ -512,24 +499,24 @@ git commit -m "feat(retrieval): add RRF and deterministic reranking"
 - Create: `tests/temporal_retrieval.rs`
 
 **Interfaces:**
-- Produces `TemporalResolver`, `ConflictResolver`, and PostgreSQL implementation of `GraphRepository`.
+- Produces `TemporalResolver`, `ConflictResolver`, and PostgreSQL `GraphRepository`.
 - Graph expansion supports depth 1–2, edge allowlists, neighbor limits and score decay.
 
-- [ ] **Step 1: Write failing current/timeline test**
+- [ ] **Step 1: Write current/timeline test**
 
-Insert Python decision, then Rust decision superseding it. `Current` must return Rust only. `Timeline` must return both in order with the supersedes relation.
+Insert Python decision, then Rust decision superseding it. `Current` returns Rust only; `Timeline` returns both in order.
 
 - [ ] **Step 2: Implement as-of selection**
 
-Select the revision that was valid and known at the requested time. Keep `occurred_at`, validity time and recorded time distinct.
+Select revision valid and known at requested time while keeping occurred, validity and recorded times distinct.
 
-- [ ] **Step 3: Implement conflict rules**
+- [ ] **Step 3: Implement conflict resolution**
 
-Resolution priority: status/supersedes, temporal validity, source quality, human confirmation, confidence. If unresolved, return one explicit conflict context object rather than silently choosing.
+Priority: status/supersedes, temporal validity, source quality, human confirmation, confidence. Unresolved conflict becomes explicit context object.
 
-- [ ] **Step 4: Implement graph expansion SQL**
+- [ ] **Step 4: Implement recursive graph SQL**
 
-Use recursive CTE with maximum depth parameter capped at `2`, workspace filter in every recursive step, relation allowlist and per-origin neighbor limit.
+Use recursive CTE capped at depth `2`, workspace filter at every step, relation allowlist and per-origin neighbor limit.
 
 - [ ] **Step 5: Run and commit**
 
@@ -550,30 +537,25 @@ git commit -m "feat(retrieval): resolve time conflicts and graph context"
 
 **Interfaces:**
 - Produces `TokenCounter` port and `ConservativeByteTokenCounter` fallback.
-- Produces `ContextPackBuilder::build(request, ranked_candidates) -> ContextPack`.
-- Produces ordered sections and four representation levels.
+- Produces `ContextPackBuilder::build(request, ranked_candidates)`.
 
-- [ ] **Step 1: Write failing budget test**
+- [ ] **Step 1: Write budget test**
 
-Build candidates whose full representations exceed 1,000 tokens. Assert resulting `accounted_tokens <= 1_000`, all hard constraints remain, and lower-priority details are compressed or omitted.
+Candidates exceed 1,000 tokens. Result must have `accounted_tokens <= 1_000`, preserve hard constraints and compress/omit lower-priority detail.
 
-- [ ] **Step 2: Implement safe fallback token counting**
+- [ ] **Step 2: Implement conservative fallback counting**
 
-When no model-specific tokenizer exists, count UTF-8 bytes as a conservative upper bound. This may underfill context but must not exceed the declared budget.
+When no model tokenizer exists, count UTF-8 bytes as an upper bound. This may underfill but must not exceed budget.
 
-- [ ] **Step 3: Implement section priorities**
+- [ ] **Step 3: Implement section order and compression ladder**
 
-Order: hard constraints, current facts, critical decisions, open tasks, procedures, supporting details, recent events, history. Intent-specific policies may reallocate section quotas without violating mandatory-item rules.
+Order: hard constraints, current facts, critical decisions, open tasks, procedures, supporting details, recent events, history. Compression: `Full → Summary → Atomic → Reference`.
 
-- [ ] **Step 4: Implement compression ladder**
+- [ ] **Step 4: Implement explanations**
 
-Try `Full`, then stored `Summary`, then typed atomic rendering, then stable reference. Every compressed item retains the same source IDs.
+Store origins, filters, score components, conflict state, representation, omitted duplicate IDs and inclusion reason.
 
-- [ ] **Step 5: Implement explanations**
-
-Store channel origins, filters, score components, conflict state, included representation, omitted duplicate IDs and reason for inclusion.
-
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 cargo test --test context_pack
@@ -583,7 +565,7 @@ git commit -m "feat(context): build token-bounded context packs"
 
 ---
 
-### Task 11: Persist retrieval runs, context packs and degraded state
+### Task 11: Persist retrieval runs and degraded state
 
 **Files:**
 - Create: `migrations/0011_retrieval_journal_and_context_packs.sql`
@@ -592,38 +574,23 @@ git commit -m "feat(context): build token-bounded context packs"
 - Create: `tests/retrieval_e2e.rs`
 
 **Interfaces:**
-- Produces tables `retrieval_runs`, `retrieval_candidates`, `context_packs`, `context_pack_items`.
+- Produces `retrieval_runs`, `retrieval_candidates`, `context_packs`, and `context_pack_items`.
 - Produces `RetrievalService::search` and `RetrievalService::build_context`.
-- Results include `degraded: bool` and structured warnings.
+- Results include `degraded` and structured warnings.
 
-- [ ] **Step 1: Create retrieval journal schema**
+- [ ] **Step 1: Create `0011_retrieval_journal_and_context_packs.sql`**
 
-Store policy version, request hash, channels attempted, durations, candidate ranks, final selection and warning codes. Do not duplicate full sensitive memory content in the journal.
+Store policy version, request hash, channels attempted, durations, ranks, final selection and warning codes. Do not duplicate sensitive content in journal rows.
 
-- [ ] **Step 2: Implement orchestration service**
+- [ ] **Step 2: Implement orchestration**
 
-Run independent candidate channels concurrently after hard-filter normalization. If vector search fails, record warning `embedding_unavailable`, continue with remaining channels and set `degraded = true`.
+Run independent channels concurrently after normalization. If vector search fails, record `embedding_unavailable`, continue with other channels and set `degraded = true`.
 
-- [ ] **Step 3: Write degraded-mode test**
+- [ ] **Step 3: Write degraded and end-to-end tests**
 
-Use a failing `EmbeddingProvider`; assert FTS/structured results are returned, vector origin is absent, warning is present and context build succeeds.
+The end-to-end scenario records events, extracts/activates decisions, generates derivatives, supersedes old decision, returns correct current/timeline results and builds bounded context with provenance.
 
-- [ ] **Step 4: Write end-to-end retrieval test**
-
-Scenario:
-
-```text
-record architecture events
-→ extraction candidates
-→ activate decisions and constraints
-→ generate search documents and embeddings
-→ revise old decision with supersedes
-→ current retrieval returns new decision
-→ timeline returns both
-→ context pack stays under budget and includes provenance
-```
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test degraded_retrieval --test retrieval_e2e
@@ -638,7 +605,7 @@ git commit -m "feat(retrieval): orchestrate explainable hybrid retrieval"
 **Files:**
 - Modify: `crates/vestrace-cli/src/commands/rebuild.rs`
 - Create: `crates/vestrace-application/src/retrieval/rebuild.rs`
-- Test: `tests/retrieval_rebuild.rs`
+- Create: `tests/retrieval_rebuild.rs`
 
 **Interfaces:**
 - Supports:
@@ -651,17 +618,17 @@ vestrace rebuild context-cache --workspace <uuid>
 
 - Rebuild is resumable and idempotent through jobs.
 
-- [ ] **Step 1: Write failing rebuild test**
+- [ ] **Step 1: Write rebuild test**
 
-Create memories, generate derivatives, delete all search documents and embeddings, run rebuild handlers, then assert the same required logical results are found.
+Create memories and derivatives, delete search documents/embeddings, run rebuild handlers, then assert required logical retrieval results return.
 
-- [ ] **Step 2: Implement paged rebuild scheduling**
+- [ ] **Step 2: Implement paged scheduling**
 
-Schedule jobs by stable revision ID cursor. Never load an entire workspace into memory.
+Schedule jobs by stable revision ID cursor; never load an entire workspace into memory.
 
-- [ ] **Step 3: Implement progress reporting**
+- [ ] **Step 3: Implement operation progress**
 
-Return operation ID and persist scheduled/completed/failed counts without storing memory content.
+Persist scheduled/completed/failed counts without memory content.
 
 - [ ] **Step 4: Run and commit**
 
@@ -683,14 +650,4 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --workspace --all-features
 ```
 
-Verify the acceptance scenario with embeddings available and unavailable. Confirm:
-
-- exact, FTS, trigram, vector and structured channels are individually tested;
-- RRF operates on rank positions, not raw mixed score values;
-- hard workspace/status/time filters precede ranking;
-- superseded knowledge is absent from current context;
-- unresolved conflicts are explicit;
-- graph depth never exceeds two in v0.1;
-- context packs never exceed the accounted budget;
-- every item includes provenance and explanation;
-- deleting all derived retrieval data and rebuilding preserves required logical results.
+Verify acceptance with embeddings available and unavailable. Confirm exact, FTS, trigram, vector and structured channels are tested; RRF uses ranks; hard filters precede ranking; superseded knowledge is absent from current context; unresolved conflicts are explicit; graph depth is at most two; context packs stay within budget; every item has provenance/explanation; rebuilding all derived retrieval data preserves required logical results; and migrations `0008` through `0011` are each created once and never edited after commit.
