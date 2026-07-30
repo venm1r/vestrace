@@ -4,7 +4,7 @@
 
 **Goal:** Create a compilable, testable Rust foundation with stable crate boundaries, configuration, PostgreSQL migrations, workspace-aware transactions, baseline RLS, health checks, observability, CI and a development Compose environment.
 
-**Architecture:** Use a Cargo workspace with pure domain/application crates and adapter crates for PostgreSQL, HTTP and the executable. The binary exposes subcommands but contains no business rules. PostgreSQL is the only persistence dependency; infrastructure implements application ports without leaking SQLx types into domain code.
+**Architecture:** Use a Cargo workspace with pure domain/application crates and adapter crates for PostgreSQL, HTTP and the executable. The repository root is also a non-publishable `vestrace-integration-tests` package so root-level `tests/` are valid Cargo integration tests. The binary exposes subcommands but contains no business rules. PostgreSQL is the only persistence dependency; infrastructure implements application ports without leaking SQLx types into domain code.
 
 **Tech Stack:** Rust Edition 2024, Tokio, Axum, Tower, Serde, Schemars, SQLx, PostgreSQL, pgvector, pg_trgm, tracing, Clap, Docker Compose, GitHub Actions.
 
@@ -19,6 +19,7 @@
 - Default authorization behavior is deny.
 - Every database transaction that accesses tenant data must set workspace and principal context.
 - CI must not require an external AI provider.
+- Root-level integration tests belong to the non-publishable root package and may depend on workspace crates only through public interfaces.
 
 ---
 
@@ -27,6 +28,7 @@
 ```text
 Cargo.toml
 Cargo.lock
+src/lib.rs
 rust-toolchain.toml
 rustfmt.toml
 clippy.toml
@@ -88,10 +90,11 @@ tests/
 
 ---
 
-### Task 1: Bootstrap the Cargo workspace and quality gates
+### Task 1: Bootstrap the Cargo workspace, root test package and quality gates
 
 **Files:**
 - Create: `Cargo.toml`
+- Create: `src/lib.rs`
 - Create: `rust-toolchain.toml`
 - Create: `rustfmt.toml`
 - Create: `clippy.toml`
@@ -101,11 +104,19 @@ tests/
 
 **Interfaces:**
 - Produces workspace crates named `vestrace-domain`, `vestrace-application`, `vestrace-infrastructure`, `vestrace-http`, and `vestrace-cli`.
+- Produces root package `vestrace-integration-tests` for repository-level integration tests.
 - Produces a binary named `vestrace` from `crates/vestrace-cli`.
 
 - [ ] **Step 1: Write the workspace manifest**
 
 ```toml
+[package]
+name = "vestrace-integration-tests"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
 [workspace]
 resolver = "3"
 members = [
@@ -129,9 +140,9 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 config = "0.15"
 http = "1"
+schemars = { version = "1", features = ["chrono04", "uuid1"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-schemars = { version = "1", features = ["chrono04", "uuid1"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
@@ -140,9 +151,27 @@ tower-http = { version = "0.6", features = ["trace", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v7", "serde"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tower.workspace = true
+vestrace-application = { path = "crates/vestrace-application" }
+vestrace-domain = { path = "crates/vestrace-domain" }
+vestrace-http = { path = "crates/vestrace-http" }
+vestrace-infrastructure = { path = "crates/vestrace-infrastructure" }
 ```
 
-- [ ] **Step 2: Add a compile smoke test**
+- [ ] **Step 2: Add the root integration-test harness and crate smoke test**
+
+Create `src/lib.rs`:
+
+```rust
+#![forbid(unsafe_code)]
+
+//! Non-publishable integration-test harness for the Vestrace workspace.
+```
 
 Create `crates/vestrace-domain/src/lib.rs`:
 
@@ -162,9 +191,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the test and formatting gates**
-
-Run:
+- [ ] **Step 3: Run the quality gates**
 
 ```bash
 cargo fmt --all --check
@@ -176,12 +203,12 @@ Expected: all commands exit `0`.
 
 - [ ] **Step 4: Add CI with PostgreSQL service**
 
-The workflow must run the three commands above and start PostgreSQL 17 with database `vestrace_test`, user `vestrace`, and password `vestrace`.
+The workflow runs the three commands above and starts PostgreSQL 17 with database `vestrace_test`, user `vestrace`, and password `vestrace`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml .gitignore .github crates
+git add Cargo.toml Cargo.lock src rust-toolchain.toml rustfmt.toml clippy.toml .gitignore .github crates
 git commit -m "build: bootstrap Rust workspace"
 ```
 
@@ -201,7 +228,7 @@ git commit -m "build: bootstrap Rust workspace"
 - Produces `Timestamp` as UTC `chrono::DateTime<Utc>`.
 - Produces `DomainError` with stable machine-readable codes.
 
-- [ ] **Step 1: Write failing identifier tests**
+- [ ] **Step 1: Write the failing identifier test**
 
 ```rust
 #[test]
@@ -276,17 +303,10 @@ impl DomainError {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 5: Run tests and commit**
 
 ```bash
 cargo test -p vestrace-domain
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
 git add crates/vestrace-domain
 git commit -m "feat(domain): add shared identifiers and errors"
 ```
@@ -361,17 +381,10 @@ pub trait HealthRepository: Send + Sync {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Run tests and commit**
 
 ```bash
 cargo test -p vestrace-application
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add crates/vestrace-application
 git commit -m "feat(application): define request context and ports"
 ```
@@ -383,7 +396,13 @@ git commit -m "feat(application): define request context and ports"
 **Files:**
 - Create: `crates/vestrace-infrastructure/src/config.rs`
 - Modify: `crates/vestrace-infrastructure/src/lib.rs`
-- Create: `crates/vestrace-cli/src/commands/*.rs`
+- Create: `crates/vestrace-cli/src/commands/mod.rs`
+- Create: `crates/vestrace-cli/src/commands/server.rs`
+- Create: `crates/vestrace-cli/src/commands/worker.rs`
+- Create: `crates/vestrace-cli/src/commands/mcp.rs`
+- Create: `crates/vestrace-cli/src/commands/migrate.rs`
+- Create: `crates/vestrace-cli/src/commands/doctor.rs`
+- Create: `crates/vestrace-cli/src/commands/rebuild.rs`
 - Modify: `crates/vestrace-cli/src/main.rs`
 - Create: `.env.example`
 - Test: `crates/vestrace-infrastructure/tests/config.rs`
@@ -393,39 +412,42 @@ git commit -m "feat(application): define request context and ports"
 - Produces `AppConfig::load()` with precedence CLI > environment > file > safe defaults.
 - Produces subcommands `server`, `worker`, `mcp`, `migrate`, `doctor`, and `rebuild`.
 
-- [ ] **Step 1: Write failing config precedence test**
+- [ ] **Step 1: Write a failing config precedence test**
+
+Use `temp_env::with_var` so the test does not call unsafe environment mutation APIs:
 
 ```rust
 #[test]
 fn environment_overrides_file_value() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), "[http]\nbind = '127.0.0.1:7000'\n").unwrap();
-    unsafe { std::env::set_var("VESTRACE_HTTP__BIND", "127.0.0.1:8000") };
-    let config = AppConfig::load_from(Some(file.path())).unwrap();
-    assert_eq!(config.http.bind.to_string(), "127.0.0.1:8000");
+    temp_env::with_var("VESTRACE_HTTP__BIND", Some("127.0.0.1:8000"), || {
+        let config = AppConfig::load_from(Some(file.path())).unwrap();
+        assert_eq!(config.http.bind.to_string(), "127.0.0.1:8000");
+    });
 }
 ```
 
-Use `serial_test` for environment-mutating tests and remove the variable after assertion.
+Add `temp-env` and `tempfile` as test dependencies.
 
 - [ ] **Step 2: Implement typed configuration**
 
 ```rust
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct AppConfig {
     pub database: DatabaseConfig,
     pub http: HttpConfig,
     pub observability: ObservabilityConfig,
 }
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct DatabaseConfig {
     pub url: secrecy::SecretString,
     pub max_connections: u32,
 }
 ```
 
-Do not implement `Debug` output that exposes the database URL value.
+Implement redacted `Debug`; never print the database URL value.
 
 - [ ] **Step 3: Implement CLI parsing**
 
@@ -447,23 +469,18 @@ enum Command {
 }
 ```
 
-Every command returns `anyhow::Result<()>`; non-server commands may initially return a clear `not implemented in foundation` error only when executed, not during parsing.
+Every command returns `anyhow::Result<()>`; unimplemented runtime behavior returns a clear command-specific error only after successful parsing.
 
-- [ ] **Step 4: Verify CLI surface**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 cargo run -p vestrace-cli -- --help
-```
-
-Expected: all six subcommands are listed.
-
-- [ ] **Step 5: Run tests and commit**
-
-```bash
 cargo test -p vestrace-infrastructure -p vestrace-cli
-git add .env.example crates/vestrace-infrastructure crates/vestrace-cli
+git add .env.example Cargo.toml Cargo.lock crates/vestrace-infrastructure crates/vestrace-cli
 git commit -m "feat: add configuration and CLI surface"
 ```
+
+Expected: all six subcommands are listed and tests pass.
 
 ---
 
@@ -474,7 +491,7 @@ git commit -m "feat: add configuration and CLI surface"
 - Create: `migrations/0002_identity_and_workspaces.sql`
 - Create: `tests/support/mod.rs`
 - Create: `tests/migrations.rs`
-- Modify: root `Cargo.toml` to register integration-test dependencies if needed
+- Modify: `Cargo.toml` dev-dependencies when test support requires them
 
 **Interfaces:**
 - Produces PostgreSQL extensions `vector` and `pg_trgm`.
@@ -505,19 +522,12 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 - [ ] **Step 3: Create identity tables**
 
-Use UUID primary keys, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, case-insensitive unique workspace slug, and explicit foreign keys with deliberate delete behavior. Seed capabilities only through later application migrations; do not hard-code product roles in this migration.
+Use UUID primary keys, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, case-insensitive unique workspace slug, and explicit foreign keys with deliberate delete behavior. Do not seed product roles in this migration.
 
-- [ ] **Step 4: Run migration tests**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test migrations
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add migrations tests Cargo.toml Cargo.lock
 git commit -m "feat(storage): add PostgreSQL identity schema"
 ```
@@ -563,15 +573,10 @@ Use `PgPoolOptions`, bounded connection count, acquisition timeout, and `sqlx::m
 
 Execute both settings using parameterized `SELECT set_config($1, $2, true)` statements; never interpolate IDs into SQL strings.
 
-- [ ] **Step 4: Run integration tests**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test -p vestrace-infrastructure --test postgres
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add crates/vestrace-infrastructure
 git commit -m "feat(storage): add scoped PostgreSQL transactions"
 ```
@@ -586,12 +591,12 @@ git commit -m "feat(storage): add scoped PostgreSQL transactions"
 - Modify: `tests/support/mod.rs`
 
 **Interfaces:**
-- Produces helper SQL functions `vestrace_current_workspace_id()` and `vestrace_current_principal_id()`.
-- Enables and forces RLS on `principals`, `roles`, `principal_roles`, and future tenant tables through repeatable policy conventions.
+- Produces SQL helpers `vestrace_current_workspace_id()` and `vestrace_current_principal_id()`.
+- Enables and forces RLS on tenant identity tables.
 
 - [ ] **Step 1: Write a failing cross-workspace isolation test**
 
-Create two workspaces and two scoped transactions. Insert a principal in workspace A. Query from workspace B and assert zero rows.
+Create two workspaces and scoped transactions. Insert a principal in workspace A. Query from workspace B and assert zero rows:
 
 ```rust
 assert_eq!(visible_count, 0);
@@ -611,8 +616,6 @@ Create the equivalent principal helper.
 
 - [ ] **Step 3: Enable and force RLS**
 
-For each tenant table:
-
 ```sql
 ALTER TABLE principals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE principals FORCE ROW LEVEL SECURITY;
@@ -621,17 +624,12 @@ USING (workspace_id = vestrace_current_workspace_id())
 WITH CHECK (workspace_id = vestrace_current_workspace_id());
 ```
 
-- [ ] **Step 4: Run tests**
+Apply the same convention to every tenant identity table.
+
+- [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test rls
-```
-
-Expected: PASS and the cross-workspace row is invisible.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add migrations/0003_rls_baseline.sql tests/rls.rs tests/support/mod.rs
 git commit -m "feat(security): enforce workspace RLS baseline"
 ```
@@ -683,15 +681,10 @@ Use `{"status":"ok"}` and `{"status":"not_ready"}`; do not expose connection str
 
 Initialize `tracing_subscriber` once in the CLI, support text or JSON output from configuration, and include request IDs in spans.
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test -p vestrace-http
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add crates/vestrace-http crates/vestrace-infrastructure crates/vestrace-cli
 git commit -m "feat(http): add health checks and tracing"
 ```
@@ -711,7 +704,7 @@ git commit -m "feat(http): add health checks and tracing"
 **Interfaces:**
 - Produces Compose services `postgres` and `vestrace-server`.
 - Exposes HTTP on `127.0.0.1:8080` by default.
-- Provides a documented command to run migrations and server locally.
+- Provides documented migration and startup commands.
 
 - [ ] **Step 1: Write the smoke script before Docker wiring**
 
@@ -722,9 +715,9 @@ curl --fail --silent http://127.0.0.1:8080/health/live | grep '"status":"ok"'
 curl --fail --silent http://127.0.0.1:8080/health/ready | grep '"status":"ok"'
 ```
 
-Run it before starting services and verify it fails.
+Run it before services start and verify it fails.
 
-- [ ] **Step 2: Add multi-stage Dockerfile**
+- [ ] **Step 2: Add a multi-stage Dockerfile**
 
 Build the release binary in a Rust image and copy it into a minimal non-root runtime image. The final image must not contain Cargo registry caches or source code.
 
@@ -732,7 +725,7 @@ Build the release binary in a Rust image and copy it into a minimal non-root run
 
 Use a PostgreSQL image that includes pgvector. Add health checks and make the server depend on healthy PostgreSQL. Do not embed production secrets.
 
-- [ ] **Step 4: Run foundation acceptance commands**
+- [ ] **Step 4: Run acceptance commands**
 
 ```bash
 docker compose up --build -d
@@ -756,7 +749,7 @@ git commit -m "chore: add foundation development environment"
 
 ## Foundation completion gate
 
-Before opening the plan pull request, verify all of the following with fresh command output:
+Before opening the plan pull request, verify with fresh output:
 
 ```bash
 cargo fmt --all --check
@@ -767,4 +760,4 @@ docker compose up --build -d
 docker compose down -v
 ```
 
-Review the diff against the global constraints. Confirm that no domain crate imports Axum or SQLx, no secret value is logged, all tenant queries execute inside a scoped transaction, and the cross-workspace RLS test passes.
+Review the diff against the global constraints. Confirm that the root package exists only as an integration-test harness, no domain crate imports Axum or SQLx, no secret value is logged, all tenant queries execute inside a scoped transaction, and the cross-workspace RLS test passes.
