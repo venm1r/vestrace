@@ -46,7 +46,7 @@ Builds:
 - PostgreSQL jobs, leases, retries, dead-letter state and transactional outbox;
 - worker process and deterministic memory extraction test doubles.
 
-**Exit gate:** an integration test records an event, creates a candidate memory, activates it, revises it with optimistic concurrency, preserves provenance, retries a leased background job safely, and removes all content and derivatives through an authorized purge.
+**Exit gate:** an integration test records an event, creates a candidate memory, activates it, revises it with optimistic concurrency, preserves provenance, retries a leased background job safely, and removes all content and derivatives through an authorized purge seam.
 
 ### 3. Retrieval and Context
 
@@ -113,6 +113,120 @@ Cognitive Runtime Foundation
 
 Later plans may add new implementations behind established ports, but must not bypass contracts finalized in earlier plans without an explicit design amendment.
 
+## Normative cross-plan contracts
+
+These contracts are authoritative when an individual task uses shorter wording.
+
+### Shared error placement
+
+- `crates/vestrace-application/src/error.rs` defines `ApplicationError` and maps domain, conflict, policy, unavailable, storage and internal failures without importing SQLx.
+- `crates/vestrace-infrastructure/src/error.rs` defines `InfrastructureError` and may wrap SQLx, migration, HTTP-client and configuration failures.
+- Interface adapters map both to stable public error codes; they never serialize internal messages directly.
+
+Foundation implementers add these two files with the first task that references each type, even when a task file list abbreviates them.
+
+### Scope types
+
+Memory Core defines:
+
+```rust
+pub enum MemoryScopeKind {
+    Workspace,
+    Project,
+    User,
+    Agent,
+    Team,
+    Workflow,
+    Execution,
+    Session,
+    Task,
+    Global,
+}
+
+pub struct MemoryScope {
+    pub kind: MemoryScopeKind,
+    pub id: uuid::Uuid,
+}
+```
+
+`Global` is workspace-global and its ID is the workspace UUID. `MemoryScopeInput` in extraction/API DTOs maps to this domain type and is not a second scope model.
+
+### Purge authorization seam
+
+Memory Core must not depend on security types introduced in Plan 4. Its purge service depends on:
+
+```rust
+#[async_trait::async_trait]
+pub trait PurgeAuthorizationPort: Send + Sync {
+    async fn authorize(
+        &self,
+        context: &RequestContext,
+        memory_id: MemoryId,
+        reason: &str,
+    ) -> Result<PurgeAuthorization, ApplicationError>;
+}
+
+pub struct PurgeAuthorization {
+    pub authorization_reference: String,
+    pub expires_at: Timestamp,
+}
+```
+
+Plan 2 uses a deterministic test adapter. Plan 4 implements the production adapter by validating `data.purge` capability and a payload-bound `ApprovalRecord`, then passes the approval ID as `authorization_reference`. The purge audit table stores that opaque reference without a foreign key to a subsystem that does not yet exist in Plan 2.
+
+### Integration-test package
+
+Root-level `tests/` belong to the non-publishable root package `vestrace-integration-tests`. A command using a root test is:
+
+```bash
+cargo test --test <test_name>
+```
+
+A command using a crate-local integration test is:
+
+```bash
+cargo test -p <crate_name> --test <test_name>
+```
+
+### Migration sequence
+
+```text
+0001 extensions
+0002 identity and workspaces
+0003 RLS baseline
+0004 sessions and events
+0005 memories and revisions
+0006 provenance, scopes and relations
+0007 idempotency, jobs, outbox and purge audit
+0008 search documents
+0009 embedding spaces
+0010 structured search indexes
+0011 retrieval journal and context packs
+0012 tokens, policies and approvals
+0013 audit and redaction
+0014 provider and model registry
+0015 routing, model executions and evaluations
+0016 agents, skills and workflows
+0017 external execution history
+0018 diagnostics and metric rollups
+```
+
+Each migration is created once and never edited after its task commit.
+
+### Routing quality blend
+
+Plan 5 uses the exact v0.1 blend:
+
+```text
+observed_weight = min(observation_count / 20.0, 1.0)
+baseline_weight = 1.0 - observed_weight
+expected_quality =
+    observed_weight × smoothed_task_type_quality
+  + baseline_weight × configured_baseline_quality
+```
+
+When observation count is zero, expected quality equals configured baseline quality.
+
 ## Branch and review policy
 
 Use one branch per plan:
@@ -125,11 +239,11 @@ feat/interfaces-security
 feat/cognitive-runtime-foundation
 ```
 
-Each task in a plan ends with its own commit. Each plan ends with a draft pull request and a requirements review against both the plan and the approved design specification.
+Each task ends with its own commit. Each plan ends with a draft pull request and requirements review against both the plan and approved design specification.
 
 ## Verification policy
 
-Every plan must keep these commands green before merge:
+Every plan keeps these commands green before merge:
 
 ```bash
 cargo fmt --all --check
@@ -137,7 +251,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Plans that introduce PostgreSQL also run their listed integration and migration commands. Plans that introduce interfaces add contract suites. The final plan runs the Docker Compose smoke test and full v0.1 end-to-end acceptance scenario.
+Plans that introduce PostgreSQL also run listed integration and migration commands. Plans that introduce interfaces add contract suites. The final plan runs Docker Compose smoke and the full v0.1 acceptance scenario.
 
 ## Scope control
 
