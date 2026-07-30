@@ -6,58 +6,66 @@
 
 **Architecture:** HTTP and MCP are thin adapters over the same application services and DTO mapping layer. Authentication establishes a trusted `RequestContext`; clients cannot choose an unrelated workspace or principal. A policy engine evaluates capabilities and scopes before application calls, while PostgreSQL RLS remains the second isolation layer. Sensitive data is classified and redacted before persistence or external model transmission.
 
-**Tech Stack:** Existing Foundation, Memory Core and Retrieval plans, Rust, Axum, Tower, rmcp, Tokio, Serde, Schemars, SQLx, bearer tokens with Argon2 hashing, tracing, tower test utilities.
+**Tech Stack:** Existing Foundation, Memory Core and Retrieval plans, Rust, Axum, Tower, rmcp, Tokio, Serde, Schemars, SQLx, Argon2id, tracing, tower test utilities.
 
 ## Global Constraints
 
 - Complete the first three plans before starting.
 - MCP and HTTP call the same application services and preserve the same domain error semantics.
 - MCP is agent-facing and narrower than HTTP/admin APIs.
-- A client-supplied workspace ID is validated against authenticated context and never establishes authority.
+- Client-supplied workspace IDs are consistency assertions, never authority.
 - Authorization defaults to deny.
-- Downstream agents, workflows, models and tools cannot gain more authority than their initiator.
+- Delegation cannot increase authority.
 - Reading memory and sending memory to a provider are separate capabilities.
 - Hard purge, permission changes, external-provider enablement and Restricted remote transfer require approval.
-- Secrets are never returned in API DTOs, MCP results, logs or audit payloads.
-- All write operations require an idempotency key; versioned mutations require expected revision.
-- Stable public error codes must not expose SQL, stack traces or secret values.
+- Secrets never appear in DTOs, MCP results, logs or audit payloads.
+- All writes require idempotency; versioned mutations require expected revision.
+- Public errors never expose SQL, stack traces or secret values.
+- Root-level contract and security tests run through the root `vestrace-integration-tests` package created by Foundation.
 
 ---
 
 ## Locked file structure additions
 
 ```text
-crates/vestrace-domain/src/
-  security/mod.rs
-  security/capability.rs
-  security/sensitivity.rs
-  security/approval.rs
+crates/vestrace-domain/src/security/
+  mod.rs
+  capability.rs
+  sensitivity.rs
+  approval.rs
 
 crates/vestrace-application/src/
-  security/mod.rs
-  security/ports.rs
-  security/policy_engine.rs
-  security/redaction.rs
-  security/approval.rs
-  operations/mod.rs
-  operations/ports.rs
   dto/mod.rs
   dto/envelope.rs
   dto/memory.rs
   dto/retrieval.rs
   dto/operations.rs
+  security/mod.rs
+  security/ports.rs
+  security/policy_engine.rs
+  security/redaction.rs
+  security/approval.rs
+  security/audit.rs
+  operations/mod.rs
+  operations/ports.rs
+
+crates/vestrace-infrastructure/src/postgres/
+  security_repository.rs
+  redaction_repository.rs
+  audit_repository.rs
+  operation_repository.rs
 
 crates/vestrace-http/src/
   auth.rs
   error.rs
   middleware.rs
+  openapi.rs
   routes/mod.rs
   routes/events.rs
   routes/memories.rs
   routes/retrieval.rs
   routes/operations.rs
   routes/admin.rs
-  openapi.rs
 
 crates/vestrace-mcp/
   Cargo.toml
@@ -65,18 +73,25 @@ crates/vestrace-mcp/
   src/server.rs
   src/context.rs
   src/error.rs
+  src/resources.rs
   src/tools/mod.rs
   src/tools/events.rs
   src/tools/memory.rs
   src/tools/retrieval.rs
   src/tools/operations.rs
-  src/resources.rs
 
-crates/vestrace-cli/src/commands/mcp.rs
+crates/vestrace-cli/src/commands/
+  mcp.rs
+  schema.rs
 
 migrations/
   0012_tokens_policies_and_approvals.sql
   0013_audit_and_redaction.sql
+
+schemas/
+  v1/*.json
+  openapi-v1.json
+  mcp-tools-v1.json
 
 tests/
   http_contract.rs
@@ -88,6 +103,7 @@ tests/
   redaction.rs
   provider_data_policy.rs
   approvals.rs
+  security_acceptance.rs
 ```
 
 ---
@@ -106,7 +122,7 @@ tests/
 - Adds `AccessTokenId`, `PolicyId`, `ApprovalRecordId`, `AuditEventId`.
 - Produces `Capability`, `Sensitivity`, `DataDestination`, `ApprovalKind`, `ApprovalStatus`, `ApprovalRecord`.
 
-- [ ] **Step 1: Write failing capability parsing tests**
+- [ ] **Step 1: Write capability parsing tests**
 
 ```rust
 #[test]
@@ -121,9 +137,9 @@ fn unknown_capability_is_rejected() {
 }
 ```
 
-- [ ] **Step 2: Implement the approved capability set**
+- [ ] **Step 2: Implement approved capabilities**
 
-Include typed variants for memory, event, context, agent, skill, workflow, execution, model, provider, workspace, audit, export and purge operations. Serialize to stable dotted lowercase names.
+Include typed memory, event, context, agent, skill, workflow, execution, model, provider, workspace, audit, export and purge variants serialized as stable dotted lowercase names.
 
 - [ ] **Step 3: Implement sensitivity ordering**
 
@@ -137,17 +153,15 @@ pub enum Sensitivity {
 }
 ```
 
-Implement `Ord` so unknown or missing classification is treated at least as `Confidential` by policy adapters, never `Public`.
+Policy adapters treat unknown/missing classification as at least `Confidential`.
 
 - [ ] **Step 4: Implement approval lifecycle**
-
-Allowed transitions:
 
 ```text
 Requested → AwaitingApproval → Approved | Rejected | Expired
 ```
 
-Approved records include approver, approved operation hash and expiry; they cannot authorize a different operation payload.
+Approved records bind approver, exact operation hash and expiry.
 
 - [ ] **Step 5: Run and commit**
 
@@ -168,13 +182,13 @@ git commit -m "feat(security): add capabilities sensitivity and approvals"
 - Create: `crates/vestrace-application/src/dto/retrieval.rs`
 - Create: `crates/vestrace-application/src/dto/operations.rs`
 - Modify: `crates/vestrace-application/src/lib.rs`
-- Test: inline schema snapshot tests
+- Test: inline schema tests
 
 **Interfaces:**
-- Produces `ApiEnvelope<T>`, `ApiWarning`, `ApiProvenance`, `ApiError`, and versioned request/response DTOs.
-- DTOs contain domain IDs and values but no SQLx or provider-client types.
+- Produces `ApiStatus::{Succeeded, Accepted, Failed}`, `ApiEnvelope<T>`, `ApiWarning`, `ApiProvenance`, `ApiError`, and versioned DTOs.
+- DTOs contain no SQLx or provider-client types.
 
-- [ ] **Step 1: Write failing JSON contract tests**
+- [ ] **Step 1: Write envelope contract test**
 
 ```rust
 #[test]
@@ -186,12 +200,20 @@ fn success_envelope_uses_stable_fields() {
 }
 ```
 
-- [ ] **Step 2: Implement success and error envelopes**
+- [ ] **Step 2: Implement envelope types**
 
 ```rust
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiStatus {
+    Succeeded,
+    Accepted,
+    Failed,
+}
+
 pub struct ApiEnvelope<T> {
     pub request_id: RequestId,
-    pub status: OperationStatus,
+    pub status: ApiStatus,
     pub data: Option<T>,
     pub error: Option<ApiError>,
     pub warnings: Vec<ApiWarning>,
@@ -202,17 +224,17 @@ pub struct ApiEnvelope<T> {
 
 - [ ] **Step 3: Map stable errors**
 
-Support exactly: `invalid_argument`, `unauthenticated`, `forbidden`, `not_found`, `revision_conflict`, `idempotency_conflict`, `policy_violation`, `budget_exceeded`, `provider_unavailable`, `rate_limited`, `operation_failed`, `internal`.
+Support exactly `invalid_argument`, `unauthenticated`, `forbidden`, `not_found`, `revision_conflict`, `idempotency_conflict`, `policy_violation`, `budget_exceeded`, `provider_unavailable`, `rate_limited`, `operation_failed`, and `internal`.
 
-- [ ] **Step 4: Generate and snapshot JSON Schemas**
+- [ ] **Step 4: Generate DTO schema snapshots**
 
-Use Schemars for each public request and response. Store snapshots under `schemas/v1/`; CI fails when generated output differs from committed schemas.
+Store deterministic Schemars output under `schemas/v1/` and add drift tests.
 
 - [ ] **Step 5: Run and commit**
 
 ```bash
 cargo test -p vestrace-application dto
-git add crates/vestrace-application schemas
+git add crates/vestrace-application schemas/v1
 git commit -m "feat(api): define stable public DTO contracts"
 ```
 
@@ -225,33 +247,34 @@ git commit -m "feat(api): define stable public DTO contracts"
 - Create: `crates/vestrace-application/src/security/ports.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/security_repository.rs`
 - Create: `tests/authorization.rs`
+- Modify: workspace dependencies for Argon2
 
 **Interfaces:**
-- Produces tables `access_tokens`, `policy_bindings`, `policy_scopes`, `approval_records`.
-- Produces `SecurityRepository` and `ApprovalRepository` ports.
-- Only token hash, prefix, principal, workspace, expiry and revocation metadata are stored.
+- Produces `access_tokens`, `policy_bindings`, `policy_scopes`, `approval_records`.
+- Produces `SecurityRepository` and `ApprovalRepository`.
+- Stores token hash, prefix, principal, workspace, expiry and revocation metadata only.
 
-- [ ] **Step 1: Write failing token-storage test**
+- [ ] **Step 1: Write token-storage test**
 
-Create token plaintext `vst_test_secret`, persist it, then query raw table and assert plaintext is absent while verification succeeds through the repository.
+Persist plaintext `vst_test_secret`; verify raw table contains no plaintext while repository verification succeeds.
 
 - [ ] **Step 2: Create schema**
 
-Use Argon2id encoded hashes. Make token prefix unique enough for lookup but not authentication. Include `revoked_at`, `expires_at`, and `last_used_at`.
+Use Argon2id encoded hashes, lookup prefix, `revoked_at`, `expires_at`, and `last_used_at`.
 
-- [ ] **Step 3: Define policy scope schema**
+- [ ] **Step 3: Define explicit policy scopes**
 
-Represent explicit constraints for workspace, project, user, agent, workflow, memory kinds, sensitivity ceiling and labels. Avoid arbitrary executable policy code in v0.1.
+Support workspace, project, user, agent, workflow, memory kinds, sensitivity ceiling and labels. Do not implement arbitrary policy code.
 
 - [ ] **Step 4: Implement repositories and RLS**
 
-Security administration uses a privileged repository; evaluation reads only policies visible to the current workspace.
+Security management uses privileged repository paths; evaluation reads only current-workspace policy rows.
 
 - [ ] **Step 5: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test authorization
-git add migrations/0012_tokens_policies_and_approvals.sql crates tests/authorization.rs
+git add Cargo.toml Cargo.lock migrations/0012_tokens_policies_and_approvals.sql crates tests/authorization.rs
 git commit -m "feat(security): persist tokens policies and approvals"
 ```
 
@@ -266,27 +289,23 @@ git commit -m "feat(security): persist tokens policies and approvals"
 - Create: `tests/http_contract.rs`
 
 **Interfaces:**
-- Produces `AuthenticatedPrincipal` and an Axum extractor for `RequestContext`.
+- Produces `AuthenticatedPrincipal` and Axum `RequestContext` extractor.
 - Supports `LocalTrusted` and `BearerToken` modes.
-- Request context derives workspace and principal from credentials; body/path workspace is a consistency assertion only.
+- Workspace/principal derive from credentials.
 
-- [ ] **Step 1: Write failing unauthenticated test**
+- [ ] **Step 1: Write unauthenticated and workspace-substitution tests**
 
-Call a protected route in bearer mode without a token and expect HTTP `401` plus error code `unauthenticated`.
+Bearer mode without token returns `401 unauthenticated`. Credentials for workspace A plus body workspace B return `403 policy_violation` before repositories are called.
 
-- [ ] **Step 2: Write failing workspace-substitution test**
+- [ ] **Step 2: Implement bearer extraction**
 
-Authenticate for workspace A, submit body with workspace B and expect `403 policy_violation`; verify no repository call occurred.
+Malformed, expired and revoked tokens share the external unauthenticated shape. Log token ID/prefix only.
 
-- [ ] **Step 3: Implement bearer extraction**
+- [ ] **Step 3: Implement local trusted mode**
 
-Reject malformed, expired and revoked tokens with the same external error shape. Log token ID/prefix only, never token text.
+Permit configured loopback/stdio contexts only; never accept arbitrary identity headers.
 
-- [ ] **Step 4: Implement local trusted mode**
-
-Permit only configured loopback/stdio contexts. Construct one configured principal and workspace; do not accept arbitrary identity headers.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test --test http_contract
@@ -302,21 +321,16 @@ git commit -m "feat(http): authenticate principals and bind context"
 - Create: `crates/vestrace-application/src/security/mod.rs`
 - Create: `crates/vestrace-application/src/security/policy_engine.rs`
 - Create: `tests/delegated_authority.rs`
-- Modify application services to accept authorization decisions at command boundary
+- Modify: application service command boundaries
 
 **Interfaces:**
-- Produces `AuthorizationRequest`, `AuthorizationDecision`, `PolicyEngine::authorize`.
-- Produces `DelegationContext` carrying initiator, current actor and accumulated capability ceiling.
+- Produces `AuthorizationRequest`, `AuthorizationDecision`, `PolicyEngine::authorize`, and `DelegationContext`.
 
-- [ ] **Step 1: Write failing deny-by-default test**
+- [ ] **Step 1: Write deny-by-default and escalation tests**
 
-No matching policy for `memory.read` must return `Denied(NoMatchingPolicy)`.
+No policy for `memory.read` returns `Denied(NoMatchingPolicy)`. A user with read only cannot delegate revise even when agent metadata requests it.
 
-- [ ] **Step 2: Write failing escalation test**
-
-A user with `memory.read` delegates to an agent requesting `memory.revise`; the effective permissions must not include revise even if the agent definition lists it.
-
-- [ ] **Step 3: Implement capability intersection**
+- [ ] **Step 2: Implement capability intersection**
 
 ```text
 initiator grants
@@ -325,13 +339,13 @@ initiator grants
 ∩ requested operation requirements
 ```
 
-Explicit deny wins over allow. Scope must match every constrained dimension.
+Explicit deny wins; every constrained scope must match.
 
-- [ ] **Step 4: Add service guards**
+- [ ] **Step 3: Guard application services before transactions**
 
-Guard each application command before opening a write transaction. Still retain RLS to stop accidental unscoped repository access.
+Keep RLS as a second boundary.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test --test authorization --test delegated_authority
@@ -352,17 +366,17 @@ git commit -m "feat(security): enforce scoped delegated authority"
 
 **Interfaces:**
 - Produces `RedactionPolicy`, `RedactionRule`, `RedactionResult`, `ProviderDataPolicy`.
-- Separates capabilities `memory.read`, `model.data.share.local`, `model.data.share.remote`.
+- Separates `memory.read`, `model.data.share.local`, and `model.data.share.remote`.
 
-- [ ] **Step 1: Write failing secret-redaction tests**
+- [ ] **Step 1: Write secret-redaction tests**
 
-Input containing `sk-test-1234567890` must be replaced before event persistence and model request construction. Assert the plaintext does not appear in database rows, logs captured by the test subscriber or serialized DTOs.
+An input containing `sk-test-1234567890` is replaced before persistence and provider serialization. Plaintext is absent from DB, captured logs and DTOs.
 
 - [ ] **Step 2: Implement deterministic rules**
 
-Support built-in patterns for API keys, bearer tokens, private-key blocks and password assignments, plus workspace-configured regular expressions. Store original hash, redacted content, matched rule IDs and policy version.
+Support API keys, bearer tokens, private-key blocks, password assignments and workspace regexes. Store original hash, redacted content, rule IDs and policy version.
 
-- [ ] **Step 3: Implement provider destination checks**
+- [ ] **Step 3: Implement provider transfer check**
 
 ```rust
 pub fn authorize_transfer(
@@ -373,11 +387,9 @@ pub fn authorize_transfer(
 ) -> Result<(), PolicyViolation>;
 ```
 
-Restricted remote transfer requires both explicit capability and approved operation. Secret values cannot be transferred or stored as memory.
+Restricted remote transfer needs capability plus approval. Secret values cannot be stored as memory or transferred.
 
-- [ ] **Step 4: Integrate before provider calls**
-
-Extraction, embedding and future reranking requests must pass the policy gate before HTTP serialization.
+- [ ] **Step 4: Integrate before extraction, embedding and reranking calls**
 
 - [ ] **Step 5: Run and commit**
 
@@ -398,25 +410,22 @@ git commit -m "feat(security): redact sensitive data and gate providers"
 - Create: `tests/approvals.rs`
 
 **Interfaces:**
-- Produces `RequestApprovalService`, `ResolveApprovalService`, `VerifyApprovalService`, `AuditWriter`.
-- Approval binds operation kind, normalized payload hash, requester and expiry.
-- Audit events are append-only and exclude sensitive payload content.
+- Produces `RequestApprovalService`, `ResolveApprovalService`, `VerifyApprovalService`, and `AuditWriter`.
+- Approval binds operation kind, canonical payload hash, requester and expiry.
 
-- [ ] **Step 1: Write failing payload-binding test**
+- [ ] **Step 1: Write payload-binding test**
 
-Approve purge of memory A. Attempt purge of memory B with the same approval and expect `policy_violation`.
+Approval for purge of memory A cannot purge memory B.
 
-- [ ] **Step 2: Implement operation hashing**
+- [ ] **Step 2: Implement canonical operation hashing**
 
-Canonicalize a typed command DTO and hash bytes with SHA-256. Include command type and workspace in the signed material.
+Hash command type, workspace and canonical typed DTO bytes with SHA-256.
 
-- [ ] **Step 3: Implement audit writes**
+- [ ] **Step 3: Implement append-only audit writes**
 
-Record allow/deny decision, policy IDs, principal, resource reference, operation and correlation ID. For Restricted reads, always write audit; for ordinary local reads, follow workspace audit policy.
+Record decision, policy IDs, principal, resource reference, operation and correlation ID without content. Restricted reads always audit.
 
-- [ ] **Step 4: Integrate with hard purge and policy changes**
-
-Require a live approval and consume it atomically with the dangerous operation.
+- [ ] **Step 4: Consume approval atomically with dangerous operation**
 
 - [ ] **Step 5: Run and commit**
 
@@ -454,19 +463,19 @@ POST /v1/relations
 GET  /v1/timeline
 ```
 
-- Uses `Idempotency-Key` header for writes and `If-Match` or explicit `expected_revision` consistently; choose one public convention and document it. Use explicit `expected_revision` in JSON to align MCP.
+- Writes use `Idempotency-Key`; versioned writes use JSON `expected_revision` to match MCP.
 
-- [ ] **Step 1: Write route contract tests before handlers**
+- [ ] **Step 1: Write route contract tests**
 
-Test status, content type, envelope fields and stable error codes for success, invalid input, not found, revision conflict and idempotency conflict.
+Cover success, invalid input, not found, revision conflict and idempotency conflict.
 
-- [ ] **Step 2: Implement DTO mapping**
+- [ ] **Step 2: Implement thin handlers**
 
-Handlers deserialize DTOs, validate authenticated workspace consistency, authorize, call one application service, map result. No business transitions occur in handlers.
+Deserialize, verify authenticated workspace, authorize, call one application service, map envelope. No domain transitions in handlers.
 
-- [ ] **Step 3: Enforce body and response limits**
+- [ ] **Step 3: Add body and timeout limits**
 
-Configure maximum JSON body size and timeout. Return `invalid_argument` for oversized payloads without reading arbitrary amounts into memory.
+Oversized JSON returns `invalid_argument` without unbounded buffering.
 
 - [ ] **Step 4: Run and commit**
 
@@ -499,19 +508,19 @@ GET  /admin/v1/audit
 GET  /admin/v1/diagnostics
 ```
 
-- Long-running actions return `operation_id` and never hold an HTTP request until completion.
+- Long-running actions return operation ID.
 
-- [ ] **Step 1: Define operation state model**
+- [ ] **Step 1: Define operation states**
 
-States: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`. Cancellation is best-effort and must not mark already committed authoritative writes as undone.
+`queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`. Cancellation never claims committed writes were undone.
 
-- [ ] **Step 2: Write purge authorization route test**
+- [ ] **Step 2: Write purge route test**
 
-Without `data.purge` and valid approval: `403`. With both: `202` and operation ID.
+Without capability and approval: `403`; with both: `202` plus operation ID.
 
-- [ ] **Step 3: Implement admin route separation**
+- [ ] **Step 3: Apply separate admin authorization layer**
 
-Use a distinct router layer requiring administrative capabilities. Do not rely on URL prefix alone.
+URL prefix alone is not authorization.
 
 - [ ] **Step 4: Run and commit**
 
@@ -523,7 +532,7 @@ git commit -m "feat(http): expose operations and admin endpoints"
 
 ---
 
-### Task 10: Create the MCP adapter crate and stdio server
+### Task 10: Create MCP adapter crate and stdio server
 
 **Files:**
 - Create: `crates/vestrace-mcp/Cargo.toml`
@@ -557,28 +566,26 @@ vestrace_operation_get
 vestrace_operation_cancel
 ```
 
-- Logs only to stderr in stdio mode.
+- [ ] **Step 1: Add crate to workspace and root test dev-dependencies**
 
-- [ ] **Step 1: Write failing tool-list test**
+Add `crates/vestrace-mcp` to workspace members and `vestrace-mcp = { path = "crates/vestrace-mcp" }` to root dev-dependencies.
 
-Start the server over in-memory duplex transport and assert the exact approved tool names and JSON input schemas are advertised.
+- [ ] **Step 2: Write tool-list contract test**
 
-- [ ] **Step 2: Implement MCP context profile**
+Start over in-memory duplex transport and assert exact names and schemas.
 
-`vestrace mcp --profile <name>` resolves configured local principal/workspace and capability ceiling. Tool arguments cannot override that identity.
+- [ ] **Step 3: Implement trusted MCP profile**
 
-- [ ] **Step 3: Implement thin tool handlers**
+`vestrace mcp --profile <name>` resolves local principal/workspace/capability ceiling; arguments cannot override identity.
 
-Each handler maps MCP input to the same DTO/application service used by HTTP and maps the common envelope to structured MCP content.
+- [ ] **Step 4: Implement thin handlers and protect stdout**
 
-- [ ] **Step 4: Protect stdio protocol output**
-
-Initialize tracing writer to stderr; add a test that stdout contains only protocol frames.
+Use common DTO/services. Send tracing to stderr only; test stdout contains protocol frames only.
 
 - [ ] **Step 5: Run and commit**
 
 ```bash
-cargo test -p vestrace-mcp --test mcp_contract
+cargo test --test mcp_contract
 git add Cargo.toml Cargo.lock crates/vestrace-mcp crates/vestrace-cli tests/mcp_contract.rs
 git commit -m "feat(mcp): expose memory tools over stdio"
 ```
@@ -594,32 +601,20 @@ git commit -m "feat(mcp): expose memory tools over stdio"
 - Create: `tests/http_mcp_equivalence.rs`
 
 **Interfaces:**
-- Exposes read-only resources:
+- Exposes backed read-only resources for memories, current context and operations in this plan.
+- Model/agent/skill/workflow/execution resources are registered only in Plan 5 when their stores exist.
 
-```text
-vestrace://workspaces/{workspace_id}/memories/{memory_id}
-vestrace://workspaces/{workspace_id}/context/current
-vestrace://workspaces/{workspace_id}/models
-vestrace://workspaces/{workspace_id}/agents/{agent_id}
-vestrace://workspaces/{workspace_id}/skills/{skill_id}
-vestrace://workspaces/{workspace_id}/workflows/{workflow_id}
-vestrace://workspaces/{workspace_id}/executions/{execution_id}
-vestrace://workspaces/{workspace_id}/operations/{operation_id}
-```
+- [ ] **Step 1: Write memory-resource equivalence test**
 
-Resources whose backing subsystem arrives in Plan 5 must be registered only in Plan 5; do not return fake empty objects in this plan.
+MCP memory resource matches normalized HTTP memory response for content, revision and provenance.
 
-- [ ] **Step 1: Write a memory-resource test**
+- [ ] **Step 2: Mount authenticated Streamable HTTP at `/mcp`**
 
-Read a known memory resource and assert content, revision, provenance and sensitivity-safe fields match the HTTP `GET /v1/memories/{id}` result.
+Reuse bearer context, origin/host restrictions, size limits and timeouts.
 
-- [ ] **Step 2: Mount Streamable HTTP MCP endpoint**
+- [ ] **Step 3: Test HTTP/MCP equivalence**
 
-Mount at `/mcp`, reuse bearer authentication and request context, enforce origin/host configuration and request limits.
-
-- [ ] **Step 3: Write HTTP/MCP equivalence tests**
-
-For record event, memory search, context build and revise conflict, compare normalized common envelopes and domain error codes.
+Compare record event, search, context build and revision conflict semantics.
 
 - [ ] **Step 4: Run and commit**
 
@@ -631,45 +626,44 @@ git commit -m "feat(mcp): add resources and Streamable HTTP"
 
 ---
 
-### Task 12: Generate OpenAPI, MCP schema snapshots and security acceptance tests
+### Task 12: Generate schemas and run security acceptance tests
 
 **Files:**
 - Create: `crates/vestrace-http/src/openapi.rs`
+- Create: `crates/vestrace-cli/src/commands/schema.rs`
+- Modify: `crates/vestrace-cli/src/commands/mod.rs`
+- Modify: `crates/vestrace-cli/src/main.rs`
 - Create: `schemas/openapi-v1.json`
 - Create: `schemas/mcp-tools-v1.json`
 - Create: `tests/security_acceptance.rs`
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Produces reproducible schema artifacts checked in CI.
-- Adds security-negative suite covering cross-workspace access, self-elevation, provider transfer, purge, logs and deleted-memory cache access.
+- Produces CLI:
 
-- [ ] **Step 1: Implement deterministic schema generation commands**
+```text
+vestrace schema http
+vestrace schema mcp
+```
+
+- Produces deterministic schema artifacts and security-negative suite.
+
+- [ ] **Step 1: Implement deterministic schema commands**
 
 ```bash
 cargo run -p vestrace-cli -- schema http > schemas/openapi-v1.json
 cargo run -p vestrace-cli -- schema mcp > schemas/mcp-tools-v1.json
 ```
 
-Sort maps and omit runtime timestamps so output is stable.
+Sort maps and omit timestamps.
 
 - [ ] **Step 2: Write security acceptance cases**
 
-Cover:
+Cover foreign workspace read, workspace substitution, self-permission update, Restricted remote transfer, purge without approval, secret leakage and deleted-memory cache/search access.
 
-```text
-foreign workspace read denied
-workspace body substitution denied
-agent self-permission update denied
-Restricted remote model transfer denied
-hard purge without approval denied
-secret absent from logs and persisted event content
-deleted memory absent from search and context cache
-```
+- [ ] **Step 3: Add schema drift CI**
 
-- [ ] **Step 3: Add schema drift check to CI**
-
-Regenerate to a temporary directory and diff against committed files.
+Regenerate to temporary files and diff.
 
 - [ ] **Step 4: Run and commit**
 
@@ -695,15 +689,4 @@ cargo run -p vestrace-cli -- schema http | diff -u schemas/openapi-v1.json -
 cargo run -p vestrace-cli -- schema mcp | diff -u schemas/mcp-tools-v1.json -
 ```
 
-Then run HTTP and MCP smoke clients against a started server. Confirm:
-
-- the same command produces equivalent semantics through both adapters;
-- identity always comes from trusted authentication/profile context;
-- authorization is deny-by-default and delegated authority cannot expand;
-- RLS still blocks cross-workspace rows when application checks are deliberately bypassed in a test;
-- Restricted data is not sent remotely without capability and approval;
-- secrets are absent from logs, audit payloads and public DTOs;
-- all writes enforce idempotency;
-- all revision writes enforce optimistic concurrency;
-- MCP stdio writes no logs to stdout;
-- admin operations are not exposed as ordinary MCP tools.
+Confirm equivalent HTTP/MCP semantics, trusted identity context, deny-by-default authorization, non-expanding delegation, RLS isolation, provider transfer policy, secret-free outputs/logs, write idempotency, optimistic concurrency, clean stdio protocol output and no administrative MCP tools.
