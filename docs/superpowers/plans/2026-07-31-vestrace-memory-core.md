@@ -6,20 +6,21 @@
 
 **Architecture:** Keep domain aggregates pure and persist them through repository ports. Application services own transaction boundaries and write an outbox record in the same transaction as every authoritative change. The worker leases PostgreSQL jobs and invokes typed handlers; AI extraction remains a port with deterministic test implementations until the retrieval plan adds a real provider.
 
-**Tech Stack:** Existing Foundation workspace, Rust, Tokio, SQLx, PostgreSQL, Serde, Schemars, tracing, property-based testing with proptest.
+**Tech Stack:** Existing Foundation workspace, Rust, Tokio, SQLx, PostgreSQL, Serde, Schemars, tracing, proptest.
 
 ## Global Constraints
 
 - Complete `2026-07-31-vestrace-foundation.md` first.
 - Events are append-only; corrections create new events.
-- Memory content is changed only by creating a new MemoryRevision.
+- Memory content changes only by creating a new `MemoryRevision`.
 - Active memory must have at least one source.
-- Derived memory must have a Derivation.
+- Derived memory must have a `Derivation`.
 - All external write commands require an idempotency key.
 - Versioned updates require `expected_revision`.
 - PostgreSQL is authoritative; jobs, outbox and provenance are stored transactionally.
 - Hard purge is an explicit administrative operation and removes content and derivatives.
 - Cross-workspace references are invalid even when UUIDs exist.
+- Migration `0007_idempotency_jobs_outbox.sql` is created once with the complete idempotency, job, outbox and purge-audit schema and is never edited after commit.
 
 ---
 
@@ -45,6 +46,8 @@ crates/vestrace-application/src/
   memory/commands.rs
   memory/services.rs
   memory/ports.rs
+  memory/extraction.rs
+  memory/purge.rs
   jobs/mod.rs
   jobs/ports.rs
   jobs/worker.rs
@@ -58,6 +61,7 @@ crates/vestrace-infrastructure/src/postgres/
   idempotency_repository.rs
   job_repository.rs
   outbox_repository.rs
+  purge_repository.rs
 
 crates/vestrace-cli/src/commands/worker.rs
 
@@ -73,6 +77,9 @@ tests/
   provenance.rs
   jobs.rs
   purge.rs
+
+crates/vestrace-application/tests/
+  extraction.rs
 ```
 
 ---
@@ -90,8 +97,8 @@ tests/
 - Modify: `crates/vestrace-domain/src/lib.rs`
 
 **Interfaces:**
-- Produces IDs: `SessionId`, `EventId`, `MemoryId`, `MemoryRevisionId`, `MemorySourceId`, `DerivationId`, `RelationId`, `JobId`, `OutboxId`.
-- Produces `MemoryKind`, `MemoryStatus`, `StructuredMemory`, `MemoryRevision`, `Memory`.
+- Produces IDs `SessionId`, `EventId`, `MemoryId`, `MemoryRevisionId`, `MemorySourceId`, `DerivationId`, `RelationId`, `JobId`, `OutboxId`.
+- Produces `MemoryKind`, `MemoryStatus`, `StructuredMemory`, `MemoryRevision`, `Memory`, `Confidence`, and `Importance`.
 
 - [ ] **Step 1: Write failing lifecycle and range tests**
 
@@ -117,12 +124,13 @@ pub struct Confidence(f32);
 
 impl Confidence {
     pub fn new(value: f32) -> Result<Self, DomainError> {
-        if (0.0..=1.0).contains(&value) && value.is_finite() {
+        if value.is_finite() && (0.0..=1.0).contains(&value) {
             Ok(Self(value))
         } else {
             Err(DomainError::InvalidArgument("confidence must be between 0 and 1".into()))
         }
     }
+
     pub const fn value(self) -> f32 { self.0 }
 }
 ```
@@ -144,7 +152,7 @@ pub enum MemoryStatus {
 
 - [ ] **Step 4: Implement typed structured payloads**
 
-Include `AssertionData`, `DecisionData`, `TaskData`, `ProcedureData`, `ObservationData`, `OutcomeData`, and `SummaryData`. Keep unknown future fields compatible through versioned schema wrappers rather than untyped top-level maps.
+Include `AssertionData`, `DecisionData`, `TaskData`, `ProcedureData`, `ObservationData`, `OutcomeData`, and `SummaryData`. Use a tagged enum with explicit schema version; do not use a free-form top-level JSON map.
 
 - [ ] **Step 5: Implement lifecycle methods**
 
@@ -158,7 +166,7 @@ impl Memory {
 }
 ```
 
-Each method validates the allowed state transition and stores the transition timestamp.
+Each method validates an explicit state-transition table and records the transition time.
 
 - [ ] **Step 6: Run tests and commit**
 
@@ -173,10 +181,10 @@ git commit -m "feat(memory): add core memory domain model"
 ### Task 2: Define events, provenance, relations and write policies
 
 **Files:**
+- Modify: `crates/vestrace-domain/src/event.rs`
 - Create: `crates/vestrace-domain/src/provenance.rs`
 - Create: `crates/vestrace-domain/src/relation.rs`
 - Create: `crates/vestrace-domain/src/policy.rs`
-- Modify: `crates/vestrace-domain/src/event.rs`
 - Test: inline unit and property tests
 
 **Interfaces:**
@@ -185,7 +193,7 @@ git commit -m "feat(memory): add core memory domain model"
 - Produces `KnowledgeRef`, `RelationType`, `KnowledgeRelation`.
 - Produces `MemoryWritePolicy::{Manual, Assisted, Automatic}` and `ActivationDecision`.
 
-- [ ] **Step 1: Write failing event and provenance invariant tests**
+- [ ] **Step 1: Write failing invariant tests**
 
 ```rust
 #[test]
@@ -195,7 +203,7 @@ fn derived_source_requires_derivation() {
 }
 ```
 
-- [ ] **Step 2: Implement immutable event value**
+- [ ] **Step 2: Implement immutable events**
 
 ```rust
 pub struct Event {
@@ -218,13 +226,13 @@ Validate namespaced event types such as `interaction.user_message`; reject empty
 
 - [ ] **Step 3: Implement provenance types**
 
-Source references must be tagged enums, not polymorphic string pairs. A `Derived` evidence role must include `DerivationId`.
+Source references are tagged enums. `EvidenceRole::Derived` requires `DerivationId`. Derivation methods are `Extraction`, `Summarization`, `Inference`, `Consolidation`, `ConflictResolution`, `HumanAuthored`, and `Imported`.
 
 - [ ] **Step 4: Implement typed relations**
 
-Support at minimum: `Supports`, `Contradicts`, `Supersedes`, `CausedBy`, `ResultedIn`, `DependsOn`, `ProducedBy`, and `RelatedTo`.
+Support at minimum `Supports`, `Contradicts`, `Supersedes`, `CausedBy`, `ResultedIn`, `DependsOn`, `ProducedBy`, and `RelatedTo`.
 
-- [ ] **Step 5: Implement policy decision rules**
+- [ ] **Step 5: Implement write-policy decisions**
 
 ```rust
 pub struct CandidateAssessment {
@@ -239,13 +247,12 @@ impl MemoryWritePolicy {
 }
 ```
 
-`Manual` always returns candidate review. `Assisted` activates only when explicit configured thresholds pass and no unresolved conflict exists. `Automatic` uses its own versioned thresholds and still refuses activation without a source.
+`Manual` always requires review. `Assisted` activates only when configured thresholds pass and no unresolved conflict exists. `Automatic` uses versioned thresholds and still refuses activation without a source.
 
-- [ ] **Step 6: Run property tests and commit**
+- [ ] **Step 6: Run and commit**
 
 ```bash
 cargo test -p vestrace-domain
-
 git add crates/vestrace-domain
 git commit -m "feat(memory): add events provenance and write policies"
 ```
@@ -262,33 +269,31 @@ git commit -m "feat(memory): add events provenance and write policies"
 **Interfaces:**
 - Produces tables `sessions`, `events`, `event_links`.
 - Enforces unique `(workspace_id, idempotency_key)` for events.
-- Prevents cross-workspace causation links with composite foreign-key strategy or trigger validation.
+- Prevents cross-workspace causation links.
 
 - [ ] **Step 1: Write failing database tests**
 
-Test that:
-
-1. duplicate event idempotency key is rejected;
-2. event payload can be read back exactly;
-3. an event in workspace A cannot use a cause from workspace B;
-4. application role cannot update or delete an event.
+Test that duplicate event idempotency is rejected, payload round-trips, cross-workspace causation fails, and the application database role cannot update or delete events.
 
 - [ ] **Step 2: Create tables and indexes**
 
-Use `JSONB NOT NULL` for payload, indexes on `(workspace_id, occurred_at DESC)`, `(workspace_id, correlation_id)`, and `(workspace_id, event_type, occurred_at DESC)`.
+Use `JSONB NOT NULL` for payload and indexes on `(workspace_id, occurred_at DESC)`, `(workspace_id, correlation_id)`, and `(workspace_id, event_type, occurred_at DESC)`.
 
 - [ ] **Step 3: Enforce append-only behavior**
 
-Create a trigger function that raises SQLSTATE `55000` on `UPDATE` or `DELETE` for the application database role. Administrative purge will use a separate privileged function introduced later.
+Create a trigger that raises SQLSTATE `55000` for `UPDATE` or `DELETE` by the normal application role. A separate administrative database role used by hard purge is explicitly exempted and is never used by ordinary repositories.
 
-- [ ] **Step 4: Add RLS policies**
+- [ ] **Step 4: Add and test RLS**
 
-Use the Foundation helper function `vestrace_current_workspace_id()` and force RLS.
-
-- [ ] **Step 5: Run and commit**
+Use `vestrace_current_workspace_id()` and force RLS.
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test event_ingestion
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
 git add migrations/0004_sessions_and_events.sql tests
 git commit -m "feat(storage): add append-only event schema"
 ```
@@ -303,17 +308,14 @@ git commit -m "feat(storage): add append-only event schema"
 
 **Interfaces:**
 - Produces tables `memories`, `memory_revisions`, `memory_status_history`.
-- `memories.current_revision_id` references a revision belonging to the same memory.
-- Unique revision number per memory.
-- Stores `kind`, `status`, confidence, importance and validity timestamps.
+- `memories.current_revision_id` must reference a revision of the same memory.
+- Revision number is unique per memory.
 
-- [ ] **Step 1: Write failing constraints tests**
+- [ ] **Step 1: Write failing constraint tests**
 
 Test invalid score range, invalid validity interval, duplicate revision number and current revision pointing to another memory.
 
 - [ ] **Step 2: Create memory tables**
-
-Use check constraints:
 
 ```sql
 CHECK (confidence >= 0 AND confidence <= 1),
@@ -321,20 +323,21 @@ CHECK (importance >= 0 AND importance <= 1),
 CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from)
 ```
 
-Store structured content as `JSONB NOT NULL` and readable content as `TEXT NOT NULL`.
+Store readable content as `TEXT NOT NULL` and typed structured content as `JSONB NOT NULL`.
 
 - [ ] **Step 3: Enforce current-revision ownership**
 
-Use a deferred constraint trigger so a transaction can insert a memory, first revision and current pointer atomically.
+Use a deferred constraint trigger so memory, first revision and current pointer can be inserted atomically.
 
-- [ ] **Step 4: Add RLS and lifecycle indexes**
-
-Index active current memories by workspace, kind and update time.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Add RLS and indexes, then run tests**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test memory_lifecycle
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
 git add migrations/0005_memories_and_revisions.sql tests/memory_lifecycle.rs
 git commit -m "feat(storage): add memory revision schema"
 ```
@@ -348,31 +351,26 @@ git commit -m "feat(storage): add memory revision schema"
 - Create: `tests/provenance.rs`
 
 **Interfaces:**
-- Produces tables `memory_sources`, `derivations`, `derivation_inputs`, `memory_scopes`, `memory_conflicts`, `knowledge_relations`.
-- `global` scope means workspace-global and still carries `workspace_id`.
-- Relations use stable typed source and target kinds with validated UUIDs.
+- Produces `memory_sources`, `derivations`, `derivation_inputs`, `memory_scopes`, `memory_conflicts`, and `knowledge_relations`.
+- `global` means workspace-global and uses the workspace UUID as `scope_id`.
 
-- [ ] **Step 1: Write failing provenance coverage test**
+- [ ] **Step 1: Write failing provenance coverage tests**
 
-Insert an active memory without a source and assert transaction commit fails. Insert a derived source without derivation and assert failure.
+Insert an active memory without a source and assert commit failure. Insert a derived source without derivation and assert failure.
 
-- [ ] **Step 2: Create source and derivation tables**
+- [ ] **Step 2: Create sources and derivations**
 
-Use explicit source columns (`source_kind`, `source_id`) plus a validation trigger that checks the referenced authoritative table and workspace.
+Use explicit `source_kind` plus `source_id` and a validation trigger that checks the authoritative table and workspace.
 
-- [ ] **Step 3: Create scope table**
+- [ ] **Step 3: Create scopes, conflicts and relations**
 
-Use `(memory_id, scope_kind, scope_id)` uniqueness. Represent workspace-global scope with `scope_kind = 'global'` and `scope_id = workspace_id`.
+Use unique `(memory_id, scope_kind, scope_id)`. A conflict records left/right revision IDs, status, resolution revision, method and timestamps.
 
-- [ ] **Step 4: Create conflict and relation tables**
+- [ ] **Step 4: Add deferred active-source invariant**
 
-A conflict records left/right memory revision IDs, status, resolution revision, detection method and timestamps.
+At commit, every `Active` memory must have at least one source linked to its current revision.
 
-- [ ] **Step 5: Add deferred active-source invariant**
-
-At transaction commit, every `Active` memory must have at least one source linked to its current revision.
-
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test provenance
@@ -394,9 +392,8 @@ git commit -m "feat(storage): add memory provenance and graph schema"
 - Modify: `crates/vestrace-application/src/lib.rs`
 
 **Interfaces:**
-- Produces commands `RecordEvent`, `RememberMemory`, `ReviseMemory`, `ChangeMemoryStatus`, `LinkKnowledge`, `HardPurgeMemory`.
-- Produces repository ports with transaction-scoped methods.
-- Produces `OutboxMessage { topic, aggregate_id, payload, idempotency_key }`.
+- Produces commands `RecordEvent`, `RememberMemory`, `ReviseMemory`, `ChangeMemoryStatus`, `LinkKnowledge`, and `HardPurgeMemory`.
+- Produces transaction-scoped repository ports and `OutboxMessage`.
 
 - [ ] **Step 1: Define exact command types**
 
@@ -426,8 +423,6 @@ pub struct ReviseMemory {
 
 - [ ] **Step 2: Define repository ports**
 
-Include exact methods:
-
 ```rust
 async fn insert_event(&mut self, event: &Event) -> Result<(), ApplicationError>;
 async fn find_event_by_idempotency_key(&mut self, workspace: WorkspaceId, key: &str) -> Result<Option<Event>, ApplicationError>;
@@ -436,9 +431,9 @@ async fn insert_memory_with_revision(&mut self, memory: &Memory, revision: &Memo
 async fn append_revision(&mut self, memory: &Memory, revision: &MemoryRevision) -> Result<(), ApplicationError>;
 ```
 
-- [ ] **Step 3: Add compile-only fake repositories**
+- [ ] **Step 3: Add compile-only fakes for service tests**
 
-Provide test fakes in `#[cfg(test)]` modules so application services can be unit tested without SQLx.
+Provide in-memory fakes under `#[cfg(test)]`; no SQLx type appears in application or domain traits.
 
 - [ ] **Step 4: Run and commit**
 
@@ -450,7 +445,7 @@ git commit -m "feat(application): define memory commands and ports"
 
 ---
 
-### Task 7: Implement event and memory application services transactionally
+### Task 7: Implement transactional event and memory services
 
 **Files:**
 - Create: `crates/vestrace-application/src/memory/services.rs`
@@ -458,40 +453,34 @@ git commit -m "feat(application): define memory commands and ports"
 - Test: unit tests beside services
 
 **Interfaces:**
-- Produces `RecordEventService`, `RememberMemoryService`, `ReviseMemoryService`, `ChangeMemoryStatusService`, `LinkKnowledgeService`.
+- Produces `RecordEventService`, `RememberMemoryService`, `ReviseMemoryService`, `ChangeMemoryStatusService`, and `LinkKnowledgeService`.
 - Every service accepts `&RequestContext` and one command.
-- Idempotent replay returns the original resource identifier without a second mutation.
+- Idempotent replay returns the original resource ID without a second mutation.
 
 - [ ] **Step 1: Write failing idempotency test**
 
-Use a fake transaction and repositories. Call `RecordEventService::execute` twice with the same key and assert one insert and the same `EventId` twice.
+Call `RecordEventService::execute` twice with the same command and assert one insert and the same `EventId` twice.
 
-- [ ] **Step 2: Implement event recording**
-
-Transaction sequence:
+- [ ] **Step 2: Implement event transaction flow**
 
 ```text
 begin scoped transaction
-→ check idempotency record
+→ verify or create idempotency record
 → insert event
-→ insert idempotency result
-→ append outbox event `event.recorded`
+→ store result
+→ append outbox topic event.recorded
 → commit
 ```
 
 - [ ] **Step 3: Write failing revision-conflict test**
 
-Load current revision `4`, execute command with `expected_revision = 3`, and expect `ApplicationError::RevisionConflict { expected: 3, current: 4 }` with no writes.
+Load revision `4`, execute `expected_revision = 3`, expect `RevisionConflict { expected: 3, current: 4 }`, and assert no writes.
 
-- [ ] **Step 4: Implement remember and revise services**
+- [ ] **Step 4: Implement remember, revise, lifecycle and linking services**
 
-Remember creates revision `1`. Revise locks the memory row, checks revision, creates `current + 1`, updates current pointer and writes `memory.revision.created` outbox message.
+Remember creates revision `1`. Revise locks the row, checks revision, appends `current + 1`, updates current pointer, and emits `memory.revision.created`. Cross-workspace links fail before write and at the database boundary.
 
-- [ ] **Step 5: Implement lifecycle and linking services**
-
-Validate domain transition before persistence. Prevent cross-workspace links through both application validation and database constraints.
-
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 cargo test -p vestrace-application memory
@@ -501,51 +490,47 @@ git commit -m "feat(application): implement transactional memory services"
 
 ---
 
-### Task 8: Implement PostgreSQL repositories and idempotency storage
+### Task 8: Add the complete idempotency, jobs, outbox and purge-audit schema
 
 **Files:**
+- Create: `migrations/0007_idempotency_jobs_outbox.sql`
+- Create: `crates/vestrace-infrastructure/src/postgres/idempotency_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/event_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/memory_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/provenance_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/relation_repository.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/idempotency_repository.rs`
 - Modify: `crates/vestrace-infrastructure/src/postgres/mod.rs`
-- Test: `tests/event_ingestion.rs`, `tests/memory_lifecycle.rs`, `tests/provenance.rs`
+- Test: existing event, lifecycle and provenance suites
 
 **Interfaces:**
-- Implements the ports from Task 6 using a shared scoped SQLx transaction.
-- Does not expose `PgTransaction` outside infrastructure.
+- `0007` creates `idempotency_records`, `jobs`, `outbox_messages`, and `purge_audit` in one immutable migration.
+- Repositories implement the ports from Task 6 using one scoped SQLx transaction.
 
-- [ ] **Step 1: Add migration for idempotency records**
+- [ ] **Step 1: Create the complete migration once**
 
-Create `migrations/0007_idempotency_jobs_outbox.sql` initially with `idempotency_records`, reserving the same file for job/outbox tables in Task 9.
+`idempotency_records` stores command, key, request hash, result type, result JSON and timestamps. `jobs` stores type, payload, priority, status, scheduling, attempts, max attempts, lease owner/time, last error and idempotency key. `outbox_messages` stores topic, aggregate reference, payload, dispatch state and key. `purge_audit` stores object IDs, actor, reason, approval ID and time without content.
 
-Store command name, key, request hash, result type, result JSON and timestamps. A reused key with a different request hash must return `idempotency_conflict`.
+- [ ] **Step 2: Write idempotency integration tests**
 
-- [ ] **Step 2: Write integration idempotency test**
-
-Two identical commands return one event. A command with the same key and different payload fails.
+Two identical commands return one event. Reusing the key with a different request hash returns `idempotency_conflict`.
 
 - [ ] **Step 3: Implement repository SQL**
 
-Use static `query_as!`/`query!` where practical. Map database constraint errors to stable application error codes.
+Use static `query!`/`query_as!` where practical. Map database constraint failures to stable application errors. Do not expose `PgTransaction` outside infrastructure.
 
-- [ ] **Step 4: Run integration suite**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test event_ingestion --test memory_lifecycle --test provenance
+git add migrations/0007_idempotency_jobs_outbox.sql crates/vestrace-infrastructure tests
+git commit -m "feat(storage): add memory repositories and durable work schema"
 ```
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add crates/vestrace-infrastructure migrations/0007_idempotency_jobs_outbox.sql tests
-git commit -m "feat(storage): implement memory repositories"
-```
+After this commit, `0007_idempotency_jobs_outbox.sql` must never be edited.
 
 ---
 
-### Task 9: Implement PostgreSQL jobs, leases and transactional outbox
+### Task 9: Implement PostgreSQL leases, retries and transactional outbox
 
 **Files:**
 - Create: `crates/vestrace-domain/src/job.rs`
@@ -554,25 +539,18 @@ git commit -m "feat(storage): implement memory repositories"
 - Create: `crates/vestrace-application/src/jobs/worker.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/job_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/outbox_repository.rs`
-- Modify: `migrations/0007_idempotency_jobs_outbox.sql`
 - Create: `tests/jobs.rs`
 
 **Interfaces:**
-- Produces `JobType`, `JobStatus`, `JobLease`, `JobHandler` and `Worker`.
-- `JobRepository::lease_next(worker_id, lease_duration, allowed_types)` uses `FOR UPDATE SKIP LOCKED`.
-- Outbox dispatcher converts unprocessed messages into idempotent jobs.
+- Produces `JobType`, `JobStatus`, `JobLease`, `JobHandler`, and `Worker`.
+- `lease_next` uses `FOR UPDATE SKIP LOCKED` against the schema created in Task 8.
+- Outbox dispatch creates jobs with deterministic keys and marks messages dispatched atomically.
 
 - [ ] **Step 1: Write failing two-worker lease test**
 
-Insert one queued job. Concurrently lease from two repositories. Assert exactly one returns the job.
+Insert one queued job. Concurrently lease from two workers. Assert exactly one receives the job.
 
-- [ ] **Step 2: Finish jobs/outbox migration**
-
-Add `jobs` and `outbox_messages` with status checks, priority, `available_at`, attempts, max attempts, lease owner/time, last error and unique idempotency keys.
-
-- [ ] **Step 3: Implement lease SQL**
-
-Use one transaction containing selection and update:
+- [ ] **Step 2: Implement lease SQL**
 
 ```sql
 SELECT id
@@ -584,9 +562,9 @@ FOR UPDATE SKIP LOCKED
 LIMIT 1;
 ```
 
-Then update status and lease fields before commit.
+Update status and lease fields before commit.
 
-- [ ] **Step 4: Implement retry classification**
+- [ ] **Step 3: Implement retry classification**
 
 ```rust
 pub enum JobFailure {
@@ -595,17 +573,17 @@ pub enum JobFailure {
 }
 ```
 
-Retryable failures schedule exponential backoff with jitter; exhausted jobs become `dead_letter`.
+Retryable failures use exponential backoff with jitter; exhausted jobs become `dead_letter`.
 
-- [ ] **Step 5: Implement outbox dispatcher**
+- [ ] **Step 4: Implement outbox dispatch**
 
-Claim outbox rows with `SKIP LOCKED`, create job records with deterministic keys, then mark outbox rows dispatched in the same transaction.
+Claim messages with `SKIP LOCKED`, insert jobs using deterministic idempotency keys, and mark messages dispatched in the same transaction.
 
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test jobs
-git add crates migrations/0007_idempotency_jobs_outbox.sql tests/jobs.rs
+git add crates tests/jobs.rs
 git commit -m "feat(worker): add PostgreSQL jobs and outbox"
 ```
 
@@ -614,13 +592,13 @@ git commit -m "feat(worker): add PostgreSQL jobs and outbox"
 ### Task 10: Wire the worker process and deterministic extraction seam
 
 **Files:**
-- Modify: `crates/vestrace-cli/src/commands/worker.rs`
 - Create: `crates/vestrace-application/src/memory/extraction.rs`
-- Test: `crates/vestrace-application/tests/extraction.rs`
-- Test: `tests/jobs.rs`
+- Modify: `crates/vestrace-cli/src/commands/worker.rs`
+- Create: `crates/vestrace-application/tests/extraction.rs`
+- Modify: `tests/jobs.rs`
 
 **Interfaces:**
-- Produces `MemoryExtractor` port:
+- Produces `MemoryExtractor`:
 
 ```rust
 #[async_trait::async_trait]
@@ -630,34 +608,29 @@ pub trait MemoryExtractor: Send + Sync {
 ```
 
 - Produces `ExtractEventJobHandler` using the port and `RememberMemoryService`.
-- Foundation implementation includes only `DeterministicExtractor` for tests and local smoke scenarios.
+- This plan provides only `DeterministicExtractor` for tests and smoke scenarios.
 
-- [ ] **Step 1: Write failing extraction job test**
+- [ ] **Step 1: Write a failing extraction job test**
 
-A recorded event emits an outbox message, the dispatcher creates `memory.extract`, the handler uses a deterministic extractor and creates one candidate with provenance to the source event.
+A recorded event emits an outbox message, dispatcher creates `memory.extract`, handler creates one candidate, and provenance points to the source event.
 
-- [ ] **Step 2: Implement extraction types and handler**
+- [ ] **Step 2: Implement extraction identity**
 
-The handler's idempotency key is:
+The handler idempotency key is:
 
 ```text
 source_event_id + extractor_version + policy_version
 ```
 
-- [ ] **Step 3: Implement worker loop**
+- [ ] **Step 3: Implement graceful worker loop**
 
-The CLI worker must stop leasing new work on shutdown, finish or release the current lease, and log job IDs without logging source content.
+On shutdown, stop leasing, finish or release the current lease, and log IDs without source content.
 
-- [ ] **Step 4: Run tests and worker smoke test**
+- [ ] **Step 4: Run and commit**
 
 ```bash
 cargo test -p vestrace-application --test extraction
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test jobs
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add crates/vestrace-application crates/vestrace-cli tests
 git commit -m "feat(worker): process memory extraction jobs"
 ```
@@ -670,31 +643,30 @@ git commit -m "feat(worker): process memory extraction jobs"
 - Create: `crates/vestrace-application/src/memory/purge.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/purge_repository.rs`
 - Create: `tests/purge.rs`
-- Modify: `migrations/0007_idempotency_jobs_outbox.sql` only if the plan branch has not yet applied it; otherwise add `0008_purge_functions.sql` and never edit an applied migration
 
 **Interfaces:**
 - Produces `HardPurgeMemoryService::execute(context, command, approval)`.
-- Requires an explicit `ApprovalRecordId` and `data.purge` capability assertion supplied by the later policy adapter.
-- Deletes content, revisions, sources, conflicts, relations, pending jobs, outbox entries and future derivative rows keyed to the memory.
-- Leaves one minimal `purge_audit` record without content.
+- Requires explicit `ApprovalRecordId` and a `data.purge` capability assertion supplied by the later policy adapter.
+- Deletes content, revisions, sources, conflicts, relations, pending jobs, outbox entries and known derivative rows.
+- Writes one minimal row to the existing `purge_audit` table.
 
-- [ ] **Step 1: Write failing purge test**
+- [ ] **Step 1: Write a failing purge test**
 
-Create memory with two revisions, provenance and queued derivative job. Purge it. Assert all content tables have zero matching rows and `purge_audit` contains only IDs, actor, reason and timestamp.
+Create memory with two revisions, provenance and queued derivative job. Purge it. Assert all content tables have zero matching rows and `purge_audit` contains only identifiers, actor, approval, reason and timestamp.
 
-- [ ] **Step 2: Implement purge transaction**
+- [ ] **Step 2: Implement one privileged purge transaction**
 
-Use one privileged transaction and explicit deletion order. Do not rely on broad cascade from workspace or principal tables.
+Use explicit deletion order through the administrative database role. Do not edit migration `0007`, do not rely on broad workspace cascades, and do not delete the minimal audit row.
 
-- [ ] **Step 3: Verify normal application role cannot call purge SQL**
+- [ ] **Step 3: Verify normal role cannot purge**
 
-Add a negative integration test expecting `insufficient_privilege`.
+Add a negative integration test expecting insufficient privilege when the normal application role attempts the privileged repository operation.
 
 - [ ] **Step 4: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test purge
-git add crates/vestrace-application crates/vestrace-infrastructure migrations tests/purge.rs
+git add crates/vestrace-application crates/vestrace-infrastructure tests/purge.rs
 git commit -m "feat(memory): add authorized hard purge"
 ```
 
@@ -710,7 +682,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --workspace --all-features
 ```
 
-Then run one acceptance test that proves:
+Then run one acceptance scenario proving:
 
 ```text
 record event
@@ -724,4 +696,4 @@ record event
 → authorized hard purge removes content and derivative work
 ```
 
-Review database constraints, not only application tests. Confirm events remain append-only, active memories cannot commit without sources, cross-workspace references fail, duplicate idempotency keys are deterministic, and two workers cannot lease the same job simultaneously.
+Confirm events remain append-only, active memories cannot commit without sources, cross-workspace references fail, duplicate idempotency keys are deterministic, two workers cannot lease the same job, and no task edits `0007_idempotency_jobs_outbox.sql` after its creation commit.
