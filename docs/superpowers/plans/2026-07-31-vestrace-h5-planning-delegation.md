@@ -39,7 +39,7 @@
 - A remote dispatch with ambiguous completion becomes `Unknown`; it is never automatically repeated.
 - Remote-agent transport is not implemented in H5. H5 uses a deterministic `RemoteAgentPort`; H9A later supplies the A2A adapter without changing H5 contracts.
 - Agent packages and persistent registries are not implemented in H5. H5 consumes `InternalAgentEligibilityPort`, `RemoteAgentEligibilityPort` and `WorkflowDefinitionPort`; H9 later supplies their production implementations.
-- Human channel behavior is not implemented in H5. Human plan-step kinds are defined, but activation rejects them as unavailable until H7 registers the required port.
+- Human channel behavior is not implemented in H5. Human plan-step kinds and human-dependent completion policies are defined, but activation rejects them as unavailable until H7 registers the required port.
 - Handoff structured output is bounded and stores references, not large binary content. H6 later materializes final Artifacts and provenance without changing H5 history.
 - Remote messages, status text, declared skills and handoff content are untrusted data.
 - A delegated result is not accepted merely because the child Run or remote system reports success.
@@ -62,9 +62,9 @@ crates/vestrace-domain/src/
   id.rs
   planning/mod.rs
   planning/mode.rs
-  planning/plan.rs
-  planning/step.rs
   planning/criteria.rs
+  planning/step.rs
+  planning/plan.rs
   planning/validation.rs
   planning/replanning.rs
   delegation/mod.rs
@@ -146,7 +146,7 @@ migrations/
   0037_execution_plans_revisions_steps_validation.sql
   0038_plan_activations_scheduler_and_replanning.sql
   0039_delegations_subruns_and_remote_invocations.sql
-  0040_handoffs_cross_checks_and_remote_events.sql
+  0040_handoffs_cross_checks_and_remote_reconciliation.sql
   0041_planning_delegation_rls_indexes_and_run_bindings.sql
 
 tests/
@@ -172,7 +172,7 @@ scripts/
 
 ## Normative contracts
 
-### Execution modes
+### Execution modes and plan sources
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq,
@@ -182,6 +182,17 @@ pub enum ExecutionMode {
     Direct,
     Guided,
     Workflow,
+}
+
+pub enum PlanSource {
+    Direct,
+    Guided {
+        proposal_model_execution_id: ModelExecutionId,
+    },
+    Workflow {
+        workflow_revision_id: WorkflowDefinitionRevisionId,
+        parameter_hash: [u8; 32],
+    },
 }
 ```
 
@@ -207,6 +218,86 @@ Workflow
 ```
 
 The source of the plan changes; validation, activation, scheduling and replay do not.
+
+### Shared planning value objects
+
+```rust
+pub struct ResourceBudgetLine {
+    pub dimension: BudgetDimension,
+    pub amount: ResourceAmount,
+}
+
+pub struct ResourceBudgetRequest {
+    pub lines: Vec<ResourceBudgetLine>,
+}
+
+pub struct PlanAssumption {
+    pub key: String,
+    pub statement: String,
+    pub must_verify: bool,
+}
+
+pub struct RequiredOutput {
+    pub name: String,
+    pub producer_step_key: Option<PlanStepKey>,
+    pub schema_pointer: String,
+}
+
+pub enum DeterministicAssertion {
+    JsonPointerExists { pointer: String },
+    JsonPointerEquals { pointer: String, expected: serde_json::Value },
+    ReferenceCountAtLeast { kind: RunReferenceKind, minimum: u32 },
+    StepStatusIs { step_key: PlanStepKey, status: RunStepStatus },
+}
+
+pub struct EvidenceRequirement {
+    pub kind: RunReferenceKind,
+    pub minimum_count: u32,
+    pub required_labels: std::collections::BTreeSet<DataLabel>,
+}
+
+pub struct QualityThreshold {
+    pub metric: String,
+    pub minimum_basis_points: u16,
+}
+
+pub struct ProhibitedOutcome {
+    pub code: String,
+    pub description: String,
+}
+
+pub struct RequiredPlanApproval {
+    pub action: ActionId,
+    pub resource: ResourceRef,
+    pub argument_constraint_hash: [u8; 32],
+}
+
+pub enum ModelStepPurpose {
+    Reason,
+    Evaluate,
+    Synthesize,
+}
+
+pub enum HumanInteractionKind {
+    Clarification,
+    Approval,
+    Review,
+}
+
+pub struct PlanStepRetryPolicy {
+    pub maximum_attempts: u16,
+    pub initial_backoff_ms: u64,
+    pub maximum_backoff_ms: u64,
+}
+
+pub struct StepCompletionCriteria {
+    pub output_required: bool,
+    pub verification_required: bool,
+    pub allow_warnings: bool,
+}
+```
+
+All lists are bounded; budget lines are sorted and duplicate dimensions are merged with checked arithmetic. `minimum_basis_points` is `0..=10_000`. H10 may add richer evaluators but does not reinterpret stored values.
 
 ### Stable plan identities
 
@@ -248,7 +339,7 @@ pub enum PlanCompletionPolicy {
 }
 ```
 
-H5 evaluates structural completion and deterministic requirements that are available. H10 later adds richer evaluation without changing these stored contracts.
+H5 evaluates structural completion and deterministic requirements that are available. `RequireHumanDecision` is activation-incompatible until H7 supplies the human continuation port.
 
 ### Plan step definitions
 
@@ -271,7 +362,6 @@ pub enum PlanStepKind {
 pub enum PlanStepAction {
     Model {
         purpose: ModelStepPurpose,
-        output_schema: serde_json::Value,
     },
     Tool {
         tool_revision_id: ToolRevisionId,
@@ -347,7 +437,7 @@ pub struct ExecutionPlanRevision {
 
 Objective, assumption and explanation strings are bounded to 32 KiB. `revision` starts at 1 and increases contiguously within one plan. Plan hashes include exact referenced component revision IDs.
 
-### Validation report
+### Validation report and reference snapshot
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq,
@@ -392,11 +482,23 @@ pub struct PlanValidationIssue {
     pub message: String,
 }
 
+pub struct PlanReferenceSnapshot {
+    pub tool_revision_hashes: std::collections::BTreeMap<ToolRevisionId, [u8; 32]>,
+    pub internal_agent_eligibility_hashes:
+        std::collections::BTreeMap<AgentRuntimeSnapshotId, [u8; 32]>,
+    pub remote_agent_eligibility_hashes:
+        std::collections::BTreeMap<RemoteAgentDefinitionRevisionId, [u8; 32]>,
+    pub workflow_revision_id: Option<WorkflowDefinitionRevisionId>,
+    pub policy_snapshot_id: PolicySnapshotId,
+    pub budget_snapshot_id: BudgetSnapshotId,
+    pub content_hash: [u8; 32],
+}
+
 pub struct PlanValidationReport {
     pub id: PlanValidationReportId,
     pub plan_revision_id: ExecutionPlanRevisionId,
     pub plan_content_hash: [u8; 32],
-    pub referenced_component_hash: [u8; 32],
+    pub reference_snapshot: PlanReferenceSnapshot,
     pub validator_version: String,
     pub issues: Vec<PlanValidationIssue>,
     pub valid: bool,
@@ -404,7 +506,7 @@ pub struct PlanValidationReport {
 }
 ```
 
-Only a report with `valid = true`, no Error issues and exact matching hashes may activate its revision.
+Only a report with `valid = true`, no Error issues and exact matching plan/reference hashes may activate its revision.
 
 ### Scheduler state
 
@@ -436,6 +538,20 @@ The snapshot is a durable projection and may be rebuilt from the active plan plu
 ### Replanning
 
 ```rust
+pub enum ReplanTrigger {
+    StepFailed { step_key: PlanStepKey, failure_code: String },
+    VerificationFailed { step_key: PlanStepKey },
+    PolicyChanged,
+    BudgetChanged,
+    UserRequested,
+}
+
+pub enum ReplanChangeScope {
+    PendingOnly,
+    PendingAndAdditive,
+    FullExceptCompletedAndRunning,
+}
+
 pub struct ReplanPolicy {
     pub maximum_plan_revisions: u32,
     pub maximum_replan_attempts_per_failure: u16,
@@ -445,6 +561,7 @@ pub struct ReplanPolicy {
 }
 
 pub struct ReplanRequest {
+    pub id: ReplanRequestId,
     pub run_id: AgentRunId,
     pub current_plan_revision_id: ExecutionPlanRevisionId,
     pub trigger: ReplanTrigger,
@@ -460,11 +577,61 @@ pub struct PlanRevisionDiff {
     pub changed_pending_steps: Vec<PlanStepKey>,
     pub preserved_completed_steps: Vec<PlanStepKey>,
 }
+
+pub enum ReplanDecisionKind {
+    Proposed,
+    Rejected,
+    LimitExhausted,
+    WaitingForQuiescence,
+}
+
+pub struct ReplanDecision {
+    pub id: ReplanDecisionId,
+    pub request_id: ReplanRequestId,
+    pub kind: ReplanDecisionKind,
+    pub proposed_revision_id: Option<ExecutionPlanRevisionId>,
+    pub diff: Option<PlanRevisionDiff>,
+    pub explanation_code: String,
+    pub created_at: Timestamp,
+}
 ```
 
-A replacement revision must retain completed steps with the exact same `definition_hash`. Running steps are not changed or removed. Activation waits until the scheduler reaches the declared quiescence condition.
+A replacement revision must retain completed and running steps with the exact same `definition_hash`. Activation waits until the scheduler reaches the declared quiescence condition.
 
-### Delegation target and request
+### Eligibility snapshots
+
+```rust
+pub struct InternalAgentEligibility {
+    pub agent_snapshot_id: AgentRuntimeSnapshotId,
+    pub lifecycle: LifecycleStatus,
+    pub skills: std::collections::BTreeSet<String>,
+    pub capabilities: std::collections::BTreeSet<Capability>,
+    pub tool_revision_ids: std::collections::BTreeSet<ToolRevisionId>,
+    pub eligibility_hash: [u8; 32],
+}
+
+pub enum RemoteAgentTrustLevel {
+    Untrusted,
+    Restricted,
+    Trusted,
+}
+
+pub struct RemoteAgentEligibility {
+    pub remote_agent_revision_id: RemoteAgentDefinitionRevisionId,
+    pub lifecycle: LifecycleStatus,
+    pub trust: RemoteAgentTrustLevel,
+    pub verified_identity: Option<ExternalIdentityRef>,
+    pub locally_allowed_skills: std::collections::BTreeSet<String>,
+    pub locally_allowed_transports: std::collections::BTreeSet<String>,
+    pub maximum_data_classification: DataClassification,
+    pub healthy: bool,
+    pub eligibility_hash: [u8; 32],
+}
+```
+
+Remote declarations are inputs to the local eligibility calculation; they are not capability grants.
+
+### Delegation request and supporting policies
 
 ```rust
 pub enum DelegationTargetRef {
@@ -474,6 +641,25 @@ pub enum DelegationTargetRef {
     RemoteAgent {
         remote_agent_revision_id: RemoteAgentDefinitionRevisionId,
     },
+}
+
+pub enum DelegatedMemoryScope {
+    None,
+    ExplicitReferences(Vec<RunReference>),
+    ReadOnlyNamespaces(Vec<String>),
+}
+
+pub enum DelegationCompletionPolicy {
+    RequireValidatedHandoff,
+    AllowPartialWithWarnings,
+    RequireCrossCheck,
+}
+
+pub struct DelegationTrustPolicy {
+    pub minimum_remote_trust: Option<RemoteAgentTrustLevel>,
+    pub require_evidence: bool,
+    pub require_independent_cross_check: bool,
+    pub maximum_cross_check_rounds: u16,
 }
 
 pub struct DelegationRequest {
@@ -507,16 +693,53 @@ pub struct DelegatedContextReference {
     pub purpose: String,
 }
 
+pub enum DelegationOmissionReason {
+    ParentCeiling,
+    TargetIneligible,
+    PolicyRestricted,
+    WorkflowRestricted,
+    ClassificationRestricted,
+    BudgetRestricted,
+}
+
+pub struct DelegationOmission {
+    pub requested_item: String,
+    pub reason: DelegationOmissionReason,
+}
+
+pub struct DelegatedInputManifest {
+    pub context: Vec<DelegatedContextReference>,
+    pub memory_scope: DelegatedMemoryScope,
+    pub omissions: Vec<DelegationOmission>,
+    pub manifest_hash: [u8; 32],
+}
+
 pub struct DelegationScope {
     pub effective_capabilities: std::collections::BTreeSet<Capability>,
     pub effective_tool_revision_ids: std::collections::BTreeSet<ToolRevisionId>,
-    pub effective_context: Vec<DelegatedContextReference>,
-    pub effective_memory_scope: DelegatedMemoryScope,
+    pub input_manifest: DelegatedInputManifest,
     pub budget_allocation_id: BudgetAllocationId,
     pub maximum_depth: u16,
     pub maximum_parallel_children: u16,
     pub expires_at: Timestamp,
     pub scope_hash: [u8; 32],
+}
+
+pub enum DelegationGrantStatus {
+    Issued,
+    Consumed,
+    Expired,
+    Revoked,
+}
+
+pub enum DelegationConsumerRef {
+    InternalSubRun {
+        binding_id: SubRunBindingId,
+        child_run_id: AgentRunId,
+    },
+    RemoteInvocation {
+        invocation_id: RemoteAgentInvocationId,
+    },
 }
 
 pub struct DelegationGrant {
@@ -573,6 +796,7 @@ pub enum RemoteAgentInvocationStatus {
     WaitingForRemoteInput,
     WaitingForAuthentication,
     WaitingForDependency,
+    CompletedPendingValidation,
     Succeeded,
     Failed,
     Rejected,
@@ -602,16 +826,91 @@ pub struct RemoteAgentInvocation {
 
 External IDs and cursors are bounded to 4 KiB and treated as opaque untrusted strings.
 
-### Remote port
+### Remote-agent port
 
 ```rust
 pub struct RemoteAgentDispatchRequest {
-    pub invocation: RemoteAgentInvocation,
+    pub invocation_id: RemoteAgentInvocationId,
     pub target_revision_id: RemoteAgentDefinitionRevisionId,
+    pub dispatch_idempotency_key: String,
     pub objective: String,
     pub input_manifest: DelegatedInputManifest,
     pub expected_output_schema: serde_json::Value,
     pub deadline: Timestamp,
+}
+
+pub struct RemoteAgentObserveRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub external_task_id: Option<String>,
+    pub external_context_id: Option<String>,
+    pub after_cursor: Option<String>,
+}
+
+pub struct RemoteAgentCancelRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub external_task_id: Option<String>,
+    pub reason_code: String,
+}
+
+pub struct RemoteAgentReconcileRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub dispatch_idempotency_key: String,
+    pub external_task_id: Option<String>,
+    pub external_context_id: Option<String>,
+}
+
+pub enum RemoteAgentObservationKind {
+    Working,
+    InputRequired,
+    AuthenticationRequired,
+    WaitingForDependency,
+    CompletedCandidate,
+    Failed,
+    Rejected,
+    Cancelled,
+    Unknown,
+}
+
+pub struct RemoteAgentObservation {
+    pub kind: RemoteAgentObservationKind,
+    pub external_task_id: Option<String>,
+    pub external_context_id: Option<String>,
+    pub event_cursor: Option<String>,
+    pub safe_message: Option<String>,
+    pub handoff_candidate: Option<HandoffArtifactDraft>,
+    pub observed_at: Timestamp,
+}
+
+pub enum RemoteAgentErrorKind {
+    Transient,
+    RateLimited,
+    Unavailable,
+    AuthenticationRequired,
+    InvalidRequest,
+    InvalidResponse,
+    Cancelled,
+    UnknownCompletion,
+}
+
+pub struct RemoteAgentError {
+    pub kind: RemoteAgentErrorKind,
+    pub safe_message: String,
+    pub completion_may_have_occurred: bool,
+}
+
+pub enum RemoteAgentReconciliationOutcome {
+    FoundWorking,
+    FoundCompletedCandidate,
+    FoundFailed,
+    FoundCancelled,
+    FailedSafeToRedispatch,
+    StillUnknown,
+}
+
+pub struct RemoteAgentReconciliationObservation {
+    pub outcome: RemoteAgentReconciliationOutcome,
+    pub observation: Option<RemoteAgentObservation>,
+    pub checked_at: Timestamp,
 }
 
 #[async_trait::async_trait]
@@ -638,11 +937,27 @@ pub trait RemoteAgentPort: Send + Sync {
 }
 ```
 
-H5 provides only deterministic fixtures. H9A implements this port with A2A.
+The dispatch DTO deliberately excludes the durable `DelegationGrant`, H2 tickets, approval IDs and parent checkpoint. H5 provides deterministic fixtures; H9A implements this port with A2A.
 
-### Handoff artifact
+### Handoff artifact and cross-checks
 
 ```rust
+pub struct HandoffArtifactDraft {
+    pub summary: String,
+    pub structured_output: serde_json::Value,
+    pub supporting_sources: Vec<RunReference>,
+    pub confidence_basis: Vec<ConfidenceEvidence>,
+    pub unresolved_questions: Vec<String>,
+    pub warnings: Vec<String>,
+    pub produced_output_candidates: Vec<RunReference>,
+}
+
+pub enum ConfidenceEvidence {
+    DeterministicCheck { check_code: String },
+    SourceCoverage { source_count: u32 },
+    IndependentAgreement { cross_check_request_id: CrossCheckRequestId },
+}
+
 pub struct HandoffArtifact {
     pub id: HandoffArtifactId,
     pub delegation_request_id: DelegationRequestId,
@@ -656,6 +971,20 @@ pub struct HandoffArtifact {
     pub produced_output_candidates: Vec<RunReference>,
     pub content_hash: [u8; 32],
     pub created_at: Timestamp,
+}
+
+pub struct HandoffCheckResult {
+    pub code: String,
+    pub passed: bool,
+    pub evidence: Vec<RunReference>,
+    pub safe_message: String,
+}
+
+pub struct HandoffIssue {
+    pub code: String,
+    pub severity: RiskLevel,
+    pub path: String,
+    pub safe_message: String,
 }
 
 pub enum HandoffDecisionKind {
@@ -677,6 +1006,25 @@ pub struct HandoffValidationReport {
     pub recommendation: HandoffDecisionKind,
     pub validated_at: Timestamp,
 }
+
+pub struct HandoffDecision {
+    pub id: HandoffDecisionId,
+    pub handoff_id: HandoffArtifactId,
+    pub validation_report_id: HandoffValidationReportId,
+    pub kind: HandoffDecisionKind,
+    pub decided_by: RunActorRef,
+    pub created_at: Timestamp,
+}
+
+pub struct CrossCheckRequest {
+    pub id: CrossCheckRequestId,
+    pub handoff_id: HandoffArtifactId,
+    pub target: DelegationTargetRef,
+    pub selected_evidence: Vec<RunReference>,
+    pub requested_budget: ResourceBudgetRequest,
+    pub round: u16,
+    pub created_at: Timestamp,
+}
 ```
 
 `Accept` requires schema, evidence and trust checks to pass. A claimed confidence number is never sufficient evidence by itself.
@@ -689,15 +1037,15 @@ pub struct HandoffValidationReport {
 - Modify: `crates/vestrace-domain/src/id.rs`
 - Create: `crates/vestrace-domain/src/planning/mod.rs`
 - Create: `crates/vestrace-domain/src/planning/mode.rs`
-- Create: `crates/vestrace-domain/src/planning/plan.rs`
-- Create: `crates/vestrace-domain/src/planning/step.rs`
 - Create: `crates/vestrace-domain/src/planning/criteria.rs`
+- Create: `crates/vestrace-domain/src/planning/step.rs`
+- Create: `crates/vestrace-domain/src/planning/plan.rs`
 - Modify: `crates/vestrace-domain/src/lib.rs`
 - Test: inline domain unit and property tests
 
 **Interfaces:**
-- Adds `ExecutionPlanId`, `ExecutionPlanRevisionId`, `PlanValidationReportId`, `PlanActivationId`, `ReplanRequestId`, `ReplanDecisionId`, `DelegationRequestId`, `DelegationGrantId`, `SubRunBindingId`, `RemoteAgentDefinitionRevisionId`, `RemoteAgentInvocationId`, `RemoteAgentEventId`, `RemoteAgentReconciliationId`, `HandoffArtifactId`, `HandoffValidationReportId`, `HandoffDecisionId` and `CrossCheckRequestId`.
-- Produces `ExecutionMode`, `PlanStepKey`, `PlanStepRef`, `PlanStepKind`, `PlanStepAction`, `PlanStepDefinition`, `PlanSuccessCriteria`, `ExecutionPlanRevision` and builders.
+- Adds `ExecutionPlanId`, `ExecutionPlanRevisionId`, `PlanValidationReportId`, `PlanActivationId`, `PlanStepDispatchId`, `ReplanRequestId`, `ReplanDecisionId`, `WorkflowDefinitionRevisionId`, `DelegationRequestId`, `DelegationGrantId`, `SubRunBindingId`, `RemoteAgentDefinitionRevisionId`, `RemoteAgentInvocationId`, `RemoteAgentEventId`, `RemoteAgentReconciliationId`, `HandoffArtifactId`, `HandoffValidationReportId`, `HandoffDecisionId`, `CrossCheckRequestId` and `CrossCheckResultId`.
+- Produces every type in the execution-mode, shared-value, success-criteria, plan-step and plan-revision sections above plus builders.
 
 - [ ] **Step 1: Write failing plan invariant tests**
 
@@ -719,8 +1067,10 @@ fn step_kind_must_match_action() {
 }
 
 #[test]
-fn direct_mode_still_requires_a_persistable_plan() {
-    let plan = DirectPlanBuilder::test_reason_step().build().unwrap();
+fn direct_mode_is_a_normal_plan_revision() {
+    let plan = ExecutionPlanRevisionBuilder::test_direct_reason()
+        .build()
+        .unwrap();
     assert_eq!(plan.mode, ExecutionMode::Direct);
     assert!(!plan.steps.is_empty());
     assert!(plan.steps.iter().any(|step| step.kind == PlanStepKind::End));
@@ -735,9 +1085,9 @@ cargo test -p vestrace-domain planning
 
 Expected: FAIL because the planning domain does not exist.
 
-- [ ] **Step 2: Implement bounded identifiers, text and schemas**
+- [ ] **Step 2: Implement bounded identifiers, text, budgets and schemas**
 
-Implement the normative parsing and size constraints. Compile every schema at creation. Reject empty objectives, revision zero, duplicate step keys, blank capability/tool collections where the action requires them and mismatched content hashes.
+Implement the normative parsing and size constraints. Compile every schema at creation. Reject empty objectives, revision zero, duplicate step keys, blank capability/tool collections where the action requires them, invalid budget lines and mismatched content hashes.
 
 - [ ] **Step 3: Implement deterministic plan hashing**
 
@@ -847,7 +1197,7 @@ H5 provides a deterministic fixture. H9 later supplies production workflow stora
 
 - [ ] **Step 5: Keep human planning unavailable until H7**
 
-The default `NoHumanInteractionPlanning` reports `unsupported_step_kind`. A plan containing HumanInput or HumanApproval fails activation until a registered implementation reports support for the exact interaction kind.
+The default `NoHumanInteractionPlanning` reports `unsupported_step_kind`. A plan containing HumanInput, HumanApproval or `RequireHumanDecision` fails activation until a registered implementation reports support.
 
 - [ ] **Step 6: Run and commit**
 
@@ -971,7 +1321,7 @@ git commit -m "feat(planning): persist immutable plan revisions"
 
 **Interfaces:**
 - Produces `PlanActivationService`, `PlanScheduler`, `StepExecutionRouter`, `PlanActivationRepositoryPort` and `PlanSchedulerRepositoryPort`.
-- Creates `plan_activations`, `plan_scheduler_snapshots`, `plan_step_dispatches` and initial replanning tables owned by migration `0038`.
+- Creates `plan_activations`, `plan_scheduler_snapshots`, `plan_step_dispatches`, `replan_requests`, `replan_decisions` and `plan_revision_diffs`.
 
 - [ ] **Step 1: Write activation stale-report tests**
 
@@ -1047,7 +1397,7 @@ git commit -m "feat(planning): activate and schedule plans"
 - Modify: `crates/vestrace-domain/src/planning/mod.rs`
 
 **Interfaces:**
-- Produces `ReplanPolicy`, `ReplanRequest`, `PlanRevisionDiff`, `ReplanDecision`, `PlanReplanner` and `ReplanningRepositoryPort`.
+- Produces every type in the Replanning section, `PlanReplanner` and `ReplanningRepositoryPort`.
 
 - [ ] **Step 1: Write completed-step preservation tests**
 
@@ -1073,7 +1423,7 @@ The replanner supplies failure codes, plan/step references, verification outcome
 
 - [ ] **Step 4: Implement revision diff and validation**
 
-Create a full new immutable revision. Preserve exact definitions for completed/running keys, allow additions and changes only within `allowed_change_scope`, then run the same PlanValidator. A diff is persisted before activation.
+Create a full new immutable revision. Preserve exact definitions for completed/running keys, allow additions and changes only within `allowed_change_scope`, then run the same PlanValidator. Persist the diff before activation.
 
 - [ ] **Step 5: Enforce revision and resource limits**
 
@@ -1081,7 +1431,7 @@ Check H2 reservation for `RunSteps`, model invocations and wall time. When limit
 
 - [ ] **Step 6: Persist decisions from migration `0038`**
 
-Use the previously created `replan_requests`, `replan_decisions` and `plan_revision_diffs` tables. Decisions are append-only and reference both old and proposed revisions.
+Use `replan_requests`, `replan_decisions` and `plan_revision_diffs`. Decisions are append-only and reference both old and proposed revisions.
 
 - [ ] **Step 7: Run and commit**
 
@@ -1112,7 +1462,7 @@ git commit -m "feat(planning): add bounded immutable replanning"
 - Create: `crates/vestrace-application/tests/delegation_scope.rs`
 
 **Interfaces:**
-- Produces `DelegationTargetRef`, `DelegationRequest`, `DelegationScope`, `DelegationGrant`, `DelegationToken`, `DelegationEligibilityService` and `DelegationScopeService`.
+- Produces every type from Eligibility through DelegationGrant, plus `DelegationEligibilityService` and `DelegationScopeService`.
 
 - [ ] **Step 1: Write authority-intersection tests**
 
@@ -1171,7 +1521,7 @@ git commit -m "feat(delegation): add narrowed delegation grants"
 - Create: `tests/remote_invocation_persistence.rs`
 
 **Interfaces:**
-- Creates `delegation_requests`, `delegation_request_context`, `delegation_request_tools`, `delegation_grants`, `delegation_scope_capabilities`, `delegation_scope_tools`, `delegation_omissions`, `subrun_bindings`, `remote_agent_invocations`, `remote_agent_events` and initial reconciliation rows.
+- Creates `delegation_requests`, `delegation_request_context`, `delegation_request_tools`, `delegation_grants`, `delegation_scope_capabilities`, `delegation_scope_tools`, `delegation_omissions`, `subrun_bindings`, `remote_agent_invocations`, `remote_agent_events` and `remote_agent_reconciliations`.
 - Produces PostgreSQL `DelegationRepositoryPort`, `SubRunBindingRepositoryPort` and `RemoteAgentInvocationRepositoryPort`.
 
 - [ ] **Step 1: Write ownership and one-time-use tests**
@@ -1186,9 +1536,9 @@ Persist request and effective scope separately so requested authority cannot be 
 
 Lock the grant, H2 allocation and active parallelism counters. Mark consumed and create either `SubRunBinding` or `RemoteAgentInvocation` in one transaction. Conflicting consumption returns `delegation_already_consumed` without creating a second consumer.
 
-- [ ] **Step 4: Persist remote events append-only**
+- [ ] **Step 4: Persist remote events and reconciliation append-only**
 
-Events contain canonical status, bounded safe message, external IDs/cursor hashes and output candidate references. Raw transport frames, credentials and protocol SDK values are never stored.
+Events contain canonical status, bounded safe message, external IDs/cursor hashes and output candidate references. Reconciliation rows contain query identity, observations and outcome. Raw transport frames, credentials and protocol SDK values are never stored.
 
 - [ ] **Step 5: Run and commit**
 
@@ -1213,12 +1563,12 @@ git commit -m "feat(delegation): persist grants subruns and remote invocations"
 - Modify: `crates/vestrace-domain/src/delegation/mod.rs`
 
 **Interfaces:**
-- Produces `SubRunBinding`, `SubRunCreationService`, `DelegatedInputManifest` and `ChildRunBootstrap`.
+- Produces `SubRunBinding`, `SubRunCreationService` and `ChildRunBootstrap`.
 - Consumes H1 Run creation, H2 allocations, eligibility/scope service and delegation persistence.
 
 - [ ] **Step 1: Write isolated-child bootstrap test**
 
-Create a parent with extra memory, tools and context. Delegate only one context reference, one Tool and read capability. Assert the child bootstrap contains only that manifest and the child cannot resolve omitted parent references.
+Create a parent with extra memory, tools and context. Delegate only one context reference, one Tool and read capability. Assert the child bootstrap contains only the durable `DelegatedInputManifest` and the child cannot resolve omitted parent references.
 
 - [ ] **Step 2: Write atomicity failure tests**
 
@@ -1275,7 +1625,7 @@ git commit -m "feat(delegation): create isolated internal subruns"
 - Modify: `crates/vestrace-domain/src/delegation/mod.rs`
 
 **Interfaces:**
-- Produces `RemoteAgentInvocation`, `RemoteAgentPort`, `RemoteAgentDispatchService`, `RemoteAgentObservationService`, `RemoteAgentReconciliationService` and deterministic remote fixture.
+- Produces every Remote-agent type and port above, `RemoteAgentDispatchService`, `RemoteAgentObservationService`, `RemoteAgentReconciliationService` and deterministic remote fixture.
 
 - [ ] **Step 1: Write dispatch-order test**
 
@@ -1300,7 +1650,7 @@ The deterministic remote accepts one external task, records it by dispatch idemp
 
 - [ ] **Step 3: Implement canonical observation mapping**
 
-Normalize fixture observations to Prepared, Dispatching, Working, waiting states, terminal candidates or Unknown. A remote `Succeeded` observation stores a handoff candidate and enters validation; it does not directly complete the parent step.
+Normalize fixture observations to Working, waiting states, `CompletedPendingValidation`, terminal failures or Unknown. A `CompletedCandidate` observation stores a handoff candidate and enters validation; it does not directly set `Succeeded` or complete the parent step.
 
 - [ ] **Step 4: Implement cancellation semantics**
 
@@ -1308,22 +1658,11 @@ Cancellation has its own H2 operation fingerprint and records a request. A Cance
 
 - [ ] **Step 5: Implement reconciliation outcomes**
 
-```rust
-pub enum RemoteAgentReconciliationOutcome {
-    FoundWorking,
-    FoundSucceeded,
-    FoundFailed,
-    FoundCancelled,
-    FailedSafeToRedispatch,
-    StillUnknown,
-}
-```
+Only `FailedSafeToRedispatch` permits a new dispatch, and it enqueues an explicit protected retry rather than calling the port inline. `FoundCompletedCandidate` follows the same handoff validation path as a normal observation.
 
-Only `FailedSafeToRedispatch` permits a new dispatch, and it enqueues an explicit protected retry rather than calling the port inline.
+- [ ] **Step 6: Prove DTO and SDK independence**
 
-- [ ] **Step 6: Prove SDK independence**
-
-The H5 workspace and tests compile without any `a2a` crate. A script later fails if `a2a` types or dependencies appear in H5 domain/application crates.
+Assert the dispatch DTO contains no grant, policy decision, authorization ticket, approval, credential or checkpoint fields. The H5 workspace and tests compile without any `a2a` crate.
 
 - [ ] **Step 7: Run and commit**
 
@@ -1346,13 +1685,13 @@ git commit -m "feat(delegation): add remote invocation boundary"
 - Create: `crates/vestrace-application/src/delegation/handoff_service.rs`
 - Create: `crates/vestrace-application/src/delegation/cross_check.rs`
 - Create: `crates/vestrace-application/tests/handoff_validation.rs`
-- Create: `migrations/0040_handoffs_cross_checks_and_remote_events.sql`
+- Create: `migrations/0040_handoffs_cross_checks_and_remote_reconciliation.sql`
 - Create: `crates/vestrace-infrastructure/src/postgres/delegation/handoff_repository.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/delegation/cross_check_repository.rs`
 - Create: `tests/handoff_persistence.rs`
 
 **Interfaces:**
-- Produces `HandoffArtifact`, `HandoffValidationReport`, `HandoffDecision`, `HandoffValidationService`, `CrossCheckRequest`, `CrossCheckService` and persistence ports.
+- Produces every Handoff/CrossCheck type above, `HandoffValidationService`, `CrossCheckService` and persistence ports.
 
 - [ ] **Step 1: Write schema/evidence/trust tests**
 
@@ -1379,7 +1718,7 @@ Remote claims, model prose and confidence fields cannot override failed determin
 
 - [ ] **Step 4: Implement protected acceptance**
 
-`handoff.accept` uses H2 when policy requires review. Acceptance atomically stores the decision, marks the delegation consumer complete, updates the parent step output references, emits one parent RunEvent and enqueues scheduling. Reject and RequestRevision do not expose broader context or budget to the producer.
+`handoff.accept` uses H2 when policy requires review. Acceptance atomically stores the decision, marks the delegation consumer complete, updates the parent step output references, changes a remote invocation from `CompletedPendingValidation` to `Succeeded` when applicable, emits one parent RunEvent and enqueues scheduling. Reject and RequestRevision do not expose broader context or budget to the producer.
 
 - [ ] **Step 5: Implement bounded cross-check**
 
@@ -1387,7 +1726,7 @@ A cross-check is a new internal SubRun or remote invocation with a distinct targ
 
 - [ ] **Step 6: Create migration `0040`**
 
-Create append-only `handoff_artifacts`, `handoff_sources`, `handoff_output_candidates`, `handoff_validation_reports`, `handoff_issues`, `handoff_decisions`, `cross_check_requests`, `cross_check_results` and extended remote event/reconciliation tables. Unique constraints prevent two terminal acceptance decisions for one handoff.
+Create append-only `handoff_artifacts`, `handoff_sources`, `handoff_output_candidates`, `handoff_validation_reports`, `handoff_issues`, `handoff_decisions`, `cross_check_requests` and `cross_check_results`. Add only indexes/foreign keys needed to link existing `remote_agent_reconciliations`; remote events remain owned by migration `0039`. Unique constraints prevent two terminal acceptance decisions for one handoff.
 
 - [ ] **Step 7: Run and commit**
 
@@ -1395,7 +1734,7 @@ Create append-only `handoff_artifacts`, `handoff_sources`, `handoff_output_candi
 cargo test -p vestrace-application --test handoff_validation
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
   cargo test --test handoff_persistence
-git add migrations/0040_handoffs_cross_checks_and_remote_events.sql crates tests/handoff_persistence.rs
+git add migrations/0040_handoffs_cross_checks_and_remote_reconciliation.sql crates tests/handoff_persistence.rs
 git commit -m "feat(delegation): validate and accept handoffs"
 ```
 
@@ -1536,7 +1875,7 @@ RemoteAgentInvocation aliasing AgentRun or SubRun
 remote-agent binding in H4 Tool Runtime
 a2a-rs dependency in H5 crates
 DelegationToken fields in model/remote DTOs
-credential or approval material in delegated input
+credential, approval or H2 ticket material in delegated input
 parent mutation methods exposed to child services
 ```
 
@@ -1575,13 +1914,13 @@ Assert:
 3. activation creates immutable H1 RunSteps and a scheduler snapshot;
 4. two internal delegations and one deterministic remote invocation receive narrower capabilities, tools, context and H2 allocations;
 5. internal children cannot read omitted context or mutate the parent;
-6. remote fixture receives no Vestrace ticket, approval, credential or parent checkpoint;
+6. remote fixture receives no Vestrace ticket, approval, credential, grant or parent checkpoint;
 7. parallelism and depth ceilings are enforced;
 8. restart while all three delegations are active creates no duplicate child Run or remote task;
 9. one internal handoff with an invalid evidence contract is rejected;
 10. the second internal handoff is accepted;
-11. the remote handoff is schema-valid but requires an independent cross-check under its trust policy;
-12. the cross-check passes within its bounded budget;
+11. the remote handoff is schema-valid but remains `CompletedPendingValidation` and requires an independent cross-check under its trust policy;
+12. the cross-check passes within its bounded budget and only then marks the remote invocation Succeeded;
 13. synthesis becomes Ready only after accepted required handoffs;
 14. a failed synthesis triggers one bounded replan that preserves all completed delegation-step definitions and outputs;
 15. the replacement revision activates only after quiescence;
@@ -1655,21 +1994,22 @@ The completed implementation must satisfy all of these statements:
 12. Default delegation depth is one and parallelism limits are enforced transactionally.
 13. Remote invocations are separate from AgentRun, SubRun and ToolInvocation.
 14. H5 remote contracts compile and test without `a2a-rs`.
-15. Ambiguous remote dispatch becomes Unknown and reconciliation, not duplicate work.
-16. Remote success is only an observation until handoff validation passes.
-17. Internal and external results share one Handoff validation contract without sharing runtime ownership.
-18. Handoff acceptance requires schema, evidence and trust conditions.
-19. Cross-checks use distinct bounded delegations and cannot recurse without policy.
-20. Parent logical state changes emit one canonical H1 event each.
-21. Restart at every critical planning/delegation window does not duplicate a child Run, remote task, handoff decision or replan activation.
-22. Replay performs no model, tool, child or remote I/O.
-23. H6 can materialize handoff/output references as Artifacts without rewriting H5 records.
-24. H7 can implement Human steps and remote-input continuation through the reserved ports.
-25. H8 can supply delegated connections and request-scoped credentials without changing delegation scope persistence.
-26. H9 can implement agent/workflow/remote registries behind existing eligibility ports.
-27. H9A can implement A2A through `RemoteAgentPort` without exposing SDK types to H5.
-28. H10 can add richer evaluation and trust scoring without changing accepted handoff history.
-29. H5 tests require no public model, agent network, A2A server or permanent credential.
+15. Remote dispatch DTOs contain no grants, tickets, approvals, credentials or parent checkpoints.
+16. Ambiguous remote dispatch becomes Unknown and reconciliation, not duplicate work.
+17. Remote completion remains `CompletedPendingValidation` until handoff validation succeeds.
+18. Internal and external results share one Handoff validation contract without sharing runtime ownership.
+19. Handoff acceptance requires schema, evidence and trust conditions.
+20. Cross-checks use distinct bounded delegations and cannot recurse without policy.
+21. Parent logical state changes emit one canonical H1 event each.
+22. Restart at every critical planning/delegation window does not duplicate a child Run, remote task, handoff decision or replan activation.
+23. Replay performs no model, tool, child or remote I/O.
+24. H6 can materialize handoff/output references as Artifacts without rewriting H5 records.
+25. H7 can implement Human steps and remote-input continuation through the reserved ports.
+26. H8 can supply delegated connections and request-scoped credentials without changing delegation scope persistence.
+27. H9 can implement agent/workflow/remote registries behind existing eligibility ports.
+28. H9A can implement A2A through `RemoteAgentPort` without exposing SDK types to H5.
+29. H10 can add richer evaluation and trust scoring without changing accepted handoff history.
+30. H5 tests require no public model, agent network, A2A server or permanent credential.
 
 ## Explicit non-goals
 
