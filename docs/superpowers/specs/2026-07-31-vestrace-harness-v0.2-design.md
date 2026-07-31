@@ -135,6 +135,14 @@ Tool output, web content, email, документы и webhook payload счит�
 
 Одна кодовая база и общие контракты, но несколько независимо запускаемых ролей. Распределённость добавляется без изменения доменной модели.
 
+### 5.9 State Engine boundary
+
+`Vestrace State Engine` — внутреннее название durable execution-state boundary самого Harness, а не отдельный продукт, сервис, база данных, binary, event store, runtime или public API.
+
+Его ответственность распределена между существующими Horizons: H1 владеет `AgentRun`, `RunStep`, `RunEvent`, checkpoints, leases и logical replay; H2 — authority, approvals и budgets; H3–H5 — typed execution, planning и delegation; H6 — context, artifacts, evidence и consolidation; H7 — interactions и triggers; H8 — connections и credentials; H10 — audit, evaluation и projections; H11 — public adapters.
+
+Нельзя вводить параллельные generic mutable `Task`, `Action` или `Attempt` aggregates, если семантика уже принадлежит owning Horizon. PostgreSQL остаётся authoritative persistence backend, но arbitrary SQL не является agent-facing или public mutation interface. Полный нормативный контракт определён в `docs/superpowers/specs/2026-07-31-vestrace-state-engine-boundary-amendment.md`; происхождение решения и сверка 56 требований — в `docs/superpowers/specs/2026-07-31-vestrace-state-engine-reconciliation-design.md`.
+
 ## 6. Архитектурные planes
 
 ```text
@@ -217,7 +225,6 @@ AgentProfile
 ```
 
 Reference profiles:
-
 - `universal-coordinator`;
 - `research-specialist`;
 - `data-analyst`;
@@ -517,7 +524,6 @@ ToolInvocation
 ├── verification_result
 └── status
 ```
-
 Статусы:
 
 ```text
