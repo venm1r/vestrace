@@ -4,61 +4,70 @@
 
 **Documentation status:** Planning artifact only. Do not create the implementation branch, add observability dependencies, create migrations, start exporters, capture production content, run evaluations, activate regression gates, execute replay or shadow traffic, run tests or write production code until the user explicitly ends the documentation-only phase.
 
-**Goal:** Implement privacy-aware operational telemetry, a tamper-evident security audit plane, durable evaluation datasets and runs, risk-oriented verification and bounded correction, component regression gates, side-effect-free replay/shadow execution, user-facing Run explanations and operational read models.
+**Goal:** Implement privacy-aware operational telemetry, a tamper-evident security audit plane, durable evaluation datasets and runs, risk-oriented verification with an unbypassable Run-completion gate, bounded correction, component regression gates, side-effect-free replay/shadow execution, user-facing Run explanations and operational read models.
 
-**Architecture:** H10 consumes canonical H1–H9A journals, references and outcomes without replacing them. Operational telemetry is a lossy projection and may never drive authoritative Run transitions. Security audit is append-only, source-linked and hash-chained with externally signed integrity checkpoints. Evaluation and verification are separate durable aggregates that use exact component/environment snapshots, H2 budgets, H3 model execution, H6 Artifact/evidence references and deterministic graders. Safe replay reconstructs or evaluates recorded work in an isolated evaluation scope where tools, remote agents, credentials, exports, notifications and memory activation are substituted or denied. Component owners remain responsible for activation and must require an exact passing regression-gate evidence record.
+**Architecture:** H10 consumes canonical H1–H9A journals, references and outcomes without replacing them. Operational telemetry is a lossy projection and can never drive authoritative Run transitions. Security audit starts with a durable intent committed beside the protected source operation, then an asynchronous writer appends one source-linked record to a hash chain and periodically signs the chain head. Evaluation and verification are separate durable aggregates using exact component/environment snapshots, H2 budgets, H3 model execution, H6 Artifact/evidence references and deterministic graders. Successful H1 completion requires a one-use `VerifiedRunCompletion` record bound to the exact Run version and terminal-result hash. Safe replay evaluates captured work in an isolated evaluation scope where every effectful port is denied or replaced by an immutable recorded observation. Component owners remain responsible for activation and consume exact, unexpired regression evidence without mutating previous activation revisions.
 
-**Tech Stack:** Existing Vestrace v0.1 plus H1–H9A; Rust Edition 2024; Tokio; Serde/Schemars; SQLx and PostgreSQL 17; tracing; OpenTelemetry-compatible traces, metrics and logs behind a Vestrace-owned port; optional OTLP exporter; SHA-256 and HMAC-SHA-256; deployment signing through H8 service credentials; H6 Artifact Store for approved captures/datasets/reports; deterministic fixed-point metrics; JSON Schema; local dashboard read models; deterministic evaluators and provider/tool/remote fixtures; proptest.
+**Tech Stack:** Existing Vestrace v0.1 plus H1–H9A; Rust Edition 2024; Tokio; Serde/Schemars; SQLx and PostgreSQL 17; tracing; OpenTelemetry-compatible traces, metrics and logs behind Vestrace-owned ports; optional OTLP exporter; SHA-256 and HMAC-SHA-256; Ed25519 integrity checkpoints through H8 service credentials; H6 Artifact Store for approved captures/datasets/reports; deterministic fixed-point metrics; JSON Schema; local dashboard read models; deterministic evaluators and provider/tool/remote fixtures; proptest.
 
 ## Global Constraints
 
 - Complete all five v0.1 plans and H1–H9A before implementing H10.
-- Harness design section `26. Observability, audit и evaluations` and H10 roadmap exit gate are normative.
-- H1 Run state, RunEvent journal and logical replay remain authoritative. H10 projections never become an alternate Run state store.
+- Harness design section `26. Observability, audit и evaluations` and the H10 roadmap exit gate are normative.
+- H1 Run state, `RunEvent` journal and logical replay remain authoritative. H10 projections never become an alternate Run state store.
 - H2 policy, approvals, budgets, tickets and accounting journals remain authoritative. H10 may evaluate and explain them but cannot issue or reinterpret authority.
 - H3 owns model execution and usage; H4 owns Tool/Sandbox execution; H5 owns planning/delegation/handoff; H6 owns Artifact/evidence/context bytes and provenance; H7 owns public events/human interaction; H8 owns credentials; H9 owns component/package/extension activation; H9A owns A2A transport mappings.
-- Vestrace owns every H10 domain/application/persistence/public contract. OpenTelemetry, exporter, dashboard, statistics and evaluator SDK types remain inside adapters.
+- Vestrace owns every H10 domain/application/persistence/public contract. OpenTelemetry, exporter, dashboard, statistics and evaluator SDK types remain inside adapters/runtime crates.
 - Operational telemetry is best-effort and bounded. Exporter outage, buffer overflow or sampling may drop telemetry but must never fail, pause, retry or mutate a Run.
-- Security audit and evaluation records are durable PostgreSQL state. Their persistence failure follows the source subsystem’s explicit policy; mandatory security audit intents must be committed transactionally with the protected source operation or its durable outbox.
-- Telemetry labels never contain user content, prompts, tool arguments, URLs, filenames, external task IDs, credentials, arbitrary workspace names or unbounded remote strings.
+- Security audit, evaluation, verification, regression and replay records are durable PostgreSQL state.
+- A mandatory security-audit intent is committed in the same transaction as the protected source operation or its existing durable outbox. The chain writer never scrapes logs or reconstructs missing intent from telemetry.
+- Telemetry labels never contain user content, prompts, Tool arguments, URLs, filenames, external task IDs, credentials, arbitrary workspace names or unbounded remote strings.
 - Workspace/Run/step/invocation correlation IDs may appear as structured log/trace fields under capture policy but never as metric labels.
-- Metric labels use bounded enums or deployment-approved stable identifiers only. High-cardinality IDs are prohibited.
-- Inbound trace headers are untrusted. They may create a validated trace link but cannot choose the authoritative Vestrace trace ID, workspace or parent span.
-- Capture modes are `Full`, `Redacted`, `StructuredOnly`, `MetadataOnly` and `Disabled`. No mode stores hidden chain-of-thought, provider reasoning tokens, secret material or unrestricted external content.
-- `Full` means exact content only when current H2/H6/H8 policy explicitly allows capture. It does not override classification, retention, secret scanning or purge.
+- Metric labels use bounded enums and deployment-approved stable identifiers only. Unknown/unapproved stable IDs are rejected or mapped to the fixed label `other` by the metric definition; they are never emitted verbatim.
+- Inbound trace headers are untrusted. They may create a validated trace link but cannot choose Vestrace trace ID, workspace or parent span.
+- Capture modes are ordered from least to most revealing: `Disabled < MetadataOnly < StructuredOnly < Redacted < Full`.
+- No capture mode stores hidden chain-of-thought, provider reasoning-token content, secret material or unrestricted external content.
+- `Full` means exact content only when current H2/H6/H8 policy explicitly allows capture. It does not override classification, retention, secret scanning, quarantine or purge.
 - `Disabled` disables optional content/diagnostic capture only. Minimum security audit, accounting, policy decision references, hashes, revisions, validation outcomes and operational health counters remain.
 - Optional capture bytes are H6 Artifacts with exact provenance, quarantine, retention and purge behavior. PostgreSQL stores bounded manifests, hashes and Artifact revision references.
+- H10 extends H6 `ArtifactRevisionSource` with `ObservabilityCapture { capture_record_id }` and `EvaluationReport { report_id }`; it does not create another blob store or Artifact lifecycle.
 - Capture policy is evaluated at collection time and again before export. An exporter cannot receive a richer mode than its exact binding permits.
 - Security audit records contain content-free facts and references. They never store raw prompts, bodies, headers, tokens, private keys, hidden reasoning, blob keys or unrestricted external errors.
-- Each audit stream is append-only and hash-chained. Periodic checkpoints sign the exact chain head through an H8-backed signing port; signing keys never enter PostgreSQL or worker payloads.
+- Each audit stream is append-only and hash-chained. Periodic checkpoints sign the exact chain head through an H8-backed signing port; signing keys never enter PostgreSQL or work payloads.
+- The reference checkpoint algorithm is Ed25519 with a 64-byte signature and an exact public-key Artifact revision/key revision reference.
 - Audit verification detects sequence gaps, previous-hash mismatch, record-hash mismatch, invalid checkpoint signatures and source-reference conflicts.
-- Hard purge of source content leaves content-free audit/evaluation tombstones and broken-content explanations, not reconstructed content.
-- Evaluation datasets, component snapshots, environments, grading plans, metric definitions, gate definitions and baselines use immutable revisions and canonical hashes.
+- Hard purge of source content leaves content-free audit/evaluation tombstones and explicit missing-content explanations, not reconstructed content.
+- Evaluation datasets, cases, component snapshots, environments, grading plans, metric definitions, gate definitions and baselines use immutable revisions and canonical hashes.
 - Package evaluation fixtures from H9 remain H6 Artifact revisions until imported into an H10 `EvaluationDatasetRevision`.
-- An `EvaluationRun` never mutates the tested component, active policy, production Run, memory or activation state.
+- Evaluation execution modes are explicit. The standard modes are `FixtureOnly`, `RecordedReplay`, `ShadowModel` and `LiveReadOnly`. No H10 evaluation mode permits effectful writes or external commitments.
+- `LiveReadOnly` requires an explicit H2 evaluation policy, read-only H4 Tools and no remote-agent dispatch.
+- An `EvaluationRun` never mutates the tested component, active policy, production Run, production memory or activation state.
 - Evaluation budgets are allocated through H2. Evaluators cannot reserve outside the EvaluationRun allocation.
 - Deterministic checks and external-state readback outrank model judgment. A model grader cannot override a deterministic failure, policy violation, unsupported evidence or unresolved `Unknown` operation.
-- Independent-model grading uses H3, an exact grader snapshot/template and an independence requirement. Producer scratchpad and hidden reasoning are excluded.
+- Independent-model grading uses H3, an exact grader snapshot/template and a `ModelIndependenceRequirement`. Producer scratchpad and hidden reasoning are excluded.
 - Evaluator output is untrusted structured data and must pass schema, bounds, evidence-reference and consistency checks before it becomes a grade.
 - Scores use deterministic integer/fixed-point representations. Floating-point values are not persisted as authoritative grades or gate thresholds.
+- Aggregation uses checked integers and round-half-away-from-zero when a scaled division is required. Scale is at most 18.
 - Grader disagreement is preserved. Aggregation never silently discards a failing mandatory grader.
-- Risk-oriented verification derives a minimum verification plan from deterministic risk inputs and the exact H9 VerificationProfile revision. A model may request stronger verification but cannot reduce it.
-- A Run cannot transition to `Succeeded` until mandatory H10 verification reaches an allowed terminal disposition. `SucceededWithWarnings` and `Partial` preserve unresolved warnings and unmet criteria.
+- Risk-oriented verification derives a minimum verification plan from deterministic risk inputs, a versioned risk-calculator revision and the exact H9 VerificationProfile revision. A model may request stronger verification but cannot reduce it.
+- `Succeeded` and `SucceededWithWarnings` commands require a one-use `VerifiedRunCompletion` matching the exact Run version and terminal-result hash. Direct H1 success without it is rejected.
+- `Verified` may authorize `Succeeded`; `VerifiedWithWarnings` may authorize only `SucceededWithWarnings`. `NeedsCorrection`, `HumanReviewRequired`, `Failed` and `Inconclusive` authorize no success state.
 - Correction is bounded by attempts, time and H2 allocation. It creates explicit H5 plan revisions/new steps or new guarded operations; it never rewrites completed history.
 - Unknown or ambiguous external effects must reconcile before correction. Verification cannot treat retry as proof.
 - A correction loop cannot lower mandatory safety, policy, evidence or quality criteria.
-- Regression-gate results are evidence, not activation. H3/H4/H7/H9/H9A component owners create activation revisions only after rechecking exact gate evidence, policy and current dependencies.
+- Regression-gate results are evidence, not activation. H3/H4/H7/H9/H9A owners create a new active revision only after rechecking exact evidence, policy and current dependencies.
 - Any policy-compliance regression, unauthorized side effect, secret leak, false success above the hard threshold or duplicate external effect is a hard gate failure regardless of aggregate quality score.
 - Safe replay is distinct from H1 logical replay. H1 reconstructs authoritative state; H10 replay re-evaluates captured inputs in an isolated evaluation scope.
-- Safe replay never invokes H4 Tool commit, H5 remote dispatch, H8 credential use, H6 export, H7 notification/trigger execution, H9 activation or memory activation.
-- Shadow mode may invoke an explicitly selected H3 model under H2 evaluation policy/budget, but all tools, remote agents, human responses and external effects are recorded substitutions or deterministic fixtures.
-- If capture is insufficient for a replay or grade, the result is `NotReplayable` or `Inconclusive`; H10 never fabricates missing inputs.
+- Safe replay never invokes H4 Tool commit, H5/H9A remote dispatch, H8 credential use, H6 export, H7 notification/trigger execution, H9 activation or memory activation.
+- Shadow mode may invoke an explicitly selected H3 model under H2 evaluation policy/budget, but all Tools, remote agents, human responses and external effects are immutable recorded substitutions or deterministic fixtures.
+- A shadow ReplayRun identifies the exact candidate `EvaluationComponentSnapshot`; a generic “candidate model” marker without an exact snapshot is invalid.
+- If capture is insufficient for replay or grading, the result is `NotReplayable` or `Inconclusive`; H10 never fabricates missing inputs.
 - Recorded `Unknown` outcomes remain Unknown in replay unless a separate stored reconciliation record resolves them.
-- Run explanations use journaled decisions, exact references, safe summaries, evidence and omissions. They never expose hidden reasoning or claim causes not supported by records.
-- Operational dashboards are projections and may lag. They cannot be used as the source of billing, policy, budget or Run completion truth.
-- Replay never exports telemetry, signs audit checkpoints, creates production work, sends notifications or calls a remote service unless the operation is an explicitly authorized H3 model-only shadow call.
+- Run explanations use journaled decisions, exact references, safe summaries, evidence and omissions. They never expose hidden reasoning or claim causes unsupported by records.
+- Operational dashboards are lagging projections and cannot be used as the source of billing, policy, budget or Run-completion truth.
+- Replay never exports telemetry, signs audit checkpoints, creates production work, sends notifications or calls a remote service except an explicitly authorized H3 model-only shadow call.
 - Existing migrations `0014`–`0072` are never edited. H10 migrations are `0073`–`0080`, each created once by one task.
-- CI uses in-memory/loopback exporters, deterministic signing keys, local H6 Artifacts, fake clocks and deterministic model/tool/remote fixtures. No public telemetry backend, model, A2A service or permanent credential is required.
+- CI uses in-memory/loopback exporters, deterministic ephemeral signing keys, local H6 Artifacts, fake clocks and deterministic model/tool/remote fixtures. No public telemetry backend, model, A2A service or permanent credential is required.
 - Future implementation branch: `feat/h10-observability-evaluation`.
 
 ---
@@ -72,17 +81,19 @@ Cargo.lock
 
 crates/vestrace-domain/src/
   id.rs
-  observability/{mod,correlation,capture,telemetry,projection}.rs
-  audit/{mod,scope,record,source,chain,checkpoint,verification}.rs
+  observability/{mod,correlation,capture,telemetry,delivery}.rs
+  audit/{mod,scope,intent,record,source,chain,checkpoint,verification}.rs
   evaluation/{mod,dataset,case,component,environment,run,grader,grade,metric,report}.rs
-  verification/{mod,risk,plan,attempt,finding,outcome,correction}.rs
+  verification/{mod,risk,plan,attempt,finding,outcome,completion,correction}.rs
   regression/{mod,baseline,gate,comparison,evidence}.rs
   replay/{mod,manifest,mode,substitution,checkpoint,outcome}.rs
   explanation/{mod,snapshot,section,warning}.rs
+  operations/{mod,projection}.rs
+  artifact/revision.rs
   run/{event,work,checkpoint,mod}.rs
 
 crates/vestrace-application/src/
-  observability/{mod,ports,correlation,capture_policy,projection,export}.rs
+  observability/{mod,ports,correlation,capture_policy,delivery,export}.rs
   audit/{mod,ports,intent,writer,checkpoint,verify,query}.rs
   evaluation/{mod,ports,commands,dataset_service,runner,case_worker,grading,aggregation,report}.rs
   verification/{mod,ports,risk_service,planner,runner,completion_gate,correction}.rs
@@ -121,20 +132,21 @@ crates/vestrace-channel-cli/src/
   explanation_commands.rs
 
 crates/vestrace-infrastructure/src/postgres/
-  observability/{mod,policy_repository,capture_repository,projection_repository,exporter_repository}.rs
-  audit/{mod,stream_repository,record_repository,checkpoint_repository}.rs
+  observability/{mod,policy_repository,capture_repository,delivery_repository,exporter_repository}.rs
+  audit/{mod,intent_repository,stream_repository,record_repository,checkpoint_repository}.rs
   evaluation/{mod,dataset_repository,component_repository,environment_repository,run_repository,grade_repository,metric_repository}.rs
-  verification/{mod,plan_repository,attempt_repository,finding_repository,correction_repository}.rs
+  verification/{mod,plan_repository,attempt_repository,finding_repository,completion_repository,correction_repository}.rs
   regression/{mod,baseline_repository,gate_repository,evidence_repository}.rs
   replay/{mod,manifest_repository,run_repository,checkpoint_repository}.rs
-  explanation/{mod,repository,dashboard_repository}.rs
+  explanation/{mod,repository}.rs
+  operations/{mod,projection_repository}.rs
 
 migrations/
-  0073_observability_capture_policies_exporters_and_projections.sql
-  0074_security_audit_streams_records_and_integrity_checkpoints.sql
+  0073_observability_capture_policies_exporters_and_delivery.sql
+  0074_security_audit_streams_intents_records_and_integrity_checkpoints.sql
   0075_evaluation_datasets_cases_components_and_environments.sql
   0076_evaluation_runs_case_attempts_grades_metrics_and_reports.sql
-  0077_verification_plans_attempts_findings_and_corrections.sql
+  0077_verification_plans_attempts_findings_completions_and_corrections.sql
   0078_regression_baselines_gates_activation_evidence_and_replay.sql
   0079_run_explanations_and_operational_read_models.sql
   0080_observability_evaluation_rls_indexes_and_run_bindings.sql
@@ -153,6 +165,7 @@ tests/
   evaluation_component_snapshot.rs
   evaluation_environment_snapshot.rs
   evaluation_runner_restart.rs
+  evaluation_effect_boundary.rs
   deterministic_grader.rs
   reference_grader.rs
   rubric_grader.rs
@@ -180,9 +193,11 @@ scripts/
   verify-audit-append-only.sh
   verify-audit-integrity.sh
   verify-evaluation-boundary.sh
+  verify-evaluation-effect-boundary.sh
   verify-replay-side-effect-boundary.sh
   verify-no-hidden-reasoning-capture.sh
   verify-regression-gate-boundary.sh
+  verify-run-completion-gate.sh
 ```
 
 ---
@@ -198,13 +213,14 @@ ObservabilityCapturePolicyId
 ObservabilityCapturePolicyRevisionId
 TelemetryExporterBindingId
 TelemetryExporterBindingRevisionId
-TelemetryProjectionCursorId
+TelemetryDeliveryBatchId
 ObservabilityCaptureRecordId
 ```
 
 Task 2 adds:
 
 ```text
+SecurityAuditIntentId
 SecurityAuditStreamId
 SecurityAuditRecordId
 AuditIntegrityCheckpointId
@@ -227,15 +243,11 @@ EvaluationMetricDefinitionId
 EvaluationMetricDefinitionRevisionId
 EvaluationMetricObservationId
 EvaluationReportId
-```
-
-Task 3 also adds:
-
-```text
 VerificationPlanId
 VerificationPlanRevisionId
 VerificationAttemptId
 VerificationFindingId
+VerifiedRunCompletionId
 CorrectionRequestId
 RegressionBaselineId
 RegressionBaselineRevisionId
@@ -248,6 +260,7 @@ ReplayRunId
 ReplayCheckpointId
 RunExplanationSnapshotId
 OperationalProjectionRevisionId
+OperationalProjectionCursorId
 ```
 
 ### Correlation and trace ownership
@@ -283,15 +296,16 @@ pub enum InvocationCorrelationRef {
 
 Trace/span IDs are generated by Vestrace at trusted boundaries. Valid external trace context is stored as an optional link in adapter-local telemetry; it never replaces `workspace_id`, `trace_id` or parentage selected by Vestrace.
 
-### Capture policy
+### Capture policy and delivery
 
 ```rust
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ObservabilityCaptureMode {
-    Full,
-    Redacted,
-    StructuredOnly,
-    MetadataOnly,
     Disabled,
+    MetadataOnly,
+    StructuredOnly,
+    Redacted,
+    Full,
 }
 
 pub enum CaptureSubjectKind {
@@ -354,13 +368,7 @@ pub struct ObservabilityCaptureRecord {
     pub byte_size: u64,
     pub created_at: Timestamp,
 }
-```
 
-`sample_basis_points` is `0..=10_000`. `Full`/`Redacted` captures are H6 Artifact revisions that re-enter quarantine and secret inspection. `StructuredOnly` contains allowlisted typed fields and references. `MetadataOnly` contains hashes, revisions, usage, validation and policy IDs only.
-
-### Telemetry exporter bindings
-
-```rust
 pub enum TelemetrySignal { Traces, Metrics, Logs }
 pub enum TelemetryExporterKind { InMemory, StdoutJson, Otlp }
 
@@ -379,9 +387,25 @@ pub struct TelemetryExporterBindingRevision {
     pub flush_interval_ms: u64,
     pub content_hash: [u8; 32],
 }
+
+pub enum TelemetryDeliveryStatus { Pending, Delivering, Delivered, Dropped, Failed }
+
+pub struct TelemetryDeliveryBatch {
+    pub id: TelemetryDeliveryBatchId,
+    pub exporter_revision_id: TelemetryExporterBindingRevisionId,
+    pub signal: TelemetrySignal,
+    pub item_count: u32,
+    pub payload_hash: [u8; 32],
+    pub status: TelemetryDeliveryStatus,
+    pub attempts: u16,
+    pub next_attempt_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+}
 ```
 
-Exporter configuration contains no secret. OTLP authentication uses H8 service binding and request-scoped lease. Exporter retry is bounded and independent of Run/work retries.
+`sample_basis_points` is `0..=10_000`. Content-capture retention is `1..=3650` days; MetadataOnly/Disabled may use zero. `Full`/`Redacted` captures are H6 Artifact revisions that re-enter quarantine and secret inspection. `StructuredOnly` contains allowlisted typed fields and references. `MetadataOnly` contains hashes, revisions, usage, validation and policy IDs only.
+
+Exporter configuration contains no secret. OTLP authentication uses H8 service binding and a fresh request-scoped lease. Export retries are bounded independently of Run/work retries.
 
 ### Metric cardinality contract
 
@@ -418,7 +442,7 @@ pub enum MetricNumber {
 
 Metric validation rejects arbitrary label keys, UUID values, URLs, user strings and values longer than 128 bytes. Workspace, Run, step, invocation, task and message IDs are trace/log fields only.
 
-### Security audit chain
+### Security audit intent and chain
 
 ```rust
 pub enum SecurityAuditScope {
@@ -479,9 +503,19 @@ pub struct SecurityAuditRecordBody {
     pub occurred_at: Timestamp,
 }
 
+pub struct SecurityAuditIntent {
+    pub id: SecurityAuditIntentId,
+    pub scope: SecurityAuditScope,
+    pub idempotency_key: String,
+    pub body: SecurityAuditRecordBody,
+    pub body_hash: [u8; 32],
+    pub created_at: Timestamp,
+}
+
 pub struct SecurityAuditRecord {
     pub id: SecurityAuditRecordId,
     pub stream_id: SecurityAuditStreamId,
+    pub intent_id: SecurityAuditIntentId,
     pub sequence: u64,
     pub previous_record_hash: [u8; 32],
     pub body: SecurityAuditRecordBody,
@@ -495,21 +529,43 @@ pub struct AuditIntegrityCheckpoint {
     pub through_sequence: u64,
     pub chain_head_hash: [u8; 32],
     pub signing_key_revision: String,
+    pub public_key_artifact_revision_id: ArtifactRevisionId,
     pub signature_algorithm: String,
     pub signature: Vec<u8>,
     pub created_at: Timestamp,
 }
+
+pub enum AuditIntegrityDisposition { Valid, Invalid, Incomplete }
+
+pub struct AuditIntegrityVerification {
+    pub id: AuditIntegrityVerificationId,
+    pub stream_id: SecurityAuditStreamId,
+    pub from_sequence: u64,
+    pub through_sequence: u64,
+    pub disposition: AuditIntegrityDisposition,
+    pub first_failure_sequence: Option<u64>,
+    pub safe_code: String,
+    pub verification_hash: [u8; 32],
+    pub verified_at: Timestamp,
+}
 ```
 
-Record hash V1 is SHA-256 over domain separator, stream ID, sequence, previous hash and canonical body. Sequence starts at 1. Checkpoint signature is over stream ID, sequence, chain head and checkpoint schema version.
+Record hash V1 is SHA-256 over a domain separator, stream ID, sequence, previous hash and canonical body. Sequence starts at 1. The reference checkpoint algorithm is `ed25519`; other algorithms require a new checkpoint schema/ADR.
 
-### Evaluation dataset and cases
+### Evaluation dataset, case and execution mode
 
 ```rust
 pub enum EvaluationCaseInput {
     Interaction { parts: Vec<InteractionContentPart> },
     Objective { objective: String, artifact_revision_ids: Vec<ArtifactRevisionId> },
-    RecordedRun { run_id: AgentRunId, capture_manifest_id: ReplayManifestId },
+    RecordedRun { run_id: AgentRunId, replay_manifest_id: ReplayManifestId },
+}
+
+pub enum EvaluationExecutionMode {
+    FixtureOnly,
+    RecordedReplay,
+    ShadowModel,
+    LiveReadOnly,
 }
 
 pub struct ExpectedProperty {
@@ -524,6 +580,7 @@ pub struct EvaluationCase {
     pub dataset_revision_id: EvaluationDatasetRevisionId,
     pub stable_key: String,
     pub input: EvaluationCaseInput,
+    pub execution_mode: EvaluationExecutionMode,
     pub expected_properties: Vec<ExpectedProperty>,
     pub prohibited_outcomes: Vec<ProhibitedOutcome>,
     pub grading_plan_revision_id: EvaluationGradingPlanRevisionId,
@@ -545,7 +602,7 @@ pub struct EvaluationDatasetRevision {
 }
 ```
 
-Dataset import verifies Artifact availability, package asset binding, schemas, duplicate stable keys, exact case hashes and prohibited content. Dataset cases cannot contain secrets, live credential handles or mutable external task references.
+Dataset import verifies Artifact availability, package asset binding, schemas, duplicate stable keys, exact case hashes and prohibited content. Dataset cases contain no secrets, live credential handles or mutable external-task references. `FixtureOnly`, `RecordedReplay` and `ShadowModel` deny effectful ports. `LiveReadOnly` allows only explicitly classified H4 read-only operations and denies remote dispatch.
 
 ### Component and environment snapshots
 
@@ -598,7 +655,7 @@ pub struct EvaluationEnvironmentSnapshot {
 
 Snapshots contain no secret, host path, raw environment variable, credential reference or mutable health state.
 
-### Evaluation run
+### Evaluation run, checkpoint and attempts
 
 ```rust
 pub enum EvaluationRunStatus {
@@ -654,6 +711,18 @@ pub struct EvaluationCaseAttempt {
     pub started_at: Option<Timestamp>,
     pub completed_at: Option<Timestamp>,
 }
+
+pub struct EvaluationCheckpoint {
+    pub schema_version: u16,
+    pub evaluation_run_id: EvaluationRunId,
+    pub next_case_ordinal: u32,
+    pub next_repetition: u16,
+    pub completed_grader_keys: Vec<String>,
+    pub aggregation_cursor: u64,
+    pub replay_checkpoint_id: Option<ReplayCheckpointId>,
+    pub budget_snapshot_id: BudgetSnapshotId,
+    pub content_hash: [u8; 32],
+}
 ```
 
 Repetitions are `1..=100`. Seeds are derived deterministically from EvaluationRun ID, case hash, repetition and environment seed.
@@ -693,12 +762,7 @@ pub enum GraderDisagreementPolicy {
     RequireHumanReview,
 }
 
-pub enum GradeDisposition {
-    Passed,
-    Failed,
-    Inconclusive,
-    Error,
-}
+pub enum GradeDisposition { Passed, Failed, Inconclusive, Error }
 
 pub struct EvaluationGrade {
     pub id: EvaluationGradeId,
@@ -723,15 +787,7 @@ Weights total 10,000 for weighted graders. Mandatory deterministic/policy grader
 ```rust
 pub enum EvaluationMetricDirection { HigherIsBetter, LowerIsBetter, Exact }
 pub enum EvaluationMetricAggregation { Sum, Mean, Median, Minimum, Maximum, RateBasisPoints }
-
-pub enum EvaluationMetricUnit {
-    Count,
-    BasisPoints,
-    Milliseconds,
-    Bytes,
-    Tokens,
-    Microunits,
-}
+pub enum EvaluationMetricUnit { Count, BasisPoints, Milliseconds, Bytes, Tokens, Microunits }
 
 pub struct EvaluationMetricDefinitionRevision {
     pub id: EvaluationMetricDefinitionRevisionId,
@@ -754,6 +810,19 @@ pub struct EvaluationMetricObservation {
     pub sample_count: u64,
     pub evidence_references: Vec<RunReference>,
     pub observed_at: Timestamp,
+}
+
+pub struct EvaluationReport {
+    pub id: EvaluationReportId,
+    pub evaluation_run_id: EvaluationRunId,
+    pub aggregate_metric_observation_ids: Vec<EvaluationMetricObservationId>,
+    pub passed_case_count: u32,
+    pub failed_case_count: u32,
+    pub inconclusive_case_count: u32,
+    pub warning_codes: Vec<String>,
+    pub report_artifact_revision_id: ArtifactRevisionId,
+    pub report_hash: [u8; 32],
+    pub created_at: Timestamp,
 }
 ```
 
@@ -778,7 +847,7 @@ remote_duplicate_prevention_count
 inbound_a2a_intake_millis
 ```
 
-### Risk-oriented verification
+### Risk-oriented verification and unbypassable completion
 
 ```rust
 pub enum VerificationRiskClass { Low, Medium, High, Critical }
@@ -823,11 +892,12 @@ pub struct VerificationPlanRevision {
     pub run_id: AgentRunId,
     pub revision: u32,
     pub profile_revision_id: VerificationProfileRevisionId,
+    pub risk_calculator_revision: String,
     pub risk_class: VerificationRiskClass,
     pub risk_inputs_hash: [u8; 32],
     pub checks: Vec<VerificationCheckRequirement>,
     pub maximum_correction_attempts: u16,
-    pub correction_budget_allocation_id: BudgetAllocationId,
+    pub correction_budget_allocation_id: Option<BudgetAllocationId>,
     pub content_hash: [u8; 32],
 }
 
@@ -850,6 +920,18 @@ pub struct VerificationAttempt {
     pub unresolved_warning_codes: Vec<String>,
     pub created_at: Timestamp,
 }
+
+pub struct VerifiedRunCompletion {
+    pub id: VerifiedRunCompletionId,
+    pub run_id: AgentRunId,
+    pub expected_run_version: RunVersion,
+    pub verification_attempt_id: VerificationAttemptId,
+    pub terminal_result_hash: [u8; 32],
+    pub allowed_status: RunStatus,
+    pub consumed_at: Option<Timestamp>,
+    pub expires_at: Timestamp,
+    pub created_at: Timestamp,
+}
 ```
 
 Minimum matrix:
@@ -861,7 +943,7 @@ High     → Medium + external state readback or independent model/cross-check
 Critical → High + human review when exact profile/policy requires it
 ```
 
-An unresolved `Unknown`, policy failure, required scanner outage or missing mandatory evidence yields `Inconclusive`/`Failed`, never Verified.
+An unresolved `Unknown`, policy failure, required scanner outage or missing mandatory evidence yields `Inconclusive`/`Failed`, never Verified. `VerifiedRunCompletion` is consumed atomically in the same H1 transaction that appends the terminal RunEvent.
 
 ### Findings and correction
 
@@ -889,6 +971,15 @@ pub enum CorrectionActionKind {
     ReconcileUnknownOperation,
 }
 
+pub enum CorrectionRequestStatus {
+    Prepared,
+    Authorized,
+    Scheduled,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 pub struct CorrectionRequest {
     pub id: CorrectionRequestId,
     pub run_id: AgentRunId,
@@ -900,15 +991,6 @@ pub struct CorrectionRequest {
     pub status: CorrectionRequestStatus,
     pub created_at: Timestamp,
 }
-
-pub enum CorrectionRequestStatus {
-    Prepared,
-    Authorized,
-    Scheduled,
-    Completed,
-    Failed,
-    Cancelled,
-}
 ```
 
 Correction cannot directly repeat a Tool/remote write. It requests H5 replanning or H4/H9A reconciliation and uses fresh authorization for any new protected action.
@@ -916,6 +998,19 @@ Correction cannot directly repeat a Tool/remote write. It requests H5 replanning
 ### Regression gates
 
 ```rust
+pub enum RegressionComponentKind {
+    Agent,
+    Model,
+    Tool,
+    Workflow,
+    Policy,
+    Package,
+    Extension,
+    Trigger,
+    RemoteAgent,
+    A2ARoute,
+}
+
 pub enum RegressionComparisonKind {
     MinimumAbsolute,
     MaximumAbsolute,
@@ -925,6 +1020,7 @@ pub enum RegressionComparisonKind {
 }
 
 pub struct RegressionMetricRule {
+    pub stable_key: String,
     pub metric_revision_id: EvaluationMetricDefinitionRevisionId,
     pub comparison: RegressionComparisonKind,
     pub threshold_integer: i128,
@@ -937,7 +1033,7 @@ pub struct RegressionGateDefinitionRevision {
     pub id: RegressionGateDefinitionRevisionId,
     pub gate_id: RegressionGateDefinitionId,
     pub revision: u32,
-    pub applicable_component_kinds: Vec<String>,
+    pub applicable_component_kinds: Vec<RegressionComponentKind>,
     pub dataset_revision_ids: Vec<EvaluationDatasetRevisionId>,
     pub metric_rules: Vec<RegressionMetricRule>,
     pub required_grader_keys: Vec<String>,
@@ -951,11 +1047,24 @@ pub struct RegressionBaselineRevision {
     pub revision: u32,
     pub component_snapshot_id: EvaluationComponentSnapshotId,
     pub evaluation_run_ids: Vec<EvaluationRunId>,
+    pub metric_observation_ids: Vec<EvaluationMetricObservationId>,
     pub aggregate_metric_hash: [u8; 32],
     pub content_hash: [u8; 32],
 }
 
+pub enum RegressionGateRunStatus { Created, Evaluating, Comparing, Completed, Failed, Inconclusive }
 pub enum RegressionGateDisposition { Passed, PassedWithWarnings, Failed, Inconclusive }
+
+pub struct RegressionGateRun {
+    pub id: RegressionGateRunId,
+    pub gate_revision_id: RegressionGateDefinitionRevisionId,
+    pub candidate_component_snapshot_id: EvaluationComponentSnapshotId,
+    pub baseline_revision_id: RegressionBaselineRevisionId,
+    pub status: RegressionGateRunStatus,
+    pub evaluation_run_ids: Vec<EvaluationRunId>,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+}
 
 pub struct RegressionGateEvidence {
     pub id: RegressionGateEvidenceId,
@@ -977,11 +1086,7 @@ Activation requires evidence for the exact candidate component/dependency hash. 
 ### Replay and shadow
 
 ```rust
-pub enum ReplayMode {
-    ProjectionOnly,
-    DeterministicEvaluation,
-    ShadowModel,
-}
+pub enum ReplayMode { ProjectionOnly, DeterministicEvaluation, ShadowModel }
 
 pub enum ReplaySubstitutionKind {
     RecordedModelOutput,
@@ -1029,147 +1134,144 @@ pub struct ReplayRun {
     pub evaluation_run_id: Option<EvaluationRunId>,
     pub manifest_id: ReplayManifestId,
     pub mode: ReplayMode,
+    pub candidate_component_snapshot_id: Option<EvaluationComponentSnapshotId>,
     pub environment_snapshot_id: EvaluationEnvironmentSnapshotId,
     pub status: ReplayRunStatus,
     pub budget_allocation_id: Option<BudgetAllocationId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-```
 
-Replay safety policy denies Tool execution, remote dispatch, credentials, exports, notifications, triggers, package/extension activation and memory writes. `ShadowModel` permits only H3 model calls through an evaluation-only policy/budget and feeds recorded observations for all effectful boundaries.
-
-### User-facing Run explanation
-
-```rust
-pub enum RunExplanationSectionKind {
-    Objective,
-    Plan,
-    Models,
-    Tools,
-    Delegations,
-    Approvals,
-    Sources,
-    Artifacts,
-    Verification,
-    Budget,
-    Warnings,
-    MissingInformation,
-}
-
-pub struct RunExplanationSection {
-    pub kind: RunExplanationSectionKind,
-    pub safe_summary: String,
-    pub references: Vec<RunReference>,
-    pub omitted_count: u32,
-    pub omission_codes: Vec<String>,
-}
-
-pub struct RunExplanationSnapshot {
-    pub id: RunExplanationSnapshotId,
-    pub workspace_id: WorkspaceId,
-    pub run_id: AgentRunId,
-    pub run_version: RunVersion,
-    pub viewer_policy_hash: [u8; 32],
-    pub sections: Vec<RunExplanationSection>,
-    pub unresolved_warning_codes: Vec<String>,
-    pub verification_attempt_id: Option<VerificationAttemptId>,
-    pub content_hash: [u8; 32],
+pub struct ReplayCheckpoint {
+    pub id: ReplayCheckpointId,
+    pub replay_run_id: ReplayRunId,
+    pub next_event_sequence: u64,
+    pub next_step_ordinal: u32,
+    pub completed_substitution_hashes: Vec<[u8; 32]>,
+    pub last_model_execution_id: Option<ModelExecutionId>,
+    pub state_hash: [u8; 32],
     pub created_at: Timestamp,
 }
 ```
 
-Explanation is generated for an exact Run version and viewer policy. It reports decisions and evidence, not private deliberation. A purged source becomes a tombstone/omission rather than reconstructed text.
+`ShadowModel` requires `candidate_component_snapshot_id`. Replay safety policy denies Tool execution, remote dispatch, credentials, exports, notifications, triggers, package/extension activation and memory writes. Shadow permits only H3 model calls through an evaluation-only policy/budget and feeds recorded observations for all effectful boundaries.
 
----
-
-### Task 1: Add observability, capture and correlation domain contracts
-
-**Files:** create observability domain modules, modify IDs and domain exports; add unit/property tests.
-
-**Consumes:** H1 Run/step/event IDs; H3/H4/H5/H6/H9A invocation IDs; H8 service bindings.
-
-**Produces:** `CorrelationContext`, capture modes/rules/policy revisions, exporter bindings, bounded metric points and projection cursor values.
-
-- [ ] Write failing tests proving external trace context cannot replace the Vestrace trace ID or workspace.
-- [ ] Write tests rejecting UUIDs, URLs, user strings and unbounded values as metric labels.
-- [ ] Property-test capture-policy canonical hashing independent of rule insertion order after normalized sorting.
-- [ ] Implement `ObservabilityCaptureMode`, `CaptureRule`, `ObservabilityCapturePolicyRevision`, `ObservabilityCaptureRecord`, `TelemetryExporterBindingRevision` and `MetricPoint` exactly as defined above.
-- [ ] Implement validation: sample basis points `0..=10_000`, positive queue/batch/time limits, exporter maximum mode cannot exceed policy, standard OTLP requires HTTPS except explicit loopback fixture.
-- [ ] Run and commit:
-
-```bash
-cargo test -p vestrace-domain observability::
-cargo test --test telemetry_correlation --test telemetry_cardinality
-git add crates/vestrace-domain tests/telemetry_correlation.rs tests/telemetry_cardinality.rs
-git commit -m "feat(observability): add correlation and capture contracts"
-```
-
-### Task 2: Add audit-chain domain contracts and canonical hashing
-
-**Files:** create audit domain modules and `vestrace-audit-runtime`; add chain/signature tests.
-
-**Consumes:** H2 operation fingerprints/decisions; H8 external identity hashes; source journal references.
-
-**Produces:** audit stream/record/checkpoint types, canonical record hash V1 and verification results.
-
-- [ ] Write a failing golden-vector test for record hash V1 with a fixed canonical body.
-- [ ] Write tests for first record zero previous hash, contiguous sequence, previous-hash mismatch, altered body and invalid checkpoint signature.
-- [ ] Implement canonical body encoding with explicit domain separators and deterministic enum/string encoding.
-- [ ] Implement `AuditChainBuilder::append(previous, body)` and `AuditIntegrityVerifier::verify(records, checkpoints, public_keys)`.
-- [ ] Implement `AuditSigningPort` whose input is exact checkpoint bytes and whose output contains algorithm, key revision and signature; no secret types cross the port.
-- [ ] Run and commit:
-
-```bash
-cargo test -p vestrace-audit-runtime
-cargo test --test audit_chain_integrity --test audit_checkpoint_signing
-git add crates/vestrace-domain/src/audit crates/vestrace-audit-runtime tests
-git commit -m "feat(audit): add tamper-evident chain contracts"
-```
-
-### Task 3: Add evaluation, verification, regression, replay and explanation contracts
-
-**Files:** create domain modules for evaluation/verification/regression/replay/explanation; modify IDs and exports; add transition/hash tests.
-
-**Produces:** every immutable revision and aggregate type defined in the normative contracts.
-
-- [ ] Write transition tests for EvaluationRun, case attempts, correction requests, ReplayRun and gate evidence expiry.
-- [ ] Write tests proving mandatory deterministic/policy failure cannot be overridden by weighted score.
-- [ ] Write tests for deterministic repetition seed derivation and component/environment snapshot hashes.
-- [ ] Write tests that a replay manifest containing an effectful live substitution is rejected.
-- [ ] Implement fixed-point metric values and checked aggregation inputs; reject scale over 18 and overflow.
-- [ ] Implement all dataset, component, environment, grading, verification, correction, regression, replay and explanation types above.
-- [ ] Run and commit:
-
-```bash
-cargo test -p vestrace-domain evaluation:: verification:: regression:: replay:: explanation::
-cargo test --test evaluation_component_snapshot --test evaluation_environment_snapshot \
-           --test verification_risk_matrix --test replay_side_effect_denial
-git add crates/vestrace-domain tests
-git commit -m "feat(evaluation): add durable evaluation and verification contracts"
-```
-
-### Task 4: Define application ports and deterministic test support
-
-**Files:** create H10 application module skeletons and `vestrace-evaluation-test-support`.
-
-**Interfaces:**
+### Application command DTOs and ports
 
 ```rust
-#[async_trait::async_trait]
-pub trait TelemetryPort: Send + Sync {
-    async fn emit_span(&self, span: NormalizedSpan) -> Result<(), TelemetryError>;
-    async fn emit_metric(&self, point: MetricPoint) -> Result<(), TelemetryError>;
-    async fn emit_log(&self, record: NormalizedLogRecord) -> Result<(), TelemetryError>;
+pub struct NormalizedSpan {
+    pub name: String,
+    pub correlation: CorrelationContext,
+    pub attributes: std::collections::BTreeMap<String, TelemetryAttributeValue>,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+}
+
+pub struct NormalizedLogRecord {
+    pub level: TelemetryLogLevel,
+    pub correlation: CorrelationContext,
+    pub stable_code: String,
+    pub safe_message: String,
+    pub attributes: std::collections::BTreeMap<String, TelemetryAttributeValue>,
+    pub observed_at: Timestamp,
+}
+
+pub enum TelemetryEmissionOutcome {
+    Accepted,
+    Dropped { reason: TelemetryDropReason },
+}
+
+pub struct SecurityAuditIntentReceipt {
+    pub intent_id: SecurityAuditIntentId,
+    pub body_hash: [u8; 32],
+}
+
+pub struct ExecuteEvaluationCase {
+    pub evaluation_run_id: EvaluationRunId,
+    pub attempt_id: EvaluationCaseAttemptId,
+    pub case_id: EvaluationCaseId,
+    pub execution_mode: EvaluationExecutionMode,
+    pub component_snapshot_id: EvaluationComponentSnapshotId,
+    pub environment_snapshot_id: EvaluationEnvironmentSnapshotId,
+    pub deterministic_seed: u64,
+}
+
+pub struct EvaluationCaseExecutionObservation {
+    pub attempt_id: EvaluationCaseAttemptId,
+    pub produced_run_id: Option<AgentRunId>,
+    pub replay_run_id: Option<ReplayRunId>,
+    pub output_references: Vec<RunReference>,
+    pub usage_snapshot_id: Option<ResourceUsageSnapshotId>,
+    pub terminal_status: EvaluationCaseAttemptStatus,
+}
+
+pub struct GradeEvaluationAttempt {
+    pub attempt_id: EvaluationCaseAttemptId,
+    pub grader: GraderRequirement,
+    pub output_references: Vec<RunReference>,
+}
+
+pub struct EvaluationGradeDraft {
+    pub disposition: GradeDisposition,
+    pub score_basis_points: Option<u16>,
+    pub evidence_references: Vec<RunReference>,
+    pub failed_property_keys: Vec<String>,
+    pub safe_rationale: Option<String>,
+    pub output_hash: [u8; 32],
+}
+
+pub struct VerifyRunOutcome {
+    pub run_id: AgentRunId,
+    pub expected_run_version: RunVersion,
+    pub proposed_terminal_result_hash: [u8; 32],
+    pub verification_plan_revision_id: VerificationPlanRevisionId,
+}
+
+pub struct RequireRegressionGateEvidence {
+    pub candidate_component_snapshot_id: EvaluationComponentSnapshotId,
+    pub gate_revision_id: RegressionGateDefinitionRevisionId,
+    pub dependency_hash: [u8; 32],
+    pub required_dispositions: Vec<RegressionGateDisposition>,
+    pub requested_at: Timestamp,
+}
+
+pub struct ExecuteReplay {
+    pub replay_run_id: ReplayRunId,
+    pub manifest_id: ReplayManifestId,
+    pub mode: ReplayMode,
+    pub candidate_component_snapshot_id: Option<EvaluationComponentSnapshotId>,
+}
+
+pub struct ReplayExecutionObservation {
+    pub replay_run_id: ReplayRunId,
+    pub status: ReplayRunStatus,
+    pub output_references: Vec<RunReference>,
+    pub comparison_hash: Option<[u8; 32]>,
 }
 
 #[async_trait::async_trait]
-pub trait SecurityAuditPort: Send + Sync {
-    async fn append_intent(
+pub trait TelemetryPort: Send + Sync {
+    async fn emit_span(&self, span: NormalizedSpan) -> TelemetryEmissionOutcome;
+    async fn emit_metric(&self, point: MetricPoint) -> TelemetryEmissionOutcome;
+    async fn emit_log(&self, record: NormalizedLogRecord) -> TelemetryEmissionOutcome;
+}
+
+#[async_trait::async_trait]
+pub trait SecurityAuditIntentPort: Send + Sync {
+    async fn persist_intent(
         &self,
         context: &RequestContext,
         intent: SecurityAuditIntent,
-    ) -> Result<SecurityAuditRecord, ApplicationError>;
+    ) -> Result<SecurityAuditIntentReceipt, ApplicationError>;
+}
+
+#[async_trait::async_trait]
+pub trait SecurityAuditWriterPort: Send + Sync {
+    async fn append_next(
+        &self,
+        context: &RequestContext,
+        stream_id: SecurityAuditStreamId,
+    ) -> Result<Option<SecurityAuditRecord>, ApplicationError>;
 }
 
 #[async_trait::async_trait]
@@ -1218,24 +1320,159 @@ pub trait ReplayExecutionPort: Send + Sync {
 }
 ```
 
-- [ ] Define normalized span/log/error DTOs with bounded fields and no exporter types.
-- [ ] Define repositories for every H10 aggregate and append-only record.
-- [ ] Compile-test object safety and Send/Sync for all ports.
-- [ ] Add deterministic fixtures for exporter failure, signer failure, model grader disagreement, policy violation, false success, tool/remote substitutions, Unknown outcome, purge and worker crash.
-- [ ] Add fault points after case claim, produced Run, each grade, metric aggregation, verification finding, audit record and replay checkpoint.
-- [ ] Run and commit.
+Telemetry ports never return an application error. Drop/failure is an operational outcome. Audit intent persistence and audit-chain append are intentionally separate boundaries.
+
+### User-facing Run explanation and operational projections
+
+```rust
+pub enum RunExplanationSectionKind {
+    Objective,
+    Plan,
+    Models,
+    Tools,
+    Delegations,
+    Approvals,
+    Sources,
+    Artifacts,
+    Verification,
+    Budget,
+    Warnings,
+    MissingInformation,
+}
+
+pub struct RunExplanationSection {
+    pub kind: RunExplanationSectionKind,
+    pub safe_summary: String,
+    pub references: Vec<RunReference>,
+    pub omitted_count: u32,
+    pub omission_codes: Vec<String>,
+}
+
+pub struct RunExplanationSnapshot {
+    pub id: RunExplanationSnapshotId,
+    pub workspace_id: WorkspaceId,
+    pub run_id: AgentRunId,
+    pub run_version: RunVersion,
+    pub viewer_policy_hash: [u8; 32],
+    pub sections: Vec<RunExplanationSection>,
+    pub unresolved_warning_codes: Vec<String>,
+    pub verification_attempt_id: Option<VerificationAttemptId>,
+    pub content_hash: [u8; 32],
+    pub created_at: Timestamp,
+}
+
+pub struct OperationalProjectionRevision {
+    pub id: OperationalProjectionRevisionId,
+    pub workspace_id: WorkspaceId,
+    pub projection_name: String,
+    pub source_cursor_id: OperationalProjectionCursorId,
+    pub source_through_sequence: u64,
+    pub dimensions_hash: [u8; 32],
+    pub aggregate_hash: [u8; 32],
+    pub created_at: Timestamp,
+}
+```
+
+Explanation is generated for an exact Run version and viewer policy. It reports decisions and evidence, not private deliberation. A purged source becomes a tombstone/omission rather than reconstructed text.
+
+---
+
+### Task 1: Add observability, capture and correlation domain contracts
+
+**Files:** create observability domain modules, modify IDs/domain exports and add unit/property tests.
+
+**Consumes:** H1 Run/step/event IDs; H3/H4/H5/H6/H9A invocation IDs; H8 service bindings.
+
+**Produces:** correlation values, ordered capture modes, capture-policy revisions, exporter/delivery records and bounded metric points.
+
+- [ ] Write failing tests proving external trace context cannot replace Vestrace trace ID or workspace.
+- [ ] Write tests rejecting UUIDs, URLs, user strings and unbounded values as metric labels.
+- [ ] Property-test capture-policy canonical hashing after deterministic rule sorting.
+- [ ] Implement all Task 1 IDs and capture/delivery/metric contracts above.
+- [ ] Implement validation: sample basis points `0..=10_000`, capture-mode ordering, retention bounds, positive queue/batch/time limits and HTTPS OTLP except explicit loopback fixture.
+- [ ] Run and commit:
+
+```bash
+cargo test -p vestrace-domain observability::
+cargo test --test telemetry_correlation --test telemetry_cardinality
+git add crates/vestrace-domain tests/telemetry_correlation.rs tests/telemetry_cardinality.rs
+git commit -m "feat(observability): add correlation and capture contracts"
+```
+
+### Task 2: Add audit intent/chain contracts and canonical hashing
+
+**Files:** create audit domain modules and `vestrace-audit-runtime`; add chain/signature tests.
+
+**Consumes:** H2 operation fingerprints/decisions; H8 external identity hashes; source journal references.
+
+**Produces:** audit intent, stream/record/checkpoint/verification types, canonical record hash V1 and Ed25519 checkpoint verification.
+
+- [ ] Write a failing golden-vector test for record hash V1 with a fixed canonical body.
+- [ ] Write tests for first-record zero hash, contiguous sequence, previous-hash mismatch, altered body, duplicate intent and invalid checkpoint signature.
+- [ ] Implement canonical body encoding with explicit domain separators and deterministic enum/string encoding.
+- [ ] Implement `AuditChainBuilder::append(previous, intent)` and `AuditIntegrityVerifier::verify(records, checkpoints, public_keys)`.
+- [ ] Implement `AuditSigningPort` accepting exact checkpoint bytes plus logical H8 service-binding revision and returning key revision/public-key Artifact/signature metadata; no secret type crosses the port.
+- [ ] Run and commit:
+
+```bash
+cargo test -p vestrace-audit-runtime
+cargo test --test audit_chain_integrity --test audit_checkpoint_signing
+git add crates/vestrace-domain/src/audit crates/vestrace-audit-runtime tests
+git commit -m "feat(audit): add intent and tamper-evident chain contracts"
+```
+
+### Task 3: Add evaluation, verification, regression, replay and explanation contracts
+
+**Files:** create evaluation/verification/regression/replay/explanation/operations domain modules; extend H6 Artifact source; modify IDs/exports and add tests.
+
+**Produces:** every immutable revision, aggregate and application DTO defined above.
+
+- [ ] Write transition tests for EvaluationRun, case attempts, correction, gate runs/evidence, ReplayRun and completion consumption.
+- [ ] Write tests proving mandatory deterministic/policy failure cannot be overridden by weighted score.
+- [ ] Write tests for deterministic seeds, fixed-point rounding, component/environment hashes and metric-rule stable keys.
+- [ ] Write tests rejecting effectful evaluation cases, shadow replay without exact candidate snapshot and live substitutions for Tool/remote/credential operations.
+- [ ] Add H6 source variants `ObservabilityCapture` and `EvaluationReport`; both still use normal H6 quarantine/provenance/retention.
+- [ ] Implement all Task 3 IDs/types and checked fixed-point aggregation; reject scale over 18 and overflow.
+- [ ] Run and commit:
+
+```bash
+cargo test -p vestrace-domain evaluation:: verification:: regression:: replay:: explanation:: operations::
+cargo test --test evaluation_component_snapshot --test evaluation_environment_snapshot \
+           --test verification_risk_matrix --test replay_side_effect_denial \
+           --test evaluation_effect_boundary
+git add crates/vestrace-domain tests
+git commit -m "feat(evaluation): add durable evaluation and completion contracts"
+```
+
+### Task 4: Define application ports and deterministic test support
+
+**Files:** create H10 application module skeletons and `vestrace-evaluation-test-support`.
+
+- [ ] Implement the exact DTOs and ports from `Application command DTOs and ports`.
+- [ ] Define repository ports for all H10 aggregates, immutable revisions, append-only records, completion consumption and projection cursors.
+- [ ] Compile-test object safety and Send/Sync for every port.
+- [ ] Add deterministic fixtures for exporter drop, signer failure, model-grader disagreement, policy violation, false success, Tool/remote substitutions, Unknown, purge and worker crash.
+- [ ] Add fault points after intent persistence, audit append, case claim, produced Run, each grade, metric aggregation, verification finding/completion, gate evidence and replay checkpoint.
+- [ ] Run and commit:
+
+```bash
+cargo test -p vestrace-application h10_ports
+cargo test -p vestrace-evaluation-test-support
+git add crates/vestrace-application crates/vestrace-evaluation-test-support
+git commit -m "feat(evaluation): add H10 application ports and fixtures"
+```
 
 ### Task 5: Implement the OpenTelemetry-compatible adapter and cardinality guard
 
 **Files:** create `vestrace-observability-otel`, composition wiring and exporter tests; modify workspace features.
 
-- [ ] Add optional features `telemetry-stdout` and `telemetry-otlp`; the default self-hosted test path uses in-memory/stdout and needs no collector.
-- [ ] Implement a Vestrace-owned `TelemetryPort` adapter; OTel types do not enter domain/application signatures.
-- [ ] Map `CorrelationContext` to trace/log fields. Metric labels pass through the strict `MetricLabelKey` validator.
-- [ ] Use constant span names such as `run.step`, `model.invoke`, `tool.invoke`, `remote.dispatch`, `evaluation.case`; never use user content as span names.
-- [ ] Add a bounded non-blocking queue. On overflow/export failure, increment local drop counters and return a swallowed operational error to the caller.
-- [ ] Implement redaction before batching and again before exporter serialization.
-- [ ] OTLP authentication uses one H8 service lease per export request; no token is retained in exporter configuration.
+- [ ] Add optional features `telemetry-stdout` and `telemetry-otlp`; default test path uses in-memory/stdout and needs no collector.
+- [ ] Implement `TelemetryPort`; OTel types do not enter domain/application signatures.
+- [ ] Map CorrelationContext to trace/log fields. Metric labels pass through the strict validator and stable-ID allowlist.
+- [ ] Use constant span names such as `run.step`, `model.invoke`, `tool.invoke`, `remote.dispatch`, `evaluation.case`; never use content as span names.
+- [ ] Add a bounded non-blocking queue. Overflow/export failure returns `TelemetryEmissionOutcome::Dropped` and increments local counters without propagating an application error.
+- [ ] Apply redaction before batching and again before exporter serialization.
+- [ ] OTLP authentication uses one H8 service lease per export request; no token is retained in configuration.
 - [ ] Test collector outage, queue overflow, invalid label, proxy/redirect policy and exporter retry independence from Run work.
 - [ ] Run and commit:
 
@@ -1249,136 +1486,140 @@ git add Cargo.toml Cargo.lock crates/vestrace-observability-otel \
 git commit -m "feat(observability): add bounded telemetry adapter"
 ```
 
-### Task 6: Persist capture policies, optional captures, exporters and operational projections
+### Task 6: Persist capture policies, captures, exporters and delivery state
 
-**Files:** create migration `0073`, observability repositories/services and capture/projection tests.
+**Files:** create migration `0073`, observability repositories/services and capture/delivery tests.
 
-- [ ] `0073` creates capture-policy identities/revisions/rules, exporter identities/revisions/signals, capture records, capture-source links, projection cursors and bounded operational read-model tables.
-- [ ] Enforce immutable policy/exporter revisions, one current revision pointer per identity and canonical hash uniqueness.
-- [ ] Implement capture decision order: subject/classification → current H2 policy → known-secret scan → sampling → mode/size → H6 Artifact or structured metadata.
-- [ ] Full/Redacted capture creates an H6 Artifact candidate with exact source references and retention; capture row becomes final only after Artifact quarantine result is known.
-- [ ] A failed/rejected capture never blocks the source Run. It persists omission/failure metadata only when policy permits.
-- [ ] Export service rechecks exporter maximum mode, destination, classification and current policy immediately before enqueue.
-- [ ] Operational projection consumes durable source outboxes with a cursor and is idempotent by source ID/hash.
-- [ ] Tests cover policy changes, sampling determinism, capture purge, exporter downgrade, projection restart and no RunVersion change.
+- [ ] `0073` creates capture-policy identities/revisions/rules, exporter identities/revisions/signals, capture records/source links, delivery batches/items and exporter retry state.
+- [ ] Enforce immutable policy/exporter revisions, one current pointer per identity and canonical-hash uniqueness.
+- [ ] Implement decision order: subject/classification → H2 policy → known-secret scan → deterministic sampling → mode/size → H6 Artifact or structured metadata.
+- [ ] Full/Redacted creates an H6 Artifact candidate with exact source references and retention; capture row finalizes only after H6 disposition.
+- [ ] Failed/rejected capture never blocks the source Run. It stores omission/failure metadata only when policy permits.
+- [ ] Export service rechecks exporter maximum mode, destination, classification and current policy before creating a delivery batch.
+- [ ] Delivery retries are bounded by exporter policy and do not enqueue Run work or alter RunVersion.
+- [ ] Tests cover policy changes, sampling determinism, capture purge, exporter downgrade, delivery restart and source-Run independence.
 - [ ] Run and commit.
 
-### Task 7: Persist security audit records and signed integrity checkpoints
+### Task 7: Persist security audit intents, records and signed checkpoints
 
-**Files:** create migration `0074`, audit writer/checkpoint/query/verification services and tests.
+**Files:** create migration `0074`, audit intent/writer/checkpoint/query/verification services and tests.
 
-- [ ] `0074` creates audit streams, source-intent inbox, records, record-source links, integrity checkpoints, signing-key public metadata and verification reports.
-- [ ] Protected subsystem transactions enqueue a `SecurityAuditIntent` with exact source ID/hash. The audit writer claims intents idempotently.
-- [ ] Allocate sequence and append record under one stream row lock. Duplicate source intent returns the existing record.
-- [ ] Force append-only triggers: no update/delete of records/checkpoints; mutable verification reports are separate.
-- [ ] Create checkpoints every configured record count or maximum interval. Sign through H8-backed `AuditSigningPort`; only public verification metadata persists.
-- [ ] Signer outage leaves records valid but checkpoint pending and emits an operational alert; it never fabricates a signature.
-- [ ] Implement CLI/API integrity verification over a bounded range and optional source completeness check.
-- [ ] Test concurrent append order, writer restart, source duplication, altered record detection, missing sequence, invalid signature and purged-source references.
+- [ ] `0074` creates audit streams, source-intent inbox, records, record-source links, integrity checkpoints, public-key metadata and verification reports.
+- [ ] Modify protected subsystem transaction services to call `SecurityAuditIntentPort::persist_intent` inside their existing transaction/outbox boundary.
+- [ ] Audit writer claims intents idempotently, allocates sequence under one stream-row lock and appends one record. Duplicate intent returns existing record.
+- [ ] Force append-only triggers: no update/delete of intents after claim, records or checkpoints; verification reports are separate.
+- [ ] Create checkpoints every configured record count or maximum interval. Sign through H8-backed `AuditSigningPort`; only public metadata persists.
+- [ ] Signer outage leaves chain records valid and checkpoint pending, emits bounded telemetry and retries checkpoint sealing; it never fabricates a signature or H7 notification implicitly.
+- [ ] Implement CLI/API integrity verification over a bounded range and optional source-completeness check.
+- [ ] Test concurrent append, writer restart, duplicate source, altered record, sequence gap, invalid signature and purged-source reference.
 - [ ] Run and commit.
 
 ### Task 8: Persist evaluation datasets, cases and exact snapshots
 
 **Files:** create migration `0075`, dataset/component/environment services and persistence tests.
 
-- [ ] `0075` creates dataset identities/revisions, cases, expected properties, prohibited outcomes, grading-plan revisions/graders, metric identities/revisions, component snapshots/dependency refs and environment snapshots/fixture refs.
-- [ ] Import H9 package `EvaluationFixture` assets only from Available H6 Artifact revisions and exact package asset bindings.
-- [ ] Validate schemas, stable keys, case budgets, grading weights, mandatory graders and duplicate case hashes before dataset revision finalization.
-- [ ] Build component snapshots by traversing exact immutable revisions only; mutable health and current pointers are excluded.
-- [ ] Build environment snapshots from source revision, migration head, Cargo.lock hash, feature hash, deployment profile, fixture revisions, clock/seed and capture policy.
-- [ ] Prevent activation/runtime secrets, host paths and environment-variable values from entering snapshots.
-- [ ] Tests prove identical normalized inputs produce identical hashes and any dependency/policy/fixture change produces a new snapshot.
+- [ ] `0075` creates dataset identities/revisions, cases, execution modes, expected/prohibited outcomes, grading-plan revisions/graders, metric identities/revisions, component snapshots/dependencies and environment snapshots/fixture refs.
+- [ ] Import H9 `EvaluationFixture` assets only from Available H6 revisions and exact package asset bindings.
+- [ ] Validate schemas, stable keys, execution mode, case budgets, grading weights, mandatory graders and duplicate case hashes before finalization.
+- [ ] Reject any case that requests write/destructive/external-commitment Tool classes, remote dispatch, credentials, export, notifications, activation or memory write.
+- [ ] Build component snapshots from exact immutable revisions only; mutable health/current pointers are excluded.
+- [ ] Build environment snapshots from source revision, migration head, Cargo.lock hash, feature/deployment hashes, fixture revisions, clock/seed and capture policy.
+- [ ] Prevent secrets, host paths and environment-variable values from entering snapshots.
+- [ ] Tests prove normalized equality/hash stability and any dependency/policy/fixture change produces a new snapshot.
 - [ ] Run and commit.
 
 ### Task 9: Implement durable EvaluationRun execution and non-model graders
 
-**Files:** create migration `0076`, evaluation runner/case worker/deterministic/reference/rubric graders, aggregation and report services.
+**Files:** create migration `0076`, evaluation runner/case worker/non-model graders, aggregation and report services.
 
-- [ ] `0076` creates EvaluationRuns, case attempts, work leases/checkpoints, grades, metric observations, aggregate reports, exclusions and budget links.
+- [ ] `0076` creates EvaluationRuns, checkpoints, case attempts, work leases, grades, metric observations, reports, exclusions and budget links.
 - [ ] Create EvaluationRun only after exact dataset/component/environment validation and H2 budget allocation.
-- [ ] Materialize one case attempt per `(case, repetition)` with deterministic seed and idempotent work item.
-- [ ] Execute cases in isolated evaluation Runs or ReplayRuns according to case input. Production Runs are never mutated.
-- [ ] Deterministic grader evaluates H5 success criteria, schemas, prohibited outcomes, policy/audit references and recorded operation status.
-- [ ] Reference grader compares normalized exact/reference values and approved Artifact hashes/representations.
-- [ ] Rubric grader uses a versioned deterministic rubric engine for typed criteria; arbitrary code or SQL is forbidden.
-- [ ] Persist each grade before aggregation. Worker restart resumes missing graders only.
-- [ ] Aggregate with fixed-point arithmetic. Mandatory fail/inconclusive rules take precedence over weighted threshold.
-- [ ] Produce standard metrics and a bounded EvaluationReport Artifact with provenance.
-- [ ] Test budget isolation, repetitions, crash after produced Run/grade, duplicate work, overflow, incomplete capture and partial report.
+- [ ] Materialize one attempt per `(case, repetition)` with deterministic seed and idempotent work.
+- [ ] Enforce execution mode at composition: FixtureOnly/RecordedReplay/ShadowModel receive deny-all effectful ports; LiveReadOnly receives only read-only H4 fixture/approved operations and no remote port.
+- [ ] Execute cases in isolated evaluation Runs or ReplayRuns; production Runs are never mutated.
+- [ ] Deterministic grader evaluates H5 criteria, schemas, prohibited outcomes, policy/audit references and operation status.
+- [ ] Reference grader compares normalized values and approved Artifact hashes/representations.
+- [ ] Rubric grader uses a versioned typed rubric engine; arbitrary code/SQL is forbidden.
+- [ ] Persist each grade before aggregation. Restart schedules missing graders only.
+- [ ] Aggregate with checked fixed-point arithmetic and mandatory-failure precedence.
+- [ ] Produce standard metrics and an H6 EvaluationReport Artifact with provenance.
+- [ ] Test effect denial, budget isolation, repetitions, crash after Run/grade, duplicate work, overflow, incomplete capture and partial report.
 - [ ] Run and commit.
 
 ### Task 10: Implement independent-model grading and verifier disagreement
 
 **Files:** create independent-model grader, H3 integration and tests; no new migration.
 
-- [ ] Define an exact structured grading schema containing disposition, score, property results, evidence references and concise rationale.
-- [ ] Build grader context from approved outputs/evidence only. Exclude producer scratchpad, hidden reasoning and unneeded conversation history.
-- [ ] Route through H3 with exact minimum-quality and independence requirements from the grading-plan revision.
-- [ ] Reserve/reconcile evaluation budget separately from the producer Run.
-- [ ] Validate structured output, evidence references, score bounds and contradiction with deterministic facts.
-- [ ] A model grade cannot change a deterministic/policy grade; disagreement is stored and processed by `GraderDisagreementPolicy`.
-- [ ] Safety refusal, invalid output, budget exhaustion and provider Unknown produce Inconclusive/Error, not a guessed score.
-- [ ] Tests cover different model/provider selection, producer scratchpad exclusion, unsupported independence, disagreement escalation and restart after model response.
+- [ ] Define an exact structured schema for disposition, score, property results, evidence references and concise rationale.
+- [ ] Build grader context from approved outputs/evidence only; exclude producer scratchpad, hidden reasoning and unneeded history.
+- [ ] Route through H3 with exact minimum quality and independence from the grading-plan revision.
+- [ ] Reserve/reconcile EvaluationRun budget separately from the producer Run.
+- [ ] Validate output schema, evidence references, scores and contradiction with deterministic facts.
+- [ ] A model grade cannot change deterministic/policy grade; disagreement follows the explicit policy and remains visible.
+- [ ] Safety refusal, invalid output, budget exhaustion and provider Unknown produce Inconclusive/Error, never a guessed score.
+- [ ] Tests cover different model/provider, scratchpad exclusion, unsupported independence, disagreement escalation and restart after response.
 - [ ] Run and commit.
 
-### Task 11: Implement risk-oriented Run verification and bounded correction
+### Task 11: Implement risk-oriented verification, completion consumption and correction
 
-**Files:** create migration `0077`, risk/planner/runner/completion-gate/correction services and tests.
+**Files:** create migration `0077`, risk/planner/runner/completion/correction services; modify authoritative H1 success command; add tests.
 
-- [ ] `0077` creates verification plan identities/revisions/checks, attempts, findings, checked-reference links, correction requests and correction-budget links.
-- [ ] Compute risk inputs from actual plan/actions/classifications/commitments/Unknown states/evidence trust, not from model self-report alone.
-- [ ] Resolve the exact H9 VerificationProfile revision and create the minimum check matrix. Model suggestions may append checks only.
-- [ ] Execute deterministic checks first, then Artifact/evidence/readback, then independent model/cross-check/human review as required.
-- [ ] External-state readback uses H4/H9A read/reconciliation operations under fresh authorization; it does not repeat the original write.
-- [ ] Persist all findings and checked references before disposition.
-- [ ] Integrate `RunCompletionGateService` with the authoritative H1 completion command: only allowed verification dispositions can create terminal success.
-- [ ] `NeedsCorrection` creates one bounded `CorrectionRequest`; H5 replanning/new steps perform correction under fresh policy/budget.
-- [ ] Enforce attempt count, additional steps, wall-clock and allocation ceilings. Mandatory criteria remain unchanged across corrections.
-- [ ] Tests cover false-success prevention, unresolved Unknown, scanner outage, critical human review, correction exhaustion and restart.
+- [ ] `0077` creates verification plan identities/revisions/checks, attempts, findings, checked-reference links, one-use verified completions, correction requests and budget links.
+- [ ] Compute risk from actual plan/actions/classifications/commitments/Unknown/evidence trust using an exact calculator revision, not model self-report alone.
+- [ ] Resolve the exact H9 VerificationProfile and create the minimum matrix. Model suggestions may append checks only.
+- [ ] Execute deterministic checks first, then Artifact/evidence/readback, then independent model/cross-check/human review.
+- [ ] External-state readback uses H4/H9A read/reconciliation operations under fresh authorization; it never repeats the original write.
+- [ ] Persist findings/references before disposition.
+- [ ] For Verified/VerifiedWithWarnings, create one `VerifiedRunCompletion` bound to exact expected RunVersion, result hash, allowed status and expiry.
+- [ ] Modify H1 completion command/store transaction: success statuses require and atomically consume the matching completion; reuse, mismatch, expiry or wrong status fails before terminal mutation.
+- [ ] NeedsCorrection creates one bounded CorrectionRequest; H5 replanning/new work performs correction under fresh policy/budget.
+- [ ] Enforce attempts, additional steps, wall clock and allocation. Mandatory criteria remain unchanged.
+- [ ] Tests cover direct completion bypass, token reuse, result/version mismatch, false success, Unknown, scanner outage, critical human review, correction exhaustion and restart.
 - [ ] Run and commit.
 
 ### Task 12: Implement regression baselines, gates and activation evidence
 
-**Files:** create migration `0078`, baseline/gate/evidence services, component-owner integrations and tests.
+**Files:** create migration `0078`, baseline/gate/evidence services, replay persistence and component-owner integrations.
 
-- [ ] `0078` creates baseline identities/revisions, gate identities/revisions/rules, gate runs, comparisons, activation evidence, replay manifests/runs/checkpoints and substitution rows.
-- [ ] Baselines reference exact completed EvaluationRuns with compatible datasets/metrics/environments and minimum sample counts.
-- [ ] Gate runner validates freshness and launches required candidate EvaluationRuns with exact seeds/repetitions.
-- [ ] Compare integer/fixed-point metrics by explicit rules. Store numerator/denominator/sample data used for every comparison.
-- [ ] Hard-fail policy compliance, unauthorized action, secret leak, duplicate side effect and false-success rules regardless of weighted quality.
-- [ ] Produce immutable `RegressionGateEvidence` bound to exact candidate/dependency hash, gate revision, baseline and expiry.
-- [ ] Add integration ports for H3 model binding, H4 Tool, H7 Trigger, H9 package/extension/remote activation and H9A route activation. Owners must call `require_passing_evidence` before creating an active revision.
-- [ ] Evidence does not activate automatically and is rejected after any candidate/dependency/policy/dataset/grader/environment change.
-- [ ] Tests cover stale baseline, insufficient samples, hard blocker, warning pass, evidence expiry, dependency change and concurrent activation attempts.
+- [ ] `0078` creates baseline identities/revisions/metric links, gate identities/revisions/rules/runs/comparisons, activation evidence and replay manifests/runs/checkpoints/substitutions.
+- [ ] Baselines reference exact completed EvaluationRuns with compatible datasets/metrics/environments and minimum samples.
+- [ ] Gate runner validates freshness and launches required candidate evaluations with exact seeds/repetitions.
+- [ ] Compare integer/fixed-point metrics by stable-keyed rules; store exact inputs/sample counts for every comparison.
+- [ ] Hard-fail policy compliance, unauthorized action, secret leak, duplicate side effect and false success regardless of weighted quality.
+- [ ] Produce immutable evidence bound to exact candidate/dependency hash, gate revision, baseline and expiry.
+- [ ] Integrate gate checks into H3 model binding, H4 Tool, H7 Trigger, H9 package/extension/remote and H9A route activation commands. Activation creates a new revision; previous immutable revisions are unchanged.
+- [ ] Evidence never activates automatically and is rejected after candidate/dependency/policy/dataset/grader/environment change.
+- [ ] Tests cover stale baseline, insufficient samples, hard blocker, warning pass, expiry, dependency change and concurrent activation.
 - [ ] Run and commit.
 
-### Task 13: Implement safe replay and model-only shadow mode
+### Task 13: Implement safe replay and exact model-only shadow mode
 
-**Files:** create replay manifest/runner/substitution/shadow/safety services and replay tests; use tables from `0078`.
+**Files:** create replay manifest/runner/substitution/shadow/safety services and tests; use `0078` tables.
 
-- [ ] Build replay manifests from exact H1 event ranges, H3 context snapshots, H10 capture records and H4/H9A observations.
-- [ ] Validate completeness and classify missing content as NotReplayable/Inconclusive before execution.
-- [ ] `ProjectionOnly` reuses H1 logical replay and compares resulting state hashes without executing application effects.
-- [ ] `DeterministicEvaluation` re-runs pure validators/graders with recorded model/tool/remote/human observations.
-- [ ] `ShadowModel` invokes only the candidate H3 model under evaluation policy/budget and supplies recorded Tool/remote/human outputs.
-- [ ] Install a deny-all replay implementation for Tool commit, remote dispatch, secret use, export, notification, trigger, activation and memory write ports; tests assert every call is denied before I/O.
-- [ ] Preserve recorded Unknown and conflicting outcomes. No substitution may convert them to success without stored reconciliation evidence.
-- [ ] Persist replay checkpoints after each event/step/grade so restart resumes without repeated model call or duplicated result.
-- [ ] Compare canonical outputs/events/metrics against source and record differences without mutating source Run.
-- [ ] Tests cover crash recovery, model-only allowance, attempted Tool/remote call, missing capture, purge, Unknown and no external network in deterministic modes.
+- [ ] Build manifests from exact H1 event ranges, H3 context snapshots, H10 capture records and H4/H9A observations.
+- [ ] Validate completeness and return NotReplayable/Inconclusive before execution when required data is absent or purged.
+- [ ] ProjectionOnly reuses H1 logical replay and compares state hashes without effects.
+- [ ] DeterministicEvaluation re-runs pure validators/graders with recorded observations.
+- [ ] ShadowModel requires an exact candidate component snapshot, invokes only H3 model execution under evaluation policy/budget and feeds recorded Tool/remote/human outputs.
+- [ ] Install deny-all implementations for Tool commit, remote dispatch, secret use, export, notification, trigger, activation and memory write; assert denial before I/O.
+- [ ] Preserve recorded Unknown/conflicts; no substitution converts them to success without stored reconciliation.
+- [ ] Persist checkpoints after each event/step/grade/model call so restart cannot repeat a model call or duplicate a result.
+- [ ] Compare canonical outputs/events/metrics against source without mutating source Run.
+- [ ] Tests cover crash recovery, missing candidate snapshot, attempted effects, missing capture, purge, Unknown and zero network in deterministic modes.
 - [ ] Run and commit.
 
-### Task 14: Build Run explanations, operational dashboards and management surfaces
+### Task 14: Build Run explanations, operational projections and management surfaces
 
-**Files:** create migration `0079`, explanation/dashboard repositories/services, HTTP/CLI routes and tests.
+**Files:** create migration `0079`, explanation/operations repositories/services, HTTP/CLI routes and tests.
 
-- [ ] `0079` creates Run explanation snapshots/sections/reference links, operational projection revisions, daily/hourly aggregates and projection cursors.
-- [ ] Explanation builder reads exact H1 plan/events/checkpoint, H2 decisions/budgets/approvals, H3 routing/usage, H4 tools, H5 delegations, H6 evidence/Artifacts, H7 human waits, H8 connection-use audit, H9 snapshot and H9A remote records.
-- [ ] Generate only supported statements with exact references and safe summaries. Mark missing, purged, policy-hidden and unresolved information explicitly.
-- [ ] Viewer policy determines section visibility. A new viewer policy or RunVersion creates a new explanation snapshot.
-- [ ] Exclude hidden reasoning, raw secrets, credential metadata, backend keys, unrestricted external text and sensitive policy internals.
-- [ ] Build operational projections for Run throughput/latency/outcomes, queues, model/tool/sandbox usage, human waits, budgets, Artifact dispositions and remote-agent metrics.
-- [ ] Metrics projection uses bounded dimensions and never stores raw content or high-cardinality labels.
+- [ ] `0079` creates explanation snapshots/sections/reference links, operational projection definitions/revisions/cursors and hourly/daily aggregates.
+- [ ] Explanation builder reads exact H1 plan/events/checkpoint, H2 policy/budget/approval, H3 routing/usage, H4 Tool, H5 delegation, H6 evidence/Artifacts, H7 waits, H8 usage audit, H9 snapshot and H9A remote records.
+- [ ] Generate only supported statements with exact references/safe summaries. Mark missing, purged, hidden and unresolved data explicitly.
+- [ ] Viewer policy determines section visibility. New viewer policy or RunVersion creates a new snapshot.
+- [ ] Exclude hidden reasoning, secrets, credential metadata, backend keys, unrestricted external text and sensitive rule internals.
+- [ ] Build projections for Run throughput/latency/outcomes, queues, model/tool/sandbox usage, human waits, budgets, Artifact dispositions and required remote metrics.
+- [ ] Projection consumes source outboxes with idempotent cursors. Rebuild is possible; lag never changes source state.
+- [ ] Dimensions are bounded and contain no content/high-cardinality identifiers.
 - [ ] Add endpoints:
 
 ```text
@@ -1393,8 +1634,8 @@ POST /v1/audit:verify-integrity
 GET  /v1/operations/summary
 ```
 
-- [ ] Add matching CLI commands with role/policy checks and bounded pagination.
-- [ ] Tests cover explanation support, viewer redaction, purged evidence, unresolved warnings, projection lag/rebuild and remote metric cardinality.
+- [ ] Add matching CLI commands with role/policy checks, idempotency for POST and bounded pagination.
+- [ ] Tests cover supported explanation, viewer redaction, purge, warnings, lag/rebuild and remote cardinality.
 - [ ] Run and commit.
 
 ### Task 15: Add Checkpoint V9, RLS, boundary scripts, CI and H10 acceptance
@@ -1419,47 +1660,49 @@ BuildRunExplanation
 RefreshOperationalProjection
 ```
 
-- [ ] Work payloads contain IDs, exact revisions, hashes, cursors, deadlines and bounded safe codes only—no raw content, secret, credential handle, exporter token, prompt, remote frame or hidden reasoning.
-- [ ] Extend H9A `RunCheckpointV8` to `RunCheckpointV9` with active verification plan/attempt IDs, pending correction request ID and latest explanation snapshot ID. Telemetry queues, audit chain state and evaluation case state are not embedded in Run checkpoints.
-- [ ] Add a separate `EvaluationCheckpoint` containing case/repetition cursor, completed grader keys, aggregate cursor, replay checkpoint ID and budget snapshot ID.
-- [ ] V8 and older Run checkpoints remain readable. Evaluation checkpoint schema is versioned independently.
-- [ ] `0080` forces RLS, append-only/immutability triggers and indexes for capture source lookup, audit chain append/verify, evaluation queues, verification completion gate, gate evidence freshness, replay restart and explanation query.
+- [ ] Work payloads contain IDs, revisions, hashes, cursors, deadlines and bounded safe codes only—no raw content, secret, credential handle, exporter token, prompt, remote frame or hidden reasoning.
+- [ ] Extend H9A `RunCheckpointV8` to V9 with active verification plan/attempt IDs, verified-completion ID, pending correction ID and latest explanation ID. Telemetry/audit/evaluation queues are not embedded.
+- [ ] Persist `EvaluationCheckpoint` independently; V8 and older Run checkpoints remain readable.
+- [ ] `0080` forces RLS, append-only/immutability triggers and indexes for capture source, audit append/verify, evaluation queues, completion consumption, gate freshness, replay restart and explanation/projection query.
 - [ ] Boundary scripts reject:
-  - OTel/exporter types outside adapter crates;
-  - user content or IDs as metric labels;
-  - optional capture without policy decision;
-  - hidden reasoning/provider reasoning fields;
+  - OTel/exporter types outside adapters;
+  - content or IDs as metric labels;
+  - optional capture without policy;
+  - hidden/provider reasoning fields;
   - update/delete of audit records/checkpoints;
-  - unsigned fabricated audit checkpoints;
+  - fabricated signatures;
+  - effectful evaluation modes;
   - model grade overriding deterministic/policy failure;
-  - Run success without mandatory verification;
-  - correction lowering mandatory criteria;
+  - success without exact VerifiedRunCompletion;
+  - weakened correction criteria;
   - activation without exact gate evidence;
   - replay Tool/remote/credential/export/notification/activation/memory calls;
-  - dashboards used as authoritative budget/Run state.
+  - dashboard state used as authoritative budget/Run truth.
 - [ ] Mandatory acceptance scenario:
 
 ```text
 production-like AgentRun
 → correlated traces/metrics without content labels
 → protected model/tool/internal and A2A work
-→ durable security audit source records
+→ durable audit intents and hash-chain records
 → high-risk verification plan
 → deterministic checks + evidence + independent verifier
 → bounded correction
-→ verified terminal outcome
+→ one-use verified completion
+→ authoritative terminal Run
 → user-facing explanation
-→ capture-policy-aware evaluation replay
+→ capture-aware evaluation replay
 → component regression comparison
 → activation denied after injected quality/policy regression
-→ audit chain verification after worker restart
+→ audit-chain verification after restart
 ```
 
-- [ ] Failure scenario injects telemetry exporter outage; Run completes normally and drop counters increase.
-- [ ] Audit scenario alters a copied record/checkpoint and verifier detects the exact sequence/signature failure.
-- [ ] Replay scenario proves recorded write/remote dispatch occurs exactly zero times while projection and grading complete.
-- [ ] Remote scenario records dispatch, Unknown, reconciliation, input wait, Artifact rejection and duplicate prevention without credentials or external IDs as metric labels.
-- [ ] Acceptance proves no hidden reasoning capture, no false success, no gate reuse after dependency change, no model grader override, content purge behavior and side-effect-free replay.
+- [ ] Telemetry outage scenario: Run completes normally and drop counters increase.
+- [ ] Audit scenario: copied record/checkpoint tampering is detected at exact sequence/signature.
+- [ ] Evaluation scenario: attempted effectful case fails before I/O.
+- [ ] Replay scenario: recorded write/remote dispatch occurs exactly zero times while grading completes.
+- [ ] Remote scenario records dispatch, Unknown, reconciliation, input wait, Artifact rejection and duplicate prevention without credentials/external IDs as metric labels.
+- [ ] Acceptance proves no hidden reasoning, no false success, no completion reuse, no gate reuse after dependency change, purge behavior and side-effect-free replay.
 - [ ] Required CI commands:
 
 ```bash
@@ -1468,15 +1711,18 @@ bash scripts/verify-telemetry-cardinality.sh
 bash scripts/verify-audit-append-only.sh
 bash scripts/verify-audit-integrity.sh
 bash scripts/verify-evaluation-boundary.sh
+bash scripts/verify-evaluation-effect-boundary.sh
 bash scripts/verify-replay-side-effect-boundary.sh
 bash scripts/verify-no-hidden-reasoning-capture.sh
 bash scripts/verify-regression-gate-boundary.sh
+bash scripts/verify-run-completion-gate.sh
 cargo test --workspace --all-features
 cargo test --workspace --no-default-features --features provider-openai-compatible
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
   cargo test --test h10_acceptance --test observability_evaluation_rls \
              --test audit_chain_integrity --test verification_completion_gate \
-             --test replay_side_effect_denial --test regression_gate_activation
+             --test replay_side_effect_denial --test regression_gate_activation \
+             --test evaluation_effect_boundary
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -1490,12 +1736,12 @@ git commit -m "test(evaluation): add H10 integrity and regression gates"
 ## Migration ownership
 
 ```text
-0073 Task 6  Capture policies, exporter bindings, capture records and operational projections
-0074 Task 7  Security audit streams, source intents, records and integrity checkpoints
-0075 Task 8  Evaluation datasets, cases, grading plans, metrics, component/environment snapshots
-0076 Task 9  Evaluation runs, attempts, grades, metric observations and reports
-0077 Task 11 Verification plans, attempts, findings and correction requests
-0078 Task 12 Regression baselines/gates/evidence and replay manifests/runs/checkpoints
+0073 Task 6  Capture policies, exporter bindings, capture records and delivery state
+0074 Task 7  Security audit streams, intents, records and integrity checkpoints
+0075 Task 8  Evaluation datasets, cases, grading plans, metrics and exact snapshots
+0076 Task 9  Evaluation runs, checkpoints, attempts, grades, metrics and reports
+0077 Task 11 Verification plans, attempts, findings, verified completions and corrections
+0078 Task 12 Regression baselines/gates/evidence and replay persistence
 0079 Task 14 Run explanations and operational read models
 0080 Task 15 RLS, indexes, append-only guards and Run/component bindings
 ```
@@ -1504,100 +1750,102 @@ No later task edits an applied migration.
 
 ## H10 completion definition
 
-H10 is complete only when all fifteen tasks pass and the following flows are proven:
+H10 is complete only when all fifteen tasks pass and these flows are proven:
 
 ```text
 Operational:
 canonical subsystem records
 → bounded correlation
 → privacy/cardinality policy
-→ best-effort trace/metric/log export
-→ non-authoritative operational projection
+→ best-effort telemetry delivery
+→ lagging operational projection
 
 Audit:
 protected source transaction
 → durable audit intent
-→ ordered append-only audit record
+→ ordered append-only record
 → hash chain
 → H8-backed signed checkpoint
-→ independent integrity verification
+→ independent verification
 
 Evaluation:
-immutable dataset revision
-+ exact component snapshot
-+ exact environment snapshot
-+ H2 evaluation budget
+immutable dataset
++ exact component/environment
++ non-effectful execution mode
++ H2 budget
 → durable repetitions
-→ deterministic/reference/rubric/independent grading
+→ deterministic/reference/rubric/independent grades
 → fixed-point metrics
-→ immutable report
+→ immutable H6 report
 
 Verification:
-completed candidate outcome
-→ deterministic risk classification
+candidate terminal result
+→ deterministic risk
 → exact verification plan
-→ ordered checks/readback/independent verification
-→ bounded correction or verified disposition
-→ authoritative H1 terminal command
+→ checks/readback/independent verification
+→ bounded correction or allowed disposition
+→ one-use VerifiedRunCompletion
+→ authoritative H1 terminal transaction
 
 Regression:
-exact candidate snapshot
+exact candidate
 + fresh baseline/gate
 → evaluation evidence
 → hard safety/policy blockers
 → immutable gate evidence
-→ owning subsystem activation check
+→ owning-subsystem activation check
 
 Replay:
 source Run/events/captures
 → completeness validation
 → recorded substitutions
-→ no effectful ports
-→ optional model-only shadow
+→ deny-all effectful ports
+→ optional exact model-only shadow
 → restart-safe comparison/report
 ```
 
 Required invariants:
 
-1. H1–H9A journals remain authoritative; H10 does not create a parallel execution truth.
+1. H1–H9A journals remain authoritative; H10 creates no parallel execution truth.
 2. Telemetry failure never changes Run behavior.
 3. Metric labels have bounded cardinality and no content/IDs.
-4. Optional content capture always has an exact policy decision and H6 lifecycle.
+4. Optional capture always has exact policy and H6 lifecycle.
 5. No capture mode stores hidden chain-of-thought or secret material.
-6. Disabled capture still preserves mandatory audit/accounting references.
-7. Audit intents are source-linked and idempotent.
+6. Disabled capture preserves mandatory audit/accounting references.
+7. Audit intent and chain append are separate, source-linked and idempotent.
 8. Audit records/checkpoints are append-only and tamper-evident.
 9. Checkpoint signing keys remain behind H8.
 10. Evaluation datasets/components/environments are immutable and reproducible.
-11. Evaluation Runs have isolated H2 budgets and cannot mutate tested components.
-12. Deterministic/policy failures outrank model judgment.
-13. Independent graders exclude producer scratchpad and satisfy exact independence policy.
-14. Grader disagreement remains visible.
-15. Fixed-point metrics avoid authoritative floating-point drift.
-16. Run success requires mandatory verification.
-17. Risk class cannot be reduced by a model.
-18. Unknown effects reconcile before correction or verification success.
-19. Correction is bounded and creates explicit new work/history.
-20. Mandatory criteria cannot be weakened by correction.
-21. Gate evidence is bound to exact candidate/dependencies and expires.
-22. Gate evidence never activates a component automatically.
-23. Policy/secret/duplicate/false-success regressions hard-fail gates.
-24. Safe replay is distinct from logical replay.
-25. Replay cannot execute Tools, remote agents, credentials, exports, notifications, activations or memory writes.
-26. Shadow mode permits only explicitly authorized model calls.
-27. Insufficient capture produces NotReplayable/Inconclusive, not invented data.
-28. Run explanations cite exact records and expose no hidden reasoning.
-29. Dashboards are lagging projections, not authority.
-30. H9A remote metrics preserve correlation without credentials or high-cardinality external IDs.
-31. Purge removes capture bytes while retaining content-free integrity/history references.
-32. Worker restart does not duplicate audit records, case attempts, grades, verification attempts, gate evidence or replay model calls.
-33. Replay and diagnostics perform no production side effects.
-34. CI requires no public telemetry collector, model, remote agent or permanent credential.
+11. Evaluation modes cannot execute writes, commitments or remote delegation.
+12. Evaluation Runs have isolated H2 budgets and cannot mutate tested components.
+13. Deterministic/policy failures outrank model judgment.
+14. Independent graders exclude producer scratchpad and satisfy exact independence.
+15. Grader disagreement remains visible.
+16. Fixed-point metrics use deterministic rounding.
+17. Run success requires exact one-use verified completion.
+18. Risk class cannot be reduced by a model.
+19. Unknown effects reconcile before correction or success.
+20. Correction is bounded and creates explicit new history.
+21. Mandatory criteria cannot be weakened.
+22. Gate evidence is exact, expiring and dependency-bound.
+23. Gate evidence never activates automatically or mutates old revisions.
+24. Policy/secret/duplicate/false-success regressions hard-fail.
+25. Safe replay is distinct from logical replay.
+26. Replay cannot execute Tools, remote agents, credentials, exports, notifications, activations or memory writes.
+27. Shadow mode requires exact candidate snapshot and only permits guarded H3 calls.
+28. Insufficient capture produces NotReplayable/Inconclusive, not invented data.
+29. Run explanations cite exact records and expose no hidden reasoning.
+30. Dashboards are lagging projections, not authority.
+31. H9A metrics preserve useful classes without credentials/high-cardinality external IDs.
+32. Purge removes capture bytes while retaining content-free integrity/history references.
+33. Restart does not duplicate audit records, attempts, grades, verified completions, gate evidence or shadow model calls.
+34. Replay/diagnostics perform no production side effects.
+35. CI requires no public collector, model, remote agent or permanent credential.
 
 ## Explicit non-goals
 
-H10 does not implement public multi-tenant analytics SaaS, unrestricted raw production tracing, hidden chain-of-thought capture, arbitrary SQL dashboards, automatic online prompt/router learning, self-modifying evaluation datasets, automatic activation after a passing gate, effectful canary execution, replay of external writes, remote-agent load testing against public services, probabilistic billing authority, permanent telemetry credentials, managed incident response, public benchmark publication or H11 product-console polish.
+H10 does not implement public multi-tenant analytics SaaS, unrestricted raw production tracing, hidden chain-of-thought capture, arbitrary SQL dashboards, automatic online prompt/router learning, self-modifying evaluation datasets, automatic activation after a passing gate, effectful canary execution, replay of external writes, public remote-agent load tests, probabilistic billing authority, permanent telemetry credentials, managed incident response, public benchmark publication or H11 product-console polish.
 
 ## Documentation-only boundary
 
-Creating this document does not authorize implementation. During the documentation-only phase, do not create `feat/h10-observability-evaluation`, add OpenTelemetry/exporter dependencies, create migrations `0073`–`0080`, start a collector, capture production content, sign checkpoints, run EvaluationRuns, invoke a model grader, execute replay/shadow mode, change component activation behavior, modify CI or run H10 tests.
+Creating this document does not authorize implementation. During the documentation-only phase, do not create `feat/h10-observability-evaluation`, add OpenTelemetry/exporter dependencies, create migrations `0073`–`0080`, start a collector, capture production content, sign checkpoints, run EvaluationRuns, invoke a model grader, execute replay/shadow mode, change completion/activation behavior, modify CI or run H10 tests.
