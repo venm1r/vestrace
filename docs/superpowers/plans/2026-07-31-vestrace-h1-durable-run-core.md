@@ -4,30 +4,31 @@
 
 **Goal:** Implement the authoritative, restart-safe `AgentRun` lifecycle with steps, append-only execution events, durable checkpoints, optimistic concurrency, leases, PostgreSQL work items and logical replay.
 
-**Architecture:** Extend the existing v0.1 domain, application and infrastructure crates instead of introducing a second orchestration stack. Logical Run mutations are committed through one Vestrace-owned `RunStorePort`: the updated aggregate, exactly one canonical `RunEvent`, optional step/checkpoint changes and newly queued work items are written atomically. Operational worker ownership lives in a separate lease table so heartbeats do not increment logical `run_version` or conflict with state transitions.
+**Architecture:** Extend the existing v0.1 domain, application and infrastructure crates. Logical Run mutations are committed through one Vestrace-owned `RunStorePort`: the updated aggregate, exactly one canonical `RunEvent`, optional step/checkpoint changes and follow-up work are persisted atomically. Worker leases and queue polling are operational state in separate tables, so heartbeats and retries do not increment logical `RunVersion` or affect replay.
 
-**Tech Stack:** Existing Vestrace v0.1 Rust workspace, Rust Edition 2024, Tokio, Serde, Schemars, SQLx, PostgreSQL 17, tracing, proptest, testcontainers or the repository PostgreSQL test harness.
+**Tech Stack:** Existing Vestrace v0.1 Rust workspace, Rust Edition 2024, Tokio, Serde, Schemars, SQLx, PostgreSQL 17, tracing, proptest and the repository PostgreSQL integration-test harness.
 
 ## Global Constraints
 
 - Complete all five Vestrace v0.1 plans before implementing H1.
-- PostgreSQL remains the source of truth for Run state, steps, events, checkpoints, leases and work items.
-- Domain and application code must not depend on SQLx, Axum, Rig or a concrete model/tool provider.
-- H1 does not implement planning, model invocation, tool execution, approvals, policy decisions or resource accounting; it provides stable references and lifecycle seams consumed by later plans.
-- Every logical Run mutation increments `RunVersion` exactly once and appends exactly one `RunEvent` with the same sequence number.
-- Lease acquisition and heartbeat are operational mutations and must not change `RunVersion`.
-- A Run mutation, its event, checkpoint changes and queued work items commit in one database transaction.
-- Run events and checkpoints are append-only. Applied migrations are forward-only and never edited.
-- `WaitingForInput`, `WaitingForApproval` and `WaitingForDependency` are durable normal states, not errors.
-- Terminal Run states cannot transition to another state.
-- External side effects are outside H1; restart tests use deterministic in-process handlers only.
-- All workspace-owned tables use forced RLS and the existing scoped transaction context.
-- CI and acceptance tests must not require an external AI provider, Rig, MCP server or network access.
-- Branch name: `feat/h1-durable-run-core`.
+- PostgreSQL is authoritative for Run state, steps, events, checkpoints, leases and work items.
+- Domain and application crates must not depend on SQLx, Axum, Rig or concrete model/tool providers.
+- H1 does not implement plans, models, tools, policies, approvals, budgets, artifacts or delegation behavior; it creates stable IDs and ports for later plans.
+- Creation starts at `RunVersion(1)` and emits `run.created` with sequence `1`.
+- Every later logical mutation increments `RunVersion` once and appends exactly one `RunEvent` whose sequence equals the new version.
+- Lease acquisition, heartbeat, queue leasing, retry scheduling and queue completion are operational changes and do not emit `RunEvent` or change `RunVersion`.
+- A logical Run mutation, its event, step/checkpoint changes and newly created follow-up work items commit in one transaction.
+- Run events and checkpoints are append-only. Applied migrations are never edited.
+- `WaitingForInput`, `WaitingForApproval` and `WaitingForDependency` are durable normal states.
+- Terminal Run states cannot transition.
+- External side effects are outside H1; restart tests use deterministic in-process handlers.
+- All H1 workspace tables use forced RLS and existing scoped transactions.
+- CI must not require an AI provider, Rig, MCP server or internet access.
+- Branch: `feat/h1-durable-run-core`.
 
 ---
 
-## Locked file structure additions
+## Locked file structure
 
 ```text
 crates/vestrace-domain/src/
@@ -57,9 +58,6 @@ crates/vestrace-infrastructure/src/postgres/
   run/lease.rs
   run/work_queue.rs
 
-crates/vestrace-cli/src/commands/
-  worker.rs
-
 migrations/
   0019_agent_runs_and_steps.sql
   0020_run_events_and_checkpoints.sql
@@ -74,42 +72,109 @@ tests/
   run_restart.rs
 ```
 
-## Normative H1 contracts
+## Normative contracts
 
-### Logical version and journal sequence
+### Logical versioning
 
 ```rust
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct RunVersion(u64);
 
 impl RunVersion {
     pub const INITIAL: Self = Self(1);
+
+    pub fn new(value: u64) -> Result<Self, DomainError> {
+        if value == 0 {
+            Err(DomainError::InvalidArgument("run version must be positive".into()))
+        } else {
+            Ok(Self(value))
+        }
+    }
+
     pub const fn value(self) -> u64 { self.0 }
+
     pub fn next(self) -> Result<Self, DomainError> {
         self.0.checked_add(1).map(Self).ok_or_else(|| {
             DomainError::InvalidArgument("run version overflow".into())
         })
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct ResumeCursor(u64);
+
+impl ResumeCursor {
+    pub const BEFORE_FIRST: Self = Self(0);
+    pub const fn from_version(version: RunVersion) -> Self { Self(version.value()) }
+    pub const fn value(self) -> u64 { self.0 }
+}
 ```
 
-For every committed logical mutation:
+### Core value objects
 
-```text
-new_run_version = previous_run_version + 1
-run_event.sequence = new_run_version
+```rust
+pub struct RunFailure {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+pub struct RunTerminalResult {
+    pub summary: String,
+    pub output_references: Vec<RunReference>,
+    pub warnings: Vec<String>,
+    pub unmet_criteria: Vec<String>,
+}
+
+pub struct ParentRunLink {
+    pub parent_run_id: AgentRunId,
+    pub parent_step_id: RunStepId,
+}
+
+pub enum RunActorRef {
+    Principal(PrincipalId),
+    AgentSnapshot(AgentRuntimeSnapshotId),
+    Worker(WorkerId),
+    System,
+}
+
+pub enum RunReferenceKind {
+    Context,
+    Artifact,
+    Approval,
+    ModelInvocation,
+    ToolInvocation,
+    SubRun,
+    External,
+}
+
+pub struct RunReference {
+    pub id: RunReferenceId,
+    pub kind: RunReferenceKind,
+}
 ```
 
-Creation is version `1` and emits `run.created` with sequence `1`.
-
-### Operational leases
-
-`run_leases` is separate from `agent_runs`. Lease heartbeat changes only `run_leases.heartbeat_at`, `lease_until` and `generation`. It never updates `agent_runs.run_version` and never emits a logical `RunEvent`.
+Strings in `RunFailure` and `RunTerminalResult` are limited to 32 KiB each. Empty machine codes and blank terminal summaries are invalid.
 
 ### Atomic commit boundary
 
 ```rust
+pub struct NewRunCommit {
+    pub idempotency_key: String,
+    pub run: AgentRun,
+    pub event: RunEvent,
+    pub enqueue: Vec<WorkItem>,
+}
+
+pub enum RunStepChange {
+    InsertMany(Vec<RunStep>),
+    Replace(RunStep),
+}
+
 pub struct RunCommit {
     pub expected_version: RunVersion,
     pub run: AgentRun,
@@ -117,6 +182,13 @@ pub struct RunCommit {
     pub event: RunEvent,
     pub checkpoint: Option<RunCheckpoint>,
     pub enqueue: Vec<WorkItem>,
+    pub cancel_pending_work: bool,
+}
+
+pub struct AgentRunSnapshot {
+    pub run: AgentRun,
+    pub steps: Vec<RunStep>,
+    pub checkpoint: Option<RunCheckpoint>,
 }
 
 #[async_trait::async_trait]
@@ -125,7 +197,7 @@ pub trait RunStorePort: Send + Sync {
         &self,
         context: &RequestContext,
         commit: NewRunCommit,
-    ) -> Result<AgentRun, ApplicationError>;
+    ) -> Result<AgentRunSnapshot, ApplicationError>;
 
     async fn load(
         &self,
@@ -143,12 +215,12 @@ pub trait RunStorePort: Send + Sync {
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
-        after: Option<ResumeCursor>,
+        after: ResumeCursor,
     ) -> Result<Vec<RunEvent>, ApplicationError>;
 }
 ```
 
-No application service may update a Run table directly or append an event outside this port.
+The store validates that `event.run_version == commit.run.version`, `event.sequence == ResumeCursor::from_version(commit.run.version)`, and every persisted step belongs to the Run and workspace.
 
 ---
 
@@ -162,9 +234,8 @@ No application service may update a Run table directly or append an event outsid
 - Test: inline unit and property tests
 
 **Interfaces:**
-- Consumes existing `WorkspaceId`, `Timestamp` and `DomainError`.
-- Produces `AgentRunId`, `RunStepId`, `RunEventId`, `RunCheckpointId`, `PlanRevisionId`, `AgentRuntimeSnapshotId`, `WorkItemId`, `WorkerId`, `BudgetSnapshotId`, `ResourceUsageSnapshotId` and `RunReferenceId`.
-- Produces `RunVersion`, `ResumeCursor`, `RunExecutionMode`, `RunStatus` and `RunStepStatus`.
+- Produces IDs `AgentRunId`, `RunStepId`, `RunEventId`, `RunCheckpointId`, `PlanRevisionId`, `AgentRuntimeSnapshotId`, `WorkItemId`, `WorkerId`, `BudgetSnapshotId`, `ResourceUsageSnapshotId`, `RunReferenceId`.
+- Produces `RunVersion`, `ResumeCursor`, `RunExecutionMode`, `RunStatus`, `RunStepStatus`.
 
 - [ ] **Step 1: Write failing transition tests**
 
@@ -175,8 +246,8 @@ fn running_may_wait_for_input() {
 }
 
 #[test]
-fn terminal_run_cannot_transition() {
-    for status in [
+fn terminal_states_are_closed() {
+    for terminal in [
         RunStatus::Succeeded,
         RunStatus::SucceededWithWarnings,
         RunStatus::Partial,
@@ -184,12 +255,12 @@ fn terminal_run_cannot_transition() {
         RunStatus::Cancelled,
         RunStatus::Expired,
     ] {
-        assert!(!status.can_transition_to(RunStatus::Running));
+        assert!(!terminal.can_transition_to(RunStatus::Running));
     }
 }
 
 #[test]
-fn unknown_step_may_be_reconciled() {
+fn unknown_step_can_be_reconciled() {
     assert!(RunStepStatus::Unknown.can_transition_to(RunStepStatus::Succeeded));
     assert!(RunStepStatus::Unknown.can_transition_to(RunStepStatus::Failed));
 }
@@ -201,52 +272,13 @@ Run:
 cargo test -p vestrace-domain run::status
 ```
 
-Expected: FAIL because the Run types do not exist.
+Expected: FAIL because Run types are absent.
 
-- [ ] **Step 2: Add the Run identifier newtypes**
+- [ ] **Step 2: Extend the existing UUID newtype macro**
 
-Extend the existing domain ID macro. Every new identifier must implement `new`, `from_uuid`, `as_uuid`, `Display`, `FromStr`, `Default`, Serde and Schemars exactly like existing IDs.
+Add all listed IDs with the same `new`, `from_uuid`, `as_uuid`, `Display`, `FromStr`, `Default`, Serde and Schemars behavior as existing domain IDs.
 
-- [ ] **Step 3: Implement Run and step statuses**
-
-```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Created,
-    Preparing,
-    Running,
-    WaitingForInput,
-    WaitingForApproval,
-    WaitingForDependency,
-    Paused,
-    PausedPolicyChanged,
-    Succeeded,
-    SucceededWithWarnings,
-    Partial,
-    Failed,
-    Cancelled,
-    Expired,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStepStatus {
-    Pending,
-    Ready,
-    Running,
-    Waiting,
-    Succeeded,
-    Failed,
-    Skipped,
-    Cancelled,
-    Unknown,
-}
-```
-
-Implement explicit `can_transition_to` match expressions. Do not infer transitions from enum ordering.
-
-Run transitions:
+- [ ] **Step 3: Implement exact Run transitions**
 
 ```text
 Created -> Preparing | Cancelled
@@ -259,10 +291,12 @@ WaitingForApproval -> Running | Paused | Cancelled | Expired
 WaitingForDependency -> Running | Paused | Failed | Cancelled | Expired
 Paused -> Running | Cancelled | Expired
 PausedPolicyChanged -> Running | Cancelled | Expired
-terminal -> no transitions
+terminal -> none
 ```
 
-Step transitions:
+Implement via explicit match expressions, never enum ordering.
+
+- [ ] **Step 4: Implement exact step transitions**
 
 ```text
 Pending -> Ready | Skipped | Cancelled
@@ -270,34 +304,14 @@ Ready -> Running | Skipped | Cancelled
 Running -> Waiting | Succeeded | Failed | Cancelled | Unknown
 Waiting -> Ready | Running | Failed | Cancelled | Unknown
 Unknown -> Waiting | Succeeded | Failed | Cancelled
-terminal -> no transitions
+terminal -> none
 ```
 
-A failed step is retried by `RunStep::retry`, which increments `attempt` and returns it to `Ready`; it is not represented as an ordinary `Failed -> Ready` transition.
+A retry is a separate `RunStep::retry` operation from `Failed` to `Ready` that increments the attempt counter.
 
-- [ ] **Step 4: Implement `RunVersion`, `ResumeCursor` and execution mode**
+- [ ] **Step 5: Add property tests and commit**
 
-```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunExecutionMode {
-    Direct,
-    Guided,
-    Workflow,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct ResumeCursor(u64);
-```
-
-`ResumeCursor::from_event_sequence` and `value` are const methods. Cursor `0` means before the first event.
-
-- [ ] **Step 5: Add property tests for terminal-state closure and version monotonicity**
-
-Use `proptest` to confirm `RunVersion::next()` is strictly greater for all generated values below `u64::MAX`, and no terminal status accepts any generated target status.
-
-- [ ] **Step 6: Run and commit**
+Use `proptest` to prove `RunVersion::next()` is monotonic below `u64::MAX` and terminal states accept no target.
 
 ```bash
 cargo test -p vestrace-domain run
@@ -308,7 +322,7 @@ git commit -m "feat(run): add durable run state types"
 
 ---
 
-### Task 2: Implement `AgentRun`, `RunStep` and forward-compatible references
+### Task 2: Implement `AgentRun` and `RunStep` aggregates
 
 **Files:**
 - Create: `crates/vestrace-domain/src/run/step.rs`
@@ -316,73 +330,32 @@ git commit -m "feat(run): add durable run state types"
 - Test: inline unit tests
 
 **Interfaces:**
-- Consumes the H1 status and identifier types.
-- Produces `AgentRun`, `ParentRunLink`, `RunStep`, `RunActorRef`, `RunReference`, `RunFailure` and `RunTerminalResult`.
-- Produces domain mutation methods that return typed `RunEventPayload` values defined in Task 3.
+- Produces `AgentRun`, `NewAgentRun`, `ParentRunLink`, `RunStep`, `NewRunStep`, `RunActorRef`, `RunReference`, `RunFailure`, `RunTerminalResult`.
 
-- [ ] **Step 1: Write failing aggregate-invariant tests**
+- [ ] **Step 1: Write failing invariant tests**
 
 ```rust
 #[test]
 fn objective_must_not_be_blank() {
     let result = AgentRun::create(NewAgentRun {
-        objective: "   ".into(),
+        objective: "  ".into(),
         ..new_run_fixture()
     });
     assert!(result.is_err());
 }
 
 #[test]
-fn expected_version_is_required_for_transition() {
-    let mut run = run_fixture(RunStatus::Running, RunVersion::INITIAL);
-    let result = run.transition(
-        RunVersion::from_value(2).unwrap(),
-        RunStatus::Paused,
-        now(),
-    );
-    assert!(matches!(result, Err(DomainError::RevisionConflict { .. })));
-}
-
-#[test]
-fn parent_link_cannot_reference_same_run() {
-    let id = AgentRunId::new();
-    assert!(ParentRunLink::new(id, RunStepId::new(), id).is_err());
+fn stale_expected_version_is_rejected() {
+    let mut run = running_run_fixture();
+    let stale = RunVersion::new(run.version.value() + 1).unwrap();
+    assert!(matches!(
+        run.transition(stale, RunStatus::Paused, None, now()),
+        Err(DomainError::RevisionConflict { .. })
+    ));
 }
 ```
 
-- [ ] **Step 2: Implement references and actor types**
-
-```rust
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum RunActorRef {
-    Principal(PrincipalId),
-    AgentSnapshot(AgentRuntimeSnapshotId),
-    Worker(WorkerId),
-    System,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunReferenceKind {
-    Context,
-    Artifact,
-    Approval,
-    ModelInvocation,
-    ToolInvocation,
-    SubRun,
-    External,
-}
-
-pub struct RunReference {
-    pub id: RunReferenceId,
-    pub kind: RunReferenceKind,
-}
-```
-
-`RunReference` is a stable cross-plan reference. Later plans may add typed adapters, but H1 persistence never interprets the referenced object.
-
-- [ ] **Step 3: Implement `AgentRun`**
+- [ ] **Step 2: Implement `AgentRun`**
 
 ```rust
 pub struct AgentRun {
@@ -407,40 +380,39 @@ pub struct AgentRun {
 }
 ```
 
-`budget_snapshot_id` and `resource_usage_snapshot_id` are nullable UUID references without foreign keys in H1. H2 creates their tables and adds validated foreign keys in a new migration.
+`create` trims and validates objective, caps it at 32 KiB, sets version `1`, status `Created`, and uses its own ID as `root_run_id` unless a parent is supplied. Parent and child IDs must differ.
 
-`AgentRun::create` sets status `Created`, version `1`, `root_run_id = id` for root runs, and rejects objectives that are empty after trimming or exceed 32 KiB UTF-8 bytes.
+`budget_snapshot_id` and `resource_usage_snapshot_id` are nullable UUID references without H1 foreign keys; H2 creates their tables and adds constraints in new migrations.
 
-- [ ] **Step 4: Implement optimistic transitions**
+- [ ] **Step 3: Implement optimistic mutations**
 
 ```rust
-impl AgentRun {
-    pub fn transition(
-        &mut self,
-        expected: RunVersion,
-        next: RunStatus,
-        at: Timestamp,
-    ) -> Result<RunStatusChange, DomainError>;
+pub fn transition(
+    &mut self,
+    expected: RunVersion,
+    target: RunStatus,
+    result: Option<RunTerminalResult>,
+    at: Timestamp,
+) -> Result<RunStatusChange, DomainError>;
 
-    pub fn attach_plan(
-        &mut self,
-        expected: RunVersion,
-        plan: PlanRevisionId,
-        at: Timestamp,
-    ) -> Result<RunPlanChange, DomainError>;
+pub fn attach_plan(
+    &mut self,
+    expected: RunVersion,
+    plan: PlanRevisionId,
+    at: Timestamp,
+) -> Result<RunPlanChange, DomainError>;
 
-    pub fn select_current_step(
-        &mut self,
-        expected: RunVersion,
-        step_id: Option<RunStepId>,
-        at: Timestamp,
-    ) -> Result<RunCurrentStepChange, DomainError>;
-}
+pub fn select_current_step(
+    &mut self,
+    expected: RunVersion,
+    step: Option<RunStepId>,
+    at: Timestamp,
+) -> Result<RunCurrentStepChange, DomainError>;
 ```
 
-Every method checks `expected == self.version`, validates the mutation, advances version exactly once and returns data sufficient to create one event. Terminal transitions require `RunTerminalResult`; non-terminal transitions reject a terminal result.
+Each method checks expected version, validates the mutation, increments once and returns an immutable change record. Terminal targets require a result; non-terminal targets reject one.
 
-- [ ] **Step 5: Implement `RunStep`**
+- [ ] **Step 4: Implement `RunStep`**
 
 ```rust
 pub struct RunStep {
@@ -459,9 +431,9 @@ pub struct RunStep {
 }
 ```
 
-`plan_step_reference` is an opaque, non-empty identifier limited to 256 bytes until H5 introduces typed plan nodes. `attempt` begins at `1`. `retry` is allowed only from `Failed`, clears terminal timing/error, increments with checked arithmetic and returns status to `Ready`.
+Attempt begins at `1`. `plan_step_reference` is an opaque non-empty value capped at 256 bytes until H5 adds typed plan nodes. `retry` is allowed only from `Failed`, clears timing/error and increments with checked arithmetic.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 5: Run and commit**
 
 ```bash
 cargo test -p vestrace-domain run
@@ -472,7 +444,7 @@ git commit -m "feat(run): add run and step aggregates"
 
 ---
 
-### Task 3: Add canonical Run events, checkpoints and logical replay
+### Task 3: Add canonical events, checkpoints and logical replay
 
 **Files:**
 - Create: `crates/vestrace-domain/src/run/event.rs`
@@ -484,57 +456,81 @@ git commit -m "feat(run): add run and step aggregates"
 - Modify: `crates/vestrace-application/src/lib.rs`
 
 **Interfaces:**
-- Produces `RunEvent`, `RunEventPayload`, `RunCheckpoint`, `RunCheckpointPayloadV1`, `RunProjection` and `replay_run`.
-- Enforces event sequence equality with the post-mutation `RunVersion`.
+- Produces `RunEvent`, `RunEventPayload`, `RunCheckpoint`, `RunCheckpointPayload`, `RunProjection`, `replay_run`.
 
-- [ ] **Step 1: Write failing event and replay tests**
+- [ ] **Step 1: Write failing replay tests**
 
 ```rust
 #[test]
-fn event_sequence_must_equal_run_version() {
-    let result = RunEvent::new(
+fn event_sequence_must_equal_version() {
+    let event = RunEvent::new(
         run_id(),
         workspace_id(),
-        RunVersion::from_value(3).unwrap(),
-        ResumeCursor::from_value(2),
+        RunVersion::new(3).unwrap(),
+        ResumeCursor::from_version(RunVersion::new(2).unwrap()),
         RunActorRef::System,
-        RunEventPayload::RunPaused,
+        RunEventPayload::RunStatusChanged {
+            from: RunStatus::Preparing,
+            to: RunStatus::Running,
+            result: None,
+        },
         correlation_id(),
         None,
         now(),
     );
-    assert!(result.is_err());
+    assert!(event.is_err());
 }
 
 #[test]
-fn replay_reconstructs_status_current_step_and_version() {
+fn replay_reconstructs_projection() {
     let projection = replay_run(&scripted_events()).unwrap();
     assert_eq!(projection.status, RunStatus::WaitingForInput);
-    assert_eq!(projection.current_step_id, Some(step_id(2)));
-    assert_eq!(projection.version.value(), 7);
+    assert_eq!(projection.version, RunVersion::new(7).unwrap());
 }
 ```
 
-- [ ] **Step 2: Implement typed event payloads**
+- [ ] **Step 2: Implement event payloads**
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum RunEventPayload {
-    RunCreated { objective: String, execution_mode: RunExecutionMode, coordinator_snapshot_id: AgentRuntimeSnapshotId, parent: Option<ParentRunLink> },
-    RunStatusChanged { from: RunStatus, to: RunStatus, result: Option<RunTerminalResult> },
-    PlanAttached { previous: Option<PlanRevisionId>, current: PlanRevisionId },
-    StepAdded { step: RunStep },
-    StepStatusChanged { step_id: RunStepId, from: RunStepStatus, to: RunStepStatus, attempt: u32 },
-    CurrentStepChanged { previous: Option<RunStepId>, current: Option<RunStepId> },
-    CheckpointCreated { checkpoint_id: RunCheckpointId, resume_cursor: ResumeCursor },
-    WorkItemQueued { work_item_id: WorkItemId, kind: WorkItemKind },
+    RunCreated {
+        objective: String,
+        execution_mode: RunExecutionMode,
+        coordinator_snapshot_id: AgentRuntimeSnapshotId,
+        parent: Option<ParentRunLink>,
+    },
+    RunStatusChanged {
+        from: RunStatus,
+        to: RunStatus,
+        result: Option<RunTerminalResult>,
+    },
+    PlanAttached {
+        previous: Option<PlanRevisionId>,
+        current: PlanRevisionId,
+    },
+    StepsAdded {
+        steps: Vec<RunStep>,
+    },
+    StepStatusChanged {
+        step_id: RunStepId,
+        from: RunStepStatus,
+        to: RunStepStatus,
+        attempt: u32,
+    },
+    CurrentStepChanged {
+        previous: Option<RunStepId>,
+        current: Option<RunStepId>,
+    },
+    CheckpointCreated {
+        checkpoint_id: RunCheckpointId,
+        resume_cursor: ResumeCursor,
+    },
 }
 ```
 
-The event type string is derived deterministically from the payload and is not supplied by the caller.
+Event type strings are derived from variants. Operational queue/lease events are intentionally absent.
 
-- [ ] **Step 3: Implement `RunEvent`**
+- [ ] **Step 3: Implement `RunEvent` validation**
 
 ```rust
 pub struct RunEvent {
@@ -551,21 +547,12 @@ pub struct RunEvent {
 }
 ```
 
-Constructor rules:
+Rules: sequence equals version; creation is sequence/version `1`; all other events are greater than `1`; causation cannot self-reference.
 
-- sequence equals `run_version.value()`;
-- sequence is at least `1`;
-- causation cannot reference the event itself;
-- `RunCreated` is sequence/version `1` only;
-- non-creation events require sequence greater than `1`.
-
-- [ ] **Step 4: Implement versioned checkpoints**
+- [ ] **Step 4: Implement versioned checkpoint payload**
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "schema", content = "state")]
 pub enum RunCheckpointPayload {
-    #[serde(rename = "run-checkpoint/v1")]
     V1(RunCheckpointPayloadV1),
 }
 
@@ -593,22 +580,15 @@ pub struct RunCheckpoint {
 }
 ```
 
-Checkpoint version and cursor must match. Reject duplicate IDs inside each vector so resume behavior is deterministic.
+Checkpoint version must equal cursor. Duplicate IDs within any vector are invalid.
 
-- [ ] **Step 5: Implement the pure replay reducer**
+- [ ] **Step 5: Implement pure replay**
 
 ```rust
 pub fn replay_run(events: &[RunEvent]) -> Result<RunProjection, ApplicationError>;
 ```
 
-Requirements:
-
-- first event is `RunCreated` at sequence `1`;
-- events are strictly contiguous by sequence;
-- all events share workspace and run IDs;
-- payload transitions are revalidated through the domain transition tables;
-- projection contains status, version, plan, current step, known steps, latest checkpoint reference and terminal result;
-- replay performs no I/O and invokes no model/tool code.
+Require first event `RunCreated`, contiguous sequences, one run/workspace, valid state transitions and no I/O. Projection contains status, version, plan, current step, known steps, checkpoint reference and terminal result.
 
 - [ ] **Step 6: Run and commit**
 
@@ -621,7 +601,7 @@ git commit -m "feat(run): add journal checkpoints and replay"
 
 ---
 
-### Task 4: Define Run commands, ports and coordinator services
+### Task 4: Define commands, ports and `RunCoordinator`
 
 **Files:**
 - Create: `crates/vestrace-application/src/run/commands.rs`
@@ -631,11 +611,10 @@ git commit -m "feat(run): add journal checkpoints and replay"
 - Modify: `crates/vestrace-application/src/run/mod.rs`
 
 **Interfaces:**
-- Produces `CreateRun`, `TransitionRun`, `AddRunStep`, `TransitionRunStep`, `CreateCheckpoint`, `PauseRun`, `ResumeRun` and `CancelRun` commands.
-- Produces `RunStorePort`, `RunLeasePort`, `WorkQueuePort`, `RunClockPort` and `RunCoordinator`.
-- Produces `NewRunCommit`, `RunCommit`, `RunStepChange` and `AgentRunSnapshot`.
+- Produces `CreateRun`, `TransitionRun`, `AddRunSteps`, `TransitionRunStep`, `CreateCheckpoint`, `PauseRun`, `ResumeRun`, `CancelRun`.
+- Produces `RunStorePort`, `RunLeasePort`, `WorkQueuePort`, `RunClockPort`, `RunCoordinator`.
 
-- [ ] **Step 1: Define exact command DTOs**
+- [ ] **Step 1: Define command DTOs**
 
 ```rust
 pub struct CreateRun {
@@ -653,6 +632,7 @@ pub struct TransitionRun {
     pub result: Option<RunTerminalResult>,
     pub actor: RunActorRef,
     pub causation_event_id: Option<RunEventId>,
+    pub idempotency_key: String,
 }
 
 pub struct CreateCheckpoint {
@@ -660,16 +640,31 @@ pub struct CreateCheckpoint {
     pub expected_version: RunVersion,
     pub payload: RunCheckpointPayloadV1,
     pub actor: RunActorRef,
+    pub idempotency_key: String,
 }
 ```
 
-All state-changing public commands carry an idempotency key at the interface layer. Internal continuation commands derive a deterministic key from run ID, expected version and action kind.
+All external state-changing commands carry idempotency keys. Internal continuation keys are deterministic from run ID, expected version and action kind.
 
-- [ ] **Step 2: Define storage and operational ports**
-
-Use the normative `RunStorePort` from this plan. Add:
+- [ ] **Step 2: Define operational ports**
 
 ```rust
+pub struct RunLease {
+    pub run_id: AgentRunId,
+    pub worker_id: WorkerId,
+    pub generation: u64,
+    pub acquired_at: Timestamp,
+    pub heartbeat_at: Timestamp,
+    pub lease_until: Timestamp,
+}
+
+pub struct AcquireRunLease {
+    pub run_id: AgentRunId,
+    pub worker_id: WorkerId,
+    pub now: Timestamp,
+    pub lease_until: Timestamp,
+}
+
 #[async_trait::async_trait]
 pub trait RunLeasePort: Send + Sync {
     async fn acquire(&self, context: &RequestContext, request: AcquireRunLease) -> Result<RunLease, ApplicationError>;
@@ -682,47 +677,28 @@ pub trait WorkQueuePort: Send + Sync {
     async fn lease_next(&self, context: &RequestContext, request: LeaseWorkRequest) -> Result<Option<WorkItem>, ApplicationError>;
     async fn complete(&self, context: &RequestContext, item: &WorkItem, at: Timestamp) -> Result<(), ApplicationError>;
     async fn retry(&self, context: &RequestContext, item: &WorkItem, available_at: Timestamp, error: RunFailure) -> Result<(), ApplicationError>;
+    async fn cancel_for_run(&self, context: &RequestContext, run_id: AgentRunId, at: Timestamp) -> Result<u64, ApplicationError>;
     async fn dead_letter(&self, context: &RequestContext, item: &WorkItem, error: RunFailure, at: Timestamp) -> Result<(), ApplicationError>;
 }
 ```
 
-`RunClockPort::now()` makes lease and lifecycle tests deterministic.
+`RunClockPort::now()` provides deterministic time.
 
-- [ ] **Step 3: Implement `RunCoordinator::create` with an in-memory fake**
+- [ ] **Step 3: Implement `create` with fake ports**
 
-`create` must build:
+Build Run version `1`, `RunCreated` event sequence `1`, and initial `AdvanceRun` item with key `run:{run_id}:version:1:advance`, then call `RunStorePort::create` once. Duplicate external idempotency returns the original snapshot.
 
-1. `AgentRun` version `1`;
-2. `RunEventPayload::RunCreated` sequence `1`;
-3. initial `WorkItemKind::AdvanceRun` with deterministic idempotency key `run:{run_id}:version:1:advance`;
-4. one `NewRunCommit` passed to `RunStorePort::create`.
+- [ ] **Step 4: Implement mutation services**
 
-The fake store records the commit and returns the snapshot. Test that a duplicate external idempotency key returns the original Run instead of creating a second one.
+Each service loads snapshot, validates expected version, mutates domain state, constructs exactly one matching event, optionally adds steps/checkpoint/follow-up work, and calls `commit` once.
 
-- [ ] **Step 4: Implement transition, step and checkpoint services**
+Checkpoint creation increments the Run version, writes the immutable checkpoint at that version/cursor and sets `checkpoint_id` in the same transaction.
 
-Each service:
+- [ ] **Step 5: Implement lifecycle helpers**
 
-1. loads `AgentRunSnapshot`;
-2. validates expected version;
-3. mutates the pure domain object;
-4. constructs exactly one event whose sequence equals the new version;
-5. optionally adds step/checkpoint changes and follow-up work;
-6. calls `RunStorePort::commit` once.
+`pause` creates no follow-up work. `resume` queues one deterministic `ResumeRun` item. `cancel` sets `cancel_pending_work = true`; it preserves step/output history and states explicitly that already performed external actions are not rolled back.
 
-Checkpoint creation advances the Run version, stores the checkpoint with that version/cursor and sets `run.checkpoint_id` in the same commit.
-
-- [ ] **Step 5: Implement lifecycle convenience commands**
-
-```rust
-pub async fn pause(&self, context: &RequestContext, command: PauseRun) -> Result<AgentRunSnapshot, ApplicationError>;
-pub async fn resume(&self, context: &RequestContext, command: ResumeRun) -> Result<AgentRunSnapshot, ApplicationError>;
-pub async fn cancel(&self, context: &RequestContext, command: CancelRun) -> Result<AgentRunSnapshot, ApplicationError>;
-```
-
-`resume` queues a deterministic `ResumeRun` work item. `pause` and `cancel` queue no new execution work. Cancellation preserves existing result references and explicitly states that external actions are not rolled back.
-
-- [ ] **Step 6: Verify fake-store atomic command construction and commit**
+- [ ] **Step 6: Run and commit**
 
 ```bash
 cargo test -p vestrace-application --test run_coordinator
@@ -733,7 +709,7 @@ git commit -m "feat(run): add coordinator commands and ports"
 
 ---
 
-### Task 5: Add PostgreSQL Run, step, journal and checkpoint schema
+### Task 5: Add Run, step, event and checkpoint schema
 
 **Files:**
 - Create: `migrations/0019_agent_runs_and_steps.sql`
@@ -743,34 +719,21 @@ git commit -m "feat(run): add coordinator commands and ports"
 - Modify: `tests/support/mod.rs`
 
 **Interfaces:**
-- Produces tables `agent_runs`, `run_steps`, `run_events` and `run_checkpoints`.
-- Uses text status columns with explicit checks rather than PostgreSQL enum types.
-- Enforces unique `(run_id, sequence)` and append-only events/checkpoints.
+- Produces `agent_runs`, `run_steps`, `run_events`, `run_checkpoints`.
 
-- [ ] **Step 1: Write failing schema tests**
+- [ ] **Step 1: Write failing database tests**
 
-Test all of the following before adding migrations:
-
-- blank objective is rejected;
-- `run_version < 1` is rejected;
-- parent Run cannot cross workspace;
-- current step must belong to the same Run;
-- duplicate event sequence is rejected;
-- event sequence different from event `run_version` is rejected;
-- event/checkpoint update and delete fail for the application role;
-- checkpoint cursor different from checkpoint `run_version` is rejected.
-
-Run:
+Cover blank objective, zero version, cross-workspace parent, current step from another Run, duplicate event sequence, event sequence/version mismatch, checkpoint cursor/version mismatch and application-role update/delete of event/checkpoint rows.
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test run_lifecycle
 ```
 
-Expected: FAIL because migrations `0019` and `0020` do not exist.
+Expected: FAIL because H1 migrations are absent.
 
 - [ ] **Step 2: Create `0019_agent_runs_and_steps.sql`**
 
-Create `agent_runs` with:
+`agent_runs` columns:
 
 ```text
 id, workspace_id, objective, coordinator_snapshot_id,
@@ -780,29 +743,22 @@ root_run_id, budget_snapshot_id, resource_usage_snapshot_id,
 run_version, result JSONB, created_at, updated_at, finished_at
 ```
 
-Use checks for non-blank objective, byte length at most `32768`, valid execution modes/statuses, version at least `1`, and terminal/finished-time consistency.
+Use text status/mode checks, objective byte length `1..32768`, version `>= 1`, and terminal/finished-time consistency.
 
-Create `run_steps` with:
+`run_steps` columns:
 
 ```text
-id, workspace_id, run_id, plan_step_reference, assigned_actor JSONB,
-input_references JSONB, status, attempt, output_references JSONB,
+id, workspace_id, run_id, plan_step_reference,
+assigned_actor JSONB, input_references JSONB,
+status, attempt, output_references JSONB,
 error JSONB, created_at, started_at, finished_at
 ```
 
-Use deferred constraint triggers for `current_step_id`, `parent_run_id` and `parent_step_id` ownership so aggregate rows can be inserted atomically.
+Use deferred constraint triggers for current-step and parent ownership.
 
 - [ ] **Step 3: Create `0020_run_events_and_checkpoints.sql`**
 
-`run_events` columns:
-
-```text
-id, workspace_id, run_id, sequence, run_version,
-event_type, actor JSONB, payload JSONB,
-correlation_id, causation_event_id, occurred_at
-```
-
-Required constraints:
+`run_events` requires:
 
 ```sql
 CHECK (sequence >= 1),
@@ -811,20 +767,11 @@ CHECK (sequence = run_version),
 UNIQUE (run_id, sequence)
 ```
 
-`run_checkpoints` columns:
+`run_checkpoints` requires `run_version = resume_cursor` and unique `(run_id, run_version)`. Add `agent_runs.checkpoint_id` foreign key after checkpoint creation. Ordinary application role cannot update/delete events or checkpoints.
 
-```text
-id, workspace_id, run_id, run_version,
-active_plan_revision_id, resume_cursor, payload JSONB, created_at
-```
+- [ ] **Step 4: Add persisted replay fixture**
 
-Require `run_version = resume_cursor` and unique `(run_id, run_version)`.
-
-Add `agent_runs.checkpoint_id` foreign key after the checkpoint table exists. Use a trigger to reject ordinary `UPDATE` and `DELETE` on `run_events` and `run_checkpoints`.
-
-- [ ] **Step 4: Add database replay fixture**
-
-Insert a seven-event scripted Run, load ordered events through SQL and pass them to `replay_run`. Assert the projection matches the persisted Run status, plan, current step and version.
+Insert a seven-event Run, load ordered events, call `replay_run`, and compare projection with persisted Run status, plan, current step and version.
 
 - [ ] **Step 5: Run and commit**
 
@@ -836,7 +783,7 @@ git commit -m "feat(storage): add durable run journal schema"
 
 ---
 
-### Task 6: Add operational leases and durable work items
+### Task 6: Add operational leases and work items
 
 **Files:**
 - Create: `crates/vestrace-domain/src/run/work.rs`
@@ -848,26 +795,15 @@ git commit -m "feat(storage): add durable run journal schema"
 - Create: `tests/run_leases.rs`
 
 **Interfaces:**
-- Produces `RunLease`, `AcquireRunLease`, `WorkItem`, `WorkItemKind`, `WorkItemStatus`, `RunWorkPayload` and PostgreSQL implementations of `RunLeasePort` and `WorkQueuePort`.
+- Produces `RunLease`, `WorkItem`, `WorkItemKind`, `WorkItemStatus`, `RunWorkPayload`, PostgreSQL `RunLeasePort` and `WorkQueuePort`.
 
-- [ ] **Step 1: Write failing lease and queue tests**
+- [ ] **Step 1: Write failing concurrency tests**
 
-Test:
+Assert worker A acquires, B is blocked before expiry, B acquires after expiry with greater generation, stale A cannot heartbeat/release, heartbeat does not change Run version, concurrent queue consumers receive different rows, duplicate idempotency returns existing item, and expired queue leases do not create duplicates.
 
-1. worker A acquires an unleased Run;
-2. worker B cannot acquire before expiry;
-3. worker B acquires after expiry with a greater generation;
-4. stale worker A cannot heartbeat or release worker B's generation;
-5. heartbeat does not change `agent_runs.run_version`;
-6. two queue consumers using `FOR UPDATE SKIP LOCKED` receive different work items;
-7. duplicate `(workspace_id, idempotency_key)` returns the existing work item;
-8. expired leased work becomes available without creating a duplicate row.
-
-- [ ] **Step 2: Implement work domain types**
+- [ ] **Step 2: Implement work types**
 
 ```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum WorkItemKind {
     AdvanceRun,
     ResumeRun,
@@ -875,75 +811,55 @@ pub enum WorkItemKind {
     ExpireRun,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum WorkItemStatus {
     Ready,
     Leased,
     Completed,
     Failed,
+    Cancelled,
     DeadLetter,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum RunWorkPayload {
     Advance,
     Resume { checkpoint_id: Option<RunCheckpointId> },
     CreateCheckpoint,
     Expire,
 }
+
+pub struct WorkItem {
+    pub id: WorkItemId,
+    pub workspace_id: WorkspaceId,
+    pub run_id: AgentRunId,
+    pub step_id: Option<RunStepId>,
+    pub expected_run_version: RunVersion,
+    pub kind: WorkItemKind,
+    pub payload: RunWorkPayload,
+    pub status: WorkItemStatus,
+    pub priority: i16,
+    pub available_at: Timestamp,
+    pub deadline: Option<Timestamp>,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub idempotency_key: String,
+}
 ```
 
-`WorkItemKind` and payload must agree; constructor rejects mismatches.
+Constructor validates kind/payload agreement, non-empty key, and `max_attempts >= 1`.
 
-- [ ] **Step 3: Create `00121_run_leases_and_work_items.sql`**
+- [ ] **Step 3: Create `0021_run_leases_and_work_items.sql`**
 
-Use the actual filename `migrations/0021_run_leases_and_work_items.sql`.
+`run_leases`: `workspace_id`, `run_id` primary key, `worker_id`, `generation >= 1`, `acquired_at`, `heartbeat_at`, `lease_until`.
 
-`run_leases`:
+`work_items`: all `WorkItem` fields plus `required_capabilities JSONB`, lease owner/until, last error, timestamps and unique `(workspace_id, idempotency_key)`.
 
-```text
-workspace_id, run_id, worker_id, generation,
-acquired_at, heartbeat_at, lease_until
-```
+- [ ] **Step 4: Implement lease generation fencing**
 
-Primary key is `run_id`. `generation >= 1`. A deferred trigger verifies the Run belongs to the same workspace.
-
-`work_items`:
-
-```text
-id, workspace_id, run_id, step_id, expected_run_version,
-kind, payload JSONB, required_capabilities JSONB,
-status, priority, available_at, deadline,
-attempt, max_attempts, lease_owner, lease_until,
-idempotency_key, last_error JSONB, created_at, updated_at, completed_at
-```
-
-Use unique `(workspace_id, idempotency_key)`, `attempt >= 0`, `max_attempts >= 1`, and text status/kind checks.
-
-- [ ] **Step 4: Implement lease SQL with generation fencing**
-
-Acquire uses one statement or transaction equivalent to:
-
-```sql
-INSERT INTO run_leases (... generation ...)
-VALUES (..., 1, ...)
-ON CONFLICT (run_id) DO UPDATE
-SET worker_id = EXCLUDED.worker_id,
-    generation = run_leases.generation + 1,
-    acquired_at = EXCLUDED.acquired_at,
-    heartbeat_at = EXCLUDED.heartbeat_at,
-    lease_until = EXCLUDED.lease_until
-WHERE run_leases.lease_until <= EXCLUDED.acquired_at
-RETURNING ...;
-```
-
-Heartbeat and release include `run_id`, `worker_id` and `generation` in the predicate. Zero affected rows maps to stable `lease_lost` application error.
+Acquire inserts generation `1` or takes an expired lease while incrementing generation. Heartbeat/release predicates include run ID, worker ID and generation. Zero affected rows maps to stable `lease_lost`.
 
 - [ ] **Step 5: Implement work leasing**
 
-Select ready or expired-leased items ordered by priority descending, `available_at`, creation time and ID, using `FOR UPDATE SKIP LOCKED`. Increment `attempt` only when a handler begins, not while polling. Items exceeding `max_attempts` move to `DeadLetter`.
+Use `FOR UPDATE SKIP LOCKED`, ordered by priority descending, available time, creation time and ID. Increment attempt when handler execution begins. Move exhausted items to `DeadLetter`. `cancel_for_run` affects only `Ready` and expired `Leased` items.
 
 - [ ] **Step 6: Run and commit**
 
@@ -964,57 +880,46 @@ git commit -m "feat(run): add leases and durable work queue"
 - Modify: `crates/vestrace-infrastructure/src/postgres/run/mod.rs`
 
 **Interfaces:**
-- Consumes `NewRunCommit`, `RunCommit`, `AgentRunSnapshot` and the existing scoped PostgreSQL transaction helper.
-- Produces `PostgresRunStore` implementing `RunStorePort`.
+- Produces `PostgresRunStore`.
 
-- [ ] **Step 1: Write failing optimistic-concurrency tests**
+- [ ] **Step 1: Write optimistic-concurrency test**
 
-Create a Run at version `1`. Build two transitions with expected version `1`. Commit them concurrently. Assert exactly one succeeds, the other returns `revision_conflict`, persisted version is `2`, and exactly one sequence-`2` event exists.
+Create version `1`; concurrently commit two version-`2` transitions with expected `1`. Exactly one succeeds, the other returns `revision_conflict`, and only one sequence-`2` event exists.
 
-- [ ] **Step 2: Write failing atomic-rollback test**
+- [ ] **Step 2: Write atomic rollback test**
 
-Prepare a valid Run transition plus a work item whose idempotency key conflicts with an existing item. Commit and assert failure. Reload and verify:
+Commit a valid transition with a follow-up work item whose idempotency key already exists. Assert failure leaves Run, event, step and checkpoint state unchanged.
 
-- Run remains at the old version/status;
-- no event for the proposed version exists;
-- no step/checkpoint changes were persisted;
-- the pre-existing work item is unchanged.
+- [ ] **Step 3: Implement `create`**
 
-- [ ] **Step 3: Implement `create` transaction**
+In one scoped transaction: resolve command idempotency, insert version-`1` Run, append `run.created`, insert initial work, store idempotent result, commit. Duplicate external idempotency returns the original snapshot.
 
-Within one scoped SQLx transaction:
+- [ ] **Step 4: Implement `commit`**
 
-1. check external command idempotency through the existing v0.1 idempotency repository;
-2. insert `agent_runs` version `1`;
-3. insert initial steps if supplied;
-4. insert `run.created` sequence `1`;
-5. insert initial work items with conflict-safe idempotency;
-6. store idempotent command result;
-7. commit.
-
-A duplicate external idempotency key returns the previously stored `AgentRunId` and snapshot.
-
-- [ ] **Step 4: Implement `commit` transaction**
-
-Use:
+Use optimistic SQL:
 
 ```sql
 UPDATE agent_runs
-SET ...,
+SET status = $status,
+    active_plan_revision_id = $plan,
+    current_step_id = $current_step,
+    checkpoint_id = $checkpoint,
+    result = $result,
     run_version = $new_version,
-    updated_at = $updated_at
+    updated_at = $updated_at,
+    finished_at = $finished_at
 WHERE workspace_id = $workspace_id
   AND id = $run_id
   AND run_version = $expected_version;
 ```
 
-Zero rows maps to `revision_conflict` after loading the current version. Then apply step changes, append the event, insert checkpoint and enqueue work items before commit. Never retry the transaction automatically after an ambiguous connection failure; return `operation_unknown` for caller reconciliation.
+Zero rows maps to `revision_conflict` after reading current version. Apply step changes, event, checkpoint, follow-up work and pending-work cancellation before commit. Ambiguous connection failure returns `operation_unknown`; do not retry automatically.
 
-- [ ] **Step 5: Implement snapshot loading**
+- [ ] **Step 5: Implement snapshot/event loading**
 
-`load` returns the Run, ordered steps, latest checkpoint metadata and no lease data. Lease is queried separately because it is operational state.
+Snapshot contains ordered steps and latest checkpoint, but no lease. `load_events` returns strictly ascending sequence after the supplied cursor.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 6: Run and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test run_atomicity
@@ -1025,7 +930,7 @@ git commit -m "feat(run): persist atomic run mutations"
 
 ---
 
-### Task 8: Add the restart-safe worker loop and handler seam
+### Task 8: Add restart-safe worker loop
 
 **Files:**
 - Create: `crates/vestrace-application/src/run/worker.rs`
@@ -1034,22 +939,13 @@ git commit -m "feat(run): persist atomic run mutations"
 - Modify: `crates/vestrace-cli/src/commands/worker.rs`
 
 **Interfaces:**
-- Produces `RunWorkHandler`, `RunWorkHandlerRegistry`, `RunWorker`, `RunWorkerConfig` and `RunWorkOutcome`.
-- Worker consumes `WorkQueuePort`, `RunLeasePort`, `RunStorePort`, `RunClockPort` and tracing.
-- H1 production registry contains only lifecycle/maintenance handlers. Tests register deterministic execution handlers; later plans register model/tool/planning handlers.
+- Produces `RunWorkHandler`, `RunWorkHandlerRegistry`, `RunWorker`, `RunWorkerConfig`, `RunWorkOutcome`.
 
-- [ ] **Step 1: Write failing worker-fencing tests**
+- [ ] **Step 1: Write failing worker tests**
 
-Use in-memory fake ports and a manual clock. Assert:
+Assert handler runs only after work and Run leases are acquired; stale expected version causes no handler call; stale lease generation cannot commit; retryable error schedules retry; non-retryable error dead-letters; cancelled Run completes/cancels queue work without handler invocation.
 
-- worker acquires work, then the matching Run lease, before invoking a handler;
-- handler is not invoked when Run version differs from `expected_run_version`;
-- stale lease generation prevents commit;
-- retryable handler error schedules retry with bounded backoff;
-- non-retryable error dead-letters the work item;
-- cancellation before handler completion prevents follow-up work from being enqueued.
-
-- [ ] **Step 2: Define the handler contract**
+- [ ] **Step 2: Define handler contract**
 
 ```rust
 #[async_trait::async_trait]
@@ -1073,31 +969,13 @@ pub enum RunWorkOutcome {
 }
 ```
 
-Handlers never mark queue rows directly. `RunWorker` performs queue completion/retry after the handler returns.
+Handlers do not modify queue rows directly.
 
-- [ ] **Step 3: Implement one worker iteration**
+- [ ] **Step 3: Implement `run_once`**
 
-```rust
-pub async fn run_once(&self, context: &RequestContext) -> Result<WorkerPollOutcome, ApplicationError>;
-```
+Sequence: lease work, load Run, compare expected version, reject paused/terminal Runs, acquire Run lease, invoke handler, complete/retry/dead-letter work, release lease. Process death relies on lease expiry. Tracing includes IDs/statuses but no objective or payload contents.
 
-Sequence:
-
-1. lease one work item;
-2. load Run snapshot;
-3. compare expected Run version;
-4. acquire Run lease with configured TTL;
-5. dispatch handler;
-6. heartbeat when the handler exposes a checkpoint boundary;
-7. complete/retry/dead-letter work;
-8. release Run lease;
-9. emit structured tracing fields without objective or payload contents.
-
-Use a guard that attempts lease release on every normal error path. Process termination is handled by lease expiry.
-
-- [ ] **Step 4: Add bounded retry policy**
-
-Default deterministic backoff for H1 maintenance work:
+- [ ] **Step 4: Implement bounded retries**
 
 ```text
 attempt 1 -> 1 second
@@ -1106,21 +984,11 @@ attempt 3 -> 30 seconds
 attempt 4+ -> dead letter
 ```
 
-Store the chosen `available_at` and error code. Do not use random jitter in unit tests; production may add bounded jitter through configuration later.
+No random jitter in tests.
 
 - [ ] **Step 5: Wire `vestrace worker`**
 
-The command loads existing configuration, creates PostgreSQL ports and runs a loop with graceful shutdown. Add configuration fields:
-
-```text
-worker.id
-worker.poll_interval_ms
-worker.run_lease_ttl_seconds
-worker.heartbeat_interval_seconds
-worker.max_concurrency
-```
-
-H1 supports `max_concurrency = 1` in the command implementation. Reject other values with a clear configuration error; concurrent worker tasks are added only after the single-worker invariants pass.
+Add config `worker.id`, `poll_interval_ms`, `run_lease_ttl_seconds`, `heartbeat_interval_seconds`, `max_concurrency`. H1 accepts only `max_concurrency = 1`; other values return configuration error.
 
 - [ ] **Step 6: Run and commit**
 
@@ -1134,7 +1002,7 @@ git commit -m "feat(run): add restart-safe worker loop"
 
 ---
 
-### Task 9: Add forced RLS, indexes and cross-workspace negative tests
+### Task 9: Add forced RLS and operational indexes
 
 **Files:**
 - Create: `migrations/0022_run_rls_and_indexes.sql`
@@ -1143,38 +1011,17 @@ git commit -m "feat(run): add restart-safe worker loop"
 - Modify: `tests/run_atomicity.rs`
 
 **Interfaces:**
-- Applies forced RLS to all H1 tables.
-- Adds query indexes used by snapshots, replay, leasing and recovery.
+- Applies forced RLS to every H1 table.
 
-- [ ] **Step 1: Add failing cross-workspace tests**
+- [ ] **Step 1: Write cross-workspace negative tests**
 
-With two scoped request contexts, verify workspace B cannot:
+Workspace B cannot load/update A's Run, append A's event, add A's step/checkpoint, acquire A's lease or lease A's work. Errors must not reveal row contents or existence through unique-key details.
 
-- load or update workspace A's Run;
-- append an event to A's Run;
-- create a step/checkpoint for A's Run;
-- acquire A's Run lease;
-- lease A's work item;
-- infer A's existence through a unique-key error.
+- [ ] **Step 2: Add forced RLS**
 
-Expected behavior is empty/not-found or authorization-safe conflict, never leaked row contents.
+Apply to `agent_runs`, `run_steps`, `run_events`, `run_checkpoints`, `run_leases`, `work_items` using existing `vestrace_current_workspace_id()`.
 
-- [ ] **Step 2: Create forced RLS policies**
-
-Apply and force RLS on:
-
-```text
-agent_runs
-run_steps
-run_events
-run_checkpoints
-run_leases
-work_items
-```
-
-Use the existing `vestrace_current_workspace_id()` helper. Administrative purge/recovery roles remain separate and are not used by ordinary repositories.
-
-- [ ] **Step 3: Add required indexes**
+- [ ] **Step 3: Add indexes**
 
 ```text
 agent_runs(workspace_id, status, updated_at)
@@ -1188,8 +1035,6 @@ work_items(workspace_id, run_id, status)
 work_items(lease_until) WHERE status = 'leased'
 ```
 
-Use `EXPLAIN` assertions only for stable index presence, not fragile exact cost values.
-
 - [ ] **Step 4: Run and commit**
 
 ```bash
@@ -1200,7 +1045,7 @@ git commit -m "feat(security): isolate durable runs with RLS"
 
 ---
 
-### Task 10: Prove pause, resume, restart and logical replay end to end
+### Task 10: Prove restart, pause/resume and replay end to end
 
 **Files:**
 - Create: `tests/run_restart.rs`
@@ -1210,69 +1055,47 @@ git commit -m "feat(security): isolate durable runs with RLS"
 - Modify: `docs/superpowers/plans/2026-07-31-vestrace-harness-roadmap.md`
 
 **Interfaces:**
-- Produces the H1 acceptance scenario and final verification commands.
-- Produces no new public runtime contracts.
+- Produces H1 acceptance evidence; no new public contracts.
 
-- [ ] **Step 1: Implement a deterministic checkpointing test handler**
+- [ ] **Step 1: Add deterministic test handler**
 
-Inside `tests/run_restart.rs`, define a handler available only to the test binary:
+The handler performs no external I/O:
 
 ```text
 Advance 1:
   Created -> Preparing
-  add step A and step B
-  step A Ready -> Running -> Succeeded
-  create checkpoint at resulting version
+  add steps A and B
+  A: Ready -> Running -> Succeeded
+  create checkpoint
   enqueue next AdvanceRun
 
 Advance 2:
   Preparing -> Running
-  step B Ready -> Running
-  simulate process loss after durable checkpoint/work commit
+  B: Ready -> Running
+  simulate process loss after durable commit
 
 Recovered Advance:
-  acquire expired work and Run leases with worker B
-  resume from latest checkpoint
-  step B -> Succeeded
+  worker B acquires expired work and Run leases
+  resume from checkpoint
+  B -> Succeeded
   Run -> Succeeded
 ```
 
-The handler uses only Run application services. It performs no external side effects.
+Each arrow is executed through `RunCoordinator` and therefore produces its own version/event.
 
-- [ ] **Step 2: Write the restart acceptance test**
+- [ ] **Step 2: Write restart acceptance test**
 
-The test must:
+Create Run, execute with worker A, verify checkpoint, expire both leases without completing active work, construct fresh PostgreSQL adapters and worker B, finish Run, assert event sequences exactly `1..=run_version`, replay equals persisted logical state, checkpoint remains immutable, stale worker A generation cannot heartbeat/release.
 
-1. create one Run through `RunCoordinator`;
-2. execute the first work item with worker A;
-3. assert a durable checkpoint exists;
-4. simulate worker A loss by advancing the manual/database clock beyond both leases without completing the active queue item;
-5. construct a new worker B with fresh port instances;
-6. lease and finish the Run;
-7. assert final status `Succeeded`;
-8. assert event sequences are exactly `1..=run_version` with no gaps or duplicates;
-9. replay all events and compare the logical projection with persisted state;
-10. assert the original checkpoint remains immutable;
-11. assert worker A's stale generation cannot heartbeat, release or commit.
+- [ ] **Step 3: Add pause/resume test**
 
-- [ ] **Step 3: Add pause and resume branch to the acceptance suite**
+Pause after checkpoint, verify paused Run work is not handled, issue `ResumeRun`, and verify completed steps are not recreated and execution resumes from recorded cursor.
 
-Create a second Run, pause it after the first checkpoint, verify no execution work is leased while paused, issue `ResumeRun`, and verify execution continues from the recorded cursor rather than recreating completed steps.
+- [ ] **Step 4: Add cancel test**
 
-- [ ] **Step 4: Add cancel behavior test**
+Cancel a Run with completed and ready work. Assert status `Cancelled`, queued execution work becomes `Cancelled`, completed step/output history remains, no handler runs afterward, and result warns that previous external effects are not rolled back.
 
-Cancel a Run with one completed and one ready step. Verify:
-
-- Run becomes `Cancelled`;
-- ready/pending steps become `Cancelled` through explicit step events;
-- completed step remains `Succeeded`;
-- existing output references remain available;
-- no new `AdvanceRun` work is created;
-- result states that prior external effects, if any, were not rolled back.
-
-- [ ] **Step 5: Add CI PostgreSQL acceptance command**
-
-CI runs:
+- [ ] **Step 5: Add CI and Compose checks**
 
 ```bash
 cargo fmt --all --check
@@ -1281,11 +1104,11 @@ cargo test --workspace --all-features
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test cargo test --test run_restart --test run_replay
 ```
 
-The Compose worker health check verifies the process can reach PostgreSQL and poll the queue; it does not require a pending item.
+Compose worker health verifies PostgreSQL reachability and queue polling without requiring pending work.
 
-- [ ] **Step 6: Update the Harness roadmap with H1 completion evidence**
+- [ ] **Step 6: Update Harness roadmap**
 
-Add the normative migration sequence `0019`–`0022` and link this detailed plan under H1. Do not mark H1 complete until the acceptance commands pass on the implementation branch.
+Link this plan under H1 and add normative migration sequence `0019`–`0022`. Do not mark H1 complete before acceptance passes.
 
 - [ ] **Step 7: Final verification and commit**
 
@@ -1304,18 +1127,11 @@ git add tests/run_restart.rs tests/run_replay.rs docker-compose.yml .github/work
 git commit -m "test(run): prove durable restart and replay"
 ```
 
-Expected:
-
-- all commands exit `0`;
-- `server`, `worker` and PostgreSQL are healthy;
-- the restart scenario completes without duplicate logical mutations;
-- replay matches persisted state.
+Expected: all commands exit `0`; server, worker and PostgreSQL are healthy; restart produces no duplicate logical mutation; replay equals persisted state.
 
 ---
 
 ## H1 exit gate
-
-H1 is complete only when a fresh PostgreSQL database and fresh process instances demonstrate:
 
 ```text
 Create Run
@@ -1333,26 +1149,25 @@ Create Run
 
 Required evidence:
 
-- one event per logical Run version;
-- no event sequence gaps or duplicates;
-- concurrent stale updates fail with `revision_conflict`;
-- heartbeat does not alter logical Run version;
+- one canonical event per logical Run version;
+- contiguous event sequences;
+- stale concurrent updates return `revision_conflict`;
+- heartbeat does not change Run version;
 - stale lease generation cannot mutate operational state;
 - failed multi-table commits leave no partial state;
-- paused Runs do not advance until explicit resume;
-- cancelled Runs preserve completed outputs and stop new execution;
-- RLS prevents every tested cross-workspace read and write;
-- restart acceptance and logical replay tests pass.
+- paused Runs do not advance before explicit resume;
+- cancelled Runs preserve completed history and stop queued execution;
+- RLS blocks all tested cross-workspace access;
+- restart and replay acceptance tests pass.
 
-## Explicit non-goals for H1
+## Explicit non-goals
 
-- model providers or model-loop engines;
-- Rig integration or the H0-RIG spike;
-- actual `ExecutionPlan` nodes or validation;
-- Policy Engine, approval grants or capability evaluation;
-- real resource reservations and budget reconciliation;
-- tool definitions, tool execution or sandboxing;
-- actual subagent delegation behavior;
-- context assembly, Artifact Store or memory consolidation;
-- conversations, triggers, channels or public Harness API;
+- model providers, model-loop engines or Rig;
+- actual plan nodes/validation;
+- Policy Engine, approvals or capabilities;
+- budget reservations/accounting;
+- tools, side effects or sandboxing;
+- subagent delegation behavior;
+- context assembly, Artifact Store or consolidation;
+- conversations, triggers, channels or Harness public API;
 - distributed consensus or cross-region execution.
