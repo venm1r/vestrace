@@ -4,38 +4,37 @@
 
 **Documentation status:** Planning artifact only. Do not create the implementation branch, modify dependencies, run provider tests or write production code until the user explicitly ends the documentation-only phase.
 
-**Goal:** Implement Vestrace-owned model invocation contracts, production native OpenAI-compatible execution, optional Rig provider integration, canonical streaming and structured outputs, policy- and budget-governed routing/fallback, durable invocation records and the bounded model-loop implementation selected by ADR-0002.
+**Goal:** Implement Vestrace-owned model invocation contracts, a production native OpenAI-compatible adapter, an optional Rig provider adapter, canonical streaming and structured outputs, policy- and budget-governed routing/fallback, durable invocation records, restart-safe model work and the bounded model-loop implementation selected by ADR-0002.
 
-**Architecture:** Extend the v0.1 provider/model registry, router and `model_executions` records rather than creating a parallel registry. A logical `ModelExecution` owns one normalized request and may contain several ordered `ModelExecutionAttempt` records when controlled fallback is allowed. Every provider adapter implements the same Vestrace-owned `ModelProviderPort`; provider-specific types remain inside adapter crates. The native OpenAI-compatible adapter is a complete narrow production path and remains available when Rig is disabled. The bounded model loop is exposed through a sans-I/O `ModelLoopPort`; its production implementation is selected only by the H0-RIG outcome ADR.
+**Architecture:** Extend the v0.1 provider/model registry, router and `model_executions` records rather than introducing parallel concepts. One logical `ModelExecution` contains one normalized request and one or more ordered `ModelExecutionAttempt` records when controlled fallback is allowed. Every adapter implements the same Vestrace-owned `ModelProviderPort`; provider-specific types remain inside adapter crates. The native OpenAI-compatible adapter is a complete narrow production path and remains usable when Rig is absent. The bounded model loop is a sans-I/O `ModelLoopPort`; ADR-0002 determines its production implementation without changing provider contracts.
 
-**Tech Stack:** Existing Vestrace v0.1, H1 and H2 Rust workspace; Rust Edition 2024; Tokio; Serde; Schemars; SQLx; PostgreSQL 17; Reqwest; Futures; Tokio Util; SHA-256; JSON Schema validation; deterministic local HTTP fixtures; optional exact-pinned `rig-core` and `rig-agent` selected by ADR-0002.
+**Tech Stack:** Existing Vestrace v0.1, H1 and H2 Rust workspace; Rust Edition 2024; Tokio; Serde; Schemars; SQLx; PostgreSQL 17; Reqwest; Futures; Tokio Util; SHA-256; JSON Schema validation; deterministic loopback HTTP fixtures; optional exact-pinned `rig-core` and `rig-agent` approved by ADR-0002.
 
 ## Global Constraints
 
-- Complete all five v0.1 plans, H1 Durable Run Core, H2 Policy/Approval/Budget Core and the H0-RIG spike before implementing the production loop task.
+- Complete all five v0.1 plans, H1 Durable Run Core, H2 Policy/Approval/Budget Core and the H0-RIG spike before Task 11.
 - ADR-0001 remains authoritative: `docs/superpowers/specs/adr/0001-rig-integration-boundary.md`.
-- ADR-0002 produced by H0-RIG must exist before Task 11 begins and must contain exactly `Accepted`, `AcceptedWithRestrictions` or `Rejected`.
-- Vestrace owns all domain types, application ports, persistence schemas, durable events, public schemas and checkpoints.
+- ADR-0002 must exist before Task 11 and contain exactly `Accepted`, `AcceptedWithRestrictions` or `Rejected`.
+- Vestrace owns every domain type, application port, persisted schema, durable event, public schema and checkpoint envelope.
 - No Rig type may appear outside `vestrace-rig-adapter` or in a Vestrace-owned persisted/public contract.
-- `vestrace-provider-openai-compatible` is a production adapter, not a fallback stub.
-- Native support is deliberately limited to text messages, JSON structured output, tool-call proposals, streaming text/tool deltas and embeddings. Unsupported modalities fail before network dispatch.
-- Provider adapters never select models, authorize data transfer, approve actions, reserve budgets or execute tools.
-- Every provider dispatch requires a consumed H2 `GuardedAction` for action `model.invoke` and an active budget reservation when the operation has non-zero estimated usage.
-- Provider credentials are resolved only inside infrastructure through an opaque secret reference. Credential material never enters prompts, domain values, ordinary logs, events or public DTOs.
-- The model sees tool definitions and may propose tool calls; H3 never executes real tools. H4 owns tool authorization and execution.
-- A provider response, stream chunk, tool result or refusal is untrusted input and cannot modify policy, capabilities, model selection or Run authority.
-- Logical `ModelExecution` and each attempt use stable idempotency keys. A fallback is a new attempt under the same logical execution, not a duplicate logical command.
-- `Unknown` completion is not retried or failed over until reconciliation establishes that a new attempt is safe.
-- Safety refusal is not bypassed by automatic fallback. Any later alternate-model attempt requires an explicit typed policy decision.
-- Authentication failure, policy denial, hard budget exhaustion and malformed local configuration are non-fallback failures.
-- Streaming events are provisional transport observations. Only normalized durable invocation events and final assembled output are authoritative.
-- Structured output must pass both JSON parsing and the exact stored output schema. Semantic validators are explicit application ports and cannot be replaced by provider claims.
-- Hidden chain-of-thought is never requested as a persistence requirement and is not stored. Provider-specific reasoning summaries are treated as ordinary untrusted output only when explicitly requested.
-- Run mutations continue to follow H1: each logical Run mutation increments `RunVersion` once and appends exactly one `RunEvent`. Stream deltas and provider attempt telemetry do not change `RunVersion`.
-- Existing migrations `0014_provider_and_model_registry.sql` and `0015_routing_executions_and_evaluations.sql` are extended only through new forward migrations.
-- H3 migrations begin at `0028` and are created once.
-- CI provider tests use deterministic local servers and require no public provider key or internet access.
-- Mandatory Rig-free feature path: `provider-openai-compatible` without `provider-rig` or a Rig loop implementation.
+- `vestrace-provider-openai-compatible` is a production adapter, not a reference stub.
+- Native support is intentionally limited to text, JSON structured output, tool-call proposals, streaming text/tool deltas and embeddings. Unsupported modalities fail before dispatch.
+- Provider adapters never select models, authorize data transfer, issue approvals, reserve budgets or execute tools.
+- Every provider dispatch requires a consumed H2 `GuardedAction` for `model.invoke` and the required reservations.
+- Provider credentials are resolved only inside adapter infrastructure through a secret reference. Secret material never enters prompts, domain values, durable events, ordinary logs or public DTOs.
+- H3 may expose tool definitions and return tool proposals, but H3 never executes a real tool. H4 owns tool authorization and execution.
+- Provider responses, stream chunks, tool proposals and refusals are untrusted data and cannot modify policy, capabilities, selection or Run authority.
+- `ModelExecution` and every attempt use stable idempotency keys. A fallback is a new attempt under the same logical execution.
+- `Unknown` completion is never retried or failed over until reconciliation proves a new dispatch is safe.
+- Safety refusal is never bypassed by automatic fallback.
+- Authentication failure, policy denial, hard-budget exhaustion and invalid local configuration are non-fallback failures.
+- Streaming events are provisional transport observations. Only canonical durable events and final assembled output are authoritative.
+- Structured output passes local JSON parsing, the exact stored JSON Schema and any explicitly configured semantic validator.
+- Hidden chain-of-thought is neither requested for persistence nor stored.
+- H1 Run semantics remain unchanged: each logical Run mutation increments `RunVersion` once and appends one `RunEvent`; provider deltas and attempt telemetry do not change `RunVersion`.
+- Existing migrations `0014` and `0015` are never edited. H3 extends them with migrations `0028`–`0031`.
+- CI provider tests use loopback fixtures and require no public provider key or internet access.
+- The Rig-free path uses `provider-openai-compatible` plus a test-only scripted loop; it does not require a production native loop when ADR-0002 accepts Rig.
 - Future implementation branch: `feat/h3-model-runtime-provider-adapters`.
 
 ---
@@ -48,18 +47,21 @@ Cargo.lock
 .github/workflows/ci.yml
 
 crates/vestrace-domain/src/
+  id.rs
+  models/mod.rs
   models/runtime.rs
   models/message.rs
   models/output.rs
   models/usage.rs
   models/error.rs
-  models/mod.rs
   run/event.rs
   run/work.rs
   run/mod.rs
-  id.rs
 
 crates/vestrace-application/src/
+  lib.rs
+  models/router.rs
+  models/ports.rs
   model_runtime/mod.rs
   model_runtime/ports.rs
   model_runtime/commands.rs
@@ -69,10 +71,8 @@ crates/vestrace-application/src/
   model_runtime/structured_output.rs
   model_runtime/worker.rs
   model_runtime/loop_port.rs
+  model_runtime/test_loop.rs
   model_runtime/native_loop.rs
-  models/router.rs
-  models/ports.rs
-  lib.rs
 
 crates/vestrace-application/tests/
   model_runtime_orchestrator.rs
@@ -111,13 +111,13 @@ crates/vestrace-model-test-support/
   src/fixtures.rs
 
 crates/vestrace-infrastructure/src/postgres/
+  mod.rs
   model_runtime/mod.rs
   model_runtime/execution_repository.rs
   model_runtime/attempt_repository.rs
   model_runtime/event_repository.rs
   model_runtime/checkpoint_repository.rs
   model_runtime/reconciliation_repository.rs
-  mod.rs
 
 migrations/
   0028_provider_adapter_bindings_and_runtime_capabilities.sql
@@ -141,13 +141,15 @@ scripts/
   verify-rig-boundary.sh
 ```
 
+`model_runtime/native_loop.rs` is created only when ADR-0002 selects a native production loop. `model_runtime/test_loop.rs` is always created behind `model-loop-test` and is excluded from production composition.
+
 ---
 
 ## Normative contracts
 
-### Existing v0.1 entities remain authoritative
+### Existing v0.1 records remain authoritative
 
-H3 does not create a second model registry or a parallel `model_invocations` table.
+H3 does not create a second registry or a `model_invocations` table.
 
 ```text
 ProviderProfile / ProviderRevision
@@ -158,27 +160,24 @@ ModelExecution
 QualityEvaluation
 ```
 
-H3 extends these through new revisions and relations:
+H3 adds:
 
 ```text
 ProviderRevision
-└── ProviderAdapterBinding
+└── ProviderAdapterBindingRevision
 
 ModelExecution
 ├── ModelExecutionAttempt 1
 ├── ModelExecutionAttempt 2 (optional fallback)
-├── ModelExecutionEvent stream
+├── ModelExecutionEvent sequence
 └── ModelLoopCheckpoint (optional)
 ```
 
-`ModelExecutionId` remains the stable logical invocation ID. H3 adds `ModelExecutionAttemptId`, `ModelExecutionEventId`, `ModelLoopCheckpointId`, `ProviderAdapterBindingId` and `ModelReconciliationId`.
+`ModelExecutionId` remains the logical invocation ID. H3 adds `ProviderAdapterBindingId`, `ProviderAdapterBindingRevisionId`, `ModelExecutionAttemptId`, `ModelExecutionEventId`, `ModelLoopCheckpointId` and `ModelReconciliationId`.
 
-### Canonical messages and content
+### Canonical domain messages
 
 ```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ModelMessageRole {
     System,
     Developer,
@@ -187,17 +186,12 @@ pub enum ModelMessageRole {
     Tool,
 }
 
-#[derive(Clone, Debug, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModelContentPart {
     Text { text: String },
     Json { value: serde_json::Value },
     InputReference { reference: RunReference, media_type: String },
 }
 
-#[derive(Clone, Debug, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelMessage {
     pub role: ModelMessageRole,
     pub parts: Vec<ModelContentPart>,
@@ -208,18 +202,16 @@ pub struct ModelMessage {
 
 Rules:
 
-- a message has at least one part;
-- each text part is at most 4 MiB before later context budgeting;
+- every message has at least one part;
+- a text part is at most 4 MiB before later context budgeting;
 - `Tool` requires a non-blank `tool_call_id`;
-- non-tool messages reject `tool_call_id`;
-- `InputReference` is allowed only when the selected model declares the matching modality and an upstream context/artifact layer has authorized the reference;
-- the native adapter initially accepts only text and JSON parts and rejects unsupported references before dispatch.
+- other roles reject `tool_call_id`;
+- `InputReference` requires an authorized reference and a selected model with the matching modality;
+- the native adapter initially rejects `InputReference` before network dispatch.
 
-### Output contract
+### Output and tool-view contracts
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModelOutputContract {
     Text,
     Json {
@@ -229,7 +221,6 @@ pub enum ModelOutputContract {
     },
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelToolDefinitionView {
     pub stable_name: String,
     pub description: String,
@@ -237,12 +228,11 @@ pub struct ModelToolDefinitionView {
 }
 ```
 
-Tool definitions are prompt views only. They contain no execution binding, credential reference or authorization ticket.
+A tool view contains no execution binding, credential reference, policy decision or authorization ticket.
 
-### Invocation requirements and request
+### Invocation requirements and logical request
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelInvocationRequirements {
     pub task_type: String,
     pub required_capabilities: std::collections::BTreeSet<ModelCapability>,
@@ -255,7 +245,6 @@ pub struct ModelInvocationRequirements {
     pub fallback_policy: ModelFallbackPolicy,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelInvocationRequest {
     pub execution_id: ModelExecutionId,
     pub run_id: AgentRunId,
@@ -272,56 +261,30 @@ pub struct ModelInvocationRequest {
 }
 ```
 
-`minimum_quality_micros` is an integer from `0` to `1_000_000`. Empty task type, messages, idempotency key or output schema are invalid.
+`minimum_quality_micros` is `0..=1_000_000`. Empty task type, messages, idempotency key or JSON schema are invalid.
 
-### Provider adapter binding
+### Provider binding
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct ProviderAdapterBinding {
-    pub id: ProviderAdapterBindingId,
+pub struct ProviderAdapterBindingRevision {
+    pub id: ProviderAdapterBindingRevisionId,
+    pub binding_id: ProviderAdapterBindingId,
+    pub revision: u32,
     pub provider_revision_id: ProviderRevisionId,
     pub adapter_kind: ProviderAdapterKind,
     pub adapter_revision: String,
     pub configuration: serde_json::Value,
     pub credential_reference: Option<SecretReference>,
     pub enabled: bool,
+    pub content_hash: [u8; 32],
 }
-
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct ProviderAdapterKind(String);
 ```
 
-Initial stable values:
+Initial adapter kinds are `openai-compatible` and `rig`. Configuration contains endpoint, timeout and safe header names, never secret values.
 
-```text
-openai-compatible
-rig
-```
-
-Configuration may contain endpoint, timeout and safe custom header names, but never secret values. Binding revisions are immutable; activation changes the current binding pointer.
-
-### Provider request and result
+### Usage, results and errors
 
 ```rust
-#[derive(Clone, Debug)]
-pub struct ProviderInvocationRequest {
-    pub execution_id: ModelExecutionId,
-    pub attempt_id: ModelExecutionAttemptId,
-    pub model_revision_id: ModelRevisionId,
-    pub provider_revision_id: ProviderRevisionId,
-    pub binding: ProviderAdapterBinding,
-    pub messages: Vec<ModelMessage>,
-    pub tools: Vec<ModelToolDefinitionView>,
-    pub output_contract: ModelOutputContract,
-    pub cancellation: CancellationToken,
-    pub deadline: Timestamp,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -330,14 +293,12 @@ pub struct ModelUsage {
     pub provider_reported: bool,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelToolCall {
     pub call_id: String,
     pub tool_name: String,
     pub normalized_arguments: CanonicalArguments,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProviderInvocationResult {
     pub provider_request_id: Option<String>,
     pub output_text: String,
@@ -347,43 +308,7 @@ pub struct ProviderInvocationResult {
     pub finish_reason: ModelFinishReason,
     pub provider_metadata: serde_json::Value,
 }
-```
 
-Provider metadata is size-limited, secret-scanned and never interpreted as authority.
-
-### Canonical stream events
-
-```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum ModelStreamEvent {
-    Started,
-    TextDelta { index: u32, text: String },
-    ToolCallDelta {
-        index: u32,
-        call_id_fragment: String,
-        tool_name_fragment: String,
-        arguments_fragment: String,
-    },
-    Usage { usage: ModelUsage },
-    Completed { finish_reason: ModelFinishReason },
-}
-```
-
-A stream is valid only when:
-
-- `Started` is first and occurs once;
-- indexes are monotonic within each text/tool stream;
-- a single terminal `Completed` exists;
-- tool-call fragments assemble into valid canonical JSON arguments;
-- final usage is non-decreasing and reconciled against the terminal provider result.
-
-### Provider errors and fallback classification
-
-```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ProviderErrorKind {
     Transient,
     RateLimited,
@@ -412,34 +337,67 @@ pub struct ProviderError {
 }
 ```
 
-Fallback eligibility:
+Fallback matrix:
 
 ```text
-Transient, RateLimited, Unavailable, Timeout
-  allowed only when completion_may_have_occurred = false
-  and request fallback policy permits another eligible model
+Transient / RateLimited / Unavailable / Timeout
+  fallback only when completion_may_have_occurred = false
 
 InvalidStructuredOutput
-  bounded correction or fallback only when configured
+  one bounded correction or fallback only when configured
 
 ContextTooLarge
-  no blind retry; return recontextualization-required unless an already-routed
-  compatible fallback has a sufficient context limit
+  no blind retry; use an already eligible larger-context fallback
+  or return recontextualization-required
 
 SafetyRefusal
   no automatic fallback
 
-Authentication, UnsupportedCapability, InvalidRequest,
-PolicyDenied, BudgetExceeded, Cancelled
+Authentication / UnsupportedCapability / InvalidRequest /
+PolicyDenied / BudgetExceeded / Cancelled
   no fallback
 
 UnknownCompletion or completion_may_have_occurred = true
-  no fallback before reconciliation
+  reconciliation required before another dispatch
 ```
 
-### Provider and semantic validation ports
+### Canonical stream events
 
 ```rust
+pub enum ModelStreamEvent {
+    Started,
+    TextDelta { index: u32, text: String },
+    ToolCallDelta {
+        index: u32,
+        call_id_fragment: String,
+        tool_name_fragment: String,
+        arguments_fragment: String,
+    },
+    Usage { usage: ModelUsage },
+    Completed { finish_reason: ModelFinishReason },
+}
+```
+
+`Started` is first and unique; indexes are monotonic per stream; `Completed` is unique and terminal; assembled tool arguments must become valid canonical JSON.
+
+### Application-owned provider request and ports
+
+`ProviderInvocationRequest`, cancellation and provider ports belong to `vestrace-application`, not `vestrace-domain`.
+
+```rust
+pub struct ProviderInvocationRequest {
+    pub execution_id: ModelExecutionId,
+    pub attempt_id: ModelExecutionAttemptId,
+    pub model_revision_id: ModelRevisionId,
+    pub provider_revision_id: ProviderRevisionId,
+    pub binding: ProviderAdapterBindingRevision,
+    pub messages: Vec<ModelMessage>,
+    pub tools: Vec<ModelToolDefinitionView>,
+    pub output_contract: ModelOutputContract,
+    pub cancellation: tokio_util::sync::CancellationToken,
+    pub deadline: Timestamp,
+}
+
 pub type ProviderEventStream = std::pin::Pin<
     Box<dyn futures_core::Stream<Item = Result<ModelStreamEvent, ProviderError>> + Send>
 >;
@@ -447,21 +405,12 @@ pub type ProviderEventStream = std::pin::Pin<
 #[async_trait::async_trait]
 pub trait ModelProviderPort: Send + Sync {
     fn adapter_kind(&self) -> ProviderAdapterKind;
-
-    async fn invoke(
-        &self,
-        request: ProviderInvocationRequest,
-    ) -> Result<ProviderInvocationResult, ProviderError>;
-
-    async fn stream(
-        &self,
-        request: ProviderInvocationRequest,
-    ) -> Result<ProviderEventStream, ProviderError>;
-
-    async fn embed(
-        &self,
-        request: EmbeddingRequest,
-    ) -> Result<EmbeddingResult, ProviderError>;
+    async fn invoke(&self, request: ProviderInvocationRequest)
+        -> Result<ProviderInvocationResult, ProviderError>;
+    async fn stream(&self, request: ProviderInvocationRequest)
+        -> Result<ProviderEventStream, ProviderError>;
+    async fn embed(&self, request: EmbeddingRequest)
+        -> Result<EmbeddingResult, ProviderError>;
 }
 
 #[async_trait::async_trait]
@@ -474,7 +423,7 @@ pub trait SemanticOutputValidatorPort: Send + Sync {
 }
 ```
 
-### Provider credentials remain infrastructure-private
+### Infrastructure-private credential resolver
 
 ```rust
 #[async_trait::async_trait]
@@ -486,14 +435,11 @@ pub(crate) trait ProviderAuthResolver: Send + Sync {
 }
 ```
 
-`ResolvedProviderAuth` is defined in adapter infrastructure, implements redacted `Debug`, is zeroized where supported and is never returned through `ModelProviderPort`.
+`ResolvedProviderAuth` has redacted `Debug`, is zeroized where supported and never crosses `ModelProviderPort`.
 
-### Durable execution lifecycle
+### Durable lifecycle
 
 ```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ModelExecutionStatus {
     Created,
     Authorized,
@@ -508,9 +454,6 @@ pub enum ModelExecutionStatus {
     Cancelled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ModelAttemptStatus {
     Prepared,
     Dispatching,
@@ -522,12 +465,11 @@ pub enum ModelAttemptStatus {
 }
 ```
 
-Terminal logical statuses are `Succeeded`, `Failed`, `Unknown` and `Cancelled`. `Unknown` is terminal for automatic execution but may transition through an explicit reconciliation command to `Succeeded` or `Failed` without dispatching a new request.
+`Succeeded`, `Failed`, `Unknown` and `Cancelled` stop automatic execution. Explicit reconciliation may resolve `Unknown` to `Succeeded` or `FailedSafeToRetry` without silently dispatching again.
 
-### Model-loop port
+### Sans-I/O model loop
 
 ```rust
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModelLoopStart {
     pub run_id: AgentRunId,
     pub step_id: RunStepId,
@@ -538,7 +480,6 @@ pub struct ModelLoopStart {
     pub journal_cursor: ResumeCursor,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum ModelLoopInput {
     Start(ModelLoopStart),
     ModelCompleted(ProviderInvocationResult),
@@ -546,7 +487,6 @@ pub enum ModelLoopInput {
     ReconciliationCompleted(Vec<ModelToolResultView>),
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum ModelLoopEffect {
     InvokeModel {
         messages: Vec<ModelMessage>,
@@ -561,16 +501,18 @@ pub enum ModelLoopEffect {
 }
 
 pub trait ModelLoopPort: Send {
-    fn apply(&mut self, input: ModelLoopInput) -> Result<ModelLoopEffect, ApplicationError>;
-    fn checkpoint(&self, cursor: ResumeCursor) -> Result<ModelLoopEngineCheckpoint, ApplicationError>;
+    fn apply(&mut self, input: ModelLoopInput)
+        -> Result<ModelLoopEffect, ApplicationError>;
+    fn checkpoint(&self, cursor: ResumeCursor)
+        -> Result<ModelLoopEngineCheckpoint, ApplicationError>;
 }
 ```
 
-The loop performs no provider or tool I/O. `ToolCallsProposed` is not permission to execute.
+The loop performs no provider or tool I/O. A tool proposal is never permission to execute.
 
 ---
 
-### Task 1: Add model-runtime identifiers, canonical messages, outputs, usage and errors
+### Task 1: Add model-runtime domain contracts
 
 **Files:**
 - Modify: `crates/vestrace-domain/src/id.rs`
@@ -581,13 +523,12 @@ The loop performs no provider or tool I/O. `ToolCallsProposed` is not permission
 - Create: `crates/vestrace-domain/src/models/runtime.rs`
 - Modify: `crates/vestrace-domain/src/models/mod.rs`
 - Modify: `crates/vestrace-domain/src/lib.rs`
-- Test: inline unit and property tests
 
 **Interfaces:**
-- Adds IDs `ProviderAdapterBindingId`, `ModelExecutionAttemptId`, `ModelExecutionEventId`, `ModelLoopCheckpointId` and `ModelReconciliationId`.
-- Produces every canonical domain contract listed above except application ports.
+- Adds the H3 IDs and all domain-owned contracts above.
+- Does not define `CancellationToken`, `ModelProviderPort` or adapter request types.
 
-- [ ] **Step 1: Write failing canonical-message tests**
+- [ ] **Step 1: Write failing message tests**
 
 ```rust
 #[test]
@@ -602,7 +543,7 @@ fn tool_message_requires_call_id() {
 }
 
 #[test]
-fn non_tool_message_rejects_call_id() {
+fn user_message_rejects_call_id() {
     let result = ModelMessage::new(
         ModelMessageRole::User,
         vec![ModelContentPart::Text { text: "hello".into() }],
@@ -613,19 +554,13 @@ fn non_tool_message_rejects_call_id() {
 }
 ```
 
-Run:
-
-```bash
-cargo test -p vestrace-domain models::message
-```
-
-Expected: FAIL because the runtime message types do not exist.
+Run `cargo test -p vestrace-domain models::message`; expect failure because the types do not exist.
 
 - [ ] **Step 2: Implement messages and output contracts**
 
-Compile JSON Schemas when `ModelOutputContract::Json` is constructed. Reject schemas larger than 1 MiB, blank semantic-validator IDs and message/tool names outside `[A-Za-z0-9_.-]` or longer than 128 bytes.
+Compile JSON Schemas on construction. Reject schemas above 1 MiB, blank semantic-validator IDs, empty parts and names outside `[A-Za-z0-9_.-]` or above 128 bytes.
 
-- [ ] **Step 3: Implement usage with checked arithmetic**
+- [ ] **Step 3: Implement checked usage accounting**
 
 ```rust
 impl ModelUsage {
@@ -634,9 +569,9 @@ impl ModelUsage {
 }
 ```
 
-Overflow returns `DomainError::InvalidArgument`; no saturating accounting is allowed.
+Overflow is an error; accounting never saturates.
 
-- [ ] **Step 4: Implement provider errors and fallback classifier**
+- [ ] **Step 4: Implement fallback classification**
 
 ```rust
 pub fn fallback_disposition(
@@ -645,13 +580,13 @@ pub fn fallback_disposition(
 ) -> FallbackDisposition;
 ```
 
-Unit tests cover every matrix row in the normative contract, including `Timeout` with `completion_may_have_occurred = true` mapping to reconciliation rather than fallback.
+Test every matrix row, especially timeout with `completion_may_have_occurred = true`.
 
 - [ ] **Step 5: Implement invocation and loop value objects**
 
-Validate non-empty messages, task type, stable idempotency key, maximum turns from `1..=64`, and unique tool names. Tool-call arguments use H2 `CanonicalArguments`.
+Require non-empty messages/task/idempotency key, `maximum_model_turns` in `1..=64`, unique tool names and H2 `CanonicalArguments` for tool calls.
 
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 cargo test -p vestrace-domain models
@@ -662,7 +597,7 @@ git commit -m "feat(model-runtime): add canonical invocation contracts"
 
 ---
 
-### Task 2: Add immutable provider adapter bindings and runtime capability negotiation
+### Task 2: Add immutable provider bindings and capability negotiation
 
 **Files:**
 - Create: `migrations/0028_provider_adapter_bindings_and_runtime_capabilities.sql`
@@ -674,54 +609,29 @@ git commit -m "feat(model-runtime): add canonical invocation contracts"
 - Create: `tests/provider_binding_registry.rs`
 
 **Interfaces:**
-- Produces immutable `ProviderAdapterBinding` revisions and a current binding pointer per provider revision.
+- Produces immutable binding revisions and a current binding pointer per provider revision.
 - Produces `RuntimeCapabilityReport` and `negotiate_runtime_capabilities`.
 
 - [ ] **Step 1: Write failing binding tests**
 
-Test that:
+Test creation, immutable revision history, secret rejection, disabled-binding exclusion and tool-capability mismatch. Run the test and expect failure because migration `0028` is absent.
 
-1. a provider revision can bind to `openai-compatible`;
-2. revising the endpoint creates a new binding and preserves the old one;
-3. configuration containing `api_key`, `authorization` or a known secret value is rejected;
-4. a disabled binding is never router-eligible;
-5. a model requiring tool calling is rejected when the binding reports no tool-call support.
+- [ ] **Step 2: Create schema**
 
-Run:
+Create `provider_adapter_bindings`, `provider_adapter_binding_revisions` and `provider_runtime_capability_reports`; add `current_adapter_binding_revision_id` to `provider_revisions`. Enforce workspace ownership, immutable revisions and content hashes.
 
-```bash
-DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test provider_binding_registry
-```
-
-Expected: FAIL because migration `0028` and binding repositories do not exist.
-
-- [ ] **Step 2: Create the binding schema**
-
-Create:
+- [ ] **Step 3: Implement binding commands**
 
 ```text
-provider_adapter_bindings
-provider_adapter_binding_revisions
-provider_runtime_capability_reports
-```
-
-Add `current_adapter_binding_revision_id` to `provider_revisions` through this migration. Enforce same-workspace ownership and immutable revision rows. Store configuration and capability reports as validated JSONB with SHA-256 hashes.
-
-- [ ] **Step 3: Implement binding services**
-
-Commands:
-
-```rust
 CreateProviderAdapterBinding
-ReviseProviderAdapterBinding { expected_revision: u32 }
+ReviseProviderAdapterBinding(expected_revision)
 ActivateProviderAdapterBindingRevision
 DisableProviderAdapterBinding
 ```
 
-All writes require idempotency and expected revision where applicable. Activation checks adapter registration through `ProviderAdapterRegistryPort` before changing the current pointer.
+All writes use idempotency and optimistic concurrency. Activation verifies that the adapter kind is registered by trusted deployment configuration.
 
-- [ ] **Step 4: Implement capability negotiation**
+- [ ] **Step 4: Implement intersection-based negotiation**
 
 ```rust
 pub fn negotiate_runtime_capabilities(
@@ -731,13 +641,13 @@ pub fn negotiate_runtime_capabilities(
 ) -> Result<EffectiveModelRuntimeCapabilities, CapabilityNegotiationError>;
 ```
 
-Effective capabilities are an intersection. Configuration or provider discovery can reduce, never broaden, the stored model declaration.
+Provider discovery and adapter configuration may reduce, never broaden, model-declared capabilities.
 
-- [ ] **Step 5: Integrate router hard filters**
+- [ ] **Step 5: Integrate router filters**
 
-Insert binding availability and effective runtime capabilities after operational availability and policy eligibility, before quality and cost ranking. Record stable exclusion codes `adapter_disabled`, `adapter_unavailable` and `runtime_capability_missing`.
+Apply adapter availability/capability checks before quality/cost ranking and record `adapter_disabled`, `adapter_unavailable` or `runtime_capability_missing`.
 
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -748,13 +658,14 @@ git commit -m "feat(model-runtime): register provider adapter bindings"
 
 ---
 
-### Task 3: Define application ports, commands and deterministic test adapters
+### Task 3: Define application ports and deterministic test runtime
 
 **Files:**
 - Create: `crates/vestrace-application/src/model_runtime/mod.rs`
 - Create: `crates/vestrace-application/src/model_runtime/ports.rs`
 - Create: `crates/vestrace-application/src/model_runtime/commands.rs`
 - Create: `crates/vestrace-application/src/model_runtime/loop_port.rs`
+- Create: `crates/vestrace-application/src/model_runtime/test_loop.rs`
 - Modify: `crates/vestrace-application/src/lib.rs`
 - Create: `crates/vestrace-model-test-support/Cargo.toml`
 - Create: `crates/vestrace-model-test-support/src/lib.rs`
@@ -762,68 +673,42 @@ git commit -m "feat(model-runtime): register provider adapter bindings"
 - Create: `crates/vestrace-model-test-support/src/fixtures.rs`
 
 **Interfaces:**
-- Produces `ModelProviderPort`, `ModelProviderRegistryPort`, `ModelExecutionRepositoryPort`, `ModelLoopCheckpointPort`, `ModelReconciliationPort`, `SemanticOutputValidatorPort` and `ModelLoopPort`.
-- Produces commands `InvokeModel`, `CancelModelExecution`, `ReconcileModelExecution` and `ContinueModelLoop`.
-- Produces `ScriptedProvider`, `ScriptedProviderStream`, `FakeSemanticValidator` and deterministic model fixtures.
+- Produces all H3 application ports and commands.
+- Produces `ScriptedProvider`, `ScriptedProviderStream`, `FakeSemanticValidator` and `ScriptedModelLoop`.
+- `ScriptedModelLoop` is compiled only with `model-loop-test` or crate-local tests.
 
 - [ ] **Step 1: Write object-safety compile tests**
 
 ```rust
-fn accepts_provider(_provider: std::sync::Arc<dyn ModelProviderPort>) {}
-fn accepts_loop(_loop_engine: Box<dyn ModelLoopPort>) {}
+fn accepts_provider(_value: std::sync::Arc<dyn ModelProviderPort>) {}
+fn accepts_loop(_value: Box<dyn ModelLoopPort>) {}
 ```
 
-Run:
+Run application tests and expect failure before ports exist.
 
-```bash
-cargo test -p vestrace-application model_runtime::ports
-```
-
-Expected: FAIL because the ports do not exist.
-
-- [ ] **Step 2: Define provider registry and persistence ports**
+- [ ] **Step 2: Define provider registry**
 
 ```rust
 #[async_trait::async_trait]
 pub trait ModelProviderRegistryPort: Send + Sync {
-    async fn get(
-        &self,
-        kind: &ProviderAdapterKind,
-    ) -> Result<std::sync::Arc<dyn ModelProviderPort>, ApplicationError>;
-
-    async fn capability_report(
-        &self,
-        kind: &ProviderAdapterKind,
-    ) -> Result<RuntimeCapabilityReport, ApplicationError>;
+    async fn get(&self, kind: &ProviderAdapterKind)
+        -> Result<std::sync::Arc<dyn ModelProviderPort>, ApplicationError>;
+    async fn capability_report(&self, kind: &ProviderAdapterKind)
+        -> Result<RuntimeCapabilityReport, ApplicationError>;
 }
 ```
 
-The registry is configured by trusted deployment code; model output cannot register adapters.
+Model output cannot register adapters.
 
-- [ ] **Step 3: Define exact persistence operations**
+- [ ] **Step 3: Define exact repository transitions**
 
-The repository port includes:
+The persistence port provides typed methods for create, authorize, route, create attempt, mark dispatching, append attempt events, complete/fail/unknown attempt, complete logical execution, load and reconcile. Every logical transition uses expected execution revision; attempt event sequence is separate from H1 `RunVersion`.
 
-```rust
-async fn create_execution(...);
-async fn mark_authorized(...);
-async fn attach_routing_decision(...);
-async fn create_attempt(...);
-async fn mark_attempt_dispatching(...);
-async fn append_attempt_events(...);
-async fn complete_attempt(...);
-async fn mark_attempt_unknown(...);
-async fn complete_execution(...);
-async fn load_execution(...);
-```
+- [ ] **Step 4: Implement deterministic fakes**
 
-Every transition carries expected logical execution revision. Attempt event append uses a separate monotonic attempt-event sequence and does not alter H1 `RunVersion`.
+`ScriptedProvider` records canonical requests and supports blocking, streaming, embeddings, timeout before dispatch and lost response after dispatch. `ScriptedModelLoop` emits configured effects and versioned checkpoints without network or provider dependencies.
 
-- [ ] **Step 4: Implement deterministic scripted providers**
-
-`ScriptedProvider` consumes queued results and records normalized requests. It must support blocking, streaming, embeddings, injected timeout before dispatch and injected lost response after dispatch. No fixture opens a network socket in this task.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p vestrace-application model_runtime
@@ -834,7 +719,7 @@ git commit -m "feat(model-runtime): define application runtime ports"
 
 ---
 
-### Task 4: Implement canonical stream assembly and structured-output validation
+### Task 4: Implement stream assembly and structured-output validation
 
 **Files:**
 - Create: `crates/vestrace-application/src/model_runtime/stream.rs`
@@ -845,61 +730,32 @@ git commit -m "feat(model-runtime): define application runtime ports"
 **Interfaces:**
 - Produces `ModelStreamAssembler`, `AssembledProviderOutput`, `StructuredOutputValidator` and `OutputValidationReport`.
 
-- [ ] **Step 1: Write failing stream-order tests**
+- [ ] **Step 1: Write stream-order tests**
 
-```rust
-#[test]
-fn text_and_tool_deltas_assemble_deterministically() {
-    let events = vec![
-        ModelStreamEvent::Started,
-        ModelStreamEvent::TextDelta { index: 0, text: "Result: ".into() },
-        ModelStreamEvent::ToolCallDelta {
-            index: 0,
-            call_id_fragment: "call-".into(),
-            tool_name_fragment: "look".into(),
-            arguments_fragment: "{\"q\":".into(),
-        },
-        ModelStreamEvent::ToolCallDelta {
-            index: 0,
-            call_id_fragment: "1".into(),
-            tool_name_fragment: "up".into(),
-            arguments_fragment: "\"rust\"}".into(),
-        },
-        ModelStreamEvent::Completed { finish_reason: ModelFinishReason::ToolCalls },
-    ];
+Test deterministic text/tool assembly, missing `Started`, duplicate terminal, decreasing indexes, malformed tool JSON and deltas after completion.
 
-    let output = ModelStreamAssembler::assemble(events).unwrap();
-    assert_eq!(output.text, "Result: ");
-    assert_eq!(output.tool_calls[0].call_id, "call-1");
-    assert_eq!(output.tool_calls[0].tool_name, "lookup");
-    assert_eq!(output.tool_calls[0].normalized_arguments.value()["q"], "rust");
-}
-```
+- [ ] **Step 2: Implement fail-closed limits**
 
-Add tests for missing `Started`, duplicate terminal events, decreasing indexes, malformed JSON fragments and text after `Completed`.
+Limit each delta to 1 MiB, total text to the configured ceiling and tool argument buffers to 4 MiB per call. Protocol violations map to `InvalidResponse`.
 
-- [ ] **Step 2: Implement fail-closed stream assembly**
+- [ ] **Step 3: Write output-validation tests**
 
-Limit individual deltas to 1 MiB, total assembled text to the configured output ceiling and tool argument buffers to 4 MiB per call. Return `ProviderErrorKind::InvalidResponse` on protocol violations.
-
-- [ ] **Step 3: Write structured-output tests**
-
-Test JSON parse failure, schema violation with JSON Pointer paths, successful strict validation and semantic-validator rejection. Schema errors return stable machine-readable codes and no provider-specific type.
+Cover JSON parse failure, schema violation with JSON Pointer paths, strict success and semantic-validator rejection.
 
 - [ ] **Step 4: Implement validation order**
 
 ```text
-assembled provider output
+assembled output
 → JSON extraction
 → JSON parse
-→ stored JSON Schema validation
-→ optional semantic validator
+→ stored schema validation
+→ optional semantic validation
 → normalized result
 ```
 
-A provider's `strict=true` claim never skips local validation.
+Provider-declared strictness never skips local validation.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p vestrace-application --test model_stream --test structured_output
@@ -909,37 +765,21 @@ git commit -m "feat(model-runtime): validate streams and structured outputs"
 
 ---
 
-### Task 5: Implement the production native OpenAI-compatible adapter
+### Task 5: Implement the native OpenAI-compatible adapter
 
 **Files:**
-- Create: `crates/vestrace-provider-openai-compatible/Cargo.toml`
-- Create: `crates/vestrace-provider-openai-compatible/src/lib.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/adapter.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/auth.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/config.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/request.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/response.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/stream.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/embeddings.rs`
-- Create: `crates/vestrace-provider-openai-compatible/src/error.rs`
+- Create every file under `crates/vestrace-provider-openai-compatible/` listed in the locked structure
 - Modify: root `Cargo.toml`
 
 **Interfaces:**
-- Produces `OpenAiCompatibleProvider` implementing `ModelProviderPort`.
-- Supports `/chat/completions`, streaming SSE and `/embeddings` against a configured `/v1`-compatible endpoint.
+- Produces `OpenAiCompatibleProvider: ModelProviderPort`.
+- Supports `/chat/completions`, SSE streaming and `/embeddings` against a configured compatible endpoint.
 
-- [ ] **Step 1: Write request-mapping unit tests**
+- [ ] **Step 1: Write exact request-mapping tests**
 
-Assert exact mapping for:
+Cover all message roles, strict JSON schema format, tool definitions, timeout/cancellation, omitted empty fields and redacted custom headers. Developer-role mapping is allowed only when the binding capability report declares support; otherwise fail before dispatch rather than silently rewriting role semantics.
 
-- system/developer/user/assistant/tool messages;
-- strict JSON schema response format;
-- tool definitions and `tool_choice = auto` only when tools exist;
-- timeout and cancellation;
-- omission of unsupported or empty optional fields;
-- deterministic custom headers without secret values in `Debug`.
-
-- [ ] **Step 2: Implement validated adapter configuration**
+- [ ] **Step 2: Implement validated configuration**
 
 ```rust
 pub struct OpenAiCompatibleConfig {
@@ -951,35 +791,23 @@ pub struct OpenAiCompatibleConfig {
 }
 ```
 
-Accept only `http` for explicitly local/private deployment configuration and `https` elsewhere according to deployment policy. Reject URL credentials, fragments, query-embedded secrets and reserved authentication headers in `safe_headers`.
+Reject URL credentials, fragments, query secrets and authentication headers in `safe_headers`. Plain HTTP is allowed only for deployment-policy-approved local/private endpoints.
 
 - [ ] **Step 3: Implement private auth resolution**
 
-Resolve the secret immediately before request construction, apply it to an ephemeral request builder, and never place it in adapter configuration or errors. Redacted debug output includes only secret-reference kind and hash prefix.
+Resolve immediately before request construction; apply to an ephemeral request builder; never expose secret material in configuration, errors or debug output.
 
-- [ ] **Step 4: Implement blocking completion and embeddings**
+- [ ] **Step 4: Implement completion and embeddings**
 
-Normalize provider request ID, output, tool calls, usage and finish reason. Reject successful HTTP responses lacking required response fields. Map non-2xx status and provider error bodies through stable `ProviderErrorKind` without returning raw confidential body text.
+Normalize provider request ID, output, tool calls, usage and finish reason. Reject malformed successful responses. Map errors to stable safe `ProviderError` values.
 
 - [ ] **Step 5: Implement SSE streaming**
 
-Handle comments, blank separators, split UTF-8 frames, `[DONE]`, provider error frames and cancellation. Feed only canonical events to `ModelStreamAssembler`; never expose raw SSE frames to application code.
+Handle comments, blank separators, split UTF-8 frames, `[DONE]`, provider error frames and cancellation. Only canonical events leave the adapter.
 
-- [ ] **Step 6: Implement capability report**
+- [ ] **Step 6: Publish the baseline capability report**
 
-Report native baseline:
-
-```text
-text completion
-streaming text
-JSON structured output
-function/tool-call proposals
-embeddings
-usage accounting
-cancellation
-```
-
-Multimodal input, audio, image generation, transcription and provider-specific reasoning controls report unsupported.
+Report text, streaming, JSON output, tool proposals, embeddings, usage and cancellation. Report multimodal/audio/image/transcription/provider-specific reasoning controls unsupported.
 
 - [ ] **Step 7: Verify and commit**
 
@@ -992,7 +820,7 @@ git commit -m "feat(provider): add native OpenAI-compatible adapter"
 
 ---
 
-### Task 6: Build the shared provider conformance suite and deterministic HTTP server
+### Task 6: Build the shared provider conformance suite
 
 **Files:**
 - Create: `crates/vestrace-model-test-support/src/server.rs`
@@ -1002,54 +830,39 @@ git commit -m "feat(provider): add native OpenAI-compatible adapter"
 - Modify: root `Cargo.toml`
 
 **Interfaces:**
-- Produces `ProviderConformanceSuite::run(provider_factory)`.
-- Produces a loopback-only scripted HTTP server with captured requests and deterministic SSE scripts.
+- Produces a loopback scripted server and `ProviderConformanceSuite::run`.
 
-- [ ] **Step 1: Implement the loopback fixture server**
+- [ ] **Step 1: Implement the loopback server**
 
-Bind to `127.0.0.1:0`. Routes return scripted JSON/SSE, delays, malformed frames, status codes and connection drops. The server rejects any request not carrying the expected test credential and stores a redacted request capture.
+Bind `127.0.0.1:0`; return scripted JSON/SSE, delays, malformed frames, statuses and connection drops. Reject unexpected credentials and store only redacted request captures.
 
-- [ ] **Step 2: Define exact conformance cases**
-
-The shared suite covers:
+- [ ] **Step 2: Define exact cases**
 
 ```text
-completion text
+text completion
 streaming equivalence
-structured JSON success
-structured JSON invalid
-single tool proposal
-parallel tool proposals
+structured JSON success/failure
+single and parallel tool proposals
 usage normalization
 embeddings
-request timeout before response
+timeout before response
 cancellation
-rate-limit mapping and retry-after
+rate limit and retry-after
 context overflow
-malformed success response
+malformed success
 lost response / unknown completion
 secret redaction
 provider unavailable
-unsupported modality fails before request
+unsupported modality rejected before request
 ```
 
-Each case asserts canonical result or `ProviderErrorKind`, captured request count and absence of secrets in formatted diagnostics.
+- [ ] **Step 3: Run native conformance**
 
-- [ ] **Step 3: Run the native adapter through the suite**
+Instantiate the native test factory and assert the complete suite passes.
 
-```rust
-#[tokio::test]
-async fn native_adapter_passes_provider_conformance() {
-    ProviderConformanceSuite::default()
-        .run(OpenAiCompatibleTestFactory::default())
-        .await
-        .unwrap();
-}
-```
+- [ ] **Step 4: Add the feature-gated Rig test shell**
 
-- [ ] **Step 4: Keep the Rig test feature-gated**
-
-`rig_provider_conformance.rs` compiles only with `provider-rig`. Until Task 7 exists, its expected failure is a missing `RigProviderFactory`; do not weaken the shared suite.
+`rig_provider_conformance.rs` compiles only with `provider-rig`; Task 7 supplies the factory. The shared assertions are not weakened.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -1061,7 +874,7 @@ git commit -m "test(provider): add shared adapter conformance suite"
 
 ---
 
-### Task 7: Implement the optional Rig provider adapter behind an anti-corruption layer
+### Task 7: Implement the optional Rig provider adapter
 
 **Files:**
 - Create: `crates/vestrace-rig-adapter/Cargo.toml`
@@ -1073,43 +886,31 @@ git commit -m "test(provider): add shared adapter conformance suite"
 - Modify: `scripts/verify-rig-boundary.sh`
 
 **Interfaces:**
-- Produces `RigModelProviderAdapter` implementing the same `ModelProviderPort`.
-- Rig types remain private to the adapter crate.
-- This task uses `rig-core`; it does not decide or implement the production agent loop.
+- Produces `RigModelProviderAdapter: ModelProviderPort`.
+- This task uses `rig-core`; it does not choose the model loop.
 
-- [ ] **Step 1: Add feature-isolated exact dependencies**
+- [ ] **Step 1: Add exact feature-isolated dependencies**
 
-```toml
-[features]
-default = []
-provider-rig = ["dep:rig-core", "dep:vestrace-rig-adapter"]
-
-[dependencies]
-rig-core = { version = "=0.41.0", optional = true, default-features = false }
-```
-
-Use the exact version approved by ADR-0001/H0. If ADR-0002 records a different tested version, use that exact version and document the change in the implementation commit.
+Pin the version approved by H0/ADR-0002. `provider-rig` enables only the adapter and `rig-core`.
 
 - [ ] **Step 2: Extend the boundary script**
 
-The script fails when `rig-core` or `rig-agent` appears in dependency trees for domain, application, native provider, HTTP, MCP or PostgreSQL infrastructure crates. It permits them only in `vestrace-rig-adapter` and the historical spike crate.
+Fail if `rig-core` or `rig-agent` appears in domain, application, native provider, HTTP, MCP or PostgreSQL infrastructure dependency trees. Permit only `vestrace-rig-adapter` and the historical spike crate.
 
-- [ ] **Step 3: Implement request/result normalization**
+- [ ] **Step 3: Implement anti-corruption translation**
 
-Translate canonical messages, tool definitions and output contracts to Rig provider requests; translate completion/streaming/embedding results back to Vestrace types. Provider-specific metadata is stored only in bounded JSON. Unsupported Rig features do not silently broaden the binding's capability report.
+Translate canonical requests/results/streams/embeddings at the adapter boundary. Provider-specific metadata remains bounded JSON and cannot broaden capabilities.
 
-- [ ] **Step 4: Map all errors through the same classifier**
+- [ ] **Step 4: Normalize every error**
 
-No `rig_core::Error`, provider client error or Rig message/tool type crosses the crate's public interface. Add compile-fail or source-boundary checks for forbidden `pub` signatures containing `rig_` paths.
+No Rig error, message or tool type appears in a public signature. Add source-boundary tests for forbidden public `rig_` paths.
 
-- [ ] **Step 5: Run the unchanged conformance suite**
+- [ ] **Step 5: Run the unchanged suite**
 
 ```bash
 cargo test --features provider-rig --test rig_provider_conformance
 bash scripts/verify-rig-boundary.sh
 ```
-
-Both native and Rig adapter tests use the same local server scripts and canonical assertions.
 
 - [ ] **Step 6: Commit**
 
@@ -1120,7 +921,7 @@ git commit -m "feat(provider): add optional Rig adapter"
 
 ---
 
-### Task 8: Implement policy-governed routing, reservations and controlled fallback
+### Task 8: Implement governed routing, reservations and fallback
 
 **Files:**
 - Create: `crates/vestrace-application/src/model_runtime/orchestrator.rs`
@@ -1132,72 +933,49 @@ git commit -m "feat(provider): add optional Rig adapter"
 
 **Interfaces:**
 - Produces `ModelRuntimeOrchestrator::invoke` and `ModelFallbackController`.
-- Consumes v0.1 router, H2 `ActionGuardService`, provider registry, execution repository, stream/structured validators and pricing revisions.
+- Consumes the v0.1 router, H2 guard/budgets, provider registry, validators and price revisions.
 
-- [ ] **Step 1: Write the successful invocation test**
+- [ ] **Step 1: Write the successful-order test**
 
-Use deterministic fakes and assert this order:
+Assert:
 
 ```text
-create logical execution
-→ route eligible models
-→ construct model.invoke fingerprint
-→ ActionGuard prepare with estimated token/cost reservation
-→ persist policy/routing references
-→ consume GuardedAction
+create execution
+→ route
+→ fingerprint model.invoke
+→ guard prepare and reserve
+→ persist policy/routing refs
+→ consume guarded action
 → create attempt
-→ dispatch selected provider
-→ validate output
+→ dispatch
+→ validate
 → reconcile actual usage/cost
-→ complete attempt and logical execution
+→ complete attempt and execution
 ```
 
-Assert the provider is never called before `consume`, and the final record references exact model, provider, binding, routing, policy, budget and price revisions.
+The provider call count must remain zero before `consume`.
 
-- [ ] **Step 2: Define operation fingerprint arguments**
+- [ ] **Step 2: Define fingerprint arguments**
 
-Canonical arguments for `model.invoke` contain only stable hashes/references:
+Use only execution ID, model revision, binding revision, context/message/tool/output hashes, estimates and deadline. Never store raw prompts in policy rows.
 
-```text
-execution ID
-selected model revision
-provider binding revision
-context snapshot hash
-message bundle hash
-tool-catalogue hash
-output-contract hash
-estimated usage by dimension
-deadline
-```
+- [ ] **Step 3: Implement reservation/reconciliation**
 
-Do not include raw prompts in policy-decision rows.
+Reserve input/output tokens, invocation count and money microunits. Reconcile using the exact price revision selected at routing time. Missing provider usage uses conservative configured accounting with `provider_reported = false`.
 
-- [ ] **Step 3: Implement cost reservation and reconciliation**
+- [ ] **Step 4: Test fallback matrix**
 
-Reserve `InputTokens`, estimated `OutputTokens`, `ModelInvocations` and `MoneyMicrounits` under one H2 reservation request. Actual usage uses the price revision selected at routing time. Missing provider usage triggers conservative configured accounting and `provider_reported = false`.
+Cover pre-response unavailable/rate-limit fallback, ambiguous timeout to `Unknown`, one bounded structured-output correction, safety refusal stop, policy-ineligible fallback exclusion, fallback budget denial and non-reconsideration of privacy/capability rejects.
 
-- [ ] **Step 4: Write fallback matrix tests**
+- [ ] **Step 5: Require attempt-specific authority**
 
-Cover:
+Every fallback gets a new fingerprint, policy evaluation, reservation and ticket. Changing model/binding invalidates the previous authority.
 
-- unavailable primary before response → permitted fallback;
-- rate limit with retry-after beyond deadline → fallback;
-- timeout after request may have completed → `Unknown`, no fallback;
-- invalid structured output → one configured correction attempt, then permitted fallback;
-- safety refusal → stop with typed refusal;
-- policy-denied fallback model → never dispatched;
-- fallback budget reservation denied → partial/failed result without provider call;
-- already rejected capability/privacy candidate → never reconsidered.
+- [ ] **Step 6: Enforce verifier independence**
 
-- [ ] **Step 5: Implement attempt-specific authorization**
+Apply model revision/family/provider/prompt-lineage exclusions before ranking and persist reasons.
 
-Every fallback attempt receives a new operation fingerprint, policy evaluation, reservation and guarded action. The original approval or ticket is not reused when the model or binding changes.
-
-- [ ] **Step 6: Implement verifier independence filters**
-
-When `ModelIndependenceRequirement` is set, exclude same model revision, family, provider or prompt-template lineage as required before ranking. Record every exclusion reason.
-
-- [ ] **Step 7: Run and commit**
+- [ ] **Step 7: Verify and commit**
 
 ```bash
 cargo test -p vestrace-application --test model_runtime_orchestrator --test model_fallback
@@ -1207,71 +985,46 @@ git commit -m "feat(model-runtime): govern routing and fallback"
 
 ---
 
-### Task 9: Persist attempts, canonical events, loop checkpoints and reconciliation state
+### Task 9: Persist attempts, events, checkpoints and reconciliation
 
 **Files:**
-- Create: `migrations/0029_model_execution_attempts_and_events.sql`
-- Create: `migrations/0030_model_loop_checkpoints_and_reconciliation.sql`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/mod.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/execution_repository.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/attempt_repository.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/event_repository.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/checkpoint_repository.rs`
-- Create: `crates/vestrace-infrastructure/src/postgres/model_runtime/reconciliation_repository.rs`
-- Modify: `crates/vestrace-infrastructure/src/postgres/mod.rs`
+- Create: migrations `0029` and `0030`
+- Create every `model_runtime/*_repository.rs` file listed in the locked structure
+- Modify: PostgreSQL module wiring
 - Create: `tests/model_execution_persistence.rs`
 - Create: `tests/model_execution_unknown.rs`
 
 **Interfaces:**
-- Extends existing `model_executions` and produces `model_execution_attempts`, `model_execution_events`, `model_loop_checkpoints` and `model_reconciliations`.
-- Produces PostgreSQL implementations of all H3 persistence ports.
+- Extends `model_executions`; creates attempts, canonical events, loop checkpoints and reconciliation records.
 
-- [ ] **Step 1: Write failing lifecycle and append-only tests**
+- [ ] **Step 1: Write lifecycle tests**
 
-Test:
+Verify contiguous attempt/event sequences, exact revision references, append-only events/checkpoints, workspace consistency, no direct `Unknown → dispatch`, and reconciliation without a new request.
 
-1. attempt numbers are unique and contiguous per execution;
-2. event sequence is unique and contiguous per attempt;
-3. exact model/provider/binding/price/policy/budget revisions are required before dispatch;
-4. event and checkpoint update/delete fail for the application role;
-5. a fallback attempt belongs to the same logical execution/workspace;
-6. `Unknown` attempt cannot transition directly to a new dispatch;
-7. reconciliation changes logical outcome without creating another provider request.
+- [ ] **Step 2: Create migration `0029` without duplicating v0.1 columns**
 
-- [ ] **Step 2: Create migration `0029`**
-
-Alter `model_executions` to add:
+Reuse the existing v0.1 `routing_decision_id`, status/outcome/usage fields where semantically identical. Add only H3-specific columns:
 
 ```text
 run_id, step_id, acting_agent_snapshot_id,
 request_fingerprint, request_hash, output_contract_hash,
 context_snapshot_reference JSONB,
-policy_decision_id, policy_snapshot_id,
-routing_decision_id, budget_reservation_id,
-status, logical_revision, final_attempt_id,
-result JSONB, failure JSONB, finished_at
+policy_decision_id, policy_snapshot_id, budget_reservation_id,
+runtime_status, runtime_revision, final_attempt_id,
+normalized_result JSONB, normalized_failure JSONB, runtime_finished_at
 ```
 
-Create `model_execution_attempts` and `model_execution_events`. Attempts store selected model/provider/binding/cost revisions, guarded action/ticket references, provider request ID, status, timing, usage, cost and safe error. Events store canonical event type/payload and monotonic sequence; raw SSE is not persisted.
+Create `model_execution_attempts` and `model_execution_events`. Attempts store exact model/provider/binding/cost/guard references; events store canonical payloads, never raw SSE.
 
 - [ ] **Step 3: Create migration `0030`**
 
-Create append-only `model_loop_checkpoints` with:
+Create append-only `model_loop_checkpoints` with engine/version/schema/opaque bytes/hash/cursor/sensitivity and `model_reconciliations` with evidence and decision.
 
-```text
-engine_name, engine_version, state_schema_version,
-serialized_state BYTEA, state_sha256,
-canonical_journal_cursor, contains_sensitive_conversation,
-run_id, step_id, model_execution_id, created_at
-```
+- [ ] **Step 4: Implement atomic transitions**
 
-Create `model_reconciliations` with operation status, provider request reference, evidence, decision and timestamps. Checkpoint reads require the same workspace and restricted-content capability when sensitive conversation is present.
+Use optimistic `runtime_revision`. Attempt transition plus its canonical event commit in one scoped transaction. Ambiguous commit returns `operation_unknown`; repositories do not auto-retry.
 
-- [ ] **Step 4: Implement atomic repository transitions**
-
-Use optimistic `logical_revision` for `model_executions`. Creating/transitioning an attempt and appending its corresponding canonical event occur in one scoped transaction. An ambiguous transaction result maps to `operation_unknown`; repositories do not retry writes automatically.
-
-- [ ] **Step 5: Implement unknown reconciliation**
+- [ ] **Step 5: Implement reconciliation**
 
 ```rust
 async fn record_reconciliation(
@@ -1281,9 +1034,9 @@ async fn record_reconciliation(
 ) -> Result<ModelExecutionRecord, ApplicationError>;
 ```
 
-`Succeeded` requires verified provider result/evidence; `FailedSafeToRetry` may allow an explicit new command to create another attempt; `StillUnknown` preserves the fence.
+`Succeeded` requires verified result/evidence; `FailedSafeToRetry` permits only a later explicit command; `StillUnknown` preserves the fence.
 
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -1294,27 +1047,22 @@ git commit -m "feat(model-runtime): persist attempts events and checkpoints"
 
 ---
 
-### Task 10: Integrate restart-safe model work with H1 Run state and queue
+### Task 10: Integrate restart-safe model work with H1
 
 **Files:**
-- Create: `migrations/0031_model_runtime_rls_indexes_and_run_bindings.sql`
-- Modify: `crates/vestrace-domain/src/run/work.rs`
-- Modify: `crates/vestrace-domain/src/run/event.rs`
-- Modify: `crates/vestrace-domain/src/run/mod.rs`
+- Create: migration `0031`
+- Modify: H1 Run work/event contracts
 - Create: `crates/vestrace-application/src/model_runtime/worker.rs`
 - Create: `crates/vestrace-application/tests/model_worker.rs`
-- Modify: `crates/vestrace-application/src/run/worker.rs`
+- Modify: H1 worker registry
 - Create: `tests/model_runtime_rls.rs`
 - Create: `tests/model_runtime_restart.rs`
 
 **Interfaces:**
-- Adds `WorkItemKind::InvokeModel` and `RunWorkPayload::InvokeModel { execution_id }`.
-- Adds canonical Run events referencing model execution lifecycle, not stream deltas.
+- Adds `WorkItemKind::InvokeModel`, matching payload and Run events for start/completion/failure/unknown.
 - Produces `ModelRuntimeWorkHandler`.
 
-- [ ] **Step 1: Extend Run work and event contracts**
-
-Add event payloads:
+- [ ] **Step 1: Extend Run contracts**
 
 ```rust
 ModelExecutionStarted { execution_id: ModelExecutionId },
@@ -1323,49 +1071,38 @@ ModelExecutionFailed { execution_id: ModelExecutionId, failure_code: String },
 ModelExecutionUnknown { execution_id: ModelExecutionId, reconciliation_id: ModelReconciliationId },
 ```
 
-Each payload is emitted as the sole event of its H1 logical mutation. Provider attempt/stream events remain in H3 tables.
+Each is the sole event of one H1 logical mutation; attempt/stream events remain in H3 tables.
 
-- [ ] **Step 2: Write the restart-before-dispatch test**
+- [ ] **Step 2: Test restart before dispatch**
 
-Create work, record `ModelExecutionStarted`, crash before consuming the guarded action/provider dispatch, restart and assert the same execution/attempt resumes without creating a duplicate attempt or reservation.
+Crash after `ModelExecutionStarted` but before ticket consumption; restart and assert no duplicate attempt/reservation.
 
-- [ ] **Step 3: Write the lost-response restart test**
+- [ ] **Step 3: Test lost response**
 
-The fixture server accepts the request and drops the connection after generating a provider request ID. Simulate worker loss before completion persistence. On restart:
+Drop the connection after the server accepted the request. On restart, send no second request; after deadline mark the attempt `Unknown`, transition the Run to durable dependency/reconciliation waiting, and emit `ModelExecutionUnknown`.
 
-- no new provider request is sent;
-- the stale dispatching attempt becomes `Unknown` after its deadline;
-- Run transitions to `WaitingForDependency` or the configured reconciliation state;
-- a `ModelExecutionUnknown` Run event references the reconciliation record.
-
-- [ ] **Step 4: Implement the worker state machine**
+- [ ] **Step 4: Implement worker order**
 
 ```text
-lease InvokeModel work
+lease work
 → acquire Run lease
-→ load Run and execution expected versions
+→ load expected versions
 → create/restore guarded attempt
-→ mark dispatching before network request
-→ invoke provider with cancellation/deadline
-→ persist canonical events and final result
-→ reconcile H2 actual usage
-→ emit one H1 completion/failure/unknown mutation
+→ mark dispatching before network
+→ invoke with deadline/cancellation
+→ persist canonical result
+→ reconcile actual budget
+→ emit one H1 result mutation
 → complete work and release lease
 ```
 
-A stale worker fenced by H1 lease generation cannot complete the Run or execution.
+Lease generation fences stale workers.
 
-- [ ] **Step 5: Add RLS, foreign-key validation and indexes**
+- [ ] **Step 5: Create migration `0031`**
 
-Migration `0031`:
+Force RLS, validate Run/step/model/provider/binding workspace ownership, extend work-kind checks and add indexes for active attempts/events/executions/reconciliations.
 
-- forces RLS on all H3 tables;
-- verifies model execution `run_id`/`step_id` ownership;
-- extends work-item kind/payload checks for `InvokeModel`;
-- indexes active attempts by deadline/status, events by attempt/sequence, executions by run/step/status and reconciliation queue by status/deadline;
-- prevents cross-workspace provider/model/binding references.
-
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -1378,69 +1115,37 @@ git commit -m "feat(model-runtime): add restart-safe model worker"
 
 ---
 
-### Task 11: Implement the production bounded model loop selected by ADR-0002
+### Task 11: Implement the ADR-0002-selected production model loop
 
-**Files always modified:**
+**Always:**
 - Create: `crates/vestrace-application/tests/model_loop_conformance.rs`
-- Modify: `crates/vestrace-application/src/model_runtime/loop_port.rs`
-- Modify: `crates/vestrace-application/src/model_runtime/mod.rs`
+- Modify: loop port/module/factory wiring
 
-**Files for outcome `Accepted` or `AcceptedWithRestrictions`:**
-- Create: `crates/vestrace-rig-adapter/src/loop_adapter.rs`
-- Create: `crates/vestrace-rig-adapter/src/checkpoint.rs`
-- Modify: `crates/vestrace-rig-adapter/src/lib.rs`
-- Modify: `crates/vestrace-rig-adapter/Cargo.toml`
+**When `Accepted` or `AcceptedWithRestrictions`:**
+- Create/modify: `vestrace-rig-adapter/src/loop_adapter.rs`, `checkpoint.rs`, `lib.rs`, `Cargo.toml`
 
-**Files for outcome `Rejected`:**
+**When `Rejected`:**
 - Create: `crates/vestrace-application/src/model_runtime/native_loop.rs`
 
 **Interfaces:**
-- Produces exactly one production `ModelLoopPort` implementation selected by ADR-0002.
-- Both possible implementations pass the same Vestrace conformance tests.
+- Produces one ADR-selected default `ModelLoopPort` factory.
+- Any compiled implementation passes the same conformance suite.
 
-- [ ] **Step 1: Add an executable ADR gate test**
+- [ ] **Step 1: Add an executable ADR gate**
 
-The test reads `docs/superpowers/specs/adr/0002-rig-agent-runtime-spike-outcome.md`, parses exactly one outcome and fails on missing, ambiguous or unsupported content. Build configuration must match:
+Parse exactly one ADR outcome. Missing/ambiguous content fails. The production default factory must match the ADR. Test-only `model-loop-test` never satisfies the production gate.
 
-```text
-Accepted
-  feature model-loop-rig enabled
-  native loop implementation not selected
+- [ ] **Step 2: Write shared conformance**
 
-AcceptedWithRestrictions
-  feature model-loop-rig enabled only for components explicitly approved by ADR
-  Vestrace fallback components named by ADR remain active
+Test initial model request, tool proposal without execution, direct completion, turn limit, fail-closed invalid tool resolution, versioned checkpoint/hash/cursor, safe incompatible-checkpoint handling, durable approval/reconciliation waits and absence of hidden-CoT fields.
 
-Rejected
-  feature model-loop-native enabled
-  no production dependency on rig-agent
-```
+- [ ] **Step 3A: Implement accepted Rig loop**
 
-- [ ] **Step 2: Write shared loop conformance tests**
+Use only H0-approved APIs/restrictions. Hand-drive the state machine; never use direct Rig tool execution, conversation memory, vector stores or workflow runtime. Store Rig state only as opaque engine checkpoint bytes.
 
-The factory-selected implementation must pass:
+- [ ] **Step 3B: Implement rejected native loop**
 
-```text
-first effect requests a model
-model tool output becomes ToolCallsProposed without execution
-model result without tools completes
-maximum turn limit fails deterministically
-invalid tool-call resolution is fail-closed
-checkpoint records engine/version/schema/cursor/hash
-same-version checkpoint resumes deterministically
-incompatible checkpoint falls back to canonical reconstruction or fails safely
-waiting for approval survives checkpoint
-waiting for reconciliation never emits InvokeModel
-no hidden chain-of-thought field exists in serialized Vestrace contracts
-```
-
-- [ ] **Step 3A: Implement the Rig loop when ADR accepts it**
-
-Use only APIs and restrictions evidenced by ADR-0002. Hand-drive the state machine; do not use direct Rig tool execution, conversation memory, vector stores or workflow runtime. Store Rig state only inside opaque `ModelLoopEngineCheckpoint`. Translate every effect through Vestrace types.
-
-- [ ] **Step 3B: Implement the native loop when ADR rejects Rig**
-
-Implement a minimal deterministic state machine:
+Implement:
 
 ```text
 NeedModel
@@ -1450,41 +1155,19 @@ NeedModel
 → NeedModel | Completed | Failed
 ```
 
-State includes messages, pending tool calls, completed turn count, output contract and cursor. It performs no I/O and serializes as versioned Vestrace JSON.
+It performs no I/O and serializes versioned Vestrace state.
 
-- [ ] **Step 4: Enforce one selected implementation**
+- [ ] **Step 4: Make feature combinations CI-safe**
 
-Cargo compile errors when both `model-loop-rig` and `model-loop-native` are enabled or when neither is enabled in a production build. Test-support builds may inject a scripted loop factory.
+Available implementations may compile together under `all-features`; the ADR-selected default factory remains singular. Deployment configuration cannot select an implementation forbidden by ADR. `model-loop-test` is accepted only by tests and cannot be enabled in production binary profiles.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
-For accepted Rig outcome:
-
-```bash
-cargo test --features provider-rig,model-loop-rig \
-  -p vestrace-application --test model_loop_conformance
-```
-
-For rejected Rig outcome:
-
-```bash
-cargo test --no-default-features \
-  --features provider-openai-compatible,model-loop-native \
-  -p vestrace-application --test model_loop_conformance
-```
-
-Commit only the selected production implementation and shared tests:
-
-```bash
-git add Cargo.toml Cargo.lock crates/vestrace-application crates/vestrace-rig-adapter
-git commit -m "feat(model-runtime): add selected bounded model loop"
-```
-
-When `Rejected`, omit unchanged/nonexistent Rig paths from `git add`.
+Run the selected loop test plus `cargo test --workspace --all-features`. Commit only files applicable to the ADR outcome and the shared tests.
 
 ---
 
-### Task 12: Add Rig-free CI, contract verification and the H3 acceptance scenario
+### Task 12: Add Rig-free CI and H3 acceptance
 
 **Files:**
 - Create: `scripts/verify-rig-free-model-runtime.sh`
@@ -1492,13 +1175,13 @@ When `Rejected`, omit unchanged/nonexistent Rig paths from `git add`.
 - Modify: `.github/workflows/ci.yml`
 - Create: `tests/model_runtime_rig_free.rs`
 - Create: `tests/h3_acceptance.rs`
-- Modify: provider and loop schema snapshots where the repository stores them
+- Modify schema snapshots used by the repository
 
 **Interfaces:**
-- Produces mandatory native-only and optional Rig CI jobs.
-- Produces the H3 exit-gate test.
+- Produces mandatory native-provider/Rig-free and optional Rig jobs.
+- Produces the H3 exit-gate scenario.
 
-- [ ] **Step 1: Create the Rig-free verification script**
+- [ ] **Step 1: Create the Rig-free script**
 
 ```bash
 #!/usr/bin/env bash
@@ -1506,66 +1189,51 @@ set -euo pipefail
 
 cargo test --workspace \
   --exclude vestrace-rig-spike \
+  --exclude vestrace-rig-adapter \
   --no-default-features \
-  --features provider-openai-compatible,model-loop-native
+  --features provider-openai-compatible,model-loop-test
 
 for package in vestrace-domain vestrace-application vestrace-infrastructure \
   vestrace-provider-openai-compatible vestrace-http vestrace-mcp; do
   if cargo tree -p "$package" | grep -E '(^| )rig-(agent|core) '; then
-    echo "Rig leaked into native path: $package" >&2
+    echo "Rig leaked into native provider path: $package" >&2
     exit 1
   fi
 done
 ```
 
-When ADR-0002 accepts Rig as the only production loop, the native-only CI still compiles a minimal native conformance loop behind a test-only feature; the production default remains the ADR-selected implementation. The native provider path must never require Rig.
+The scripted loop proves the provider/runtime path without assuming ADR selected a native production loop.
 
-- [ ] **Step 2: Add CI matrix jobs**
-
-Required jobs:
+- [ ] **Step 2: Add CI jobs**
 
 ```text
 native-provider-rig-free
 all-features
 provider-conformance-native
-provider-conformance-rig (only when provider-rig is supported)
+provider-conformance-rig
 model-loop-selected
 postgres-model-runtime
 ```
 
-All use local fixtures. No job expects provider credentials.
+All use local fixtures and no provider credentials.
 
-- [ ] **Step 3: Write the Rig-free integration test**
+- [ ] **Step 3: Write Rig-free integration**
 
-Compile and run a text completion plus strict structured-output request through the native adapter, router, H2 guard, budget reservation and H3 persistence with Rig disabled. Assert no Rig package appears in the dependency tree captured by the script.
+Run text completion and strict JSON through native adapter, router, H2 guard/budgets and H3 persistence with Rig excluded. Assert no Rig dependency appears.
 
-- [ ] **Step 4: Write the full H3 acceptance scenario**
+- [ ] **Step 4: Write H3 acceptance**
 
-The test registers:
+Use three registered models:
 
 ```text
-Model A: native OpenAI-compatible, unavailable
-Model B: Rig provider adapter, eligible fallback
-Model C: remote high-quality model, policy-ineligible for Restricted data
+A: native adapter, temporarily unavailable
+B: Rig provider adapter, eligible fallback
+C: higher-quality remote model, policy-ineligible for Restricted data
 ```
 
-Run two sub-scenarios:
+Public data: A fails before completion and B succeeds with new authority/reservation. Restricted data: C is excluded and a local native-compatible model succeeds. Also simulate a lost response and assert `Unknown` without fallback. Verify routing explanations, consumed ticket ordering, budget reconciliation, local schema validation, durable reload, Run-event references and secret-free diagnostics.
 
-1. Public data: A fails before completion, B succeeds; canonical events and exact fallback authorization are persisted.
-2. Restricted data: C is excluded by policy; native local A succeeds through the Rig-free path.
-
-For each scenario assert:
-
-- exact routing candidates and exclusion reasons;
-- ActionGuard ticket consumed before dispatch;
-- reservations and actual usage reconcile;
-- structured output validates locally;
-- logical execution and attempts survive repository reload;
-- Run events reference start and completion without stream-delta noise;
-- a simulated lost response becomes `Unknown` and is not failed over;
-- adapter diagnostics contain no secret.
-
-- [ ] **Step 5: Run all H3 gates**
+- [ ] **Step 5: Run all gates**
 
 ```bash
 bash scripts/verify-rig-free-model-runtime.sh
@@ -1575,8 +1243,6 @@ DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
-
-Expected: all commands exit `0`.
 
 - [ ] **Step 6: Commit**
 
@@ -1589,65 +1255,44 @@ git commit -m "test(model-runtime): add H3 acceptance and Rig-free gates"
 
 ## H3 completion definition
 
-H3 is complete only when all twelve tasks pass and evidence demonstrates:
+H3 is complete only when the implementation demonstrates:
 
 ```text
-canonical invocation request
-→ policy and data-transfer eligibility
-→ quality-first model routing
-→ exact budget reservation
+canonical request
+→ policy/data eligibility
+→ quality-first routing
+→ exact reservation
 → consumed authorization ticket
 → selected provider adapter
-→ canonical blocking or streaming result
-→ local structured-output validation
-→ durable usage/cost reconciliation
+→ canonical blocking/streaming result
+→ local output validation
+→ usage/cost reconciliation
 → controlled fallback or fenced Unknown
-→ Run continuation from persisted state
+→ restart-safe Run continuation
 ```
 
-The completed implementation must satisfy all of these statements:
+Required invariants:
 
-1. The native OpenAI-compatible adapter passes the complete provider conformance suite and is usable without Rig.
-2. The Rig provider adapter, when enabled, passes the same suite without changing canonical expectations.
-3. Router selection refers to model/provider/binding revisions, not Rust adapter implementations.
-4. A provider cannot be called before H2 authorization and reservation consumption.
-5. A fallback cannot reuse another model attempt's ticket, reservation or approval binding.
-6. `Unknown` completion never creates an automatic replacement request.
+1. Native OpenAI-compatible execution passes the complete conformance suite without Rig.
+2. The optional Rig provider adapter passes the same suite.
+3. Routing selects model/provider/binding revisions, never a Rust library directly.
+4. Dispatch cannot occur before H2 guard consumption.
+5. Fallback cannot reuse another attempt's ticket, reservation or approval binding.
+6. `Unknown` never creates an automatic replacement request.
 7. Safety refusal is not blindly bypassed.
-8. Structured output is validated locally after assembly.
+8. Structured output is validated locally.
 9. Stream deltas never become authoritative Run state.
-10. Every successful invocation stores exact routing, policy, budget, provider, price, usage and validation provenance.
-11. Provider secrets are absent from canonical DTOs, execution events, checkpoints, errors and logs.
-12. The selected production model loop matches ADR-0002 and remains replaceable through `ModelLoopPort`.
-13. H1 logical replay does not require replaying provider I/O.
-14. H3 tests require no public network or paid provider.
-15. H4 can consume `ToolCallsProposed` without changing model-provider contracts.
+10. Every success stores exact routing, policy, budget, provider, price, usage and validation provenance.
+11. Secrets are absent from canonical DTOs, events, checkpoints, errors and logs.
+12. The production loop matches ADR-0002 and remains replaceable through `ModelLoopPort`.
+13. H1 replay performs no provider I/O.
+14. Tests require no public network or paid provider.
+15. H4 can consume `ToolCallsProposed` without changing provider contracts.
 
 ## Explicit non-goals
 
-H3 does not implement:
-
-- real tool execution or sandboxing;
-- tool risk classification and prepare/commit lifecycle;
-- artifact ingestion and multimodal artifact transformation;
-- conversations, channels or triggers;
-- OAuth connections or general Credential Broker leases;
-- agent planning or delegation;
-- automatic model training or prompt mutation;
-- provider-specific audio/image/transcription APIs;
-- browser automation;
-- public marketplace or managed provider fleet.
-
-These remain assigned to later Harness plans.
+H3 does not implement real tool execution, sandboxing, artifact ingestion, multimodal processing, conversations, triggers, OAuth connections, the general Credential Broker, planning, delegation, browser automation, provider-specific media APIs, automatic training or a managed provider fleet.
 
 ## Documentation-only boundary
 
-Creating this document does not authorize implementation. During the current documentation phase, do not:
-
-- create `feat/h3-model-runtime-provider-adapters`;
-- change Cargo dependencies or features;
-- execute H0-RIG or produce ADR-0002;
-- run provider servers or conformance tests;
-- create migrations `0028`–`0031`;
-- modify CI;
-- write native or Rig adapter code.
+Creating this document does not authorize implementation. During the documentation phase, do not create the branch, change Cargo features, execute H0-RIG, produce ADR-0002, run fixture servers, create migrations `0028`–`0031`, modify CI or write adapter/loop code.
