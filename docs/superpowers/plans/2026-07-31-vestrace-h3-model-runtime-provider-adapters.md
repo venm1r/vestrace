@@ -556,7 +556,7 @@ pub struct ModelExecutionRecord {
 }
 ```
 
-`Succeeded`, `Failed`, `Unknown` and `Cancelled` stop automatic execution. Reconciliation may resolve `Unknown` without silently dispatching again.
+`ModelExecutionAttemptRecord` contains attempt ID/number, exact model/provider/binding/price revisions, status, provider request ID, usage, cost, safe failure and timestamps. `Succeeded`, `Failed`, `Unknown` and `Cancelled` stop automatic execution.
 
 ### Sans-I/O model loop
 
@@ -800,17 +800,15 @@ fn accepts_factory(_value: std::sync::Arc<dyn ModelLoopFactoryPort>) {}
 
 Use typed signatures for create execution, authorize, attach routing, create attempt, mark dispatching/streaming, append events, complete/fail/unknown attempt, complete execution, load and reconcile. Every logical transition carries expected runtime revision.
 
-- [ ] **Step 3: Define root feature forwarding**
+- [ ] **Step 3: Add only the test-loop feature**
 
 ```toml
 [features]
-default = ["provider-openai-compatible"]
-provider-openai-compatible = ["dep:vestrace-provider-openai-compatible"]
-provider-rig = ["dep:vestrace-rig-adapter"]
-model-loop-test = ["vestrace-application/model-loop-test"]
+default = []
+model-loop-test = []
 ```
 
-Production binary profiles reject `model-loop-test` in Task 11.
+Provider feature forwarding is added only when the corresponding adapter crate exists in Tasks 5 and 7.
 
 - [ ] **Step 4: Implement deterministic fakes**
 
@@ -874,7 +872,7 @@ git commit -m "feat(model-runtime): validate streams and structured outputs"
 
 **Files:**
 - Create: `crates/vestrace-provider-openai-compatible/Cargo.toml`
-- Create all ten Rust files listed for this crate in the locked structure
+- Create the nine Rust files listed for this crate in the locked structure
 - Modify: root `Cargo.toml`
 
 **Interfaces:** Produces `OpenAiCompatibleProvider: ModelProviderPort`; supports compatible chat completions, SSE and embeddings.
@@ -909,9 +907,17 @@ Normalize provider request ID, output, tool calls, usage and finish reason. Reje
 
 Handle comments, separators, split UTF-8, `[DONE]`, provider error frames and cancellation. Only canonical events leave the adapter.
 
-- [ ] **Step 6: Publish baseline capabilities**
+- [ ] **Step 6: Publish baseline capabilities and root feature**
 
-Report text, streaming, JSON, tool proposals, embeddings, usage and cancellation; report unsupported media/provider-specific controls honestly.
+Report text, streaming, JSON, tool proposals, embeddings, usage and cancellation; report unsupported media/provider-specific controls honestly. Add root forwarding:
+
+```toml
+[features]
+default = ["provider-openai-compatible"]
+provider-openai-compatible = ["dep:vestrace-provider-openai-compatible"]
+```
+
+Preserve the existing `model-loop-test` feature.
 
 - [ ] **Step 7: Verify and commit**
 
@@ -949,7 +955,7 @@ Instantiate the native factory and require every case to pass.
 
 - [ ] **Step 4: Add feature-gated Rig shell**
 
-Task 7 supplies the Rig factory; shared assertions remain identical.
+Task 7 defines `provider-rig` and supplies the Rig factory; shared assertions remain identical.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -972,9 +978,13 @@ git commit -m "test(provider): add shared adapter conformance suite"
 
 **Interfaces:** Produces `RigModelProviderAdapter: ModelProviderPort`; uses `rig-core` only for provider adaptation.
 
-- [ ] **Step 1: Add exact isolated dependency**
+- [ ] **Step 1: Add exact isolated dependency and feature**
 
-Pin the H0/ADR-approved `rig-core`; `provider-rig` enables only this adapter.
+Pin the H0/ADR-approved `rig-core`; add root forwarding:
+
+```toml
+provider-rig = ["dep:vestrace-rig-adapter"]
+```
 
 - [ ] **Step 2: Extend boundary verification**
 
@@ -1187,9 +1197,9 @@ git commit -m "feat(model-runtime): add restart-safe model worker"
 - Create: `crates/vestrace-cli/src/composition/model_runtime.rs`
 - Modify: `crates/vestrace-cli/src/main.rs`
 
-**When accepted/restricted:** create Rig `loop_adapter.rs` and `checkpoint.rs`; modify Rig crate manifest/lib.
+**When accepted/restricted:** create Rig `loop_adapter.rs` and `checkpoint.rs`; modify Rig crate manifest/lib and add root `model-loop-rig` forwarding.
 
-**When rejected:** create `crates/vestrace-application/src/model_runtime/native_loop.rs`.
+**When rejected:** create `crates/vestrace-application/src/model_runtime/native_loop.rs` and add root `model-loop-native` forwarding.
 
 **Interfaces:** Produces one ADR-selected default `ModelLoopFactoryPort` in the composition root. Application does not depend on concrete adapters.
 
@@ -1263,13 +1273,13 @@ model-loop-selected
 postgres-model-runtime
 ```
 
-- [ ] **Step 3: Write Rig-free integration**
+- [ ] **Step 3: Write mandatory Rig-free acceptance**
 
-Run text and strict JSON through native adapter, router, H2 guard/budgets and H3 persistence with Rig excluded.
+Run text and strict JSON through native adapter, router, H2 guard/budgets and H3 persistence with Rig excluded. Simulate a lost native response and assert `Unknown` without fallback.
 
-- [ ] **Step 4: Write H3 acceptance**
+- [ ] **Step 4: Add feature-gated cross-adapter acceptance**
 
-Use native-unavailable A, Rig-fallback B and policy-ineligible remote C. Test public fallback with new authority, Restricted-data exclusion/local success, and lost-response Unknown without fallback. Verify routing explanations, ticket order, budget reconciliation, schema validation, durable reload, Run references and secret-free diagnostics.
+Inside `h3_acceptance.rs`, keep the Rig-free scenario unconditional. Under `#[cfg(feature = "provider-rig")]`, add native-unavailable A, Rig-fallback B and policy-ineligible remote C. Public data must fall back from A to B with new authority/reservation; Restricted data must exclude C and select an eligible local/native model.
 
 - [ ] **Step 5: Run gates**
 
@@ -1278,6 +1288,8 @@ bash scripts/verify-rig-free-model-runtime.sh
 cargo test --workspace --all-features
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
   cargo test --test h3_acceptance --test model_runtime_restart
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --all-features --test h3_acceptance cross_adapter
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
