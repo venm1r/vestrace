@@ -2,48 +2,48 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Documentation status:** Planning artifact only. Do not create the implementation branch, modify dependencies, create migrations, start authorization or proxy services, store credentials, run tests or write production code until the user explicitly ends the documentation-only phase.
+**Documentation status:** Planning artifact only. Do not create the implementation branch, modify dependencies, create migrations, start authorization/proxy services, store credentials, run tests or write production code until the user explicitly ends the documentation-only phase.
 
-**Goal:** Implement immutable connector definitions, user/workspace-bound Connections, Authorization Code + PKCE and API-key onboarding, replaceable secret storage, operation-bound credential leases, delegated Connection access, request-scoped injection for providers/tools/remote agents, a sandbox credential proxy, rotation/revocation, secret-leak controls and content-free credential audit.
+**Goal:** Implement immutable Connector definitions, user/workspace-bound Connections, Authorization Code + PKCE and API-key onboarding, replaceable secret storage, operation-bound credential leases, delegated Connection access, request-scoped injection for providers/tools/remote agents, a sandbox credential proxy, rotation/revocation, known-secret controls and content-free audit.
 
-**Architecture:** H8 separates four authorities. PostgreSQL owns connector/Connection lifecycle, local permission ceilings, authorization-flow metadata, opaque secret references, grants, leases and audit. `SecretBackendPort` owns secret bytes and immutable secret versions but cannot authorize their use. H2 authorizes both the protected external operation and `secret.use`; the Credential Broker intersects those decisions with the exact Connection or service binding and issues a short-lived lease. `vestrace-credential-runtime` consumes the lease immediately before dispatch, resolves zeroizing ephemeral material and injects/signs the infrastructure request. Models, public DTOs, work items, durable events and sandbox workloads receive only sanitized logical handles.
+**Architecture:** PostgreSQL owns Connector/Connection/service-binding state, permission revisions, authorization-flow metadata, opaque secret references, grants, leases and audit. `SecretBackendPort` owns immutable secret bytes but cannot authorize their use. H2 separately authorizes the protected action and `secret.use`; the Broker verifies both tickets against one shared `credential_binding_hash`, then issues a short lease bound to the exact actor, Run/invocation, source generation, operation, resources and destination. `vestrace-credential-runtime` consumes the lease immediately before dispatch, resolves zeroizing material and injects/signs the infrastructure request. Models, public DTOs, work items, durable events and sandbox workloads receive only sanitized logical handles.
 
-**Tech Stack:** Existing Vestrace v0.1 plus H1–H7 Rust workspace; Rust Edition 2024; Tokio; Axum/Tower for secure callback/submission routes; SQLx and PostgreSQL 17; SHA-256 and HMAC-SHA-256; OAuth Authorization Code with PKCE S256; non-serializable zeroizing secret wrappers; RustCrypto XChaCha20-Poly1305 for the initial local encrypted backend; deterministic loopback OAuth/resource/remote/proxy fixtures; proptest; tracing with mandatory redaction.
+**Tech Stack:** Existing Vestrace v0.1 plus H1–H7 Rust workspace; Rust Edition 2024; Tokio; Axum/Tower; SQLx and PostgreSQL 17; SHA-256 and HMAC-SHA-256; OAuth Authorization Code with PKCE S256; non-serializable zeroizing secret wrappers; RustCrypto XChaCha20-Poly1305 for the initial local encrypted backend; deterministic loopback OAuth/resource/remote/proxy fixtures; proptest; tracing with mandatory redaction.
 
 ## Global Constraints
 
 - Complete all five v0.1 plans and H1–H7 before implementing H8.
 - Harness design section `20. Connector Registry and Credential Broker` is normative.
-- PostgreSQL is authoritative for Connector definitions/revisions, Connections, permission ceilings, authorization flows, credential-set references, service bindings, rotations, validations, grants, remote profiles, leases, uses, proxy sessions, leak findings and audit metadata.
-- Secret bytes, OAuth codes, PKCE verifiers, access/refresh tokens, API keys, client secrets, passwords, signing keys and private keys live only behind `SecretBackendPort` and are never PostgreSQL values.
-- Vestrace owns every domain/application contract, ID, lifecycle, schema, operation fingerprint and public DTO. External OAuth/HTTP/keyring/cloud/A2A SDK types remain inside adapters.
-- Connector, adapter-binding, secret-backend-binding, remote-profile, credential-generation and permission-ceiling revisions are immutable. Mutable lifecycle belongs to stable identities with optimistic state revisions.
-- A Connection is a logical authorization relationship, not a secret. It is principal-bound or workspace-bound and has an explicit local ceiling.
+- PostgreSQL is authoritative for Connector definitions/revisions, Connections, immutable permission-ceiling revisions, service credential bindings/revisions, authorization flows, credential-set references, rotations, validations, grants, remote profiles, leases/uses, proxy sessions, leak findings and audit metadata.
+- Secret bytes, OAuth codes, PKCE verifiers, access/refresh tokens, API keys, client secrets, passwords and private/signing keys live only behind `SecretBackendPort` and are never PostgreSQL values.
+- Vestrace owns every domain/application type, ID, lifecycle, schema, hash and public DTO. External OAuth/HTTP/keyring/cloud/A2A SDK types remain inside adapters.
+- Connector, adapter-binding, backend-binding, Connection ceiling, service-binding, remote-profile and credential-generation revisions are immutable. Mutable lifecycle belongs to stable identity rows with optimistic state revisions.
+- A Connection is a logical authorization relationship, not a secret. It is principal-bound or workspace-bound and points to exact Connector, permission and credential revisions.
 - External scopes and remote security declarations are compatibility evidence, not local authority.
-- Effective use is the intersection of operation requirements, Connection/service binding, sharing, delegated grant, current H2 policy, data classification, destination and the exact protected action.
-- A `SecretReference`, `SecretVersionReference`, Connection ID, lease ID or content hash is not a bearer capability.
-- Clear secret material types are non-Clone, non-Serialize and non-Debug, use constant-time-safe handling where applicable and zeroize on drop.
-- Authorization Code + PKCE S256 is the initial user OAuth flow. Implicit and password-grant flows are rejected. State is one-time and persisted only as HMAC.
-- OAuth codes and PKCE verifiers are short-retention secret-backend values. Raw token responses are never persisted.
-- An ambiguous token exchange response becomes `AuthorizationFlowStatus::Unknown`; the code is not blindly exchanged again. The user is routed to reauthorization unless a connector-specific reconciliation proves the credential generation exists.
-- API-key submission uses a dedicated sensitive route/secure CLI input and never becomes an H7 InteractionEvent, command-line argument, access-log field or error payload.
-- Refresh tokens and client secrets are broker-internal components. They cannot be selected by a model or injected as an ordinary external-operation credential.
-- Rotation creates a new immutable credential generation, validates it, atomically activates a new binding and revokes unconsumed leases for older generations.
-- Connection or service-binding revocation blocks new leases immediately but cannot recall an already dispatched request.
-- Credential leases default to one use and no more than 60 seconds. Longer/multi-use leases require explicit nonstandard policy and are excluded from the v0.2 reference profiles.
-- Lease consumption occurs at the last practical enforcement point before secret resolution/injection. A consumed lease is not reused after crash, timeout or ambiguous completion.
-- H3 provider, H4 tool, H5 remote-agent, H6 authenticated fetch/store and H9A A2A adapters use the same Vestrace lease and runtime-injection boundary.
-- Models see only `LogicalConnectionHandle` and sanitized connector operation metadata. They never see backend refs, credential generations, lease IDs, proxy capabilities or secret fragments.
-- Sandboxes receive no long-lived credential through environment, argv, mounted files or Artifacts. H8 supplies an application-level HTTP credential proxy over an H4-managed local channel.
-- The proxy strips caller-supplied authentication, cookie and proxy-authentication headers before injection.
-- Remote-agent authentication binds exact local remote-agent revision/profile, verified identity/origin, transport, operation, resource and classification. Agent Cards cannot widen the profile.
-- SubRuns and remote invocations use explicit `ConnectionAccessGrant` records; no child inherits the parent Connection implicitly.
-- Known-secret scans return only refs/hashes, rule IDs, ranges and irreversible fingerprints. Findings never contain recoverable secret values.
-- Secret scanning is integrated before model transfer, ordinary event persistence, notification rendering, Artifact availability/export and connector diagnostics according to subsystem policy.
-- Credential-use and credential-lifecycle audit records are append-only and content-free. H10 may add integrity chains without rewriting H8 rows.
-- Replay never starts authorization, reads secret material, refreshes, rotates, issues/consumes leases, injects credentials, calls a connector or uses the proxy.
-- Existing migrations `0014`–`0053` are never edited. H8 migrations are `0054`–`0060` and are created once.
-- CI uses loopback fixtures, temporary encrypted stores and fake clocks. It requires no public identity provider, SaaS account, remote agent or permanent credential.
+- Effective use is the intersection of Connector/service operation requirements, Connection/service-binding ceiling, sharing, delegated grant, current H2 policy, classification, destination and exact protected action.
+- `SecretReference`, `SecretVersionReference`, Connection ID, lease ID and content hash are never bearer capabilities.
+- Clear secret material is non-Clone, non-Serialize and non-Debug and zeroizes on drop. Secret refs use custom redacted Debug.
+- Authorization Code + PKCE S256 is the initial user OAuth flow. Implicit/password-grant flows are rejected. Clear state is one-time; PostgreSQL stores only HMAC.
+- OAuth codes and PKCE verifiers are short-retention exact secret versions. Raw token responses are never persisted.
+- Ambiguous token exchange becomes `AuthorizationFlowStatus::Unknown`; the code is not blindly exchanged again. Reauthorization is required unless connector-specific reconciliation proves an already stored generation.
+- API-key submission uses a dedicated sensitive HTTP/CLI path and never becomes an InteractionEvent, argv, access-log field or error payload.
+- Refresh tokens/client secrets are broker-internal and cannot be selected by model/tool input or ordinary injection.
+- Rotation creates one new immutable generation, validates it, atomically activates a new binding/revision and revokes unexhausted leases tied to old generations.
+- Revocation blocks new leases immediately but cannot recall an already dispatched request.
+- Credential leases default to one use and at most 60 seconds. Longer/multi-use leases are nonstandard and excluded from reference profiles.
+- Lease consumption occurs at the last practical enforcement point. An exhausted lease is never reused after crash, timeout or ambiguous completion.
+- H3 provider, H4 tool, H5 remote-agent, H6 authenticated fetch/store and H9A adapters use the same lease/runtime-injection boundary.
+- Models see only `LogicalConnectionHandle` plus sanitized operation metadata. They never see backend refs, generations, lease IDs, proxy capabilities or secret fragments.
+- Sandboxes receive no long-lived credential through env, argv, mounts or Artifacts. H8 uses an application-level HTTP credential proxy over an H4-managed local channel.
+- Proxy requests strip caller authentication/cookie/proxy-auth headers before injection.
+- Remote authentication binds exact local remote revision/profile, verified identity/origin, transport, operation, resources and classification. Agent Cards cannot widen it.
+- SubRuns and remote invocations use explicit `ConnectionAccessGrant`; no child inherits a parent Connection.
+- Known-secret scans return only ref hashes, rule IDs, ranges and irreversible fingerprints.
+- Secret scanning is applied before model transfer, ordinary event persistence, notification rendering, Artifact availability/export and connector diagnostics according to subsystem policy.
+- Usage and lifecycle audits are append-only and content-free. H10 may add integrity chains without rewriting H8 history.
+- Replay never starts authorization, reads secret bytes, refreshes/rotates, issues/consumes leases, injects, calls a Connector or uses the proxy.
+- Existing migrations `0014`–`0053` are never edited. H8 migrations are `0054`–`0060`, each owned once.
+- CI uses loopback fixtures, temporary encrypted stores and fake clocks; no public provider/SaaS/remote agent/permanent credential is required.
 - Future implementation branch: `feat/h8-connections-credential-broker`.
 
 ---
@@ -74,35 +74,9 @@ crates/vestrace-credential-runtime/src/
   remote_decorator.rs
   redaction.rs
 
-crates/vestrace-secret-backend-local/src/
-  lib.rs
-  backend.rs
-  crypto.rs
-  layout.rs
-  staging.rs
-  master_key.rs
-  reconcile.rs
-
-crates/vestrace-credential-proxy/src/
-  lib.rs
-  server.rs
-  session.rs
-  request_policy.rs
-  injector.rs
-  response.rs
-
-crates/vestrace-credential-test-support/src/
-  lib.rs
-  secret_backend.rs
-  oauth_server.rs
-  resource_server.rs
-  connector.rs
-  remote.rs
-  proxy.rs
-  scanner.rs
-  fixtures.rs
-  conformance.rs
-
+crates/vestrace-secret-backend-local/src/{lib,backend,crypto,layout,staging,master_key,reconcile}.rs
+crates/vestrace-credential-proxy/src/{lib,server,session,request_policy,injector,response}.rs
+crates/vestrace-credential-test-support/src/{lib,secret_backend,oauth_server,resource_server,connector,remote,proxy,scanner,fixtures,conformance}.rs
 crates/vestrace-channel-http/src/{connection_routes,authorization_routes,oauth_callback,sensitive_body}.rs
 crates/vestrace-channel-cli/src/{connection_commands,secure_input}.rs
 
@@ -158,12 +132,18 @@ scripts/
 
 ## Normative contracts
 
-### Supporting types
+### Shared supporting values
 
 ```rust
 pub enum ConnectorDefinitionStatus { Draft, Active, Deprecated, Revoked }
 pub enum ConnectorAdapterKind { Builtin, Http, Mcp, Extension }
 pub enum SecretBackendKind { LocalEncrypted, External }
+pub enum ServiceCredentialBindingStatus { Active, Disabled, Revoked, Expired }
+pub enum ConnectionValidationStatus { Valid, Degraded, Invalid, ReauthorizationRequired }
+pub enum ConnectionAccessGrantStatus { Issued, Exhausted, Expired, Revoked }
+pub enum SandboxCredentialProxyStatus { Issued, Active, Exhausted, Expired, Revoked }
+pub enum CredentialLeaseStatus { Issued, Exhausted, Expired, Revoked, Failed }
+pub enum CredentialUseResult { MaterialResolved, Injected, RequestDispatched, RejectedBeforeDispatch, CompletionUnknown, Failed }
 
 pub struct ConnectorDataHandlingDeclaration {
     pub allowed_classifications: std::collections::BTreeSet<DataClassification>,
@@ -197,11 +177,6 @@ pub struct LogicalConnectionHandle(String);
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NormalizedOrigin(String);
 
-pub enum ConnectionValidationStatus { Valid, Degraded, Invalid, ReauthorizationRequired }
-pub enum ConnectionAccessGrantStatus { Issued, Exhausted, Expired, Revoked }
-pub enum SandboxCredentialProxyStatus { Issued, Active, Exhausted, Expired, Revoked }
-pub enum CredentialUseResult { Injected, RequestDispatched, RejectedBeforeDispatch, CompletionUnknown, Failed }
-
 pub enum SecretReadPurpose {
     ConsumedCredentialLease { lease_id: CredentialLeaseId },
     OAuthTokenExchange { flow_id: AuthorizationFlowId },
@@ -212,7 +187,7 @@ pub enum SecretReadPurpose {
 }
 ```
 
-`LogicalConnectionHandle` contains an opaque logical alias selected by trusted application code. `NormalizedOrigin` is exactly `scheme://host:effective-port`, contains no userinfo/path/query/fragment and rejects non-HTTPS origins except deterministic loopback tests or explicit local policy.
+`NormalizedOrigin` is exactly `scheme://host:effective-port`, contains no userinfo/path/query/fragment and rejects non-HTTPS origins except explicit local loopback policy. All free identifiers/paths/origins are bounded and normalized.
 
 ### Connector definitions and operations
 
@@ -276,9 +251,9 @@ pub struct ConnectorDefinitionRevision {
 }
 ```
 
-Stable names use lowercase dotted segments. Connector-defined credential headers are validated against an allowlist. `Authorization` and explicitly approved `X-Api-Key`-style names are possible; `Cookie`, `Proxy-Authorization`, `Host`, `Content-Length` and hop-by-hop headers are forbidden.
+Stable names use lowercase dotted segments. Credential header targets use a fixed allowlist: `Authorization` and approved `X-Api-Key`-style names are possible; `Cookie`, `Proxy-Authorization`, `Host`, `Content-Length` and hop-by-hop headers are forbidden.
 
-### Connections and service credential bindings
+### Connection and immutable permission revisions
 
 ```rust
 pub enum ConnectionOwner {
@@ -298,7 +273,10 @@ pub enum ConnectionStatus {
 
 pub enum ConnectionSharingMode { OwnerOnly, ExplicitPrincipals, WorkspaceAgents }
 
-pub struct ConnectionPermissionCeiling {
+pub struct ConnectionPermissionCeilingRevision {
+    pub id: ConnectionPermissionCeilingRevisionId,
+    pub connection_id: ConnectionId,
+    pub revision: u32,
     pub allowed_operations: std::collections::BTreeSet<ConnectorOperationId>,
     pub allowed_resources: Vec<ConnectorResourcePattern>,
     pub allowed_external_scopes: std::collections::BTreeSet<String>,
@@ -314,10 +292,10 @@ pub struct Connection {
     pub owner: ConnectionOwner,
     pub status: ConnectionStatus,
     pub sharing_mode: ConnectionSharingMode,
+    pub current_permission_revision_id: ConnectionPermissionCeilingRevisionId,
     pub current_credential_binding_id: Option<ConnectionCredentialBindingId>,
     pub external_identity_hash: Option<[u8; 32]>,
     pub external_identity_display: Option<String>,
-    pub permission_ceiling: ConnectionPermissionCeiling,
     pub state_revision: u64,
     pub last_validation_id: Option<ConnectionValidationId>,
     pub created_at: Timestamp,
@@ -328,19 +306,25 @@ pub struct ServiceCredentialBinding {
     pub id: ServiceCredentialBindingId,
     pub workspace_id: WorkspaceId,
     pub stable_name: String,
+    pub status: ServiceCredentialBindingStatus,
+    pub current_revision_id: ServiceCredentialBindingRevisionId,
+    pub state_revision: u64,
+}
+
+pub struct ServiceCredentialBindingRevision {
+    pub id: ServiceCredentialBindingRevisionId,
+    pub binding_id: ServiceCredentialBindingId,
+    pub revision: u32,
     pub purpose: String,
     pub credential_set_generation_id: CredentialSetGenerationId,
     pub allowed_operations: std::collections::BTreeSet<String>,
     pub allowed_origins: Vec<NormalizedOrigin>,
     pub maximum_classification: DataClassification,
-    pub status: ServiceCredentialBindingStatus,
-    pub state_revision: u64,
+    pub content_hash: [u8; 32],
 }
 ```
 
-`ServiceCredentialBinding` covers infrastructure-owned provider, Artifact-store, processor or other non-Connector credentials. It does not appear in model-visible catalogues. Connection sharing and service binding use still require H2.
-
-Allowed Connection transitions include:
+Connection transitions:
 
 ```text
 PendingAuthorization → Active | ReauthorizationRequired | Disabled | Revoked
@@ -351,10 +335,12 @@ Disabled → PendingAuthorization | Active | Revoked | Expired, only by protecte
 Revoked and Expired are terminal
 ```
 
-### Secret references, backend results and credential sets
+A new ceiling or service-binding revision never rewrites history. Connection sharing selects locally eligible principals/agents but every use still passes H2.
+
+### Secret backend and credential generations
 
 ```rust
-#[derive(Clone, Debug, Eq, PartialEq,
+#[derive(Clone, Eq, PartialEq,
          serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SecretReference {
     pub backend_binding_revision_id: SecretBackendBindingRevisionId,
@@ -382,6 +368,7 @@ pub enum CredentialComponentKind {
 pub struct CredentialSetGeneration {
     pub id: CredentialSetGenerationId,
     pub credential_set_id: CredentialSetId,
+    pub workspace_id: WorkspaceId,
     pub generation: u64,
     pub components: std::collections::BTreeMap<CredentialComponentKind, SecretVersionReference>,
     pub granted_external_scopes: std::collections::BTreeSet<String>,
@@ -390,6 +377,7 @@ pub struct CredentialSetGeneration {
 }
 
 pub struct StageSecretVersionRequest {
+    pub backend_binding_revision_id: SecretBackendBindingRevisionId,
     pub secret_id: SecretId,
     pub version_id: SecretVersionId,
     pub generation: u64,
@@ -435,7 +423,7 @@ pub struct SecretDeletionObservation {
 }
 ```
 
-`RefreshToken`, `ClientSecret`, `Password` and `PrivateKey` are never ordinary outbound components. Their use is restricted to enumerated refresh/exchange/revoke/signer purposes.
+`SecretReference` implements a custom redacted Debug. `RefreshToken`, `ClientSecret`, `Password` and `PrivateKey` are not ordinary outbound components.
 
 ```rust
 #[async_trait::async_trait]
@@ -445,31 +433,23 @@ pub trait SecretBackendPort: Send + Sync {
         request: StageSecretVersionRequest,
         material: SensitiveSecretInput,
     ) -> Result<StagedSecretVersion, SecretBackendError>;
-    async fn promote_version(
-        &self,
-        staged: &StagedSecretVersion,
-    ) -> Result<SecretVersionObservation, SecretBackendError>;
-    async fn inspect_version(
-        &self,
-        reference: &SecretVersionReference,
-    ) -> Result<SecretVersionObservation, SecretBackendError>;
+    async fn promote_version(&self, staged: &StagedSecretVersion)
+        -> Result<SecretVersionObservation, SecretBackendError>;
+    async fn inspect_version(&self, reference: &SecretVersionReference)
+        -> Result<SecretVersionObservation, SecretBackendError>;
     async fn read_ephemeral(
         &self,
         reference: &SecretVersionReference,
         purpose: SecretReadPurpose,
     ) -> Result<EphemeralSecretMaterial, SecretBackendError>;
-    async fn disable_version(
-        &self,
-        reference: &SecretVersionReference,
-    ) -> Result<(), SecretBackendError>;
-    async fn delete_version(
-        &self,
-        reference: &SecretVersionReference,
-    ) -> Result<SecretDeletionObservation, SecretBackendError>;
+    async fn disable_version(&self, reference: &SecretVersionReference)
+        -> Result<(), SecretBackendError>;
+    async fn delete_version(&self, reference: &SecretVersionReference)
+        -> Result<SecretDeletionObservation, SecretBackendError>;
 }
 ```
 
-`SensitiveSecretInput` and `EphemeralSecretMaterial` are Vestrace-owned non-serializable zeroizing wrappers in `vestrace-credential-runtime`. Authorization/rotation may stage; only a consumed lease, exchange/refresh, validation/revocation signer or isolated known-secret scanner may read with an exact purpose.
+`SensitiveSecretInput`/`EphemeralSecretMaterial` are Vestrace-owned, non-serializable and zeroizing. Authorization/rotation may stage; only an exhausted lease, exchange/refresh, validation/revocation signer or isolated scanner may read with exact `SecretReadPurpose`.
 
 ### Authorization, rotation and validation
 
@@ -541,7 +521,7 @@ pub struct ConnectionValidation {
 }
 ```
 
-Clear OAuth state is returned once and only its HMAC is persisted. Callback code and PKCE verifier use exact secret versions. After successful exchange the code/verifier versions are disabled and deleted under short-retention cleanup. Refresh is singleflight per Connection/generation; `invalid_grant` moves the Connection to `ReauthorizationRequired`.
+Clear state is returned once and only HMAC is stored. Code/verifier use exact versions and are disabled/deleted after exchange. Refresh is singleflight per Connection/generation; `invalid_grant` produces `ReauthorizationRequired`.
 
 ### Delegated grants and remote profiles
 
@@ -549,12 +529,12 @@ Clear OAuth state is returned once and only its HMAC is persisted. Callback code
 pub enum ConnectionGrantConsumer {
     SubRun { child_run_id: AgentRunId, binding_id: SubRunBindingId },
     RemoteInvocation { invocation_id: RemoteAgentInvocationId },
-    AgentSnapshot { agent_snapshot_id: AgentRuntimeSnapshotId },
 }
 
 pub struct ConnectionAccessGrant {
     pub id: ConnectionAccessGrantId,
     pub connection_id: ConnectionId,
+    pub permission_revision_id: ConnectionPermissionCeilingRevisionId,
     pub parent_run_id: AgentRunId,
     pub consumer: ConnectionGrantConsumer,
     pub purpose: String,
@@ -575,6 +555,7 @@ pub struct RemoteAgentConnectionProfileRevision {
     pub revision: u32,
     pub remote_agent_revision_id: RemoteAgentDefinitionRevisionId,
     pub connection_id: ConnectionId,
+    pub permission_revision_id: ConnectionPermissionCeilingRevisionId,
     pub verified_external_identity_hash: Option<[u8; 32]>,
     pub allowed_origins: Vec<NormalizedOrigin>,
     pub allowed_transports: std::collections::BTreeSet<String>,
@@ -586,14 +567,14 @@ pub struct RemoteAgentConnectionProfileRevision {
 }
 ```
 
-A remote profile is a local immutable allowlist. Agent Card declarations may only reduce the compatible intersection.
+A remote profile is a local immutable allowlist. Remote declarations only narrow the intersection.
 
-### Credential leases and injection
+### Credential leases and dual-ticket binding
 
 ```rust
 pub enum CredentialSourceRef {
-    Connection { connection_id: ConnectionId },
-    ServiceBinding { binding_id: ServiceCredentialBindingId },
+    Connection { connection_id: ConnectionId, permission_revision_id: ConnectionPermissionCeilingRevisionId },
+    ServiceBinding { binding_revision_id: ServiceCredentialBindingRevisionId },
 }
 
 pub enum CredentialOperationRef {
@@ -620,8 +601,6 @@ pub enum CredentialInjectionScheme {
     RequestSigner { scheme: String },
 }
 
-pub enum CredentialLeaseStatus { Issued, Consumed, Expired, Revoked, Failed }
-
 pub struct CredentialResourceBinding {
     pub kind: String,
     pub canonical_identifier_hash: [u8; 32],
@@ -640,24 +619,28 @@ pub struct CredentialLease {
     pub operation: CredentialOperationRef,
     pub resources: Vec<CredentialResourceBinding>,
     pub destination_origin: NormalizedOrigin,
-    pub operation_fingerprint: OperationFingerprint,
+    pub credential_binding_hash: [u8; 32],
+    pub protected_action_fingerprint: OperationFingerprint,
+    pub secret_use_fingerprint: OperationFingerprint,
     pub protected_action_ticket_id: AuthorizationTicketId,
     pub secret_use_ticket_id: AuthorizationTicketId,
     pub access_grant_id: Option<ConnectionAccessGrantId>,
     pub injection_scheme: CredentialInjectionScheme,
+    pub lease_idempotency_key: String,
     pub maximum_uses: u16,
     pub use_count: u16,
     pub expires_at: Timestamp,
     pub status: CredentialLeaseStatus,
+    pub logical_revision: u64,
     pub created_at: Timestamp,
 }
 ```
 
-Interactive setup/validation uses an authenticated principal with no Run; Run work includes agent/Run/step. System maintenance uses a dedicated service principal. Both protected-action and `secret.use` tickets bind the same normalized operation fingerprint.
+`protected_action_fingerprint` and `secret_use_fingerprint` are distinct because their H2 actions/resources differ. Both tickets must carry or obligation-bind the exact same `credential_binding_hash`, derived from workspace, principal/agent, Run/consumer, credential source revision, operation, resources, destination, classification and argument hash. This prevents a valid secret-use ticket from being attached to another protected action.
 
-Consumption atomically verifies current Connection/service binding, credential generation, delegated grant, destination, expiry, revocation and use count; increments counters; appends a usage intent; then resolves the exact component inside `vestrace-credential-runtime`. Query injection and persistent cookie jars are not supported by the standard profile.
+Consumption locks lease, source revision, generation and optional grant; validates tickets, binding hash, expiry/revocation/use count; increments counters and appends a usage intent; then resolves the exact component inside credential runtime. For a one-use lease, the transition is `Issued → Exhausted`. Query injection and persistent cookies are unsupported.
 
-### Sandbox credential proxy
+### Sandbox proxy
 
 ```rust
 pub struct SandboxCredentialProxySession {
@@ -666,6 +649,7 @@ pub struct SandboxCredentialProxySession {
     pub run_id: AgentRunId,
     pub step_id: RunStepId,
     pub connection_id: ConnectionId,
+    pub permission_revision_id: ConnectionPermissionCeilingRevisionId,
     pub allowed_origin: NormalizedOrigin,
     pub allowed_methods: std::collections::BTreeSet<String>,
     pub allowed_path_patterns: Vec<String>,
@@ -678,9 +662,9 @@ pub struct SandboxCredentialProxySession {
 }
 ```
 
-The workload receives an ephemeral proxy capability over an H4-owned local channel. The proxy validates session, origin, DNS pin, method/path/body limits; strips credential headers; consumes a fresh lease; injects outside the workload namespace; and returns a bounded/redacted response.
+The workload receives only an ephemeral proxy capability through an H4-owned local channel. PostgreSQL stores its HMAC. The proxy validates session/origin/DNS pin/method/path/body, strips auth headers, consumes a fresh lease, injects outside the workload namespace and bounds/redacts the response.
 
-### Secret leak records and separate audits
+### Secret leak and separate audit records
 
 ```rust
 pub enum SecretLeakDisposition { Deny, Redact, Quarantine, Alert }
@@ -715,7 +699,7 @@ pub struct CredentialUsageAuditRecord {
     pub run_id: Option<AgentRunId>,
     pub step_id: Option<RunStepId>,
     pub consumer: CredentialConsumerRef,
-    pub operation_fingerprint: OperationFingerprint,
+    pub credential_binding_hash: [u8; 32],
     pub destination_origin_hash: [u8; 32],
     pub result: CredentialUseResult,
     pub occurred_at: Timestamp,
@@ -747,18 +731,18 @@ pub struct CredentialLifecycleAuditRecord {
 }
 ```
 
-Usage audit describes lease-bound request handling. Lifecycle audit describes authorization/refresh/rotation/revocation/leak decisions. Neither contains headers, token fragments, URL query strings, bodies or backend paths.
+Usage audit is lease-bound. Lifecycle audit covers authorization/refresh/rotation/revocation. Neither stores headers, token fragments, query strings, bodies or backend paths.
 
 ---
 
 ### Task 1: Add Connector definition and operation contracts
 
-**Files:** modify `id.rs`; create `connector/{mod,definition,operation,resource,scope,binding}.rs`; export from domain.
+**Files:** modify `id.rs`; create `connector/{mod,definition,operation,resource,scope,binding}.rs`; export domain modules.
 
-- [ ] Add all H8 IDs, including `ServiceCredentialBindingId`, `CredentialRefreshId`, `SecretLeakScanId` and `CredentialLifecycleAuditRecordId`.
-- [ ] Write failing tests for duplicate operations, unsafe header names, invalid origins/resources/scopes, unsupported write semantics and revision/content-hash mismatch.
-- [ ] Implement stable identifiers and immutable hashing across binding, auth schemes, scopes, operations, schemas and data handling.
-- [ ] Require each non-read-only operation to declare idempotency and reconciliation support explicitly.
+- [ ] Add all H8 IDs, including ceiling/service revisions, refresh/scan and both audit IDs.
+- [ ] Test duplicate operations, unsafe headers, invalid origin/resource/scope, unsupported write semantics and hash/revision mismatch.
+- [ ] Implement stable identifiers and immutable hashing across binding, auth, scopes, operations, schemas and data handling.
+- [ ] Require every non-read-only operation to declare idempotency/reconciliation support.
 - [ ] Run/commit:
 
 ```bash
@@ -768,155 +752,155 @@ git add crates/vestrace-domain
 git commit -m "feat(connector): add connector operation contracts"
 ```
 
-### Task 2: Add Connection, service binding and permission-ceiling contracts
+### Task 2: Add Connection and service-binding revisions
 
-**Files:** create `connection/{mod,connection,owner,sharing,permission,status,validation}.rs`; create credential service-binding types.
+**Files:** create connection files and service-binding credential types.
 
-- [ ] Test owner/workspace invariants, complete lifecycle table, ceiling wider than Connector, unsafe identity display, service origin mismatch and optimistic revisions.
-- [ ] Implement deterministic intersection for operation/resource/scope/classification/risk.
-- [ ] Define explicit principal/agent sharing rows; `WorkspaceAgents` still requires eligible Agent snapshot and H2.
-- [ ] Keep service bindings non-model-visible and limited to exact origins/operations/classification.
+- [ ] Test owner/workspace invariants, full transition table, ceiling wider than Connector, revision immutability, unsafe identity display and service-origin mismatch.
+- [ ] Implement deterministic intersections for operation/resource/scope/classification/risk.
+- [ ] Explicit sharing rows select principals/agents; H2 remains mandatory.
+- [ ] Service bindings are non-model-visible and exact-origin/operation/classification bound.
 - [ ] Run/commit.
 
 ### Task 3: Add secret contracts and local encrypted backend
 
-**Files:** create credential reference/set types, `vestrace-credential-runtime`, `vestrace-secret-backend-local`, test support/conformance and `secret_backend_local_conformance.rs`.
+**Files:** create credential reference/set types, credential runtime, local backend, test support/conformance.
 
-- [ ] Compile/runtime tests prove material wrappers are not Clone/Serialize/Debug, errors are redacted and buffers zeroize.
-- [ ] One backend conformance suite covers stage/promote/inspect/purpose-read/disable/delete, idempotent promotion, ambiguous reconciliation, generation isolation and wrong-master-key failure.
-- [ ] Local backend uses an owner-only master-key file or inherited descriptor, XChaCha20-Poly1305, random nonce, AAD `(deployment, backend binding, secret ID, version ID, generation)`, exclusive staging, fsync and atomic rename.
-- [ ] Paths derive only from opaque IDs, never connector/user/identity text.
+- [ ] Prove material wrappers cannot Clone/Serialize/Debug; errors are redacted and buffers zeroize.
+- [ ] Conformance covers stage/promote/inspect/purpose-read/disable/delete, idempotent promote, ambiguous reconciliation, generation isolation and wrong key.
+- [ ] Local backend uses owner-only master-key file/inherited descriptor, XChaCha20-Poly1305, random nonce, exact AAD, exclusive staging, fsync and atomic rename.
+- [ ] Paths derive from opaque IDs only.
 - [ ] Run/commit.
 
 ### Task 4: Define H8 ports, commands and deterministic fixtures
 
-**Files:** create application connector/connection/credential/remote modules and `vestrace-credential-test-support`.
+**Files:** create application modules and credential test-support crate.
 
-**Interfaces:** produce repository ports, `ConnectorAuthorizationPort`, `ConnectorValidationPort`, `CredentialRefreshPort`, `SecretBackendPort`, `CredentialBrokerPort`, `CredentialLeaseConsumerPort`, `ConnectionAccessGrantPort`, `RemoteAgentCredentialDecoratorPort`, `SandboxCredentialProxyPort`, `KnownSecretScannerPort` and fault injection.
+**Interfaces:** repository ports, Connector auth/validation/refresh, secret backend, Broker/lease consumer, grant, remote decorator, sandbox proxy, known-secret scanner and fault injection.
 
-- [ ] Add object-safety compile tests for every port.
-- [ ] Fault points: after secret stage/promote, OAuth code stage, token response, credential-generation persistence, binding activation, lease consume, proxy injection, rotation activation and audit append.
-- [ ] Connector adapters receive ephemeral material only for exchange/refresh/validation/revoke and return normalized safe observations.
-- [ ] Deterministic connector supports PKCE, API-key header, identity validation, refresh, revoke and an exchange response-loss script.
+- [ ] Object-safety compile tests for every port.
+- [ ] Faults after stage/promote, code stage, token response, generation persistence, binding activation, lease exhaust, proxy injection, rotation activation and audit append.
+- [ ] Connector adapters receive ephemeral material only and return normalized safe observations.
+- [ ] Deterministic Connector supports PKCE, API-key, validation, refresh, revoke and lost exchange response.
 - [ ] Run/commit.
 
-### Task 5: Persist Connector definitions, Connections and service bindings
+### Task 5: Persist Connector/Connection/service definitions
 
-**Files:** create migrations `0054`, `0055`, PostgreSQL repositories and connector/Connection persistence tests.
+**Files:** create `0054`, `0055`, PostgreSQL repositories and persistence tests.
 
-- [ ] `0054` creates stable definitions, immutable revisions, operations/scopes/resources, adapter bindings and secret-backend bindings.
-- [ ] `0055` creates Connections, service credential bindings, permission ceilings, sharing, granted external scopes and validation records.
-- [ ] Enforce same workspace, exact current revisions, append-only revisions/validations and one active binding pointer.
-- [ ] New Connector revisions never silently alter existing Connection semantics; rebinding is explicit and validated.
+- [ ] `0054`: stable Connector definitions, immutable revisions, operations/scopes/resources, adapter/backend bindings.
+- [ ] `0055`: Connections, immutable ceiling revisions, service bindings/revisions, sharing, external scopes and validations; add H3 provider/H6 backend relation tables to service-binding revisions without editing historical migrations.
+- [ ] Enforce workspace, exact current revisions and append-only revision/validation rows.
+- [ ] New Connector revision never silently changes an existing Connection.
 - [ ] Run/commit.
 
 ### Task 6: Implement PKCE and secure API-key authorization
 
-**Files:** create migration `0056`, authorization/binding repositories/services, secure HTTP/CLI routes and OAuth/API-key/unknown tests.
+**Files:** create `0056`, authorization/binding repositories/services, secure HTTP/CLI routes and auth tests.
 
-- [ ] PKCE test covers state HMAC, callback replay, wrong principal/workspace, expiry, exact verifier/code secret versions, exchange, validation and activation.
-- [ ] Lost token-exchange response produces `Unknown`, stores no guessed generation and requires connector reconciliation or reauthorization; no blind code replay.
-- [ ] API-key test proves value absent from HTTP logs, H7 interactions, PostgreSQL, traces and errors.
-- [ ] `0056` creates authorization flows/events, credential sets/generations/components, Connection bindings, refresh/rotation rows and temporary secret bindings.
-- [ ] Callback immediately stages code; exchange stages/promotes token components, persists one generation, validates, activates binding, then disables/deletes code/verifier versions.
-- [ ] H7 sees opaque flow status only.
+- [ ] PKCE test covers state HMAC, callback replay/wrong actor/expiry, exact code/verifier versions, exchange, validation and activation.
+- [ ] Lost exchange response becomes Unknown, creates no guessed generation and does not replay code blindly.
+- [ ] API-key value is absent from access logs, H7, PostgreSQL, traces and errors.
+- [ ] `0056`: flows/events, credential sets/generations/components, Connection bindings, refresh/rotation and temporary secret bindings.
+- [ ] Callback stages code; exchange promotes components, persists one generation, validates/activates, then disables/deletes code/verifier.
+- [ ] H7 receives opaque status only.
 - [ ] Run/commit.
 
-### Task 7: Implement validation, refresh, rotation, reauthorization and revocation
+### Task 7: Implement validation, refresh, rotation and revocation
 
-**Files:** create validation/revocation/refresh/rotation services, repositories/workers and tests.
+**Files:** create services/repositories/workers and refresh/rotation/revocation tests.
 
-- [ ] Validation calls a Connector-declared safe identity operation and stores only identity/scope hashes and stable codes.
-- [ ] Twenty concurrent refresh requests use one singleflight operation and one new access-token generation.
-- [ ] Rotation stages, validates, atomically activates, revokes old unconsumed leases and schedules old-version retention/deletion.
-- [ ] Crash after backend promote reconciles the same version/generation.
-- [ ] Revocation marks stable identity Revoked, revokes issued leases/grants, attempts connector revoke when supported and preserves in-flight uncertainty.
-- [ ] `invalid_grant` sets `ReauthorizationRequired` and opens/updates a matching H7 AuthenticationRequired request.
+- [ ] Validation uses safe identity operation and stores only hashes/codes.
+- [ ] Twenty concurrent refreshes create one refresh and one new access-token generation.
+- [ ] Rotation stages/validates/activates one generation and revokes old unexhausted leases.
+- [ ] Crash after promote reconciles same version/generation.
+- [ ] Revocation blocks new leases/grants, attempts provider revoke and preserves in-flight uncertainty/audit.
+- [ ] `invalid_grant` sets ReauthorizationRequired and matching H7 auth request.
 - [ ] Run/commit.
 
-### Task 8: Persist delegated Connection grants and remote profiles
+### Task 8: Persist delegated grants and remote profiles
 
-**Files:** create migration `0057`, grant/profile services/repositories/tests.
+**Files:** create `0057`, grant/profile services/repositories/tests.
 
-- [ ] Effective grant = Connection ceiling ∩ H5 delegation scope ∩ request ∩ H2 policy.
-- [ ] Bind to one exact SubRun, RemoteAgentInvocation or Agent snapshot; enforce expiry, maximum leases and one workspace.
-- [ ] Child cannot use omitted operation/resource/classification or parent-only Connection.
-- [ ] Agent Card-declared schemes/origins/skills cannot widen local remote profile.
-- [ ] `0057` creates grants, operation/resource rows, counters and immutable profile revisions.
+- [ ] Grant = exact Connection ceiling revision ∩ H5 scope ∩ request ∩ H2.
+- [ ] Bind to one SubRun or RemoteInvocation; enforce expiry/max leases/workspace.
+- [ ] Child cannot use omitted or parent-only access.
+- [ ] Agent Card declarations cannot widen profile.
+- [ ] `0057`: grants, operation/resource rows, counters and immutable remote profile revisions.
 - [ ] Run/commit.
 
-### Task 9: Implement atomic credential leases
+### Task 9: Implement atomic dual-ticket leases
 
-**Files:** create migration `0058`, Broker/lease services/repository/runtime consumer and atomicity/restart tests.
+**Files:** create `0058`, Broker/lease repository/runtime consumer and atomicity/restart tests.
 
-- [ ] Issue requires matching protected-action and `secret.use` tickets, current source/generation, exact operation/resource/origin, allowed injection scheme and valid optional grant.
-- [ ] Duplicate idempotency returns identical lease; conflicting payload fails.
-- [ ] Consume locks lease, source, generation and grant in deterministic order; verifies all fences; increments use/grant counters and appends usage intent before secret read.
-- [ ] Concurrent one-use consumption yields exactly one success.
-- [ ] Crash after consume leaves the lease consumed; the owning operation must prove retry safety before requesting a new lease.
-- [ ] `0058` creates leases, resource/origin rows, uses, proxy sessions/capability HMACs and revocation indexes.
+- [ ] Issue validates two distinct H2 tickets and a common `credential_binding_hash`, source revision/generation, operation/resource/origin, scheme and optional grant.
+- [ ] Duplicate idempotency returns same lease; conflict fails.
+- [ ] Consume locks lease/source/generation/grant, validates all fences, increments counters, appends usage intent and transitions one-use lease to Exhausted before secret read.
+- [ ] Concurrent consume yields one success.
+- [ ] Crash after exhaustion never reuses lease; owner must prove retry safety for a new lease.
+- [ ] `0058`: leases, binding hashes/fingerprints/resources/origins, use records, proxy sessions/HMACs and revocation indexes.
 - [ ] Run/commit.
 
-### Task 10: Integrate leases with H3, H4 and H6
+### Task 10: Integrate H3, H4 and H6 credentials
 
-**Files:** modify H3 provider adapters, H4 HTTP/MCP/native adapters and H6 authenticated fetch/store decorators; add provider/tool/fetch tests.
+**Files:** modify provider/tool/fetch/store adapters and add integration tests.
 
-- [ ] H3 uses `ServiceCredentialBinding` bound to exact provider origin/attempt and injects only inside adapter.
-- [ ] H4 uses Connection + Connector operation/resources matching the H4 commit fingerprint; tool arguments expose only `LogicalConnectionHandle`.
-- [ ] H6 authenticates only after SSRF/origin checks; cross-origin redirect requires new authorization/lease and is denied by default.
-- [ ] Prove no backend ref/generation/lease/material appears in prompts, tool results, Artifact metadata, work items or events.
-- [ ] Ambiguous completion consumes the lease and follows owner reconciliation; Broker does not retry.
+- [ ] H3 maps existing provider credential refs to exact ServiceCredentialBindingRevision and binds provider origin/attempt.
+- [ ] H4 maps logical Connection handle to exact Connection/ceiling/operation/resources and H4 commit fingerprint.
+- [ ] H6 authenticates only after SSRF/origin checks; cross-origin redirect requires new authorization and is denied by default.
+- [ ] Prove no backend/generation/lease/material in prompts, results, Artifacts, work or events.
+- [ ] Unknown completion exhausts lease and follows owning reconciliation; Broker never retries.
 - [ ] Run/commit.
 
 ### Task 11: Implement sandbox credential proxy
 
-**Files:** create `vestrace-credential-proxy`, H4 composition and `sandbox_credential_proxy.rs`.
+**Files:** create proxy crate, H4 composition and proxy tests.
 
-- [ ] Workload with no credential env/mount reaches one allowed HTTPS origin/path; upstream sees injected auth while workload capture does not.
+- [ ] Workload without env/mount secret reaches one allowed origin/path and upstream sees injected auth.
 - [ ] Reject wrong origin/IP/DNS pin/method/path/body, caller auth/cookie headers, expired capability, wrong sandbox and overuse.
-- [ ] Capability clear value is passed only through H4 local socket/memfd-style channel; PostgreSQL stores HMAC only.
-- [ ] Consume a fresh lease per request; enforce H4 egress limits and bounded/redacted response.
+- [ ] Clear proxy capability uses H4 local socket/memfd-style channel; PostgreSQL stores HMAC only.
+- [ ] Fresh lease per request; H4 egress and bounded/redacted response.
 - [ ] No generic TCP/SOCKS/unrestricted proxy.
 - [ ] Run/commit.
 
 ### Task 12: Integrate H7 authentication continuations
 
-**Files:** modify H7 authentication/continuation and HTTP/CLI commands; add `authentication_continuation.rs`.
+**Files:** modify H7 auth/continuation and HTTP/CLI commands; add auth-continuation tests.
 
-- [ ] AuthenticationRequired references opaque H8 Connection/flow IDs and rejects credentials in HumanResponse.
-- [ ] Starting authorization returns safe instruction/URL directly to authenticated requester; state/code never enter notification or interaction history.
-- [ ] Completion enqueues exact H7 `AuthenticationReady` cause.
-- [ ] Resume rechecks Connection, required operation/resource, grant, current policy and active generation; unrelated flow cannot resume.
-- [ ] CLI API-key input disables echo and avoids shell args/history.
+- [ ] AuthenticationRequired references opaque H8 IDs and rejects credential content in HumanResponse.
+- [ ] Start returns safe URL/instruction directly to authenticated requester; state/code never enter history/notifications.
+- [ ] Completion enqueues exact `AuthenticationReady` cause.
+- [ ] Resume rechecks Connection/operation/resource/grant/policy/current generation; unrelated flow cannot resume.
+- [ ] CLI secure input disables echo and avoids argv/history.
 - [ ] Run/commit.
 
-### Task 13: Integrate remote-agent request-scoped authentication
+### Task 13: Integrate remote-agent authentication
 
-**Files:** create remote profile/service/decorator runtime, modify H5 fixtures and add remote-agent credential tests.
+**Files:** create remote profile/decorator runtime, modify H5 fixtures and add remote tests.
 
-- [ ] Validate exact remote revision/profile, verified identity/origin, transport, operation, resources, classification and H5 grant.
-- [ ] Use a distinct lease and inject only in infrastructure transport.
-- [ ] Remote Card/message/task/metadata receives no Vestrace refs, tickets, grants, leases or material.
-- [ ] Lost response consumes lease and sets H5 `Unknown`; reconciliation never reuses it.
-- [ ] Profile/Connection revocation blocks later dispatch/continuation while preserving remote task/audit.
-- [ ] H9A can consume this boundary without A2A types in H8.
+- [ ] Validate exact remote profile/revision, identity/origin, transport, operation/resources/classification and H5 grant.
+- [ ] Use distinct lease and infrastructure-only injection.
+- [ ] Remote Card/message/task/metadata receives no refs/tickets/grants/leases/material.
+- [ ] Lost response exhausts lease and sets H5 Unknown; reconciliation never reuses it.
+- [ ] Revocation blocks later dispatch/continuation while preserving task/audit.
+- [ ] H9A consumes boundary without A2A types in H8.
 - [ ] Run/commit.
 
-### Task 14: Add known-secret detection and separate audits
+### Task 14: Add known-secret controls and separate audits
 
-**Files:** create migration `0059`, scanner/audit/leak services/repositories, H3/H6/H7 integration and tests.
+**Files:** create `0059`, scanner/audit/leak services/repositories, H3/H6/H7 integration and tests.
 
-- [ ] Scanner loads eligible values into isolated zeroizing memory, returns only refs/rules/ranges/fingerprints.
-- [ ] Test current and retained rotated secrets, credential patterns, false-positive policy and finding serialization without fragments.
-- [ ] Apply Deny before model transfer, Redact for permitted ordinary text, Quarantine for Artifact and Alert for diagnostics.
-- [ ] `0059` creates append-only scan/findings, usage audit, lifecycle audit and safe diagnostics.
-- [ ] Usage records distinguish injection/dispatch/rejection/unknown/failure; lifecycle records distinguish authorization/validation/refresh/rotation/reauth/disable/revoke/leak block.
+- [ ] Scanner loads eligible values into isolated zeroizing memory and returns only refs/rules/ranges/fingerprints.
+- [ ] Test current/retained rotated secrets, patterns, false-positive policy and fragment-free serialization.
+- [ ] Deny before model transfer, Redact eligible text, Quarantine Artifact, Alert diagnostics.
+- [ ] `0059`: append-only scans/findings, usage audit, lifecycle audit and safe diagnostics.
+- [ ] Usage records material-resolve/inject/dispatch/reject/unknown/failure; lifecycle records auth/validate/refresh/rotate/reauth/disable/revoke/leak block.
 - [ ] Persistence script rejects secret-bearing SQL/schema/event/public fields.
 - [ ] Run/commit.
 
-### Task 15: Integrate H8 workers, checkpoint V6, RLS and acceptance
+### Task 15: Integrate workers, checkpoint V6, RLS and acceptance
 
-**Files:** create migration `0060`, worker/Run/checkpoint changes, boundary scripts, CI and acceptance/RLS tests.
+**Files:** create `0060`, worker/Run/checkpoint changes, boundary scripts, CI and acceptance/RLS tests.
 
 - [ ] Work kinds:
 
@@ -934,32 +918,33 @@ ExpireConnectionAccessGrants
 ScanKnownSecrets
 ```
 
-Payloads contain stable IDs/revisions/deadlines only—never material, code, verifier, clear state, proxy capability or ephemeral credential.
+Payloads contain IDs/revisions/deadlines only—never material, code, verifier, clear state, proxy capability or ephemeral credential.
 
-- [ ] Logical Run events only when entering auth wait, binding an available Connection or pausing due to revocation. Lease/use/refresh/audit progress remains H8-local.
-- [ ] `RunCheckpointV6` stores required Connection IDs, active flow IDs and delegated grant IDs only; it stores no secret refs, generations, leases or capabilities.
+- [ ] Logical Run events only for auth waiting, available Connection binding or pause due to revocation; H8 operational events do not increment RunVersion.
+- [ ] `RunCheckpointV6` extends V5 compatibly with required Connection IDs, active flow IDs and delegated grant IDs only; older payloads remain readable. No secret refs/generations/leases/capabilities.
 - [ ] `0060` forces RLS, same-workspace/owner/consumer consistency, immutable/append-only guards and active flow/refresh/lease/grant/expiry/audit indexes.
 - [ ] Boundary scripts reject serializable/debuggable material, secret-like work/event/public fields, backend reads outside credential runtime, raw credentials in H3–H7, sandbox env/mount credentials and A2A credential fields.
 - [ ] Acceptance proves:
-  1. immutable Connector revision with PKCE/API-key schemes;
-  2. OAuth Connection with no clear code/token in PostgreSQL/logs/events;
-  3. exchange response-loss becomes Unknown without blind replay;
+  1. immutable Connector/ceiling/service revisions;
+  2. OAuth with no clear code/token in PostgreSQL/logs/events;
+  3. exchange response-loss is Unknown without replay;
   4. API-key secure input creates no InteractionEvent copy;
-  5. provider service binding and tool Connection use separate short leases;
-  6. model sees only logical handles;
-  7. sandbox proxy exposes no secret to workload;
-  8. SubRun grant is narrower than parent;
-  9. remote dispatch has identity/origin-bound lease;
-  10. lost external response consumes lease and does not duplicate work;
-  11. refresh is singleflight;
-  12. rotation activates one generation and revokes obsolete leases;
-  13. revocation blocks future tool/remote leases;
-  14. matching H7 auth continuation resumes, unrelated one does not;
-  15. known secret is denied/redacted/quarantined by target policy;
-  16. usage/lifecycle audit is complete and fragment-free;
-  17. restart at every store/auth/rotation/lease/proxy fault creates no duplicate generation, use or call;
-  18. replay performs no secret-bearing action.
-- [ ] Required CI jobs: Connector/Connection domain, encrypted backend, authorization, refresh/rotation/revoke, grants/profiles, lease atomicity, provider/tool/fetch injection, proxy, remote auth, leak/audit, boundaries, H8 acceptance.
+  5. provider service binding and tool Connection use separate leases;
+  6. dual tickets share exact binding hash but have distinct fingerprints;
+  7. model sees logical handles only;
+  8. sandbox proxy exposes no secret;
+  9. SubRun grant is narrower than parent;
+  10. remote dispatch uses identity/origin-bound lease;
+  11. lost external response exhausts lease and does not duplicate work;
+  12. refresh singleflight;
+  13. rotation activates one generation/revision and revokes obsolete leases;
+  14. revocation blocks future tool/remote leases;
+  15. matching H7 auth resumes and unrelated flow does not;
+  16. known secret is denied/redacted/quarantined;
+  17. usage/lifecycle audit is complete and fragment-free;
+  18. restart creates no duplicate generation/use/call;
+  19. replay performs no credential-bearing action.
+- [ ] Required CI jobs: domain, encrypted backend, authorization, refresh/rotation/revoke, grants/profiles, lease atomicity, provider/tool/fetch injection, proxy, remote auth, leak/audit, boundaries, H8 acceptance.
 - [ ] Run/commit:
 
 ```bash
@@ -985,11 +970,11 @@ git commit -m "test(credentials): add H8 acceptance and secret safety gates"
 
 ```text
 0054 Task 5  Connector definitions, operations and backend bindings
-0055 Task 5  Connections, service bindings, sharing, scopes and validation
+0055 Task 5  Connections, permission/service revisions, sharing, scopes and validation
 0056 Task 6  Authorization flows, credential bindings and rotations
 0057 Task 8  Delegated Connection grants and remote profiles
 0058 Task 9  Credential leases, uses and proxy sessions
-0059 Task 14 Secret-leak findings and credential audits
+0059 Task 14 Secret-leak findings and usage/lifecycle audits
 0060 Task 15 RLS, indexes and Run bindings
 ```
 
@@ -1000,53 +985,55 @@ No later task edits an applied migration.
 H8 is complete only when all fifteen tasks pass and evidence demonstrates:
 
 ```text
-ConnectorDefinitionRevision or ServiceCredentialBinding
-→ local permission ceiling
+ConnectorDefinitionRevision or ServiceCredentialBindingRevision
+→ immutable local ceiling
 → authorization/secret generation
 → validation
-→ protected external operation + secret.use
+→ protected action ticket + secret.use ticket
+→ common credential_binding_hash
 → exact CredentialLease
-→ atomic consumption
+→ atomic exhaustion
 → ephemeral injection/proxy decoration
 → external request
-→ owning operation reconciliation
+→ owning reconciliation
 → usage audit
 → refresh/rotation/revocation
 ```
 
 Required invariants:
 
-1. PostgreSQL stores no secret material; secret backend does not authorize use.
-2. Connector/remote declarations cannot grant local authority.
-3. External scopes/sharing cannot exceed local ceiling and H2.
-4. OAuth state/code/verifier/token lifecycles are one-time, bounded and restart-safe without clear persistence.
+1. PostgreSQL stores no secret bytes; secret backend cannot authorize use.
+2. Connector/remote declarations cannot grant authority.
+3. External scopes/sharing cannot exceed immutable local revision and H2.
+4. OAuth state/code/verifier/token lifecycle is one-time, bounded and restart-safe without clear persistence.
 5. Ambiguous exchange is Unknown, not blind replay.
 6. API-key input bypasses ordinary interactions/logging.
-7. Material wrappers cannot clone/serialize/debug values and zeroize on drop.
-8. Every outbound use consumes an exact lease immediately before injection.
-9. Consumed leases are never reused after crash/timeout/unknown completion.
-10. Refresh is singleflight and refresh tokens are never ordinary outbound credentials.
-11. Rotation activates one immutable generation and revokes obsolete leases.
-12. Revocation blocks new leases while preserving in-flight uncertainty/audit.
-13. SubRuns/remote invocations use explicit narrowed grants.
-14. Remote auth binds local identity/origin/transport/operation/resource/classification.
-15. Models see logical Connection handles only.
-16. Sandboxes receive no long-lived secret; proxy capability cannot escape exact session/destination.
-17. Provider/tool/fetch/remote adapters share one lease/runtime contract.
-18. Known-secret detection persists no matched value.
-19. Usage and lifecycle audits are append-only and content-free.
-20. H7 authentication continuations contain opaque status only.
-21. No A2A SDK type or Agent Card credential enters H8 core.
-22. Restart does not duplicate generations, lease consumption, rotation or connector calls.
-23. Replay performs no credential-bearing action.
-24. H9 can register Connector/adapter revisions without changing H8 semantics.
-25. H9A can consume remote profiles/leases without changing H8 types.
-26. H10 can add integrity/metrics without rewriting H8 records.
-27. H8 tests require no public provider, SaaS account, remote agent or permanent secret.
+7. Material wrappers cannot clone/serialize/debug values and zeroize.
+8. Protected-action and secret-use tickets are distinct but bound to one exact credential operation.
+9. Every outbound use exhausts/consumes an exact lease immediately before injection.
+10. Exhausted leases are never reused after crash/timeout/Unknown.
+11. Refresh is singleflight; refresh tokens are not ordinary outbound credentials.
+12. Rotation activates one immutable generation/revision and revokes obsolete leases.
+13. Revocation blocks new leases while preserving in-flight uncertainty/audit.
+14. SubRuns/remote invocations use explicit narrowed grants.
+15. Remote auth binds local identity/origin/transport/operation/resource/classification.
+16. Models see logical handles only.
+17. Sandboxes receive no long-lived secret; proxy capability is exact-session/destination bound.
+18. Provider/tool/fetch/remote adapters share one lease/runtime contract.
+19. Known-secret detection persists no matched value.
+20. Usage/lifecycle audits are append-only and content-free.
+21. H7 authentication continuations contain opaque status only.
+22. No A2A SDK type or Agent Card credential enters H8 core.
+23. Restart does not duplicate generations, lease use, rotation or connector calls.
+24. Replay performs no credential-bearing action.
+25. H9 can register Connector/adapter revisions without changing H8 semantics.
+26. H9A can consume remote profiles/leases without changing H8 types.
+27. H10 can add integrity/metrics without rewriting H8 records.
+28. Tests require no public provider/SaaS/remote agent/permanent secret.
 
 ## Explicit non-goals
 
-H8 does not implement production Gmail/Slack/CRM connectors, organization OIDC/SCIM, a marketplace, Vault/cloud-secret-manager adapters, HSM-backed signing, OAuth device flow, browser UI, generic TCP/SOCKS tunneling, unrestricted cookie jars, permanent sandbox env credentials, cross-organization credential delegation, Agent Card trust, A2A transport or any API returning secret material.
+H8 does not implement production Gmail/Slack/CRM connectors, organization OIDC/SCIM, a marketplace, Vault/cloud-secret-manager adapters, HSM signing, OAuth device flow, browser UI, generic TCP/SOCKS tunneling, unrestricted cookies, permanent sandbox env credentials, cross-organization credential delegation, Agent Card trust, A2A transport or any API returning secret material.
 
 ## Documentation-only boundary
 
