@@ -2,52 +2,52 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Documentation status:** Planning artifact only. Do not create the implementation branch, modify dependencies, create migrations, start schedulers or channel servers, run tests or write production code until the user explicitly ends the documentation-only phase.
+**Documentation status:** Planning artifact only. Do not create the implementation branch, modify dependencies, create migrations, start channel or scheduler processes, run tests or write production code until the user explicitly ends the documentation-only phase.
 
-**Goal:** Implement durable conversations and interaction routing, typed human continuations, channel-independent public events and notifications, HTTP/SSE/CLI channel adapters, immutable trigger definitions, manual/API/schedule/run-continuation triggers, bounded autonomy, durable Run proposals and transactional storm protection.
+**Goal:** Implement durable conversations and interaction routing, typed human continuations, channel-independent public events and notifications, HTTP/SSE/CLI adapters, immutable trigger revisions, manual/API/schedule/run-continuation triggers, bounded autonomy, durable Run proposals and transactional storm protection.
 
-**Architecture:** H7 separates communication, execution and activation. `Conversation` and `InteractionEvent` preserve communication history; `AgentRun` remains the sole authority for executable work; `TriggerDefinitionRevision` describes a governed source of observations, proposals, new Runs or continuations. Human requests are typed durable continuation points whose responses are validated and authorized before they mutate a Run, approval, remote invocation or Artifact review. All channels call the same application services and consume one durable public-event stream; SSE and CLI are projections, never sources of truth.
+**Architecture:** H7 separates communication, execution and activation. `Conversation` and append-only `InteractionEvent` records preserve communication history; `AgentRun` remains the sole executable authority; `TriggerDefinitionRevision` describes a governed source of observations, proposals, new Runs or exact continuations. Typed `HumanRequest` records are durable continuation points whose responses must satisfy exact schema, participant and H2 policy checks before they affect a Run, approval, remote invocation or Artifact review. All channels call one application core and consume one durable public-event stream; SSE, CLI and notifications are projections rather than sources of truth.
 
-**Tech Stack:** Existing Vestrace v0.1 plus H1–H6 Rust workspace; Rust Edition 2024; Tokio; Axum; Tower; Serde; Schemars; SQLx; PostgreSQL 17; Server-Sent Events; Clap; SHA-256 canonical hashing; JSON Schema validation; RFC 5545 RRULE subset with IANA time-zone data; deterministic clock/scheduler/channel fixtures; proptest; tracing.
+**Tech Stack:** Existing Vestrace v0.1 plus H1–H6 Rust workspace; Rust Edition 2024; Tokio; Axum; Tower; Serde; Schemars; SQLx; PostgreSQL 17; Server-Sent Events; Clap; SHA-256 canonical hashing; JSON Schema validation; RFC 5545 RRULE subset with IANA time-zone data; deterministic clocks, schedulers and channel fixtures; proptest; tracing.
 
 ## Global Constraints
 
 - Complete all five v0.1 plans and H1–H6 before implementing H7.
 - Harness design sections `15. Triggers and autonomy` and `17. Conversations, interactions and channels` are normative.
-- `Conversation` stores communication; `AgentRun` stores execution. A conversation may link to multiple Runs and a Run may have more than one authorized conversation link, but neither aggregate owns the other.
-- PostgreSQL is authoritative for conversations, participants, interactions, Run links, human requests/responses, continuation records, public-event cursors, notification intents/deliveries, trigger definitions/revisions, occurrences, evaluations, schedule state, Run proposals, deduplication and causal-chain records.
+- `Conversation` stores communication and `AgentRun` stores execution. They are connected only by explicit links.
+- PostgreSQL is authoritative for conversations, participants, interactions, Run links, human requests/responses, continuation records, public events/cursors, notification intents/deliveries, trigger identities/revisions, schedule state, occurrences, evaluations, Run proposals, deduplication, counters and causal chains.
 - Vestrace owns every domain type, application port, persisted schema, lifecycle transition, event kind and public DTO.
-- Axum, Clap, SSE, WebSocket, MCP, A2A, provider and connector SDK types may not appear in domain/application signatures or PostgreSQL schemas.
-- Channel adapters authenticate a principal and normalize input; they never assign Run roles, approve operations, increase budgets, choose policies or bypass application services.
+- Axum, Clap, SSE, WebSocket, MCP, A2A, provider, connector and notification SDK types may not appear in domain/application signatures or PostgreSQL schemas.
+- Channel adapters authenticate a principal and normalize input; they never assign Run roles, approve actions, increase budgets, choose policies or mutate Run state directly.
 - Conversation membership does not grant `run.cancel`, `approval.grant`, `artifact.export`, `budget.increase`, `trigger.manage` or any other capability.
-- Run participation roles are explicit, versioned and checked together with H2 policy. `Approver` is eligibility to request an approval decision, not an automatic `ApprovalGrant`.
-- Interaction content, channel metadata, external IDs, filenames and remote progress text are untrusted data.
-- Interaction events are append-only. Corrections, edits, retractions and redactions create new events linked to the original; they do not mutate history.
-- Interaction content has bounded parts. Large/binary attachments are exact H6 `ArtifactRevision` references and are never embedded in ordinary interaction rows or work items.
-- Quarantined/rejected/deleted Artifact revisions may be referenced as upload history but cannot enter Run context, tool input or remote continuation until H6 declares them eligible.
-- Human requests are typed. A free-form message cannot satisfy an approval, authentication, review or manual-action request unless it validates against that exact request contract.
-- A continuation token is an opaque one-time correlation proof stored only as a hash. It never authenticates a principal and never substitutes for H2 authorization.
-- Approval responses call H2 approval services with the exact operation fingerprint, resource, constraints and approver identity. H7 never manufactures an `ApprovalGrant` from words such as “yes”.
-- Authentication responses contain only status and a future H8 authorization-flow reference. Credentials, authorization codes, refresh tokens and passwords never enter H7 interaction or request payloads.
-- Remote-agent input/authentication continuations use Vestrace-owned H5/H7 ports. No A2A Task, Agent Card or `a2a-rs` type appears in H7 contracts.
-- Public event streaming is at-least-once. Consumers deduplicate by immutable event ID and cursor; reconnect never assumes exactly-once delivery.
-- Streaming, notifications and CLI output are projections. Loss or duplication of a delivery never changes authoritative Run, HumanRequest, Trigger or Proposal state.
-- Public-event cursors are workspace-bound, opaque externally and monotonically ordered within a workspace. A cursor from another workspace is invalid.
-- Notification content is rendered from canonical templates and safe summaries. Raw secrets, backend identifiers, hidden reasoning, untrusted instructions and unrestricted Artifact content are excluded.
-- Trigger revisions are immutable. Enabling, disabling, suspending and revoking are explicit lifecycle commands with expected revision.
-- Mandatory first-slice trigger kinds are `Manual`, `Api`, `Schedule` and `RunContinuation`.
-- `ExternalEvent`, `StateChange` and `Condition` are represented by stable source-port contracts but no production external connector is required in H7.
-- Trigger filters and objective mappings use a bounded declarative DSL. Arbitrary code, SQL, regex with unbounded complexity and template evaluation are forbidden.
-- Trigger execution cannot widen the target `AgentRuntimeSnapshot`, H2 policy, data classification, tool ceiling, delegation ceiling or budget ceiling.
-- Standard autonomy levels are `Observe`, `Suggest`, `Prepare` and `Execute`. `Commit` exists in the schema for forward compatibility but activation is rejected unless a future explicit feature flag and policy permit it; standard v0.2 never enables it.
-- `Observe` may automatically create only a read-only observation Run. `Suggest` creates a durable `RunProposal` and does not execute the proposed work. `Prepare` may create a Run that reaches safe preparation/preview but cannot commit. `Execute` may perform only policy-approved bounded reversible/idempotent actions and cannot infer permission for destructive, irreversible or external-commitment actions.
-- Every trigger occurrence is idempotent. Unknown external source delivery is reconciled by source occurrence ID/hash and never blindly creates another Run.
-- Trigger storm protection includes deduplication, cooldown, max occurrences/runs per window, concurrent-Run ceiling, H2 budget/quota checks, failure suspension and causal-loop prevention.
-- A `RunContinuation` trigger never creates a second Run. It enqueues continuation of the exact existing Run after validating the durable cause.
-- Schedule calculations are deterministic for one trigger revision, time-zone database revision and clock instant. DST ambiguity/nonexistent-time and catch-up behavior are explicit.
-- Trigger scheduler leases and operational heartbeats do not increment `RunVersion` or trigger-definition revision.
+- Run participation roles are explicit and checked together with base capability and H2 policy. `Approver` is eligibility to submit a decision, not an `ApprovalGrant`.
+- Interaction content, channel metadata, external IDs, remote progress and trigger payloads are untrusted data.
+- Interaction events are append-only. Corrections, retractions and redactions create linked events instead of changing history.
+- Inline interaction content is bounded. Binary/large attachments use exact H6 `ArtifactRevisionId` references.
+- Quarantined, rejected, deleted or purge-pending Artifacts may be shown as communication history but cannot enter Run context, tools or remote continuations.
+- Human requests are typed. Free-form text cannot satisfy approval, authentication, review or manual-action requests without validating against the exact request.
+- A continuation token is an opaque one-time correlation proof stored only as a hash. It does not authenticate or authorize the responder.
+- Approval responses call H2 with the exact operation fingerprint, action, resource, constraints and approver identity. H7 never creates approval from words such as “yes”.
+- Authentication responses contain only status and opaque authorization-flow references. Passwords, codes, tokens and credentials never enter H7 payloads.
+- Remote continuation contracts are Vestrace-owned. No A2A Task, Agent Card or `a2a-rs` type appears in H7.
+- Public event delivery is at-least-once. Consumers deduplicate by immutable event ID/cursor.
+- Streaming, CLI rendering and notifications are projections. Their failure cannot alter Run, HumanRequest, Trigger or Proposal state.
+- Public cursors are opaque, workspace-bound and monotonically ordered within one workspace.
+- Notifications use canonical templates and bounded safe summaries; they exclude raw prompts, secrets, backend keys, hidden reasoning and unrestricted external content.
+- Trigger identities have mutable lifecycle state; trigger revisions are immutable. Enabling, disabling, suspension and revocation use expected state revision.
+- Required first-slice trigger kinds are `Manual`, `Api`, `Schedule` and `RunContinuation`.
+- `ExternalEvent`, `StateChange` and `Condition` have stable contracts but remain inactive without a compatible H9 extension.
+- Filters and objective mappings use a bounded declarative DSL. Arbitrary code, SQL, unbounded regex and executable templates are forbidden.
+- Trigger execution cannot widen the selected `AgentRuntimeSnapshot`, H2 policy, data classifications, tool/delegation ceilings or budgets.
+- Standard autonomy levels are `Observe`, `Suggest`, `Prepare` and `Execute`. `Commit` exists for forward compatibility but is rejected in standard v0.2.
+- `Observe` can start only a read-only observation Run. `Suggest` creates a `RunProposal` and executes no proposed work. `Prepare` may reach safe preparation/preview but cannot commit. `Execute` permits only policy-approved bounded reversible/idempotent actions and cannot infer destructive, irreversible or external-commitment authority.
+- Every trigger occurrence is idempotent. Ambiguous source delivery is reconciled by source occurrence ID/hash and never blindly creates another Run.
+- Storm protection includes deduplication, cooldown, occurrence/Run windows, concurrent Run ceiling, H2 budget/quota checks, failure suspension and causal-loop prevention.
+- `RunContinuation` never creates a second Run; it enqueues continuation of the exact existing Run after validating a durable cause.
+- Schedule behavior is deterministic for the trigger revision, time-zone database revision and clock instant. DST ambiguity, nonexistent local time and catch-up behavior are explicit.
+- Scheduler leases and heartbeats are operational state and do not increment `RunVersion` or trigger revision.
 - Existing migrations `0014`–`0047` are never edited. H7 migrations are `0048`–`0053` and are created once.
-- CI uses deterministic clocks, local HTTP/SSE fixtures and fake notification/remote-continuation ports. It requires no public model, email/messenger service, A2A server, OAuth provider or permanent credential.
+- CI uses deterministic clocks, local HTTP/SSE fixtures and fake notification/remote-continuation ports. No public model, external channel, A2A server, OAuth provider or permanent credential is required.
 - Future implementation branch: `feat/h7-conversations-channels-triggers`.
 
 ---
@@ -57,7 +57,7 @@
 ```text
 crates/vestrace-domain/src/
   id.rs
-  conversation/{mod,conversation,participant,interaction,content,run_link}.rs
+  conversation/{mod,conversation,participant,interaction,content,run_link,routing}.rs
   human/{mod,request,response,continuation}.rs
   channel/{mod,event,cursor,notification,preference}.rs
   trigger/{mod,definition,source,filter,template,autonomy,occurrence,proposal,schedule,causality}.rs
@@ -117,20 +117,44 @@ scripts/
 
 ## Normative contracts
 
+### Supporting opaque references and command values
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[serde(transparent)]
+pub struct OpaqueAuthorizationFlowReference(String);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[serde(transparent)]
+pub struct OpaqueConnectionReference(String);
+
+pub enum TypedRunCommand {
+    Pause { reason_code: String },
+    Resume,
+    Cancel { reason_code: String },
+    AttachArtifact { revision_id: ArtifactRevisionId },
+}
+
+pub struct NotificationDeliveryObservation {
+    pub delivery_id: NotificationDeliveryId,
+    pub status: NotificationStatus,
+    pub external_receipt_hash: Option<[u8; 32]>,
+    pub completion_may_have_occurred: bool,
+    pub observed_at: Timestamp,
+}
+```
+
+Opaque references are bounded, redacted in Debug and reject credential-like payloads. Budget increases and approval grants are separate H2 commands and are not generic `TypedRunCommand` variants.
+
+### ID ownership
+
+Task 1 adds `ConversationId`, `ConversationRunLinkId`, `RunParticipantAssignmentId`, `InteractionEventId` and `InteractionRoutingDecisionId`. Task 2 adds `HumanRequestId`, `HumanResponseId` and `HumanContinuationRecordId`. Task 3 adds `TriggerDefinitionId`, `TriggerDefinitionRevisionId`, `TriggerOccurrenceId`, `TriggerEvaluationDecisionId`, `CausalChainId` and `RunProposalId`. Task 4 adds `PublicEventId`, `NotificationPreferenceId`, `NotificationPreferenceRevisionId`, `NotificationIntentId` and `NotificationDeliveryId`.
+
 ### Conversation, participants and Run links
 
 ```rust
-pub enum ConversationStatus {
-    Active,
-    Archived,
-    Closed,
-}
-
-pub enum ConversationVisibility {
-    Private,
-    Restricted,
-    Workspace,
-}
+pub enum ConversationStatus { Active, Archived, Closed }
+pub enum ConversationVisibility { Private, Restricted, Workspace }
 
 pub struct Conversation {
     pub id: ConversationId,
@@ -144,13 +168,7 @@ pub struct Conversation {
     pub updated_at: Timestamp,
 }
 
-pub enum ConversationParticipantRole {
-    Owner,
-    Member,
-    Guest,
-    Agent,
-    Observer,
-}
+pub enum ConversationParticipantRole { Owner, Member, Guest, Agent, Observer }
 
 pub struct ConversationParticipant {
     pub conversation_id: ConversationId,
@@ -160,13 +178,9 @@ pub struct ConversationParticipant {
     pub left_at: Option<Timestamp>,
 }
 
-pub enum RunParticipantRole {
-    Owner,
-    Requester,
-    Approver,
-    Contributor,
-    Observer,
-}
+pub enum RunParticipantRole { Owner, Requester, Approver, Contributor, Observer }
+
+pub enum ConversationRunRelation { Origin, Continuation, Discussion, Notification }
 
 pub struct ConversationRunLink {
     pub id: ConversationRunLinkId,
@@ -175,13 +189,6 @@ pub struct ConversationRunLink {
     pub linked_by: PrincipalId,
     pub relation: ConversationRunRelation,
     pub created_at: Timestamp,
-}
-
-pub enum ConversationRunRelation {
-    Origin,
-    Continuation,
-    Discussion,
-    Notification,
 }
 
 pub struct RunParticipantAssignment {
@@ -196,9 +203,9 @@ pub struct RunParticipantAssignment {
 }
 ```
 
-Conversation roles affect visibility and presentation only. Every Run command still checks `RunParticipantAssignment`, base capability and H2 policy.
+Conversation roles affect visibility/presentation only. Every privileged Run command still requires assignment eligibility, base capability and H2 policy.
 
-### Interaction actors, kinds and content
+### Interaction actors, content and routing
 
 ```rust
 pub enum InteractionActorRef {
@@ -244,7 +251,15 @@ pub enum InteractionContentPart {
 
 pub struct InteractionExternalIdentifier {
     pub namespace: String,
-    pub value_hash: [u8; 32],
+    pub value_hmac: [u8; 32],
+}
+
+pub enum InteractionTrustClass {
+    AuthenticatedUser,
+    VestraceSystem,
+    VestraceAgent,
+    VerifiedExternal,
+    UntrustedExternal,
 }
 
 pub struct InteractionEvent {
@@ -264,20 +279,6 @@ pub struct InteractionEvent {
     pub recorded_at: Timestamp,
 }
 
-pub enum InteractionTrustClass {
-    AuthenticatedUser,
-    VestraceSystem,
-    VestraceAgent,
-    VerifiedExternal,
-    UntrustedExternal,
-}
-```
-
-One event has 1–64 parts, each text part is at most 256 KiB and total serialized inline content is at most 1 MiB. External identifier values are never persisted in cleartext unless a future connector policy explicitly requires an encrypted mapping.
-
-### Interaction-to-Run routing
-
-```rust
 pub enum InteractionRoutingIntent {
     CreateRun,
     ContinueRun { run_id: AgentRunId },
@@ -287,11 +288,7 @@ pub enum InteractionRoutingIntent {
     NoExecutableIntent,
 }
 
-pub enum InteractionRoutingDecisionKind {
-    Accepted,
-    ClarificationRequired,
-    Rejected,
-}
+pub enum InteractionRoutingDecisionKind { Accepted, ClarificationRequired, Rejected }
 
 pub struct InteractionRoutingDecision {
     pub id: InteractionRoutingDecisionId,
@@ -305,7 +302,7 @@ pub struct InteractionRoutingDecision {
 }
 ```
 
-Routing uses explicit run/request references first. An ambiguous conversation with multiple active Runs cannot silently choose one; it creates a typed clarification request or remains non-executable.
+One event has 1–64 parts, each text part is at most 256 KiB and total inline serialization is at most 1 MiB. Explicit Run/request references take precedence. Multiple active Runs without an explicit target produce `ClarificationRequired` rather than selecting one heuristically.
 
 ### Human request and response lifecycle
 
@@ -321,13 +318,7 @@ pub enum HumanRequestKind {
     RemoteInputRequired,
 }
 
-pub enum HumanRequestStatus {
-    Open,
-    Answered,
-    Expired,
-    Cancelled,
-    Superseded,
-}
+pub enum HumanRequestStatus { Open, Answered, Expired, Cancelled, Superseded }
 
 pub enum HumanRequestTarget {
     Run { run_id: AgentRunId },
@@ -359,8 +350,8 @@ pub struct ApprovalChallengeRef {
 }
 
 pub struct AuthenticationChallengeRef {
-    pub connection_id: Option<ConnectionId>,
-    pub authorization_flow_reference: Option<String>,
+    pub connection_reference: Option<OpaqueConnectionReference>,
+    pub authorization_flow_reference: Option<OpaqueAuthorizationFlowReference>,
     pub required_operation: String,
 }
 
@@ -376,25 +367,33 @@ pub struct HumanRequest {
     pub blocking: HumanBlockingDisposition,
     pub approval_challenge: Option<ApprovalChallengeRef>,
     pub authentication_challenge: Option<AuthenticationChallengeRef>,
+    pub supersedes_request_id: Option<HumanRequestId>,
     pub status: HumanRequestStatus,
     pub request_revision: u64,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
 }
 
+pub enum HumanApprovalDecision { Approve, Deny }
+pub enum HumanReviewDecision { Accept, AcceptWithWarnings, RequestRevision, Reject }
+pub enum AuthenticationContinuationStatus { Completed, Cancelled, Failed }
+
 pub enum HumanResponsePayload {
     Clarification { value: serde_json::Value },
     Choice { choice_id: String },
     Approval { decision: HumanApprovalDecision },
-    Review { decision: HumanReviewDecision, comments: Option<String>, evidence: Vec<RunReference> },
-    Authentication { status: AuthenticationContinuationStatus, authorization_flow_reference: Option<String> },
+    Review {
+        decision: HumanReviewDecision,
+        comments: Option<String>,
+        evidence: Vec<RunReference>,
+    },
+    Authentication {
+        status: AuthenticationContinuationStatus,
+        authorization_flow_reference: Option<OpaqueAuthorizationFlowReference>,
+    },
     ManualAction { result: serde_json::Value, evidence: Vec<RunReference> },
     RemoteInput { value: serde_json::Value },
 }
-
-pub enum HumanApprovalDecision { Approve, Deny }
-pub enum HumanReviewDecision { Accept, AcceptWithWarnings, RequestRevision, Reject }
-pub enum AuthenticationContinuationStatus { Completed, Cancelled, Failed }
 
 pub struct HumanResponse {
     pub id: HumanResponseId,
@@ -408,13 +407,15 @@ pub struct HumanResponse {
 }
 ```
 
-Payload kind must exactly match request kind and JSON Schema. One request accepts at most one terminal response. A correction creates a new request linked through `supersedes`.
+Payload variant must match request kind and exact JSON Schema. One request accepts at most one terminal response. A correction creates a new request using `supersedes_request_id`.
 
-### Continuation proof and disposition
+### Continuation records and disposition
 
 ```rust
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HumanContinuationToken(String);
+
+pub enum HumanContinuationStatus { Issued, Consumed, Expired, Revoked }
 
 pub struct HumanContinuationRecord {
     pub id: HumanContinuationRecordId,
@@ -424,13 +425,6 @@ pub struct HumanContinuationRecord {
     pub used_count: u16,
     pub expires_at: Timestamp,
     pub status: HumanContinuationStatus,
-}
-
-pub enum HumanContinuationStatus {
-    Issued,
-    Consumed,
-    Expired,
-    Revoked,
 }
 
 pub enum HumanResponseDisposition {
@@ -443,7 +437,7 @@ pub enum HumanResponseDisposition {
 }
 ```
 
-The clear token is returned once through an authorized response channel and never logged or stored. Token verification is necessary for correlation where configured, but authenticated principal, participant eligibility and H2 policy remain mandatory.
+The clear token is returned once through an authorized channel and never stored/logged. Token verification is a correlation check only; authenticated principal, participant assignment and H2 policy remain mandatory.
 
 ### Remote-agent continuation boundary
 
@@ -459,7 +453,7 @@ pub struct RemoteAgentInputContinuation {
 pub struct RemoteAgentAuthenticationContinuation {
     pub invocation_id: RemoteAgentInvocationId,
     pub request_id: HumanRequestId,
-    pub authorization_flow_reference: String,
+    pub authorization_flow_reference: OpaqueAuthorizationFlowReference,
     pub idempotency_key: String,
 }
 
@@ -481,7 +475,7 @@ pub trait RemoteAgentContinuationPort: Send + Sync {
 }
 ```
 
-H7 deterministic fixtures implement the port. H9A later maps it to protocol-specific continuation without changing these types. H8 supplies the authorization-flow reference and request-scoped credential state.
+H7 fixtures implement this port. H9A maps it to A2A later; H8 maps opaque authorization references to request-scoped credential state.
 
 ### Durable public-event stream
 
@@ -543,23 +537,13 @@ pub struct PublicEventQuery {
 }
 ```
 
-Cursor encoding binds workspace ID, sequence and version with an integrity MAC or server-side opaque lookup. Public payloads contain stable references and bounded safe summaries, not raw prompts, secrets, SQL or provider/tool frames.
+Cursor encoding binds workspace, sequence and format version with an integrity check or opaque server lookup. Payloads contain stable references and bounded safe summaries, not raw prompts, provider/tool frames or secrets.
 
-### Notification intents and preferences
+### Notification preferences and delivery
 
 ```rust
-pub enum NotificationDetailLevel {
-    Minimal,
-    Standard,
-    Detailed,
-}
-
-pub enum NotificationUrgency {
-    Passive,
-    Normal,
-    Important,
-    Critical,
-}
+pub enum NotificationDetailLevel { Minimal, Standard, Detailed }
+pub enum NotificationUrgency { Passive, Normal, Important, Critical }
 
 pub enum NotificationTarget {
     Principal(PrincipalId),
@@ -579,6 +563,8 @@ pub enum NotificationStatus {
 
 pub struct NotificationPreferenceRevision {
     pub id: NotificationPreferenceRevisionId,
+    pub preference_id: NotificationPreferenceId,
+    pub workspace_id: WorkspaceId,
     pub principal_id: PrincipalId,
     pub revision: u32,
     pub detail_level: NotificationDetailLevel,
@@ -626,45 +612,28 @@ pub trait NotificationDeliveryPort: Send + Sync {
 }
 ```
 
-H7 ships in-app/public-stream and CLI delivery adapters. Email/messenger adapters remain H9 extensions and H8 connection consumers.
+H7 provides in-app/public-stream and CLI adapters. Email/messenger delivery remains an H9 extension using H8 connections.
 
-### Trigger definitions and sources
+### Trigger identities, revisions and sources
 
 ```rust
-pub enum TriggerKind {
-    Manual,
-    Api,
-    Schedule,
-    ExternalEvent,
-    StateChange,
-    Condition,
-    RunContinuation,
-}
-
-pub enum TriggerLifecycleStatus {
-    Draft,
-    Enabled,
-    Disabled,
-    Suspended,
-    Revoked,
-}
-
-pub enum TriggerAutonomyLevel {
-    Observe,
-    Suggest,
-    Prepare,
-    Execute,
-    Commit,
-}
-
-pub enum TriggerCatchUpPolicy {
-    SkipMissed,
-    FireOnce,
-    Bounded { maximum_occurrences: u16 },
-}
-
+pub enum TriggerKind { Manual, Api, Schedule, ExternalEvent, StateChange, Condition, RunContinuation }
+pub enum TriggerLifecycleStatus { Draft, Enabled, Disabled, Suspended, Revoked }
+pub enum TriggerAutonomyLevel { Observe, Suggest, Prepare, Execute, Commit }
+pub enum TriggerCatchUpPolicy { SkipMissed, FireOnce, Bounded { maximum_occurrences: u16 } }
 pub enum AmbiguousLocalTimePolicy { Earliest, Latest }
 pub enum NonexistentLocalTimePolicy { Skip, NextValid }
+
+pub struct TriggerDefinition {
+    pub id: TriggerDefinitionId,
+    pub workspace_id: WorkspaceId,
+    pub current_revision_id: TriggerDefinitionRevisionId,
+    pub lifecycle: TriggerLifecycleStatus,
+    pub state_revision: u64,
+    pub created_by: PrincipalId,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
 
 pub struct TriggerScheduleSpec {
     pub dtstart_local: String,
@@ -676,16 +645,6 @@ pub struct TriggerScheduleSpec {
     pub time_zone_database_revision: String,
 }
 
-pub enum TriggerSourceBinding {
-    Manual,
-    Api { route_key: String },
-    Schedule { schedule: TriggerScheduleSpec },
-    RunContinuation { causes: Vec<RunContinuationCause> },
-    External { source_kind: String, binding_revision: String },
-    StateChange { projection_kind: String },
-    Condition { evaluator_revision: String, minimum_interval_seconds: u64 },
-}
-
 pub enum RunContinuationCause {
     HumanResponseAnswered,
     ApprovalGranted,
@@ -695,11 +654,21 @@ pub enum RunContinuationCause {
     DependencyCompleted,
     ResumeAtTime,
 }
+
+pub enum TriggerSourceBinding {
+    Manual,
+    Api { route_key: String },
+    Schedule { schedule: TriggerScheduleSpec },
+    RunContinuation { causes: Vec<RunContinuationCause> },
+    External { source_kind: String, binding_revision: String },
+    StateChange { projection_kind: String },
+    Condition { evaluator_revision: String, minimum_interval_seconds: u64 },
+}
 ```
 
-`External`, `StateChange` and `Condition` revisions remain disabled unless a compatible H9 extension is active.
+Unsupported source bindings cannot transition the Trigger identity to Enabled.
 
-### Bounded filter and objective mapping DSL
+### Bounded filter and template DSL
 
 ```rust
 pub enum TriggerFilterExpression {
@@ -736,7 +705,7 @@ pub struct InitialContextMappingRule {
 }
 ```
 
-Filter depth is at most 8, total nodes at most 128 and `InSet` at most 256 values. JSON pointers are allowlisted against the source schema. Templates perform substitution only; they cannot execute expressions, access environment variables or emit instructions outside the bounded objective field.
+Filter depth is at most 8, nodes at most 128 and `InSet` at most 256 values. Number bounds use canonical decimal strings. JSON pointers must be compatible with the source schema. Template segments only substitute source values into the objective; they execute no expressions.
 
 ### Trigger revision, limits and autonomy envelope
 
@@ -786,7 +755,6 @@ pub struct TriggerDefinitionRevision {
     pub deduplication: TriggerDeduplicationPolicy,
     pub causal_loop_policy: TriggerCausalLoopPolicy,
     pub failure_policy: TriggerFailurePolicy,
-    pub lifecycle: TriggerLifecycleStatus,
     pub content_hash: [u8; 32],
     pub created_by: PrincipalId,
     pub created_at: Timestamp,
@@ -805,11 +773,19 @@ pub struct TriggerAutonomyEnvelope {
 }
 ```
 
-Activation computes the autonomy envelope from the trigger revision, target snapshot, H2 policy and deployment feature flags. The envelope can only narrow permissions.
+Activation compiles the immutable revision, then updates the Trigger identity lifecycle. The autonomy envelope is computed from revision + target snapshot + H2 policy + deployment flags and can only narrow permissions.
 
-### Trigger occurrences and decisions
+### Occurrence payload, causality and evaluation
 
 ```rust
+pub enum TriggerOccurrencePayload {
+    InlineJson { value: serde_json::Value },
+    ArtifactReference {
+        revision_id: ArtifactRevisionId,
+        redacted_metadata: serde_json::Value,
+    },
+}
+
 pub enum TriggerOccurrenceStatus {
     Received,
     Deduplicated,
@@ -823,25 +799,25 @@ pub enum TriggerOccurrenceStatus {
     Unknown,
 }
 
-pub struct TriggerOccurrence {
-    pub id: TriggerOccurrenceId,
-    pub workspace_id: WorkspaceId,
-    pub trigger_revision_id: TriggerDefinitionRevisionId,
-    pub source_occurrence_id_hash: [u8; 32],
-    pub source_payload_hash: [u8; 32],
-    pub source_payload: serde_json::Value,
-    pub causation: TriggerCausation,
-    pub status: TriggerOccurrenceStatus,
-    pub occurred_at: Timestamp,
-    pub recorded_at: Timestamp,
-}
-
 pub struct TriggerCausation {
     pub causal_chain_id: CausalChainId,
     pub parent_occurrence_id: Option<TriggerOccurrenceId>,
     pub source_run_id: Option<AgentRunId>,
     pub source_trigger_revision_id: Option<TriggerDefinitionRevisionId>,
     pub depth: u16,
+}
+
+pub struct TriggerOccurrence {
+    pub id: TriggerOccurrenceId,
+    pub workspace_id: WorkspaceId,
+    pub trigger_revision_id: TriggerDefinitionRevisionId,
+    pub source_occurrence_id_hmac: [u8; 32],
+    pub source_payload_hash: [u8; 32],
+    pub payload: TriggerOccurrencePayload,
+    pub causation: TriggerCausation,
+    pub status: TriggerOccurrenceStatus,
+    pub occurred_at: Timestamp,
+    pub recorded_at: Timestamp,
 }
 
 pub enum TriggerDecisionKind {
@@ -870,25 +846,26 @@ pub struct TriggerEvaluationDecision {
 }
 ```
 
-Source payload is bounded by its schema and classification policy. Restricted source data may instead be stored as an H6 Artifact reference and a redacted metadata payload.
+Restricted or large source payloads are ingested through H6 and represented by exact Artifact revision plus redacted metadata.
 
 ### Durable Run proposals
 
 ```rust
-pub enum RunProposalStatus {
-    Draft,
-    Ready,
-    Accepted,
-    Rejected,
-    Expired,
-    Superseded,
-}
+pub enum RunProposalStatus { Draft, Ready, Accepted, Rejected, Expired, Superseded }
 
 pub struct RunProposalRiskSummary {
     pub maximum_tool_risk: RiskLevel,
     pub possible_side_effects: Vec<ToolSideEffectClass>,
     pub data_classifications: Vec<DataClassification>,
     pub external_commitment_possible: bool,
+}
+
+pub struct PlanPreview {
+    pub estimated_step_count: u32,
+    pub step_kinds: Vec<PlanStepKind>,
+    pub required_outputs: Vec<String>,
+    pub warnings: Vec<String>,
+    pub preview_hash: [u8; 32],
 }
 
 pub struct RunProposal {
@@ -906,34 +883,27 @@ pub struct RunProposal {
     pub required_approval_actions: Vec<ActionId>,
     pub status: RunProposalStatus,
     pub proposal_hash: [u8; 32],
+    pub accepted_run_id: Option<AgentRunId>,
     pub expires_at: Timestamp,
     pub created_at: Timestamp,
 }
-
-pub struct PlanPreview {
-    pub estimated_step_count: u32,
-    pub step_kinds: Vec<PlanStepKind>,
-    pub required_outputs: Vec<String>,
-    pub warnings: Vec<String>,
-    pub preview_hash: [u8; 32],
-}
 ```
 
-Proposal acceptance re-evaluates current policy, budget, trigger lifecycle, target snapshot and source references. It creates one Run or returns a stable rejection; it never trusts the earlier estimate as current authority.
+Proposal acceptance re-evaluates current Trigger lifecycle/revision, target snapshot, H2 policy/budget and source availability. It creates exactly one Run or a stable rejection.
 
 ---
 
 ### Task 1: Add Conversation and Interaction domain contracts
 
-**Files:** create/modify domain conversation files and IDs listed above.
+**Files:** modify `id.rs`; create domain conversation files; modify domain `lib.rs`.
 
-**Interfaces:** produces `Conversation`, participant/run-role types, `InteractionEvent`, content parts, trust values and run-link contracts.
+**Interfaces:** produces all Conversation/Interaction contracts and Task 1 IDs above.
 
-- [ ] Write failing tests for append-only interaction correction, bounded parts, path-independent Artifact references, participant non-authority and same-workspace run links.
-- [ ] Implement normalized titles, channel/namespace stable IDs, content-size accounting and canonical interaction hash.
-- [ ] Implement conversation revision transitions `Active → Archived|Closed`, with `Archived → Active` allowed by policy and `Closed` terminal.
-- [ ] Implement immutable interaction linkage: `reply_to` may reference prior visible event; `supersedes` is permitted only for Retraction/RedactionNotice or typed correction.
-- [ ] Run/commit:
+- [ ] Write failing tests for bounded content, append-only correction, same-workspace Run links and conversation-role non-authority.
+- [ ] Run `cargo test -p vestrace-domain conversation`; expect missing-module failures.
+- [ ] Implement normalized titles, HMAC external identifiers, content accounting, lifecycle and deterministic interaction hash.
+- [ ] Implement reply/supersede rules and explicit same-workspace links.
+- [ ] Run tests and commit:
 
 ```bash
 cargo test -p vestrace-domain conversation
@@ -944,97 +914,158 @@ git commit -m "feat(conversation): add interaction contracts"
 
 ### Task 2: Add Human request, response and continuation contracts
 
-**Files:** create domain `human/{mod,request,response,continuation}.rs`; modify IDs/lib.
+**Files:** create domain human files; modify IDs/lib.
 
-- [ ] Test request-kind/payload mismatch, invalid response schema, expired request, second terminal response and token reuse.
-- [ ] Test that an Approval response without exact `ApprovalChallengeRef` is invalid and Authentication payload rejects credential/code/token fields.
-- [ ] Implement bounded questions/choices/comments, deterministic response hash and one-way status transitions.
-- [ ] Implement token generation interface using CSPRNG, persistent hash only, constant-time verification and redacted debug/serialization.
-- [ ] Implement disposition derivation without executing side effects.
-- [ ] Run/commit.
+**Interfaces:** produces all Human contracts and Task 2 IDs above.
 
-### Task 3: Add Trigger, schedule, autonomy and proposal domain contracts
+- [ ] Test request/payload mismatch, invalid schema, expiry, second response, token reuse and superseded request history.
+- [ ] Test Approval without exact challenge fails and Authentication payload rejects code/token/password-shaped fields.
+- [ ] Run `cargo test -p vestrace-domain human`; expect failures.
+- [ ] Implement bounded values, deterministic response hash, one-way status transitions and CSPRNG token interface with constant-time hash verification.
+- [ ] Run tests and commit:
 
-**Files:** create domain trigger files and IDs listed above.
+```bash
+cargo test -p vestrace-domain human
+cargo clippy -p vestrace-domain --all-targets -- -D warnings
+git add crates/vestrace-domain
+git commit -m "feat(human): add typed continuation contracts"
+```
 
-- [ ] Test bounded filter/template depth, invalid JSON pointer, objective overflow, duplicate schedule ambiguity policy and invalid RRULE/catch-up bounds.
-- [ ] Test lifecycle activation rejects `Commit`, unsupported external source and autonomy envelope wider than target/H2 ceiling.
-- [ ] Test causal depth, same-trigger ancestry and dedup-key determinism.
-- [ ] Implement immutable revision/content hashes, source-schema validation, schedule normalization and proposal hashes.
-- [ ] Implement stable mapping `Observe → observation Run`, `Suggest → proposal`, `Prepare → preparation Run`, `Execute → execution Run`; `Commit` returns `commit_autonomy_disabled`.
-- [ ] Run/commit.
+### Task 3: Add Trigger, autonomy, schedule and proposal domain contracts
 
-### Task 4: Define H7 application ports and deterministic test support
+**Files:** create domain trigger files; modify IDs/lib.
 
-**Files:** create application conversation/human/channel/trigger module roots/ports/commands and `vestrace-channel-test-support` crate.
+**Interfaces:** produces Trigger/Proposal contracts and Task 3 IDs above.
 
-**Interfaces:** produces conversation/interaction repositories, Run-routing port, HumanRequest/Response/Continuation stores, H2 approval adapter, H5 remote continuation port, public-event store/projector, notification delivery port, trigger registry/occurrence/schedule/proposal/storm stores, deterministic clock and fixtures.
+- [ ] Test DSL depth/nodes, incompatible pointers, objective overflow, invalid schedule/catch-up, causal depth and deterministic dedup keys.
+- [ ] Test Commit activation and autonomy-envelope widening fail.
+- [ ] Run `cargo test -p vestrace-domain trigger`; expect failures.
+- [ ] Implement immutable revision hashes, mutable identity lifecycle, schedule normalization, source-schema checks and proposal hashes.
+- [ ] Implement fixed disposition mapping: Observe→observation Run, Suggest→proposal, Prepare→preparation Run, Execute→execution Run, Commit→`commit_autonomy_disabled`.
+- [ ] Run tests and commit:
 
-- [ ] Add object-safety compile tests for every port.
-- [ ] Define `ClockPort` returning UTC plus time-zone database revision; tests can advance deterministically.
-- [ ] Define source occurrence ingestion as bounded canonical JSON plus source occurrence ID hash; no SDK payload type.
-- [ ] Add one-shot fault points after interaction insert, request answer, approval grant, remote continuation dispatch, public-event insert, notification dispatch, trigger occurrence insert, proposal acceptance and Run creation.
-- [ ] Run/commit.
+```bash
+cargo test -p vestrace-domain trigger
+cargo clippy -p vestrace-domain --all-targets -- -D warnings
+git add crates/vestrace-domain
+git commit -m "feat(trigger): add bounded trigger contracts"
+```
 
-### Task 5: Persist Conversations, participants, interactions and Run links
+### Task 4: Define H7 ports, commands and deterministic fixtures
+
+**Files:** create application module roots/ports/commands and `vestrace-channel-test-support`.
+
+**Interfaces:** produces stores/services for conversations, human continuations, public events, notifications, trigger registry/occurrences/schedules/proposals/storm state; `RemoteAgentContinuationPort`; deterministic `ClockPort`; Task 4 IDs.
+
+- [ ] Add compile tests proving every port is object-safe.
+- [ ] Define `ClockPort::now_utc()` plus time-zone database revision and deterministic advancement fixture.
+- [ ] Define bounded canonical source occurrence input with inline JSON or Artifact reference only.
+- [ ] Add one-shot fault points after interaction, response, approval, remote continuation, public event, notification, occurrence, proposal acceptance and Run creation.
+- [ ] Run/commit:
+
+```bash
+cargo test -p vestrace-application conversation human channel trigger
+cargo test -p vestrace-channel-test-support
+git add Cargo.toml Cargo.lock crates/vestrace-application crates/vestrace-channel-test-support
+git commit -m "feat(channels): define H7 ports and fixtures"
+```
+
+### Task 5: Persist Conversations, interactions and Run links
 
 **Files:** create migration `0048`, PostgreSQL conversation repositories and persistence tests.
 
-- [ ] Migration creates `conversations`, `conversation_participants`, `conversation_events`, `interaction_content_parts`, `interaction_external_identifiers`, `conversation_run_links`, `run_participant_assignments` and routing decisions.
-- [ ] Test append-only interaction rows, idempotency conflict, participant leave/rejoin history, explicit Run roles and cross-workspace rejection.
-- [ ] Store JSON/text inline only under bounds; Artifact parts store exact H6 revision IDs.
-- [ ] Atomically record interaction plus optional routing decision/outbox work, but never perform model/Run work inside the transaction.
-- [ ] Run/commit.
+- [ ] Migration creates conversations, participants, interaction events/parts/external HMACs, Run links, Run participant assignments and routing decisions.
+- [ ] Test append-only rows, idempotency conflict, participant history, explicit Run roles and cross-workspace rejection.
+- [ ] Persist one interaction plus optional routing/outbox work atomically; no model or Run execution occurs inside the transaction.
+- [ ] Store only bounded inline data and exact Artifact revision IDs.
+- [ ] Run/commit:
 
-### Task 6: Implement explicit Interaction-to-Run routing and typed Run commands
+```bash
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test conversation_persistence --test interaction_idempotency
+git add migrations/0048_conversations_participants_interactions_run_links.sql crates tests
+git commit -m "feat(conversation): persist interactions and run links"
+```
 
-**Files:** create conversation service/routing/commands tests; integrate H1 Run coordinator and H6 attachment eligibility ports.
+### Task 6: Implement explicit Interaction-to-Run routing
 
-- [ ] Test explicit request/run references win over conversation heuristics; multiple active Runs without reference yield `ClarificationRequired`.
-- [ ] Test an AttachmentProvided event may be recorded while Quarantined but cannot create/continue model work until H6 says Available.
-- [ ] Implement typed commands `CreateRun`, `PauseRun`, `ResumeRun`, `CancelRun`, `SubmitHumanResponse`, `AttachArtifact` with expected version and H2 action.
-- [ ] Create Run, interaction, origin link, participant assignments, one Run event and work item atomically.
-- [ ] Ensure model-proposed routing is advisory and must pass deterministic target/reference checks.
-- [ ] Run/commit.
+**Files:** create conversation service/routing tests; integrate H1/H2/H6 ports.
 
-### Task 7: Persist and execute typed Human requests/responses
+- [ ] Test explicit Run/request references win and multiple active Runs yield clarification rather than heuristic continuation.
+- [ ] Test Quarantined attachment records successfully but cannot enter executable context.
+- [ ] Implement typed `CreateRun`, `Pause`, `Resume`, `Cancel`, `SubmitHumanResponse` and `AttachArtifact` routing with expected version and H2 action.
+- [ ] Atomically create Run, origin link, participant assignments, Run event and work item.
+- [ ] Treat model routing suggestions as advisory structured data requiring deterministic validation.
+- [ ] Run/commit:
+
+```bash
+cargo test -p vestrace-application --test conversation_run_routing
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test conversation_run_routing
+git add crates tests/conversation_run_routing.rs
+git commit -m "feat(conversation): route interactions explicitly"
+```
+
+### Task 7: Persist and apply typed Human requests/responses
 
 **Files:** create migration `0049`, human repositories/services/tests.
 
 - [ ] Migration creates requests, choices, target links, continuation hashes, responses, response references and lifecycle events.
-- [ ] Request creation atomically applies the exact H1 waiting state/event and checkpoint reference when blocking.
-- [ ] Response service locks request/token, validates principal/role/H2 policy/schema/expiry, inserts one response, consumes token and enqueues disposition work atomically.
-- [ ] Clarification/choice/manual/review responses resume only after all target-specific checks pass.
-- [ ] Restart after response commit but before continuation worker executes reuses the same disposition/work item and never accepts a second response.
-- [ ] Run/commit.
+- [ ] Request creation atomically applies exact H1 waiting status/event/checkpoint when blocking.
+- [ ] Response service locks request/token, verifies principal/role/H2/schema/expiry, inserts one response, consumes token and enqueues one disposition work item.
+- [ ] Restart after response commit reuses the same work item and rejects another response.
+- [ ] Run/commit:
 
-### Task 8: Integrate exact approval and remote-agent continuation
+```bash
+cargo test -p vestrace-application --test human_response_atomicity
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test human_request_persistence --test human_response_atomicity
+git add migrations/0049_human_requests_responses_and_continuations.sql crates tests
+git commit -m "feat(human): persist typed requests and responses"
+```
 
-**Files:** create human approval/remote-continuation services and integration tests; modify H5 delegation ports with `RemoteAgentContinuationPort`.
+### Task 8: Integrate H2 approval and H5 remote continuation
 
-- [ ] Approval test proves text “yes” does not grant approval; only typed Approve by eligible principal against matching fingerprint calls H2, while Deny records a durable denial.
-- [ ] H2 approval grant creation, HumanRequest answer, continuation disposition and Run wake-up are coordinated idempotently; no grant is consumed merely by notification delivery.
-- [ ] Remote InputRequired creates a linked `RemoteInputRequired` request; typed response dispatches through `RemoteAgentContinuationPort` after `remote_agent.continue` guard consumption.
-- [ ] AuthenticationRequired response contains only H8 flow reference/status; without H8 fixture it remains waiting.
-- [ ] Lost remote continuation response moves invocation to H5 `Unknown`/reconciliation and restart never sends a duplicate continuation blindly.
-- [ ] Run/commit.
+**Files:** create approval/remote-continuation services/tests; modify H5 ports.
 
-### Task 9: Persist canonical public events, cursors and reconnect projections
+- [ ] Prove free-form “yes” creates no grant; typed Approve by eligible principal against matching challenge calls H2, while Deny records explicit denial.
+- [ ] Coordinate approval creation, HumanRequest answer and Run wake-up idempotently; notification delivery never consumes a grant.
+- [ ] Map H5 InputRequired to `RemoteInputRequired`; dispatch typed response through `RemoteAgentContinuationPort` after exact H2 guard consumption.
+- [ ] Authentication continuation contains only opaque H8 reference; without H8 fixture it remains waiting.
+- [ ] Lost remote continuation response becomes H5 `Unknown`/reconciliation and is never blindly resent.
+- [ ] Run/commit:
 
-**Files:** create migration `0050`, public-event projection/store and cursor tests.
+```bash
+cargo test -p vestrace-application --test approval_response_integration
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test remote_continuation_restart
+git add crates tests
+git commit -m "feat(human): integrate approvals and remote continuations"
+```
 
-- [ ] Migration creates workspace stream sequences, public events, source bindings, notification preferences/intents/deliveries and projection checkpoints.
-- [ ] Allocate one workspace sequence and insert event atomically with source projection checkpoint. Reprocessing source returns the existing event.
-- [ ] Encode/decode opaque cursor with workspace/version/integrity binding; reject malformed, future and cross-workspace cursors.
-- [ ] Query applies event scope, participant visibility, H2 read policy and classification redaction before returning payload.
-- [ ] Test reconnect after event 50 returns 51..N in sequence, and duplicate SSE delivery does not create duplicate state.
-- [ ] Run/commit.
+### Task 9: Persist public events, cursors and notifications
 
-### Task 10: Add HTTP/SSE and CLI adapters over the same application core
+**Files:** create migration `0050`, public-event/notification repositories and tests.
 
-**Files:** create `vestrace-channel-http`, `vestrace-channel-cli`, adapter tests and CLI composition wiring.
+- [ ] Migration creates workspace sequences, public events/source bindings, projection checkpoints, preference identities/revisions, notification intents/deliveries.
+- [ ] Allocate workspace sequence and insert event atomically; source reprocessing returns original event.
+- [ ] Encode/decode workspace-bound cursor; reject malformed/future/cross-workspace values.
+- [ ] Query applies scope/participant/H2/classification filters before returning safe payload.
+- [ ] Test reconnect from sequence 50 returns 51..N and duplicate delivery creates no authoritative mutation.
+- [ ] Run/commit:
 
-- [ ] HTTP endpoints:
+```bash
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test public_event_cursor --test notification_persistence
+git add migrations/0050_public_events_notifications_and_preferences.sql crates tests
+git commit -m "feat(channel): persist public events and notifications"
+```
+
+### Task 10: Add HTTP/SSE and CLI adapters
+
+**Files:** create HTTP/CLI crates, adapter tests and composition wiring.
+
+- [ ] Implement endpoints:
 
 ```text
 POST /v1/conversations
@@ -1047,77 +1078,116 @@ POST /v1/run-proposals/{id}:accept
 POST /v1/run-proposals/{id}:reject
 ```
 
-All writes require `Idempotency-Key`; versioned commands require expected revision/`If-Match`.
+Writes require `Idempotency-Key`; versioned commands require expected revision/`If-Match`.
 
-- [ ] SSE uses `id`, typed `event`, JSON `data`, heartbeat comments and `Last-Event-ID`/`after` cursor. Backpressure closes slow clients with a resumable last cursor rather than buffering without bound.
-- [ ] CLI commands cover conversation send, request list/respond, event watch, trigger fire and proposal accept/reject; CLI prints references and never bypasses authorization.
-- [ ] Contract tests issue equivalent HTTP and CLI commands and assert identical application records/events.
-- [ ] MCP adapter remains a thin future/public-surface consumer of these application ports; no H7 domain changes are reserved for it.
-- [ ] Run/commit.
+- [ ] SSE emits immutable `id`, typed `event`, JSON `data`, heartbeat comments and supports `Last-Event-ID`/`after`. Slow clients are closed with resumable cursor instead of unbounded buffering.
+- [ ] CLI supports conversation send, request list/respond, event watch, trigger fire and proposal accept/reject.
+- [ ] HTTP and CLI contract tests assert equivalent application records/events.
+- [ ] Run/commit:
 
-### Task 11: Implement notification preferences, safe rendering and delivery
-
-**Files:** create channel notification/rendering services, repositories/tests using migration `0050`.
-
-- [ ] Test Minimal/Standard/Detailed output contains progressively more safe references but never prompts, credentials, raw external text, blob keys or hidden reasoning.
-- [ ] Generate intents only for enabled kinds/visible targets; muted conversation and policy-denied classification become `Suppressed` with reason.
-- [ ] Delivery uses stable recipient/channel/intent idempotency key. Built-in in-app/stream/CLI adapters return deterministic receipts.
-- [ ] Unknown future external delivery remains `Unknown` and uses reconcile; never send a second notification solely because acknowledgement was lost.
-- [ ] Notification failure never rolls back or changes source Run/HumanRequest/Trigger state.
-- [ ] Run/commit.
-
-### Task 12: Persist Trigger definitions/revisions and implement Manual/API firing
-
-**Files:** create migration `0051`, trigger registry/manual API services/repositories/tests.
-
-- [ ] Migration creates trigger identities/revisions, source/filter/template/context/limit rows, lifecycle events, schedule definitions and scheduler state.
-- [ ] Activation recompiles source schema/filter/template, resolves exact target snapshot, evaluates H2 `trigger.enable`, computes narrowed autonomy envelope and rejects Commit/unsupported source.
-- [ ] Manual/API firing authenticates principal, checks `trigger.fire`, validates payload/schema, creates one occurrence and enqueues evaluation atomically.
-- [ ] Same API idempotency/source occurrence returns original occurrence; conflicting payload returns idempotency conflict.
-- [ ] Disable/suspend prevents new occurrences but preserves history and does not cancel existing Runs unless an explicit Run command is authorized.
-- [ ] Run/commit.
-
-### Task 13: Implement durable schedule and Run-continuation triggers
-
-**Files:** create trigger scheduler/continuation services, schedule repository/tests using migrations `0051`/`0052`.
-
-- [ ] Test UTC schedules, spring-forward nonexistent local time, fall-back ambiguous time, process downtime and every catch-up policy.
-- [ ] Scheduler leases due rows with generation fencing, computes next occurrence from immutable revision/time-zone DB revision and records occurrence + next fire + work atomically.
-- [ ] Schedule edit creates a new revision and scheduler state; already recorded occurrence remains bound to the old revision.
-- [ ] RunContinuation accepts only exact durable causes. It inserts an occurrence/decision and one `ContinueRun` work item; it never creates a Run.
-- [ ] Duplicate HumanResponse/ArtifactAvailable/DependencyCompleted projection yields the original continuation occurrence and no second wake-up.
-- [ ] Run/commit.
-
-### Task 14: Implement Trigger evaluation, Run proposals, autonomy and storm protection
-
-**Files:** create migration `0052`, trigger evaluator/autonomy/proposal/storm services/repositories/tests.
-
-- [ ] Migration creates occurrences, payload references, evaluation decisions, Run proposals, proposal events, dedup keys, cooldown state, window counters, causal chains, failure counters and trigger-to-Run bindings.
-- [ ] Evaluation order:
-
-```text
-load exact enabled revision
-→ source/schema validation
-→ causal-loop check
-→ deduplication
-→ filter
-→ cooldown/window/concurrency counters
-→ H2 policy and budget/quota reservation
-→ render objective/context manifest
-→ compute autonomy envelope
-→ create proposal, new Run or existing-Run continuation
+```bash
+cargo test -p vestrace-channel-http -p vestrace-channel-cli
+cargo clippy -p vestrace-channel-http -p vestrace-channel-cli --all-targets -- -D warnings
+git add Cargo.toml Cargo.lock crates
+git commit -m "feat(channel): add HTTP SSE and CLI adapters"
 ```
 
-- [ ] All counters/dedup/reservation/decision and proposal-or-Run creation commit in one scoped transaction; rejected paths release prepared reservations as specified by H2.
-- [ ] `Suggest` creates a Ready proposal only. Acceptance re-evaluates current state and atomically creates one Run. Repeated acceptance returns the same Run.
-- [ ] `Observe`, `Prepare` and `Execute` Runs store exact trigger revision, occurrence, causal chain and autonomy envelope; Policy Engine uses the envelope on every action.
-- [ ] Simulate trigger A → Run → event → trigger A and A → B → A. Same ancestry/depth policy suppresses loops with durable reason.
-- [ ] Consecutive failure threshold suspends trigger and emits notification; scheduler/worker retry does not count the same occurrence twice.
-- [ ] Run/commit.
+### Task 11: Implement safe notification rendering/delivery
 
-### Task 15: Integrate H7 workers, checkpoint V5, RLS, boundaries and acceptance
+**Files:** create notification/rendering services and tests using `0050`.
 
-**Files:** create migration `0053`, H7 workers, Run events/work/checkpoint changes, boundary scripts, CI and acceptance tests.
+- [ ] Test Minimal/Standard/Detailed renderings increase safe detail but never include prompts, secrets, raw external text, blob keys or hidden reasoning.
+- [ ] Generate intents only for enabled visible targets; muting/policy denial creates `Suppressed` with reason.
+- [ ] Deliver with stable intent/recipient/channel idempotency key; built-in in-app/stream/CLI adapters return receipts.
+- [ ] Unknown future external delivery uses reconcile and is not resent solely because acknowledgement was lost.
+- [ ] Delivery failure never changes source state.
+- [ ] Run/commit:
+
+```bash
+cargo test -p vestrace-application channel::notification
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test notification_persistence
+git add crates tests/notification_persistence.rs
+git commit -m "feat(channel): deliver safe notifications"
+```
+
+### Task 12: Persist Trigger registry and immutable revisions
+
+**Files:** create migration `0051`, registry/schedule repositories and tests.
+
+- [ ] Migration creates Trigger identities, immutable revisions, source/filter/template/context/limit rows, lifecycle events, schedules and scheduler state.
+- [ ] Activation recompiles schema/filter/template, resolves exact target snapshot, evaluates H2 `trigger.enable`, computes narrowed autonomy envelope and rejects Commit/unsupported sources.
+- [ ] Disable/suspend blocks new occurrences but preserves history and does not cancel existing Runs without an explicit Run command.
+- [ ] Revision change creates a new immutable row and scheduler state; prior occurrences remain bound to old revision.
+- [ ] Run/commit:
+
+```bash
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test trigger_registry_persistence
+git add migrations/0051_trigger_definitions_revisions_and_schedules.sql crates tests
+git commit -m "feat(trigger): persist registry and schedules"
+```
+
+### Task 13: Implement Trigger evaluation, Manual/API firing, proposals and storm protection
+
+**Files:** create migration `0052`, evaluator/manual API/autonomy/proposal/storm services/repositories/tests.
+
+**Migration ownership:** Task 13 creates `0052` once. Task 14 consumes it and never edits it.
+
+- [ ] Migration creates occurrences/payload references, evaluation decisions, Run proposals/events, dedup keys, cooldown/window/concurrency/failure counters, causal chains and Trigger-to-Run bindings.
+- [ ] Manual/API fire authenticates principal, checks `trigger.fire`, validates source schema and inserts one occurrence + evaluation work atomically.
+- [ ] Evaluation order is exact:
+
+```text
+load enabled identity + exact revision
+→ source/schema validation
+→ causal-loop check
+→ dedup
+→ filter
+→ cooldown/window/concurrency
+→ H2 policy and budget/quota reservation
+→ objective/context manifest
+→ autonomy envelope
+→ proposal or new Run
+```
+
+- [ ] Counters/dedup/reservation/decision and proposal-or-Run creation commit atomically. Duplicate API/source occurrence returns original occurrence.
+- [ ] Suggest creates Ready proposal only. Acceptance re-evaluates current state and creates one Run; repeated acceptance returns `accepted_run_id`.
+- [ ] Observe/Prepare/Execute Runs persist exact revision, occurrence, causal chain and autonomy envelope; H2 checks the envelope on every action.
+- [ ] Test A→A and A→B→A causal loops, limits, concurrent Run ceiling and failure suspension.
+- [ ] Run/commit:
+
+```bash
+cargo test -p vestrace-application --test trigger_manual_api
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test trigger_manual_api --test trigger_storm_protection \
+             --test run_proposal_persistence
+git add migrations/0052_trigger_occurrences_proposals_dedup_and_causality.sql crates tests
+git commit -m "feat(trigger): evaluate bounded trigger occurrences"
+```
+
+### Task 14: Implement durable Schedule and RunContinuation sources
+
+**Files:** create scheduler/continuation services and tests using `0051`/`0052` without modifying migrations.
+
+- [ ] Test UTC schedule, spring-forward nonexistent time, fall-back ambiguity, downtime and every catch-up policy.
+- [ ] Scheduler leases due rows with generation fencing and atomically records occurrence + next fire + evaluation work.
+- [ ] Schedule edit uses a new Trigger revision; old occurrences remain unchanged.
+- [ ] RunContinuation accepts exact durable causes and creates one occurrence/decision/`ContinueRun` work item; it never creates a Run.
+- [ ] Duplicate HumanResponse/ArtifactAvailable/DependencyCompleted projection returns original continuation occurrence and no second wake-up.
+- [ ] Run/commit:
+
+```bash
+cargo test -p vestrace-application trigger::scheduler trigger::continuation
+DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
+  cargo test --test trigger_schedule_dst --test trigger_run_continuation
+git add crates tests/trigger_schedule_dst.rs tests/trigger_run_continuation.rs
+git commit -m "feat(trigger): add schedules and run continuations"
+```
+
+### Task 15: Integrate workers, checkpoint V5, RLS, boundaries and acceptance
+
+**Files:** create migration `0053`, workers, Run event/work/checkpoint changes, boundary scripts, CI and acceptance tests.
 
 - [ ] Add work kinds:
 
@@ -1135,7 +1205,7 @@ ExpireRunProposal
 SuspendTrigger
 ```
 
-Work payloads contain stable IDs/expected revisions/deadlines, never interaction bodies, credentials, clear continuation tokens or unredacted trigger payloads.
+Payloads contain stable IDs/expected revisions/deadlines, never interaction bodies, credentials, clear continuation tokens or unredacted trigger data.
 
 - [ ] Add logical Run events:
 
@@ -1147,11 +1217,11 @@ TriggerRunBound { trigger_revision_id: TriggerDefinitionRevisionId, occurrence_i
 RunProposalAccepted { proposal_id: RunProposalId },
 ```
 
-Delivery/projection/trigger scheduler progress remains H7-local and does not increment `RunVersion`.
+Projection/delivery/scheduler progress remains H7-local and does not increment `RunVersion`.
 
-- [ ] `RunCheckpointV5` adds active human requests, linked conversations, source trigger occurrence/autonomy envelope and last public-event projection reference. Older payloads remain readable.
-- [ ] Migration `0053` forces RLS on every H7 workspace table, adds same-workspace target checks, append-only guards, idempotency/expiry/due-schedule/window/causal-chain indexes and prevents role/token/cursor cross-workspace use.
-- [ ] Boundary scripts reject channel SDK types in core, generic approval booleans without challenge refs, clear continuation tokens in persistence/logs, credentials in auth responses, A2A types in remote continuation, direct channel mutation of Runs, Commit activation and trigger actions without H2/autonomy envelope.
+- [ ] `RunCheckpointV5` stores active requests, linked conversations, source Trigger occurrence/autonomy envelope and last public-event projection reference. Older payloads remain readable.
+- [ ] Migration `0053` forces RLS, same-workspace checks, append-only guards and idempotency/expiry/due/window/causal indexes; it prevents cross-workspace role/token/cursor use.
+- [ ] Boundary scripts reject channel SDKs in core, generic approval booleans without challenge refs, clear tokens in storage/logs, credentials in auth responses, A2A types, direct channel Run mutation, Commit activation and Trigger actions without H2/autonomy envelope.
 - [ ] Mandatory acceptance scenario:
 
 ```text
@@ -1165,34 +1235,19 @@ authenticated HTTP interaction
 → one continuation
 → Run resumes
 → SSE reconnect from prior cursor
-→ missed events replay in order
-→ deterministic remote invocation InputRequired
-→ same HumanRequest/response boundary
+→ missed events in order
+→ deterministic remote InputRequired
+→ same HumanRequest boundary
 → continuation after worker restart
-→ schedule occurrence
+→ scheduled occurrence
 → bounded Observe Run
-→ duplicate schedule/source delivery suppressed
+→ duplicate occurrence suppressed
 → causal loop suppressed
 → trigger ceiling enforced
 ```
 
-- [ ] Acceptance also proves: conversation membership alone cannot approve/cancel/export; “yes” does not create approval; quarantined attachment cannot enter context; notification failure does not change Run; Suggest creates proposal only; proposal acceptance is idempotent; Prepare cannot commit; Execute cannot perform external commitment; Commit activation fails; replay sends no response/notification/trigger/remote continuation.
-- [ ] Required CI jobs:
-
-```text
-conversation-domain-and-postgres
-human-request-continuation
-approval-and-remote-continuation
-public-events-and-sse
-channel-http-cli-contracts
-trigger-registry-manual-api
-trigger-schedule-dst
-trigger-storm-autonomy
-conversation-trigger-boundaries
-h7-acceptance
-```
-
-- [ ] Run/commit:
+- [ ] Negative acceptance proves membership cannot approve/cancel/export; “yes” creates no approval; quarantined attachment cannot enter context; notification failure does not change Run; Suggest creates proposal only; Prepare cannot commit; Execute cannot make external commitment; Commit activation fails; replay sends no response/notification/Trigger/remote continuation.
+- [ ] Run all gates and commit:
 
 ```bash
 bash scripts/verify-conversation-boundary.sh
@@ -1217,14 +1272,14 @@ git commit -m "test(channels): add H7 acceptance and autonomy gates"
 
 ```text
 0048 Task 5   Conversations, participants, interactions and Run links
-0049 Task 7   Human requests, responses and continuation records
-0050 Task 9   Public events, notification intents/deliveries and preferences
-0051 Task 12  Trigger definitions, revisions, schedules and scheduler state
-0052 Task 14  Occurrences, proposals, deduplication, counters and causality
+0049 Task 7   Human requests, responses and continuations
+0050 Task 9   Public events, notifications and preferences
+0051 Task 12  Trigger identities, revisions, schedules and scheduler state
+0052 Task 13  Occurrences, proposals, deduplication, counters and causality
 0053 Task 15  RLS, indexes and Run bindings
 ```
 
-No later task edits a migration after its owner task commits it.
+No later task edits an applied migration.
 
 ## H7 completion definition
 
@@ -1242,54 +1297,52 @@ channel input
 → optional safe notification
 
 trigger source
-→ immutable Trigger revision
+→ enabled Trigger identity + immutable revision
 → occurrence + causality
 → dedup/cooldown/quota/policy
 → autonomy envelope
-→ RunProposal, bounded Run or exact Run continuation
-→ durable events and restart recovery
+→ RunProposal, bounded new Run or exact Run continuation
+→ restart-safe execution
 ```
 
 Required invariants:
 
-1. Conversations and Runs remain separate aggregates connected by explicit links.
-2. One conversation can discuss multiple Runs without ambiguous automatic continuation.
-3. Interaction history is append-only and bounded; binary content uses H6 references.
-4. Conversation membership never grants privileged Run operations.
+1. Conversations and Runs are separate aggregates connected explicitly.
+2. Multiple Runs in one conversation never cause ambiguous automatic continuation.
+3. Interaction history is append-only/bounded and binary content uses H6 references.
+4. Conversation membership grants no privileged Run operation.
 5. Human requests are typed, exact-target and restart-safe.
-6. Continuation tokens are hashed, one-time and never authenticate by themselves.
-7. Approval responses cannot bypass H2 operation-bound approval rules.
+6. Continuation tokens are hashed/one-time and never authenticate alone.
+7. Approval responses cannot bypass H2 operation-bound rules.
 8. Authentication responses contain no credential material.
-9. Remote input/auth continuations remain transport-neutral and duplicate-safe.
-10. Public-event streams are durable, workspace-ordered, resumable and at-least-once.
-11. Channel adapters produce equivalent application state and cannot mutate Runs directly.
-12. Notifications are safe projections and delivery failure cannot affect source state.
-13. Trigger definitions/revisions are immutable and activation is explicit.
-14. Manual/API/Schedule/RunContinuation are fully implemented without external services.
-15. External/StateChange/Condition sources remain disabled without compatible extension.
-16. Filters/templates are bounded declarative data, never arbitrary code.
-17. Trigger autonomy only narrows target/policy authority.
-18. Suggest creates a proposal rather than executing proposed work.
-19. Prepare cannot commit; Execute cannot infer irreversible/external-commitment authority.
-20. Commit remains disabled in standard v0.2.
-21. Every occurrence is idempotent and source-loss ambiguity cannot duplicate a Run.
-22. Cooldown, windows, concurrency, H2 budgets/quotas and failure suspension are transactional.
-23. Causal-loop policies suppress direct and multi-trigger feedback loops.
-24. Schedule behavior across DST/downtime is explicit and deterministic.
-25. RunContinuation resumes the exact existing Run and never creates another.
-26. Restart does not duplicate interaction routing, response application, approval, remote continuation, notification, trigger occurrence, proposal acceptance or Run creation.
-27. Replay performs no channel delivery, remote continuation or trigger firing.
-28. H8 can attach connection/credential authorization flows without changing HumanRequest/trigger persistence.
-29. H9 can supply external trigger/channel/notification extensions and profile resolution without changing H7 core.
-30. H9A can map A2A InputRequired/AuthRequired/progress to H7 contracts without SDK-type leakage.
-31. H10 can add trace/metrics/evaluation projections without changing event history.
-32. H11 can expose web/MCP/SDK surfaces over the same application ports.
-33. H7 tests require no public provider, external channel, A2A service or permanent credential.
+9. Remote continuations are transport-neutral and duplicate-safe.
+10. Public events are durable, workspace-ordered, resumable and at-least-once.
+11. Channel adapters are equivalent projections and never mutate Runs directly.
+12. Notification failure cannot affect authoritative state.
+13. Trigger identities/revisions and lifecycle ownership are unambiguous.
+14. Manual/API/Schedule/RunContinuation work without external services.
+15. External/StateChange/Condition remain disabled without extension.
+16. Filters/templates are bounded declarative data.
+17. Trigger autonomy only narrows authority.
+18. Suggest creates proposal; Prepare cannot commit; Execute cannot infer external commitment; Commit is disabled.
+19. Every occurrence is idempotent and ambiguous source delivery cannot duplicate a Run.
+20. Cooldown/windows/concurrency/H2 budget/quota/failure suspension are transactional.
+21. Direct and multi-Trigger causal loops are suppressed.
+22. DST/downtime behavior is explicit and deterministic.
+23. RunContinuation resumes the exact existing Run.
+24. Restart duplicates no routing, response, approval, remote continuation, notification, occurrence, proposal acceptance or Run creation.
+25. Replay performs no channel delivery, continuation or Trigger fire.
+26. H8 can bind credential flows without changing H7 persistence.
+27. H9 can provide external channel/Trigger/notification extensions without changing H7 core.
+28. H9A can map A2A progress/InputRequired/AuthRequired without SDK leakage.
+29. H10 can project telemetry/evaluations without changing history.
+30. H11 can expose web/MCP/SDK surfaces over the same ports.
+31. H7 tests require no public provider, channel, A2A service or permanent credential.
 
 ## Explicit non-goals
 
-H7 does not implement email or messenger adapters, OAuth/API-key acquisition, secret storage, A2A wire protocol, Agent Card discovery, arbitrary webhook sources, browser notifications, unrestricted condition code, production WebSocket as a second mandatory stream, public web UI, permanent push tokens, automatic Commit autonomy, model-controlled policy changes or exactly-once network delivery.
+H7 does not implement email/messenger adapters, OAuth/API-key acquisition, secret storage, A2A wire protocol, Agent Card discovery, arbitrary webhooks, executable condition code, public web UI, permanent push tokens, automatic Commit autonomy, model-controlled policy changes or exactly-once network delivery.
 
 ## Documentation-only boundary
 
-Creating this document does not authorize implementation. During the documentation phase, do not create `feat/h7-conversations-channels-triggers`, change dependencies, create migrations `0048`–`0053`, start HTTP/SSE/scheduler services, send notifications, fire triggers, mutate Runs, modify production channel/trigger code, change CI or execute H7 tests.
+Creating this document does not authorize implementation. During the documentation phase, do not create `feat/h7-conversations-channels-triggers`, change dependencies, create migrations `0048`–`0053`, start HTTP/SSE/scheduler services, send notifications, fire Triggers, mutate Runs, change CI or execute H7 tests.
