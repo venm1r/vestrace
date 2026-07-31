@@ -6,56 +6,66 @@
 
 **Goal:** Assemble H1–H10 and H9A into one production-shaped self-hosted Vestrace v0.2 surface with equivalent HTTP/CLI/MCP application behavior, Rust and TypeScript SDKs, resumable Artifact transfer, signed webhooks, a minimal secure web console, reference Agent Packages, Personal/Team/Embedded deployment profiles, upgrade/backup/recovery tooling and restart-safe end-to-end release acceptance.
 
-**Architecture:** H11 is an integration and productization layer, not a new execution authority. Existing H1–H10 and H9A aggregates, journals, policies, budgets, credentials, Artifacts, evaluations and checkpoints remain authoritative. Public surfaces translate versioned DTOs into shared application commands and queries, then return durable operation/resource references. The web console and SDKs consume only those public contracts. Deployment, backup and release operations use independent durable product-operation records; `RunCheckpointV9` is not extended by H11. Reference packages are ordinary H9 packages with exact H10 gate evidence, and the release vertical slice proves the complete system through real application boundaries and deterministic local fixtures.
+**Architecture:** H11 is an integration and productization layer, not a new execution authority. Existing H1–H10 and H9A aggregates, journals, policies, budgets, credentials, Artifacts, evaluations and checkpoints remain authoritative. Public transports translate versioned DTOs into shared application commands and queries, then return durable operation/resource references. Rust/TypeScript SDKs and the console are clients of the HTTP/SSE contract, not distinct server-side idempotency domains. Deployment, transfer, webhook and maintenance records have independent durable state; `RunCheckpointV9` is not extended. Portable release manifests contain only stable hashes/assets, while a local installed-release binding maps them to deployment-specific schema/package revisions. Multipart upload uses temporary backend staging references and streams the assembled bytes into the existing H6 lifecycle. Backups use a separate encrypted backup store so they do not depend on the database/Artifact metadata they must restore.
 
-**Tech Stack:** Existing Vestrace v0.1 plus H1–H10 and H9A; Rust Edition 2024; Tokio; Axum/Tower; `rmcp`; Serde/Schemars; SQLx and PostgreSQL 17 with pgvector; H6 Local CAS and S3-compatible Artifact stores; H8 encrypted secret backend; Docker/Compose with a rootless-compatible sandbox manager; OpenAPI 3.1 and JSON Schema 2020-12; Server-Sent Events; HMAC-SHA-256 signed webhooks; Rust SDK using Reqwest; TypeScript SDK and web console using TypeScript, React and Vite; deterministic local OpenAI-compatible, Tool, A2A, webhook and object-store fixtures; cargo-nextest-compatible test layout; CycloneDX/SPDX-compatible SBOM output.
+**Tech Stack:** Existing Vestrace v0.1 plus H1–H10 and H9A; Rust Edition 2024; Tokio; Axum/Tower; `rmcp`; Serde/Schemars; SQLx and PostgreSQL 17 with pgvector; H6 Local CAS and S3-compatible Artifact stores; H8 encrypted secret and cryptographic service bindings; Docker/Compose with a rootless-compatible sandbox manager; OpenAPI 3.1 and JSON Schema 2020-12; Server-Sent Events; HMAC-SHA-256 signed webhooks; Ed25519 release/backup manifest signatures; Rust SDK using Reqwest; TypeScript SDK and web console using TypeScript, React and Vite; deterministic local OpenAI-compatible, Tool, A2A, webhook, backup-store and object-store fixtures; cargo-nextest-compatible test layout; CycloneDX/SPDX-compatible SBOM output.
 
 ## Global Constraints
 
 - Complete all five v0.1 plans, H1–H10, H9A and the binding ADR-0002 outcome before implementing H11.
-- The Harness design sections `27. Public API, event stream, MCP и SDK`, `28. Self-hosted product boundary`, `29. Reference Agent Packages`, `30. Обязательный vertical slice`, `31. Release acceptance criteria` and `32. Нормативные security invariants` are normative.
+- Harness design sections `27. Public API, event stream, MCP и SDK`, `28. Self-hosted product boundary`, `29. Reference Agent Packages`, `30. Обязательный vertical slice`, `31. Release acceptance criteria` and `32. Нормативные security invariants` are normative.
 - H11 never creates a second Run, plan, Tool, model, memory, Artifact, approval, policy, budget, credential, remote-agent, evaluation or audit aggregate.
 - H1 `AgentRun`, `RunStep`, `RunEvent` and `RunCheckpointV9` remain authoritative. H11 adds no `RunCheckpointV10`.
-- Product-surface operations such as upload, webhook delivery, backup, restore and upgrade have independent durable state and must not increment `RunVersion` unless they cause an explicit logical Run command through an existing application service.
+- Product-surface operations such as upload, webhook delivery, backup, restore and upgrade have independent durable state and do not increment `RunVersion` unless they invoke an explicit existing Run command.
 - H7 `PublicEventRecord` and durable workspace cursor remain the only event-stream source. HTTP SSE, SDK streams, CLI follow mode and console timelines are projections over H7.
-- H6 remains the only Artifact byte/provenance lifecycle. Upload/download/product surfaces never introduce a second blob identity or bypass quarantine, inspection, export authorization, retention or purge.
-- H8 remains the only secret/credential authority. Webhook signing, SDK tokens, release signing and external storage credentials are references or request-scoped leases, never plaintext configuration or database fields.
-- H9 remains the package/profile/extension authority. Built-in reference packages are installed, resolved, evaluated and activated through normal H9/H10 flows; release bundling does not silently grant capabilities.
-- H9A remains the A2A gateway. H11 only mounts/configures it, publishes one selected reference agent and includes it in release acceptance.
-- H10 verification, one-use `VerifiedRunCompletion`, regression evidence, audit and explanation remain mandatory. H11 cannot bypass them for product demos or reference packages.
-- Public DTOs, generated SDK types and console state are separate from domain, SQLx, provider, adapter and internal checkpoint types.
-- `/v1` is the only stable product API prefix. `/admin/v1` remains administrative and capability-gated. No unrestricted state `PATCH` endpoint is introduced.
-- Every state-changing HTTP command requires `Idempotency-Key`. Commands changing a versioned or mutable resource require `If-Match` or an explicit expected version.
-- The same idempotency key with the same canonical request returns the original receipt/result; reuse with changed canonical content returns `idempotency_conflict`.
+- H6 remains the only permanent Artifact byte/provenance lifecycle. Upload/download surfaces never create a second logical Artifact identity or bypass quarantine, inspection, export authorization, retention or purge.
+- Temporary multipart upload objects are non-authoritative staging objects behind `ArtifactUploadPartStorePort`. They have no public/model identity and are deleted after finalize/expiry/cancel.
+- H8 remains the only secret/credential authority. Webhook signing, pagination/download token signing, release signing, backup encryption/signing and external storage credentials use request-scoped cryptographic ports or leases; plaintext keys never cross into application/domain/persistence.
+- H9 remains the package/profile/extension authority. Reference packages are installed, resolved, evaluated and activated through H9/H10; release bundling grants nothing.
+- H9A remains the A2A gateway. H11 only mounts/configures it, publishes one selected exact snapshot and includes it in release acceptance.
+- H10 verification, one-use `VerifiedRunCompletion`, regression evidence, audit and explanation remain mandatory. H11 cannot bypass them for demos, bootstrap or reference packages.
+- Public DTOs, generated SDK types and console state are separate from domain, SQLx, provider, adapter and checkpoint types.
+- `/v1` is the stable product API prefix. `/admin/v1` remains administrative and capability-gated. No unrestricted state `PATCH` endpoint is introduced.
+- Every state-changing HTTP command requires `Idempotency-Key`. Commands changing a versioned/mutable resource require `If-Match` or explicit expected version.
+- Idempotency scope is workspace + principal + operation + idempotency-key hash, not transport. The same key/body retried through HTTP, local CLI or MCP returns the original binding; changed canonical content conflicts.
+- HTTP is the server-side surface for the Rust SDK, TypeScript SDK and console. SDK/client identity is recorded only as bounded user-agent telemetry and never changes idempotency scope or authority.
 - Async commands return `202 Accepted` with an existing `OperationId` or resource ID, current state/version and canonical status/events links.
 - Public errors use one bounded envelope and never expose SQL, stack traces, prompts, secrets, raw external errors, internal paths or adapter Debug output.
 - SSE uses H7 cursor values. `Last-Event-ID` and `after_cursor` may not disagree. Reconnect is at-least-once and clients deduplicate by event ID.
-- HTTP, CLI and MCP call the same application command/query services and therefore produce equivalent canonical state for overlapping operations.
-- A2A is not forced into HTTP/MCP parity where protocol semantics differ. Equivalence is required only at shared application outcomes and references.
-- Artifact upload is streaming/resumable, bounded and hash-validated. A completed upload becomes an H6 quarantined ingestion candidate, not an Available Artifact.
-- Artifact download requires current H2 authorization and either a direct authenticated stream or a one-purpose short-lived download grant. Grants are audience/resource/range/expiry bound and never bearer access to other revisions.
-- Active HTML, SVG with scripts, executable content and untrusted rich documents are never rendered directly by the console. The console uses H6 Preview/RedactedCopy/PageImage representations or forces attachment download.
-- Outgoing webhooks are at-least-once notifications, not commands. Retries reuse the same immutable body, event IDs and delivery ID so receivers can deduplicate.
-- Webhook redirects and ambient proxies are disabled. Destination validation follows H6/H9A SSRF protections; private/reserved targets require an explicit local deployment policy.
-- Every webhook attempt uses a fresh H8 credential/signing lease. Signing secrets never enter subscription rows, delivery bodies, logs or console DTOs.
-- The reference signature format is `v1=<lowercase hex HMAC-SHA-256>` over `timestamp + "." + delivery_id + "." + exact_body_bytes`.
-- SDKs never automatically retry an ambiguous non-idempotent operation. They expose `operation_unknown` and reconciliation/status helpers.
-- SDKs do not implement policy, approval matching, budget logic, Tool execution or credential resolution locally.
-- The TypeScript browser SDK and console never store bearer tokens in localStorage, sessionStorage or IndexedDB. `BearerPrompt` keeps the token in memory only; reload requires re-authentication.
-- Initial authentication remains v0.1 local trusted mode for loopback/stdio and bearer-token mode for HTTP. OIDC, public signup and browser SSO remain out of scope.
+- HTTP, CLI and MCP call the same application command/query services and produce equivalent canonical state for overlapping operations.
+- A2A is not forced into HTTP/MCP parity where wire semantics differ. Equivalence is required at shared application outcomes and references.
+- Artifact upload is streaming/resumable, bounded and hash-validated. Completed transfer becomes an H6 quarantined ingestion candidate, never directly Available.
+- Upload parts may arrive out of order, but finalization requires the sorted part set to cover exactly `0..total_size` with no gap/overlap.
+- Artifact download requires current H2 authorization and either a direct authenticated stream or a one-purpose short-lived grant bound to exact revision/range/audience/expiry.
+- Active HTML, scripted SVG, executable content and untrusted rich documents are never rendered directly by the console. Only H6 Preview/RedactedCopy/PageImage or forced attachment download is allowed.
+- Outgoing webhooks are at-least-once notifications, not commands. Retries reuse the same immutable body, event IDs and delivery ID.
+- Webhook redirects, cookies and ambient proxies are disabled. Destination validation follows H6/H9A SSRF protections; private/reserved targets require an explicit exact local policy.
+- Webhook HMAC is produced by `WebhookSigningPort` after consuming an H8-bound signing authorization. Secret bytes never enter the webhook service.
+- Reference signature format: `v1=<lowercase hex HMAC-SHA-256>` over `timestamp + "." + delivery_id + "." + exact_body_bytes`.
+- SDKs never automatically retry an ambiguous non-idempotent operation. They expose `operation_unknown` and status/reconciliation helpers.
+- SDKs do not implement policy, approval matching, budgets, Tool execution or credential resolution locally.
+- Browser SDK/console never store bearer tokens in localStorage, sessionStorage or IndexedDB. `BearerPrompt` keeps the token in memory; reload requires re-authentication.
+- Initial authentication remains v0.1 local-trusted loopback/stdio and bearer-token HTTP. OIDC, signup and browser SSO remain out of scope.
+- Personal console local-trusted writes require same-origin checks plus an ephemeral process-local `X-Vestrace-Console-Nonce`; the nonce is injected into the same-origin console bootstrap, never persisted/logged and rotates on restart.
+- Bearer-mode console uses no auth cookies. Exact CORS origins are configured; wildcard origins are rejected.
 - Personal deployment binds externally reachable services to loopback by default and refuses wildcard binding without an explicit unsafe-development override or configured TLS termination.
-- Team deployment supports multiple principals/workspaces using existing bearer-token and capability contracts; it must not pretend to provide OIDC.
-- Embedded deployment disables the console and interactive local bootstrap by default and exposes HTTP/MCP/SDK/A2A surfaces according to explicit configuration.
-- Configuration precedence remains `CLI → environment → configuration file → safe defaults`. Environment variables contain secret references or bootstrap inputs only, never long-lived generated credentials in rendered diagnostics.
-- Docker images run as non-root where the role permits, use read-only root filesystems where practical, expose explicit writable volumes and contain no build credentials.
-- Untrusted sandbox containers never receive the Docker socket. The sandbox manager may access a dedicated rootless-compatible engine endpoint under H4 policy.
-- Forward-only migrations remain explicit. Server startup never auto-applies migrations unless the operator enabled the exact Personal-development setting.
-- Backups are content-addressed, manifest-driven and verified. Clear secret material and the secret-backend master key are never placed in the same backup bundle.
-- Restore targets an empty or explicitly disposable deployment. In-place destructive restore is not a release feature.
+- Team deployment supports multiple principals/workspaces using existing bearer/capability contracts and does not claim OIDC support.
+- Embedded deployment disables console and interactive bootstrap by default and exposes only explicitly configured HTTP/MCP/A2A surfaces.
+- Configuration precedence remains `CLI → environment → configuration file → safe defaults`. Diagnostics redact bootstrap values and secret references.
+- Docker images run non-root where roles permit, use read-only root filesystems where practical, expose explicit writable volumes and contain no build credentials.
+- Untrusted sandbox containers never receive the Docker socket. Only the sandbox manager may receive a dedicated rootless-compatible engine endpoint under H4 policy.
+- Forward-only migrations remain explicit. Team/Embedded startup never auto-migrates. Personal development auto-migrate requires an explicit setting and is off in release examples.
+- Portable ProductReleaseManifest contains no deployment-local UUID. InstalledReleaseBinding maps its stable hashes to local schema/package revisions.
+- ProductReleaseManifest is content-hashed and Ed25519-signed; the signing private key remains behind H8/build signing infrastructure.
+- Reference release qualification reports are portable assets. Target activation still creates local H10 gate evidence for the exact installed candidate/dependency hash.
+- Backups use an encrypted content-addressed `BackupStorePort`, not H6 Artifacts, so restore metadata is available independently of the source database.
+- Backup bundles never include clear source secrets, source secret-backend master key or backup-encryption private key.
+- Restore release scope is disaster recovery of the recorded deployment identity into an empty replacement target. Cross-deployment cloning is not supported.
+- Restore requires the old deployment to be fenced/offline and enters recovery validation before outgoing webhooks, Triggers and external commits are enabled.
 - Binary rollback is allowed only when the old binary declares compatibility with the current schema/release manifest. Database down-migrations are not generated.
-- Release artifacts contain exact public schema hashes, migration head, package hashes, image digests, dependency lock hash and SBOM references.
-- Reference packages and release fixtures must pass H10 regression gates before release bundling. Passing evidence does not activate them in existing workspaces.
-- The mandatory vertical slice uses deterministic local provider/tool/A2A/webhook/storage fixtures in CI and requires no public internet, permanent external credential or managed service.
+- Release assets contain exact public-schema, migration, package, image, lock, console/SDK and SBOM hashes.
+- Reference packages and release fixtures pass H10 gates before release assembly; passing evidence does not activate packages in existing workspaces.
+- Mandatory vertical-slice CI uses deterministic local provider/tool/A2A/webhook/backup/object-store fixtures and requires no public internet, permanent credential or managed service.
 - Existing migrations `0014`–`0080` are never edited. H11 migrations are `0081`–`0086`, each created once by one task.
 - Future implementation branch: `feat/h11-universal-product-surface`.
 
@@ -72,11 +82,11 @@ rust-toolchain.toml
 
 crates/vestrace-domain/src/
   id.rs
-  product/{mod,profile,release,bootstrap,operation,error}.rs
+  product/{mod,profile,release,bootstrap,readiness,error}.rs
   public_api/{mod,version,request,event,pagination,schema}.rs
   transfer/{mod,upload,download}.rs
   webhook/{mod,subscription,delivery,signature}.rs
-  backup/{mod,manifest,run,restore,upgrade}.rs
+  backup/{mod,target,object,manifest,run,restore,upgrade}.rs
 
 crates/vestrace-application/src/
   product/{mod,ports,bootstrap,readiness,release}.rs
@@ -90,7 +100,7 @@ crates/vestrace-channel-http/src/
   lib.rs
   router.rs
   auth.rs
-  middleware/{request_id,idempotency,concurrency,error,limits,cors,csp}.rs
+  middleware/{request_id,idempotency,concurrency,error,limits,cors,csp,local_console_nonce}.rs
   dto/{mod,common,run,plan,approval,artifact,agent,trigger,connection,remote,evaluation,audit}.rs
   routes/{mod,workspaces,conversations,runs,steps,events,approvals,artifacts,agents,skills,workflows,tools,triggers,connections,policies,models,extensions,evaluations,audit,operations,webhooks,schemas}.rs
   sse.rs
@@ -131,7 +141,7 @@ apps/console/
   src/
     main.tsx
     app.tsx
-    auth/{mode,token}.ts
+    auth/{mode,token,localNonce}.ts
     api/client.ts
     events/useRunEvents.ts
     routes.tsx
@@ -152,47 +162,13 @@ schemas/
   compatibility/public-schema-baseline.json
 
 packages/reference/
-  universal-assistant/
-    vestrace-package.json
-    profiles/*.json
-    skills/*.json
-    workflows/*.json
-    policies/*.json
-    schemas/*.json
-    evaluations/*.json
-    examples/*.json
-  research/
-    vestrace-package.json
-    profiles/*.json
-    skills/*.json
-    workflows/*.json
-    policies/*.json
-    schemas/*.json
-    evaluations/*.json
-    examples/*.json
-  workspace-automation/
-    vestrace-package.json
-    profiles/*.json
-    skills/*.json
-    workflows/*.json
-    policies/*.json
-    schemas/*.json
-    evaluations/*.json
-    examples/*.json
+  universal-assistant/{vestrace-package.json,profiles,skills,workflows,policies,schemas,evaluations,examples}/
+  research/{vestrace-package.json,profiles,skills,workflows,policies,schemas,evaluations,examples}/
+  workspace-automation/{vestrace-package.json,profiles,skills,workflows,policies,schemas,evaluations,examples}/
 
-fixtures/product/
-  provider/
-  tools/
-  a2a/
-  webhook/
-  object_store/
-  vertical_slice/
+fixtures/product/{provider,tools,a2a,webhook,object_store,backup_store,vertical_slice}/
 
-config/
-  vestrace.example.toml
-  personal.toml
-  team.toml
-  embedded.toml
+config/{vestrace.example,personal,team,embedded}.toml
 
 deploy/
   Dockerfile
@@ -223,14 +199,14 @@ crates/vestrace-infrastructure/src/postgres/
   product/{mod,request_binding_repository,schema_repository,bootstrap_repository,release_repository}.rs
   transfer/{mod,upload_repository,download_repository}.rs
   webhook/{mod,subscription_repository,delivery_repository}.rs
-  backup/{mod,run_repository,manifest_repository}.rs
+  backup/{mod,target_repository,run_repository,manifest_repository}.rs
 
 migrations/
   0081_public_request_bindings_schema_bundles_and_release_surfaces.sql
   0082_artifact_upload_sessions_parts_and_download_grants.sql
   0083_webhook_subscriptions_deliveries_and_attempts.sql
-  0084_product_profiles_bootstrap_and_release_manifests.sql
-  0085_backup_restore_and_upgrade_runs.sql
+  0084_product_profiles_bootstrap_and_installed_release_bindings.sql
+  0085_backup_targets_restore_and_upgrade_runs.sql
   0086_product_surface_rls_indexes_and_bindings.sql
 
 tests/
@@ -284,28 +260,20 @@ scripts/
 
 ## Normative contracts
 
-### Product profiles and release identity
+### Product profiles and process roles
 
 ```rust
-pub enum ProductDeploymentProfile {
-    Personal,
-    Team,
-    Embedded,
-}
+pub enum ProductDeploymentProfile { Personal, Team, Embedded }
 
-pub struct ProductProfileRevision {
-    pub id: ProductProfileRevisionId,
-    pub profile: ProductDeploymentProfile,
-    pub revision: u32,
-    pub enabled_roles: std::collections::BTreeSet<DeploymentRole>,
-    pub enabled_surfaces: std::collections::BTreeSet<ProductSurface>,
-    pub authentication_mode: ProductAuthenticationMode,
-    pub artifact_backend_kind: String,
-    pub secret_backend_kind: String,
-    pub sandbox_required: bool,
-    pub console_enabled: bool,
-    pub safe_defaults_hash: [u8; 32],
-    pub content_hash: [u8; 32],
+pub enum ProductProcessRole {
+    All,
+    Server,
+    Scheduler,
+    Worker,
+    SandboxManager,
+    Mcp,
+    Migrate,
+    Doctor,
 }
 
 pub enum ProductSurface {
@@ -320,9 +288,69 @@ pub enum ProductSurface {
     OutgoingWebhooks,
 }
 
-pub enum ProductAuthenticationMode {
-    LocalTrusted,
-    BearerToken,
+pub enum ProductAuthenticationMode { LocalTrusted, BearerToken }
+
+pub struct ProductProfileRevision {
+    pub id: ProductProfileRevisionId,
+    pub profile: ProductDeploymentProfile,
+    pub revision: u32,
+    pub enabled_roles: std::collections::BTreeSet<ProductProcessRole>,
+    pub enabled_surfaces: std::collections::BTreeSet<ProductSurface>,
+    pub authentication_modes: std::collections::BTreeSet<ProductAuthenticationMode>,
+    pub default_authentication_mode: ProductAuthenticationMode,
+    pub artifact_backend_kind: String,
+    pub secret_backend_kind: String,
+    pub sandbox_required: bool,
+    pub console_enabled: bool,
+    pub safe_defaults_hash: [u8; 32],
+    pub content_hash: [u8; 32],
+}
+```
+
+Personal may combine LocalTrusted and BearerToken but LocalTrusted HTTP is loopback-only. Team uses BearerToken. Embedded defaults to BearerToken and may enable local-trusted stdio MCP separately.
+
+### Portable release manifest and local installation binding
+
+```rust
+pub enum ReleaseAssetKind {
+    Binary,
+    ConsoleBundle,
+    PublicSchemaBundle,
+    ReferencePackage,
+    QualificationReport,
+    RustSdkArchive,
+    TypeScriptSdkArchive,
+    Sbom,
+    LicenseReport,
+}
+
+pub struct ReleaseAssetDescriptor {
+    pub kind: ReleaseAssetKind,
+    pub logical_name: String,
+    pub media_type: String,
+    pub byte_size: u64,
+    pub sha256: [u8; 32],
+}
+
+pub struct ReleaseReferencePackageAsset {
+    pub stable_id: String,
+    pub version: String,
+    pub package_archive: ReleaseAssetDescriptor,
+    pub package_manifest_digest: [u8; 32],
+    pub qualification_report: ReleaseAssetDescriptor,
+}
+
+pub struct ProductReleaseSignature {
+    pub algorithm: String,
+    pub key_revision: String,
+    pub signature: Vec<u8>,
+}
+
+pub struct ReleaseCompatibilityRange {
+    pub minimum_schema_head: String,
+    pub maximum_schema_head: String,
+    pub minimum_public_api_major: u16,
+    pub maximum_public_api_major: u16,
 }
 
 pub struct ProductReleaseManifest {
@@ -332,46 +360,41 @@ pub struct ProductReleaseManifest {
     pub rust_toolchain: String,
     pub cargo_lock_hash: [u8; 32],
     pub migration_head: String,
-    pub public_schema_bundle_revision_id: PublicSchemaBundleRevisionId,
+    pub public_api_major: u16,
+    pub public_schema_bundle_hash: [u8; 32],
     pub config_schema_hash: [u8; 32],
-    pub reference_package_revision_hashes: Vec<[u8; 32]>,
+    pub reference_packages: Vec<ReleaseReferencePackageAsset>,
+    pub assets: Vec<ReleaseAssetDescriptor>,
     pub container_image_digests: Vec<String>,
-    pub sbom_artifact_revision_ids: Vec<ArtifactRevisionId>,
     pub compatibility: ReleaseCompatibilityRange,
     pub content_hash: [u8; 32],
+    pub signature: ProductReleaseSignature,
     pub created_at: Timestamp,
 }
 
-pub struct ReleaseCompatibilityRange {
-    pub minimum_schema_head: String,
-    pub maximum_schema_head: String,
-    pub minimum_public_api_major: u16,
-    pub maximum_public_api_major: u16,
+pub struct InstalledReleaseBinding {
+    pub id: InstalledReleaseBindingId,
+    pub deployment_id: DeploymentInstallationId,
+    pub release_manifest_id: ProductReleaseManifestId,
+    pub public_schema_bundle_revision_id: PublicSchemaBundleRevisionId,
+    pub installed_package_revision_ids: Vec<AgentPackageRevisionId>,
+    pub installed_package_lock_ids: Vec<AgentPackageLockId>,
+    pub installed_at: Timestamp,
 }
 ```
 
-Release manifests are immutable. Image digests use normalized `sha256:<64 lowercase hex>` form. A release manifest contains no registry credential, signing private key, host path or environment value.
+The portable manifest has no local Artifact/package/schema UUID. `content_hash` excludes `signature`; signature is Ed25519 over a domain-separated canonical tuple containing the content hash and product version. Image digests use `sha256:<64 lowercase hex>`.
 
-### Public request identity and receipts
-
-H11 extends the existing v0.1 idempotency/operation layer rather than creating another generic operation system.
+### Public request identity and cross-surface idempotency
 
 ```rust
-pub enum PublicSurfaceKind {
-    Http,
-    Cli,
-    Mcp,
-    A2A,
-    Console,
-    RustSdk,
-    TypeScriptSdk,
-}
+pub enum PublicSurfaceKind { Http, Cli, Mcp, A2A }
 
 pub struct PublicRequestBinding {
     pub id: PublicRequestBindingId,
     pub workspace_id: WorkspaceId,
     pub principal_id: PrincipalId,
-    pub surface: PublicSurfaceKind,
+    pub first_surface: PublicSurfaceKind,
     pub operation_name: String,
     pub idempotency_key_hash: [u8; 32],
     pub canonical_request_hash: [u8; 32],
@@ -388,7 +411,20 @@ pub enum PublicResourceRef {
     Trigger(TriggerDefinitionId),
     Evaluation(EvaluationRunId),
     Webhook(WebhookSubscriptionId),
+    Bootstrap(ProductBootstrapRunId),
     Backup(BackupRunId),
+    Restore(RestoreRunId),
+    Upgrade(UpgradeRunId),
+    Connection(ConnectionId),
+    PackageActivation(PackageActivationRevisionId),
+}
+
+pub enum PublicCommandStatus {
+    Accepted,
+    Completed,
+    WaitingForInput,
+    WaitingForApproval,
+    Rejected,
 }
 
 pub struct PublicCommandReceipt {
@@ -401,19 +437,11 @@ pub struct PublicCommandReceipt {
     pub events_url: Option<String>,
     pub accepted_at: Timestamp,
 }
-
-pub enum PublicCommandStatus {
-    Accepted,
-    Completed,
-    WaitingForInput,
-    WaitingForApproval,
-    Rejected,
-}
 ```
 
-Idempotency keys are 8–200 visible ASCII bytes before hashing. The canonical request hash includes API major, operation name, authenticated workspace/principal, normalized body and expected version. Authorization headers, trace headers and transport metadata are excluded.
+Uniqueness is `(workspace_id, principal_id, operation_name, idempotency_key_hash)`; `first_surface` is audit metadata only. Idempotency keys are 8–200 visible ASCII bytes. Canonical request hash includes API major, operation, authenticated scope, normalized body and expected version; it excludes authorization/trace/user-agent/transport metadata.
 
-### Public error envelope
+### Public errors and events
 
 ```rust
 pub enum PublicErrorCategory {
@@ -432,9 +460,10 @@ pub enum PublicErrorCategory {
     Internal,
 }
 
-pub struct PublicErrorEnvelope {
-    pub request_id: PublicRequestId,
-    pub error: PublicErrorBody,
+pub struct PublicErrorDetail {
+    pub path: Option<String>,
+    pub code: String,
+    pub safe_message: String,
 }
 
 pub struct PublicErrorBody {
@@ -448,18 +477,11 @@ pub struct PublicErrorBody {
     pub retry_after_ms: Option<u64>,
 }
 
-pub struct PublicErrorDetail {
-    pub path: Option<String>,
-    pub code: String,
-    pub safe_message: String,
+pub struct PublicErrorEnvelope {
+    pub request_id: PublicRequestId,
+    pub error: PublicErrorBody,
 }
-```
 
-Messages are bounded to 8 KiB, detail count to 32 and detail messages to 2 KiB. Internal errors return a stable code and request ID only.
-
-### Public event stream
-
-```rust
 pub struct PublicEventEnvelopeV1 {
     pub schema_version: u16,
     pub cursor: PublicEventCursor,
@@ -483,7 +505,7 @@ pub enum PublicEventResourceRef {
 }
 ```
 
-`data` must validate against the exact event schema selected by `event_type` and schema bundle revision. SSE frame `id` is the cursor, `event` is the event type and `data` is the canonical envelope. Heartbeats are SSE comments and never advance the cursor.
+Messages are bounded to 8 KiB, details to 32 × 2 KiB. Event `data` validates against the exact event-type schema. SSE `id` is cursor, `event` is event type and heartbeat comments do not advance the cursor.
 
 ### Public schema bundle
 
@@ -499,63 +521,104 @@ pub struct PublicSchemaBundleRevision {
     pub mcp_schema_artifact_revision_id: ArtifactRevisionId,
     pub extension_schema_artifact_revision_id: ArtifactRevisionId,
     pub a2a_reference_schema_artifact_revision_id: ArtifactRevisionId,
+    pub portable_bundle_hash: [u8; 32],
     pub compatibility_baseline_hash: [u8; 32],
     pub content_hash: [u8; 32],
     pub created_at: Timestamp,
 }
 ```
 
-Within `/v1`, additive optional fields and new enum values declared forward-compatible are allowed. Removing required fields, changing meaning/type, narrowing accepted input or changing operation IDs is breaking and requires a new API major.
+Local schema artifacts are imported into the deployment system workspace and bound to the portable bundle hash from the release manifest. Within `/v1`, removing required fields, changing type/meaning, narrowing accepted input or changing operation IDs is breaking.
 
-### Surface command/query facade
-
-Every product surface maps to these application-owned interfaces:
+### Application command/query DTOs and facade
 
 ```rust
+pub struct BeginPublicRequest {
+    pub surface: PublicSurfaceKind,
+    pub operation_name: String,
+    pub idempotency_key: String,
+    pub canonical_request_hash: [u8; 32],
+}
+
+pub enum PublicRequestDisposition {
+    New { binding_id: PublicRequestBindingId },
+    ExistingSameRequest { binding: PublicRequestBinding },
+    Conflict,
+}
+
+pub struct CompletePublicRequest {
+    pub binding_id: PublicRequestBindingId,
+    pub operation_id: Option<OperationId>,
+    pub resource: Option<PublicResourceRef>,
+    pub response_hash: [u8; 32],
+}
+
+pub enum ProductCommand {
+    CreateRun(CreateRunCommand),
+    PauseRun(PauseRunCommand),
+    ResumeRun(ResumeRunCommand),
+    CancelRun(CancelRunCommand),
+    SubmitHumanResponse(SubmitHumanResponseCommand),
+    GrantApproval(GrantApprovalCommand),
+    RevisePlan(RevisePlanCommand),
+    RequestBudgetIncrease(RequestBudgetIncreaseCommand),
+    FireTrigger(FireTriggerCommand),
+    AcceptRunProposal(AcceptRunProposalCommand),
+    RejectRunProposal(RejectRunProposalCommand),
+    CreateEvaluationRun(CreateEvaluationRunCommand),
+    VerifyAuditIntegrity(VerifyAuditIntegrityCommand),
+    CreateWebhookSubscription(CreateWebhookSubscriptionCommand),
+    DisableWebhookSubscription(DisableWebhookSubscriptionCommand),
+}
+
+pub enum ProductQuery {
+    GetRun { run_id: AgentRunId },
+    ListRuns { filter: RunListFilter, page: PublicPageRequest },
+    GetRunEvents { run_id: AgentRunId, after: Option<PublicEventCursor> },
+    GetOperation { operation_id: OperationId },
+    GetArtifact { revision_id: ArtifactRevisionId },
+    GetAgent { agent_revision_id: AgentRevisionId },
+    GetTrigger { trigger_id: TriggerDefinitionId },
+    GetConnection { connection_id: ConnectionId },
+    GetEvaluation { evaluation_run_id: EvaluationRunId },
+    GetRunExplanation { run_id: AgentRunId },
+    GetReadiness,
+}
+
+pub struct ProductQueryResult {
+    pub schema_id: String,
+    pub canonical_value: serde_json::Value,
+    pub content_hash: [u8; 32],
+    pub resource_version: Option<u64>,
+}
+
 #[async_trait::async_trait]
 pub trait ProductCommandFacade: Send + Sync {
-    async fn execute(
-        &self,
-        context: &RequestContext,
-        command: ProductCommand,
-    ) -> Result<PublicCommandReceipt, ApplicationError>;
+    async fn execute(&self, context: &RequestContext, command: ProductCommand)
+        -> Result<PublicCommandReceipt, ApplicationError>;
 }
 
 #[async_trait::async_trait]
 pub trait ProductQueryFacade: Send + Sync {
-    async fn query(
-        &self,
-        context: &RequestContext,
-        query: ProductQuery,
-    ) -> Result<ProductQueryResult, ApplicationError>;
+    async fn query(&self, context: &RequestContext, query: ProductQuery)
+        -> Result<ProductQueryResult, ApplicationError>;
 }
 ```
 
-`ProductCommand` is a closed enum of references to existing commands:
+Command payload types through `VerifyAuditIntegrityCommand` are owned by prior plans. H11 defines the two webhook commands, public paging/filter values and query projection registry. `canonical_value` is produced by a closed schema-specific projector, not arbitrary SQL/JSON.
 
-```text
-CreateRun
-PauseRun
-ResumeRun
-CancelRun
-SubmitHumanResponse
-GrantApproval
-RevisePlan
-RequestBudgetIncrease
-FireTrigger
-AcceptRunProposal
-RejectRunProposal
-CreateEvaluationRun
-VerifyAuditIntegrity
-CreateWebhookSubscription
-DisableWebhookSubscription
-```
-
-Artifact upload/download and backup/restore use dedicated services because they are streaming or deployment-scoped. No surface may bypass these facades to call repositories directly.
-
-### Artifact upload
+### Multipart upload staging and finalization
 
 ```rust
+#[derive(Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OpaqueUploadPartStorageRef(String);
+
+impl std::fmt::Debug for OpaqueUploadPartStorageRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OpaqueUploadPartStorageRef([REDACTED])")
+    }
+}
+
 pub enum ArtifactUploadSessionStatus {
     Created,
     Receiving,
@@ -590,12 +653,57 @@ pub struct ArtifactUploadPart {
     pub byte_end_exclusive: u64,
     pub byte_size: u64,
     pub content_hash: ArtifactContentHash,
-    pub staged_handle_hash: [u8; 32],
+    pub storage_ref: OpaqueUploadPartStorageRef,
     pub received_at: Timestamp,
+}
+
+pub struct StagedUploadPart {
+    pub storage_ref: OpaqueUploadPartStorageRef,
+    pub content_hash: ArtifactContentHash,
+    pub byte_size: u64,
+}
+
+#[async_trait::async_trait]
+pub trait ArtifactUploadPartStorePort: Send + Sync {
+    async fn stage(&self, request: StageUploadPartRequest)
+        -> Result<StagedUploadPart, ArtifactTransferError>;
+    async fn open(&self, reference: &OpaqueUploadPartStorageRef)
+        -> Result<ArtifactByteStream, ArtifactTransferError>;
+    async fn delete(&self, reference: &OpaqueUploadPartStorageRef)
+        -> Result<(), ArtifactTransferError>;
 }
 ```
 
-Parts are contiguous, non-overlapping and immutable. Default part size is 8 MiB; configurable range is 1–64 MiB. Maximum session size follows workspace/H6 policy. Re-uploading an ordinal with the same range/hash is idempotent; changed content conflicts. Finalization verifies total size, ordered rolling hash and H6 ingestion binding before promotion/quarantine.
+Arrival order is arbitrary. Finalization sorts by ordinal/range, rejects gaps/overlaps, opens parts sequentially and streams one combined body into H6 `StageArtifactBlobRequest`. Default part size is 8 MiB; range is 1–64 MiB.
+
+Application transfer DTOs:
+
+```rust
+pub struct CreateArtifactUpload {
+    pub declared_media_type: Option<String>,
+    pub original_filename: Option<String>,
+    pub expected_size: Option<u64>,
+    pub expected_hash: Option<ArtifactContentHash>,
+    pub requested_part_size: Option<u64>,
+}
+
+pub struct AppendArtifactUploadPart {
+    pub session_id: ArtifactUploadSessionId,
+    pub ordinal: u32,
+    pub byte_start: u64,
+    pub body: ArtifactByteStream,
+}
+
+pub struct FinalizeArtifactUpload {
+    pub session_id: ArtifactUploadSessionId,
+    pub expected_logical_revision: u64,
+}
+
+pub struct IssuedArtifactDownloadGrant {
+    pub grant: ArtifactDownloadGrant,
+    pub clear_token: String,
+}
+```
 
 ### Artifact download grants
 
@@ -614,24 +722,45 @@ pub struct ArtifactDownloadGrant {
 }
 ```
 
-Default maximum uses is one and maximum lifetime is five minutes. The clear token is returned once and never persisted. Range responses include immutable ETag from the Artifact content hash and enforce `If-Range` correctly.
+Default uses is one, lifetime five minutes. Clear token is returned once and never persisted. ETag is exact content hash; `If-Range` follows HTTP semantics.
 
-### Webhook subscriptions and delivery
+### Webhook support types and cryptographic boundary
 
 ```rust
-pub enum WebhookSubscriptionLifecycle {
-    Draft,
-    Active,
-    Disabled,
-    Revoked,
+pub struct NormalizedWebhookDestination {
+    pub origin: NormalizedOrigin,
+    pub path: String,
 }
+
+pub struct WebhookResourceFilter {
+    pub resource_kind: String,
+    pub stable_id_hash: Option<[u8; 32]>,
+}
+
+pub struct WebhookRetryPolicy {
+    pub maximum_attempts: u16,
+    pub maximum_age_seconds: u64,
+    pub base_delay_seconds: u64,
+    pub maximum_delay_seconds: u64,
+}
+
+pub enum WebhookAttemptOutcome {
+    Delivered,
+    RetryableFailure,
+    TerminalFailure,
+    UnknownResponse,
+    Cancelled,
+}
+
+pub enum WebhookSubscriptionLifecycle { Draft, Active, Disabled, Revoked }
+pub enum WebhookDeliveryStatus { Pending, Delivering, Delivered, RetryScheduled, Failed, Disabled }
 
 pub struct WebhookSubscriptionRevision {
     pub id: WebhookSubscriptionRevisionId,
     pub subscription_id: WebhookSubscriptionId,
     pub workspace_id: WorkspaceId,
     pub revision: u32,
-    pub destination: NormalizedOriginAndPath,
+    pub destination: NormalizedWebhookDestination,
     pub event_type_filters: std::collections::BTreeSet<String>,
     pub resource_filters: Vec<WebhookResourceFilter>,
     pub signing_service_binding_revision_id: ServiceCredentialBindingRevisionId,
@@ -652,15 +781,6 @@ pub struct WebhookDelivery {
     pub created_at: Timestamp,
 }
 
-pub enum WebhookDeliveryStatus {
-    Pending,
-    Delivering,
-    Delivered,
-    RetryScheduled,
-    Failed,
-    Disabled,
-}
-
 pub struct WebhookDeliveryAttempt {
     pub id: WebhookDeliveryAttemptId,
     pub delivery_id: WebhookDeliveryId,
@@ -671,9 +791,41 @@ pub struct WebhookDeliveryAttempt {
     pub safe_code: String,
     pub observed_at: Timestamp,
 }
+
+pub struct SignWebhookRequest {
+    pub service_binding_revision_id: ServiceCredentialBindingRevisionId,
+    pub timestamp: Timestamp,
+    pub delivery_id: WebhookDeliveryId,
+    pub exact_body: bytes::Bytes,
+}
+
+pub struct WebhookSignature { pub header_value: String }
+
+#[async_trait::async_trait]
+pub trait WebhookSigningPort: Send + Sync {
+    async fn sign(&self, request: SignWebhookRequest)
+        -> Result<WebhookSignature, ApplicationError>;
+}
 ```
 
-One delivery contains 1–100 events and at most 1 MiB canonical JSON. Attempts are capped at 12 over 24 hours with exponential backoff and jitter. HTTP `2xx` is delivered; `408`, `425`, `429` and `5xx` are retryable; other `4xx` fail. Response bodies are not stored. A lost response schedules the same immutable delivery again under at-least-once semantics.
+The signing adapter consumes H8 authorization/lease at the enforcement point and returns only the bounded signature. One delivery contains 1–100 events, ≤1 MiB. Attempts cap at 12/24h. `2xx` succeeds; `408/425/429/5xx` retry; other `4xx` fail. Lost response retries the same immutable delivery.
+
+Webhook commands:
+
+```rust
+pub struct CreateWebhookSubscriptionCommand {
+    pub destination: NormalizedWebhookDestination,
+    pub event_type_filters: std::collections::BTreeSet<String>,
+    pub resource_filters: Vec<WebhookResourceFilter>,
+    pub signing_service_binding_revision_id: ServiceCredentialBindingRevisionId,
+    pub maximum_classification: DataClassification,
+}
+
+pub struct DisableWebhookSubscriptionCommand {
+    pub subscription_id: WebhookSubscriptionId,
+    pub expected_revision: u64,
+}
+```
 
 ### SDK retry contract
 
@@ -686,44 +838,33 @@ pub enum SdkRetryClass {
 }
 ```
 
-- `GET`, range reads and SSE reconnect use `SafeRead`.
-- A command with a stable caller-supplied idempotency key may use `SameIdempotentCommand` only after a transport failure known to occur before any response body and only against the same endpoint/body/hash.
-- `operation_unknown`, H4/H9A Unknown and webhook/Artifact finalization ambiguity use `StatusOrReconciliationOnly`.
-- SDKs never generate a new idempotency key during retry.
+Reads/range/SSE use SafeRead. SameIdempotentCommand preserves exact endpoint/body/key. Unknown effect/finalization uses status/reconciliation only. A new retry key is forbidden.
 
-### Reference package release set
+### Reference package release and local qualification
 
 ```rust
-pub struct ReferencePackageReleaseEntry {
+pub struct ReferencePackageInstallationBinding {
+    pub release_manifest_id: ProductReleaseManifestId,
     pub stable_id: String,
-    pub version: String,
-    pub package_artifact_revision_id: ArtifactRevisionId,
     pub package_revision_id: AgentPackageRevisionId,
     pub package_lock_id: AgentPackageLockId,
-    pub regression_gate_evidence_id: RegressionGateEvidenceId,
-    pub default_profile_stable_name: String,
+    pub local_regression_gate_evidence_id: RegressionGateEvidenceId,
     pub content_hash: [u8; 32],
 }
 ```
 
-Required stable IDs:
-
-```text
-vestrace.universal-assistant
-vestrace.research
-vestrace.workspace-automation
-```
-
-The release set is pinned in the ProductReleaseManifest. Workspace activation is explicit and creates normal H9 activation revisions.
+Required stable IDs are `vestrace.universal-assistant`, `vestrace.research`, `vestrace.workspace-automation`. Portable archive/qualification hashes live in the release manifest; local H9/H10 IDs live only in installation bindings.
 
 ### Product bootstrap
 
 ```rust
 pub enum ProductBootstrapStatus {
     Created,
-    InstallingReferencePackages,
+    ImportingReleaseAssets,
     CreatingWorkspace,
     CreatingPrincipal,
+    InstallingReferencePackages,
+    RunningLocalQualification,
     ApplyingSafePolicies,
     Ready,
     Failed,
@@ -732,6 +873,7 @@ pub enum ProductBootstrapStatus {
 pub struct ProductBootstrapRun {
     pub id: ProductBootstrapRunId,
     pub deployment_profile_revision_id: ProductProfileRevisionId,
+    pub installed_release_binding_id: InstalledReleaseBindingId,
     pub status: ProductBootstrapStatus,
     pub default_workspace_id: Option<WorkspaceId>,
     pub initial_principal_id: Option<PrincipalId>,
@@ -743,11 +885,63 @@ pub struct ProductBootstrapRun {
 }
 ```
 
-Personal bootstrap may create one default workspace/principal and activate the Universal Assistant package under safe `Prepare` autonomy. Team bootstrap creates the administrative workspace/principal but does not activate workspace packages without an explicit admin command. Embedded bootstrap creates no interactive principal or package activation by default.
+Personal bootstrap creates default workspace/principal, installs packages, runs local exact qualification and may activate only Universal Assistant under Prepare autonomy. Team creates administrative scope but activates no workspace package. Embedded creates no interactive principal/activation.
 
-### Backup, restore and upgrade
+### Encrypted backup store and maintenance contracts
 
 ```rust
+#[derive(Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OpaqueBackupObjectRef(String);
+
+pub enum BackupObjectKind {
+    DatabaseSnapshot,
+    ArtifactBlob,
+    ArtifactInventory,
+    SecretBackendCiphertext,
+    RedactedConfiguration,
+    AuditVerificationReport,
+}
+
+pub struct BackupObjectDescriptor {
+    pub kind: BackupObjectKind,
+    pub object_ref: OpaqueBackupObjectRef,
+    pub plaintext_hash: [u8; 32],
+    pub ciphertext_hash: [u8; 32],
+    pub byte_size: u64,
+    pub encryption_profile_revision: String,
+}
+
+pub struct BackupTargetRevision {
+    pub id: BackupTargetRevisionId,
+    pub target_id: BackupTargetId,
+    pub revision: u32,
+    pub backend_kind: String,
+    pub safe_destination_ref: String,
+    pub service_binding_revision_id: Option<ServiceCredentialBindingRevisionId>,
+    pub encryption_service_binding_revision_id: ServiceCredentialBindingRevisionId,
+    pub signing_service_binding_revision_id: ServiceCredentialBindingRevisionId,
+    pub content_hash: [u8; 32],
+}
+
+pub struct BackupManifestSeal {
+    pub algorithm: String,
+    pub key_revision: String,
+    pub signature: Vec<u8>,
+}
+
+pub struct BackupManifest {
+    pub id: BackupManifestId,
+    pub source_deployment_id: DeploymentInstallationId,
+    pub product_release_manifest_hash: [u8; 32],
+    pub database_schema_head: String,
+    pub database_snapshot_lsn: String,
+    pub artifact_generation: u64,
+    pub objects: Vec<BackupObjectDescriptor>,
+    pub content_hash: [u8; 32],
+    pub seal: BackupManifestSeal,
+    pub created_at: Timestamp,
+}
+
 pub enum ProductMaintenanceOperationStatus {
     Created,
     Preflight,
@@ -756,31 +950,17 @@ pub enum ProductMaintenanceOperationStatus {
     Verifying,
     Ready,
     Applying,
+    RecoveryValidation,
     Completed,
     Failed,
     Cancelled,
     Unknown,
 }
 
-pub struct BackupManifest {
-    pub id: BackupManifestId,
-    pub deployment_id: DeploymentInstallationId,
-    pub product_release_manifest_id: ProductReleaseManifestId,
-    pub database_snapshot_artifact_revision_id: ArtifactRevisionId,
-    pub artifact_inventory_revision_id: ArtifactRevisionId,
-    pub secret_backend_ciphertext_inventory_revision_id: ArtifactRevisionId,
-    pub configuration_snapshot_artifact_revision_id: ArtifactRevisionId,
-    pub database_schema_head: String,
-    pub database_snapshot_lsn: String,
-    pub artifact_generation: u64,
-    pub component_hashes: Vec<[u8; 32]>,
-    pub content_hash: [u8; 32],
-    pub created_at: Timestamp,
-}
-
 pub struct BackupRun {
     pub id: BackupRunId,
     pub deployment_id: DeploymentInstallationId,
+    pub target_revision_id: BackupTargetRevisionId,
     pub status: ProductMaintenanceOperationStatus,
     pub manifest_id: Option<BackupManifestId>,
     pub operation_id: OperationId,
@@ -794,6 +974,7 @@ pub struct RestoreRun {
     pub source_manifest_id: BackupManifestId,
     pub status: ProductMaintenanceOperationStatus,
     pub target_empty_verified: bool,
+    pub source_deployment_fenced: bool,
     pub operation_id: OperationId,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
@@ -804,16 +985,69 @@ pub struct UpgradeRun {
     pub deployment_id: DeploymentInstallationId,
     pub from_release_manifest_id: ProductReleaseManifestId,
     pub to_release_manifest_id: ProductReleaseManifestId,
-    pub preflight_report_artifact_revision_id: ArtifactRevisionId,
+    pub preflight_report_hash: [u8; 32],
     pub backup_manifest_id: BackupManifestId,
     pub status: ProductMaintenanceOperationStatus,
     pub operation_id: OperationId,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
 }
+
+#[async_trait::async_trait]
+pub trait BackupStorePort: Send + Sync {
+    async fn put(&self, request: PutBackupObject)
+        -> Result<BackupObjectDescriptor, BackupStoreError>;
+    async fn inspect(&self, reference: &OpaqueBackupObjectRef)
+        -> Result<BackupObjectObservation, BackupStoreError>;
+    async fn open(&self, reference: &OpaqueBackupObjectRef)
+        -> Result<BackupByteStream, BackupStoreError>;
+    async fn delete(&self, reference: &OpaqueBackupObjectRef)
+        -> Result<(), BackupStoreError>;
+}
+
+#[async_trait::async_trait]
+pub trait BackupCryptographyPort: Send + Sync {
+    async fn encrypt(&self, request: EncryptBackupStream)
+        -> Result<EncryptedBackupStream, ApplicationError>;
+    async fn decrypt(&self, request: DecryptBackupStream)
+        -> Result<BackupByteStream, ApplicationError>;
+    async fn seal_manifest(&self, content_hash: [u8; 32], binding: ServiceCredentialBindingRevisionId)
+        -> Result<BackupManifestSeal, ApplicationError>;
+}
 ```
 
-Backup quiescence blocks new write commands, waits for active database transactions to finish and pauses new work leasing, but does not kill running external operations. If effectful operations remain Dispatching/Unknown after the configured maximum, backup fails safely rather than claiming a consistent snapshot. The secret master key is documented and backed up separately by the operator.
+Application maintenance DTOs:
+
+```rust
+pub struct CreateBackup {
+    pub deployment_id: DeploymentInstallationId,
+    pub target_revision_id: BackupTargetRevisionId,
+    pub maximum_quiesce_seconds: u64,
+}
+
+pub struct BackupVerificationReport {
+    pub manifest_id: BackupManifestId,
+    pub valid_signature: bool,
+    pub all_objects_present: bool,
+    pub all_hashes_match: bool,
+    pub compatible_release: bool,
+    pub content_hash: [u8; 32],
+}
+
+pub struct CreateRestore {
+    pub target_deployment_id: DeploymentInstallationId,
+    pub source_manifest_id: BackupManifestId,
+    pub source_deployment_fenced: bool,
+}
+
+pub struct CreateUpgrade {
+    pub deployment_id: DeploymentInstallationId,
+    pub target_release_manifest_id: ProductReleaseManifestId,
+    pub backup_target_revision_id: BackupTargetRevisionId,
+}
+```
+
+Backups are encrypted before `BackupStorePort`. Manifest seal is Ed25519. Restore is disaster recovery only; it verifies empty target, source identity/fencing, signature, object hashes and release compatibility. RecoveryValidation keeps Triggers, webhooks and external commits disabled until doctor checks pass.
 
 ### Product readiness
 
@@ -833,6 +1067,16 @@ pub enum ReadinessCheckKind {
     AuditIntegrity,
 }
 
+pub enum ReadinessCheckStatus { Healthy, Degraded, Failed, Unknown }
+
+pub struct ProductReadinessCheck {
+    pub kind: ReadinessCheckKind,
+    pub required: bool,
+    pub status: ReadinessCheckStatus,
+    pub safe_code: String,
+    pub observed_revision: Option<String>,
+}
+
 pub struct ProductReadinessReport {
     pub product_release_manifest_id: ProductReleaseManifestId,
     pub profile_revision_id: ProductProfileRevisionId,
@@ -842,25 +1086,24 @@ pub struct ProductReadinessReport {
 }
 ```
 
-`/health/live` reports process liveness only. `/health/ready` is successful only when mandatory profile checks pass. Optional provider/remote-agent unavailability appears as degraded detail unless the active profile/package requires it.
+`/health/live` is process liveness only. `/health/ready` requires all profile-required checks; optional providers/remotes may be degraded unless active package/profile requires them.
 
 ---
 
 ### Task 1: Add product, public-surface, transfer, webhook and maintenance contracts
 
-**Files:** create H11 domain modules, modify IDs and exports, add unit/property tests.
+**Files:** create H11 domain modules, modify IDs/exports and add unit/property tests.
 
-**Consumes:** all authoritative IDs and contracts from v0.1/H1–H10/H9A.
+**Produces:** every H11 value/aggregate above.
 
-**Produces:** every H11 domain/value contract defined above.
-
-- [ ] Add all H11 IDs: `ProductProfileRevisionId`, `ProductReleaseManifestId`, `DeploymentInstallationId`, `PublicRequestId`, `PublicRequestBindingId`, `PublicSchemaBundleId`, `PublicSchemaBundleRevisionId`, `ArtifactUploadSessionId`, `ArtifactDownloadGrantId`, `WebhookSubscriptionId`, `WebhookSubscriptionRevisionId`, `WebhookDeliveryId`, `WebhookDeliveryAttemptId`, `ProductBootstrapRunId`, `BackupManifestId`, `BackupRunId`, `RestoreRunId`, `UpgradeRunId`.
-- [ ] Write transition tests for upload, webhook, bootstrap and maintenance operation states, including terminal closure and explicit Unknown handling.
-- [ ] Write canonical-hash tests for public request, schema bundle, package release set, webhook body/signature input, release manifest and backup manifest.
-- [ ] Write tests proving product operations cannot be placed in `RunCheckpointV9` and do not increment RunVersion by themselves.
-- [ ] Write validation tests for profile-safe defaults, release digests, idempotency keys, public error bounds, upload ranges, download-grant lifetime, webhook limits and empty-target restore.
-- [ ] Implement the normative types and validation exactly as specified.
-- [ ] Run and commit:
+- [ ] Add IDs: `ProductProfileRevisionId`, `ProductReleaseManifestId`, `InstalledReleaseBindingId`, `DeploymentInstallationId`, `PublicRequestId`, `PublicRequestBindingId`, `PublicSchemaBundleId`, `PublicSchemaBundleRevisionId`, `ArtifactUploadSessionId`, `ArtifactDownloadGrantId`, `WebhookSubscriptionId`, `WebhookSubscriptionRevisionId`, `WebhookDeliveryId`, `WebhookDeliveryAttemptId`, `ProductBootstrapRunId`, `BackupTargetId`, `BackupTargetRevisionId`, `BackupManifestId`, `BackupRunId`, `RestoreRunId`, `UpgradeRunId`.
+- [ ] Test transition closure for upload/webhook/bootstrap/maintenance including Unknown and RecoveryValidation.
+- [ ] Golden-test canonical hashes/signatures for public request, schema bundle, release manifest, webhook signature input and backup manifest.
+- [ ] Prove portable release/backup manifests reject deployment-local schema/package/Artifact UUIDs except their own local persistence ID.
+- [ ] Prove H11 state cannot serialize into RunCheckpointV9 or increment RunVersion alone.
+- [ ] Validate profile defaults, release assets/digests, idempotency bounds, errors, upload ranges, grant lifetime, webhook limits, backup target and empty/fenced restore.
+- [ ] Implement all normative types.
+- [ ] Run/commit:
 
 ```bash
 cargo test -p vestrace-domain product:: public_api:: transfer:: webhook:: backup::
@@ -868,111 +1111,63 @@ git add crates/vestrace-domain
 git commit -m "feat(product): add H11 surface and release contracts"
 ```
 
-### Task 2: Define the shared product facade and surface-parity test harness
+### Task 2: Define shared facades, cryptographic/staging ports and parity fixtures
 
-**Files:** create application surface/product modules and deterministic parity fixtures/tests.
+**Files:** create application product/surface/transfer/webhook/backup modules and deterministic test support.
 
-**Interfaces:**
-
-```rust
-#[async_trait::async_trait]
-pub trait PublicRequestBindingPort: Send + Sync {
-    async fn begin(
-        &self,
-        context: &RequestContext,
-        request: BeginPublicRequest,
-    ) -> Result<PublicRequestDisposition, ApplicationError>;
-    async fn complete(
-        &self,
-        context: &RequestContext,
-        request: CompletePublicRequest,
-    ) -> Result<PublicRequestBinding, ApplicationError>;
-}
-
-#[async_trait::async_trait]
-pub trait PublicSchemaRegistryPort: Send + Sync {
-    async fn current_bundle(
-        &self,
-        context: &RequestContext,
-        api_major: u16,
-    ) -> Result<PublicSchemaBundleRevision, ApplicationError>;
-}
-
-#[async_trait::async_trait]
-pub trait ArtifactTransferPort: Send + Sync {
-    async fn create_upload(&self, context: &RequestContext, request: CreateArtifactUpload)
-        -> Result<ArtifactUploadSession, ApplicationError>;
-    async fn append_part(&self, context: &RequestContext, request: AppendArtifactUploadPart)
-        -> Result<ArtifactUploadSession, ApplicationError>;
-    async fn finalize_upload(&self, context: &RequestContext, request: FinalizeArtifactUpload)
-        -> Result<ArtifactUploadSession, ApplicationError>;
-    async fn create_download_grant(&self, context: &RequestContext, request: CreateArtifactDownloadGrant)
-        -> Result<IssuedArtifactDownloadGrant, ApplicationError>;
-}
-
-#[async_trait::async_trait]
-pub trait ProductMaintenancePort: Send + Sync {
-    async fn create_backup(&self, context: &RequestContext, request: CreateBackup)
-        -> Result<BackupRun, ApplicationError>;
-    async fn verify_backup(&self, context: &RequestContext, manifest_id: BackupManifestId)
-        -> Result<BackupVerificationReport, ApplicationError>;
-    async fn restore(&self, context: &RequestContext, request: CreateRestore)
-        -> Result<RestoreRun, ApplicationError>;
-    async fn upgrade(&self, context: &RequestContext, request: CreateUpgrade)
-        -> Result<UpgradeRun, ApplicationError>;
-}
-```
-
-- [ ] Implement `ProductCommandFacade` and `ProductQueryFacade` as thin dispatchers to existing application services; no repository access or duplicated policy logic.
-- [ ] Define canonical public request hashing, receipt construction, error normalization and resource links in application-owned DTOs.
-- [ ] Build a parity harness that submits the same normalized command through direct facade, HTTP mapping, CLI mapping and MCP mapping and compares canonical resource/event hashes.
-- [ ] Include negative parity cases for denied capability, approval required, version conflict, budget exceeded, operation unknown and cross-workspace access.
-- [ ] Add fixture adapters for upload bytes, webhook receiver, backup target and release manifests.
-- [ ] Compile-test every port for object safety and Send/Sync.
-- [ ] Run and commit:
+- [ ] Implement all application DTOs/ports defined above plus `PublicRequestBindingPort`, `PublicSchemaRegistryPort`, `ArtifactTransferPort`, `ProductMaintenancePort`.
+- [ ] `ProductCommandFacade` delegates only to existing command services; query facade uses closed schema projectors, never repositories/raw SQL.
+- [ ] Add `ArtifactUploadPartStorePort`, `WebhookSigningPort`, `BackupStorePort`, `BackupCryptographyPort`, release-signing and pagination/download-token signing ports.
+- [ ] Build parity fixtures that submit identical command/key/body through direct facade, HTTP mapper, local CLI mapper and MCP mapper and compare canonical resource/event hashes.
+- [ ] Negative parity: denied capability, approval required, version conflict, budget exceeded, Unknown and cross-workspace access.
+- [ ] Add faults after idempotency claim, existing command commit, upload-part stage, webhook body persist, backup object put and manifest seal.
+- [ ] Compile-test object safety/Send/Sync and redacted Debug for opaque refs.
+- [ ] Run/commit:
 
 ```bash
-cargo test -p vestrace-application surface:: product::
+cargo test -p vestrace-application surface:: product:: transfer:: webhook:: backup::
 cargo test --test surface_parity
 git add crates/vestrace-application tests/surface_parity.rs fixtures/product
-git commit -m "feat(product): add shared surface facade and parity harness"
+git commit -m "feat(product): add shared facades and boundary ports"
 ```
 
-### Task 3: Persist public request bindings, schema bundles and release-surface metadata
+### Task 3: Persist cross-surface idempotency, schema bundles and release bindings
 
-**Files:** create migration `0081`, product repositories/services and persistence tests.
+**Files:** create `0081`, repositories/services/tests.
 
-- [ ] `0081` creates `public_request_bindings`, schema-bundle identities/revisions/artifact links, release-surface capability rows and public-operation resource links.
-- [ ] Enforce uniqueness by workspace, principal, surface, operation and idempotency-key hash.
-- [ ] `begin` atomically returns `New`, `ExistingSameRequest` or `Conflict`; no command runs before `New` is durably claimed.
+- [ ] `0081` creates public request bindings, schema bundle identities/revisions/artifact links, release manifest rows/signatures, installed-release bindings and public-operation resource links.
+- [ ] Uniqueness excludes surface and is `(workspace, principal, operation, idempotency hash)`.
+- [ ] `begin` atomically returns New/ExistingSameRequest/Conflict before command execution.
 - [ ] `complete` stores exact response/resource hash and existing Operation/Run/resource reference.
-- [ ] Schema bundle revisions are immutable, artifact-backed and bound to one API major.
-- [ ] Persist no Authorization header, bearer token, request body, raw error, trace header or console state.
-- [ ] Tests cover concurrent duplicate commands, crash before/after command dispatch, response reconstruction, changed-body conflict and schema-bundle immutability.
-- [ ] Run and commit:
+- [ ] Portable manifest bytes/signature are verified before persistence; installed binding validates local schema/package hashes.
+- [ ] Schema bundle revisions are immutable, deployment-system-workspace Artifact-backed and bound to one portable hash/API major.
+- [ ] Persist no auth header/token/body/raw error/trace/user-agent/console state.
+- [ ] Test concurrent cross-surface duplicate, crash before/after command commit, changed body, manifest signature and local binding mismatch.
+- [ ] Run/commit:
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test public_api_idempotency --test schema_compatibility
+  cargo test --test public_api_idempotency --test schema_compatibility --test release_manifest
 git add migrations/0081_public_request_bindings_schema_bundles_and_release_surfaces.sql \
   crates/vestrace-infrastructure/src/postgres/product tests
-git commit -m "feat(api): persist public request and schema bindings"
+git commit -m "feat(api): persist request schema and release bindings"
 ```
 
-### Task 4: Complete the versioned HTTP API and durable SSE surface
+### Task 4: Complete `/v1` HTTP, admin and durable SSE surfaces
 
-**Files:** implement HTTP router/middleware/DTO/routes/SSE and contract tests.
+**Files:** implement HTTP router/middleware/DTO/routes/SSE/tests.
 
-- [ ] Mount `/v1` resources for workspaces, conversations/interactions, Runs/steps/events/approvals/artifacts, agents/skills/workflows/tools, triggers/proposals, connections, policies/models/extensions, remote agents, evaluations, audit and operations.
-- [ ] Implement explicit commands: Create/Pause/Resume/Cancel Run, SubmitHumanResponse, GrantApproval, RevisePlan, RequestBudgetIncrease, FireTrigger, Accept/RejectRunProposal and CreateEvaluationRun.
-- [ ] Return `202` receipts for async commands, `200/201` only when the command completed synchronously by contract, `409` for version/idempotency conflict, `428` when required `If-Match` is absent and `422` for semantic validation.
-- [ ] Implement request ID, body/field limits, bearer/local authentication, workspace resolution, capability checks, idempotency and expected-version middleware in deterministic order.
-- [ ] Build public error mapping with stable codes and no internal diagnostics.
-- [ ] Implement bounded signed pagination tokens tied to workspace, principal, query hash and expiry.
-- [ ] Implement SSE from H7 with cursor resume, heartbeat comments, slow-client disconnect, schema validation and exact viewer-policy filtering.
-- [ ] Generate immutable ETags for revisioned resources and use weak ETags only for explicitly lagging projections.
-- [ ] Test all published operations against OpenAPI examples and negative security cases.
-- [ ] Run and commit:
+- [ ] Mount `/v1` resources for workspaces, conversations/interactions, Runs/steps/events/approvals/artifacts, agents/skills/workflows/tools, triggers/proposals, connections, policies/models/extensions/remotes, evaluations/audit/operations/webhooks/schemas.
+- [ ] Keep provider/secret/hard-purge/backup/upgrade endpoints under capability-gated `/admin/v1`.
+- [ ] Implement explicit Run/HumanResponse/Approval/Plan/Budget/Trigger/Proposal/Evaluation/Webhook commands; no unrestricted PATCH.
+- [ ] Return `202` async receipts; `409` conflict, `428` missing precondition, `422` semantic validation and bounded error envelopes.
+- [ ] Middleware order: request ID → transport/auth validation → scope → body limits → idempotency/precondition → application facade → error/receipt mapping.
+- [ ] LocalTrusted browser writes require exact Origin/Host/Sec-Fetch-Site and process-local console nonce. Bearer requests use exact CORS allowlist and no credentials cookies.
+- [ ] Signed pagination tokens use H8 signing port and bind workspace/principal/query/expiry.
+- [ ] SSE uses H7 cursor, heartbeat comments, slow-client disconnect, viewer filtering and event-schema validation.
+- [ ] ETags are immutable revision/content hashes; weak ETags only for lagging projections.
+- [ ] Contract-test every published operation/example and security negative case.
+- [ ] Run/commit:
 
 ```bash
 cargo test -p vestrace-channel-http
@@ -982,20 +1177,21 @@ git add crates/vestrace-channel-http tests schemas/openapi schemas/events
 git commit -m "feat(api): expose the complete v1 product surface"
 ```
 
-### Task 5: Implement resumable Artifact upload and authorized range download
+### Task 5: Implement resumable upload and exact authorized download
 
-**Files:** create migration `0082`, transfer repositories/services and HTTP/CLI/SDK contract tests.
+**Files:** create `0082`, staging/repositories/services/HTTP/CLI/SDK tests.
 
-- [ ] `0082` creates upload sessions, immutable part rows, finalization records, download grants and grant-consumption events.
-- [ ] Create upload session only after H2 `artifact.upload` authorization and H6 quota/retention checks.
-- [ ] Stream each part into H6 staging while hashing; never buffer the whole upload in HTTP or SDK memory.
-- [ ] Atomically persist part metadata after staging success. Ambiguous blob promotion uses H6 inspect/reconciliation.
-- [ ] Finalize only when ranges are contiguous, expected size/hash match and no session expiry/cancel occurred.
-- [ ] Bind finalization to one H6 ingestion session and return Quarantined status plus Artifact reference.
-- [ ] Implement authenticated direct range download and one-use grant flow with ETag, `Range` and `If-Range` semantics.
-- [ ] Reject active-content inline rendering; set attachment disposition unless a safe H6 preview representation is explicitly requested.
-- [ ] Test resume after server restart, duplicate part, changed duplicate, expiration, size/hash mismatch, cross-workspace grant, range abuse and purge after grant issuance.
-- [ ] Run and commit:
+- [ ] `0082` creates upload sessions, immutable part rows with opaque storage refs, finalization records, download grants and consumption events.
+- [ ] Create session after H2 `artifact.upload` and H6 quota/retention checks.
+- [ ] Stage each bounded part through `ArtifactUploadPartStorePort` while hashing; HTTP/SDK never buffer whole files.
+- [ ] Persist part after stage success. Same ordinal/range/hash is idempotent; changed duplicate conflicts.
+- [ ] On finalize, sort parts and require exact contiguous coverage; stream open parts into one H6 stage request and verify expected size/hash.
+- [ ] Ambiguous final H6 promote uses inspect/reconciliation; status becomes Quarantined only after durable H6 binding.
+- [ ] Delete temporary parts after verified finalize or expiry/cancel; cleanup is idempotent.
+- [ ] Implement authenticated range download and one-use grant with ETag/Range/If-Range.
+- [ ] Force attachment unless exact safe preview representation requested.
+- [ ] Test out-of-order resume/restart, duplicate/conflict, missing range, expiry, hash/size mismatch, cross-workspace, purge and ambiguous promote.
+- [ ] Run/commit:
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -1007,20 +1203,20 @@ git add migrations/0082_artifact_upload_sessions_parts_and_download_grants.sql \
 git commit -m "feat(artifact): add resumable transfer surface"
 ```
 
-### Task 6: Implement signed outgoing webhooks with durable delivery
+### Task 6: Implement signed durable outgoing webhooks
 
-**Files:** create migration `0083`, webhook repositories/services/worker/routes and tests.
+**Files:** create `0083`, webhook repositories/services/worker/routes/tests.
 
-- [ ] `0083` creates subscription identities/revisions/lifecycle, filters, deliveries, event links, attempts and retry schedule indexes.
-- [ ] Create/activate subscription only after exact H2 policy, destination SSRF validation and H8 service-binding compatibility.
-- [ ] Build immutable canonical JSON body from authorized H7 public events after viewer/export policy filtering.
-- [ ] At attempt time obtain a fresh H8 signing lease, compute the exact HMAC signature and send with `X-Vestrace-Delivery`, `X-Vestrace-Timestamp`, `X-Vestrace-Signature` and event schema bundle headers.
-- [ ] Disable redirects, proxies, cookies, DNS rebinding and private/reserved targets unless an explicit local policy allows the exact destination.
-- [ ] Store response status and bounded safe code only; never store response body or request signature.
-- [ ] Retry the same immutable delivery according to the normative matrix. Reusing event IDs/delivery ID is required.
-- [ ] Auto-disable after terminal policy revocation, destination incompatibility or configured consecutive terminal failures; lifecycle change is separately audited.
-- [ ] Test signature golden vectors, replay/dedup headers, lost response, retry restart, `429 Retry-After`, SSRF, secret absence and subscription revision pinning.
-- [ ] Run and commit:
+- [ ] `0083` creates subscription identities/revisions/lifecycle, filters, deliveries, event links, attempts/retry indexes.
+- [ ] Activate after H2 policy, destination SSRF validation and H8 signing binding compatibility.
+- [ ] Build immutable canonical JSON from authorized H7 public events after classification/export filtering.
+- [ ] Immediately before send, call `WebhookSigningPort`; send delivery/timestamp/signature/schema headers.
+- [ ] Disable redirects/proxies/cookies, re-resolve/pin DNS and reject private/reserved destinations unless exact local policy.
+- [ ] Store response status/safe code only; no body/signature/header.
+- [ ] Retry same immutable delivery under matrix; lost response is UnknownResponse and schedules same delivery.
+- [ ] Auto-disable only by explicit configured terminal conditions; audit lifecycle change.
+- [ ] Test golden signature, receiver dedup, restart, 429, DNS rebinding/SSRF, secret absence and revision pinning.
+- [ ] Run/commit:
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -1031,19 +1227,19 @@ git add migrations/0083_webhook_subscriptions_deliveries_and_attempts.sql \
 git commit -m "feat(webhook): add signed durable event delivery"
 ```
 
-### Task 7: Complete the MCP surface through the shared facade
+### Task 7: Complete MCP through the shared facade
 
-**Files:** implement `vestrace-channel-mcp`, MCP schemas/docs and parity tests.
+**Files:** implement channel, schemas/docs/parity tests.
 
-- [ ] Preserve all v0.1 memory/context/model/cognitive/execution tools and map Harness operations through the same application facades.
-- [ ] Add agent-facing tools for create/get/follow Run, submit HumanResponse, list pending approvals, grant approval when capability permits, read Artifact metadata/preview, list/get Agent/Skill/Workflow and create EvaluationRun when explicitly allowed.
-- [ ] Keep provider/secret/package-policy administration, hard purge, backup/restore and unrestricted export unavailable to ordinary MCP clients.
-- [ ] Expose read-only URI resources for memory, Run, step, event, Artifact, Agent, Workflow and Operation with exact workspace scope.
-- [ ] Support stdio local-trusted mode and Streamable HTTP bearer mode; transport identity never overrides authenticated principal/workspace.
-- [ ] Convert application errors to stable MCP errors with operation/HumanRequest references but no internal fields.
-- [ ] Validate tool/resource schemas against `schemas/mcp/v1.json` and prove canonical parity with HTTP/CLI for overlapping commands.
-- [ ] Test approval binding, idempotency, version conflict, Unknown, cursor follow and cross-workspace denial.
-- [ ] Run and commit:
+- [ ] Preserve v0.1 memory/context/model/cognitive/execution tools.
+- [ ] Add create/get/follow Run, HumanResponse, pending approvals, exact grant when capable, Artifact metadata/preview, Agent/Skill/Workflow and Evaluation tools.
+- [ ] Exclude provider/secret/package-policy admin, hard purge, backup/restore and unrestricted export from ordinary MCP.
+- [ ] Expose read-only memory/Run/step/event/Artifact/Agent/Workflow/Operation resources.
+- [ ] Support stdio LocalTrusted and Streamable HTTP BearerToken; transport metadata grants nothing.
+- [ ] Map application errors safely and validate `schemas/mcp/v1.json`.
+- [ ] Prove parity for overlapping commands including cross-surface idempotency.
+- [ ] Test approvals, versions, Unknown, cursor follow and RLS.
+- [ ] Run/commit:
 
 ```bash
 cargo test -p vestrace-channel-mcp
@@ -1052,19 +1248,19 @@ git add crates/vestrace-channel-mcp schemas/mcp docs/mcp.md tests
 git commit -m "feat(mcp): expose the H11 agent-facing surface"
 ```
 
-### Task 8: Build the Rust SDK ergonomic layer
+### Task 8: Build the Rust SDK
 
-**Files:** create `vestrace-sdk-rust`, docs/examples and SDK contract tests.
+**Files:** create SDK/docs/examples/tests.
 
-- [ ] Generate or include public DTOs from the exact OpenAPI/schema bundle without importing domain or SQL types.
-- [ ] Implement `VestraceClient` with explicit base URL, bearer/local mode, timeouts, user agent and no ambient proxy by default.
-- [ ] Add ergonomic modules for Runs, operations, SSE, Artifacts, approvals, agents, triggers, evaluations and webhooks.
-- [ ] Implement a resumable upload stream from `AsyncRead`, range download stream and H7 cursor reconnect.
-- [ ] Implement caller-provided or generated-once idempotency keys; preserve the same key/body across allowed retries.
-- [ ] Expose typed `ApprovalRequired`, `VersionConflict`, `BudgetExceeded`, `OperationUnknown` and `RateLimited` errors.
-- [ ] Never automatically retry a changed body, Unknown side effect, approval grant, cancel/commit-like command or expired download grant.
-- [ ] Add contract tests against the loopback product server and compile examples for create/follow/respond/download.
-- [ ] Run and commit:
+- [ ] Generate/include public types from exact schemas; no domain/SQL types.
+- [ ] Implement explicit-base-URL `VestraceClient`, bearer/local config, timeouts, no ambient proxy.
+- [ ] Modules: Runs, operations, SSE, Artifacts, approvals, agents, triggers, evaluations, webhooks.
+- [ ] Stream upload from `AsyncRead`, range download and cursor reconnect.
+- [ ] Generate idempotency key once per command object or accept caller key; preserve exact key/body on allowed retry.
+- [ ] Typed ApprovalRequired/VersionConflict/BudgetExceeded/OperationUnknown/RateLimited.
+- [ ] Never auto-retry changed body, Unknown, approval grant, cancel/commit-like command or expired grant.
+- [ ] Loopback contract tests/examples.
+- [ ] Run/commit:
 
 ```bash
 cargo test -p vestrace-sdk-rust
@@ -1074,20 +1270,19 @@ git add crates/vestrace-sdk-rust docs/sdk-rust.md scripts/verify-sdk-generation.
 git commit -m "feat(sdk): add the Rust product client"
 ```
 
-### Task 9: Build the TypeScript SDK for Node and browsers
+### Task 9: Build the TypeScript SDK
 
-**Files:** create `packages/sdk-typescript`, generated types, tests and docs.
+**Files:** create package/generated types/tests/docs.
 
-- [ ] Generate TypeScript public DTOs from the exact OpenAPI/event/JSON schemas and preserve unknown compatible fields.
-- [ ] Implement ESM-first client with Node 20+ and evergreen-browser targets; provide no implicit global singleton.
-- [ ] Add helpers for Run creation/following, HumanResponse/approval, operation polling, Artifact upload/download, triggers and evaluations.
-- [ ] Implement SSE reconnect using cursor and event-ID dedup; abort signals cancel local waiting but do not imply Run cancellation.
-- [ ] Stream uploads with bounded chunks; do not read large files wholly into memory.
-- [ ] Keep bearer token only in caller-supplied memory; never write browser storage or logs.
-- [ ] Apply the same retry classes as the Rust SDK and surface Unknown explicitly.
-- [ ] Run contract tests in Node and browser-compatible test environment against deterministic fixtures.
-- [ ] Build a versioned npm tarball artifact for release tests; public npm publication is not required.
-- [ ] Run and commit:
+- [ ] Generate types from OpenAPI/events/JSON schemas and preserve compatible unknown fields.
+- [ ] ESM-first Node 20+/evergreen browser client; no singleton.
+- [ ] Helpers for Runs, responses/approvals, operations, Artifacts, triggers/evaluations.
+- [ ] Implement bearer-capable SSE with `fetch` streaming/parser rather than native EventSource; reconnect by cursor/event dedup.
+- [ ] Browser upload uses bounded `Blob.slice`; Node uses streams; neither buffers full file.
+- [ ] Caller-supplied token remains memory-only; no storage/logging.
+- [ ] Same retry classes and explicit Unknown.
+- [ ] Node/browser-compatible contract tests and versioned npm tarball release artifact.
+- [ ] Run/commit:
 
 ```bash
 npm --prefix packages/sdk-typescript ci
@@ -1099,21 +1294,21 @@ git add packages/sdk-typescript docs/sdk-typescript.md tests scripts
 git commit -m "feat(sdk): add the TypeScript product client"
 ```
 
-### Task 10: Publish schemas and integrate the three reference Agent Packages
+### Task 10: Generate schemas, reference packages, profiles and bootstrap
 
-**Files:** create migration `0084`, schemas, reference packages, bootstrap/release services and tests.
+**Files:** create `0084`, schemas/packages/bootstrap/install bindings/tests.
 
-- [ ] `0084` creates ProductProfile revisions, bootstrap runs/events, release manifests, reference-package release entries and deployment-installation identity.
-- [ ] Generate OpenAPI 3.1, event JSON Schemas, public JSON Schemas, MCP schema, extension schema, A2A reference and product config/release schemas deterministically.
-- [ ] Store generated schema bundle as H6 Artifacts and persist one immutable `PublicSchemaBundleRevision`.
-- [ ] Build portable packages `vestrace.universal-assistant`, `vestrace.research` and `vestrace.workspace-automation` using only package-local IDs and normal H9 manifests.
-- [ ] Universal Assistant provides Direct/Guided coordination, memory-aware context, internal delegation, typed HumanRequest and verification, with default autonomy no greater than Prepare.
-- [ ] Research provides read-only source discovery/fetch, source comparison, evidence requirements, internal research SubRuns and optional exact H9A remote-agent delegation.
-- [ ] Workspace Automation provides Artifact transformations, sandboxed document rendering, preview, exact approval-bound export and optional schedule definitions that are inactive until explicitly enabled.
-- [ ] Include package evaluation fixtures and require exact passing H10 gate evidence before adding each package to a release manifest.
-- [ ] Implement Personal/Team/Embedded bootstrap semantics exactly as defined; repeated bootstrap resumes or returns the same result.
-- [ ] Test package portability, permission diffs, lock reproducibility, gate expiry, bootstrap restart and no implicit Connection/Trigger/remote activation.
-- [ ] Run and commit:
+- [ ] `0084` creates ProductProfile revisions, bootstrap runs/events, deployment installation and local reference-package installation bindings.
+- [ ] Generate OpenAPI 3.1, event/JSON/MCP/extension/A2A/config/release schemas deterministically and import the exact bundle into the system workspace.
+- [ ] Build portable packages `vestrace.universal-assistant`, `vestrace.research`, `vestrace.workspace-automation` using package-local IDs.
+- [ ] Universal: Direct/Guided, memory context, internal delegation, HumanRequest, verification, autonomy ≤ Prepare.
+- [ ] Research: read-only source tools, comparison/evidence, internal SubRuns and optional exact H9A delegation.
+- [ ] Workspace Automation: Artifact transforms, Docker render, preview, exact approval/export; schedules inactive.
+- [ ] Produce portable qualification report assets during release evaluation, but target install runs local exact H10 gates before activation.
+- [ ] Implement profile bootstrap semantics; repeated bootstrap resumes/returns same result.
+- [ ] Personal may activate only locally qualified Universal; Team/Embedded activate none by default.
+- [ ] Test package portability, permission diff, locks, local gate expiry, restart and no hidden Connection/Trigger/credential/remote trust.
+- [ ] Run/commit:
 
 ```bash
 bash scripts/generate-public-schemas.sh
@@ -1122,27 +1317,28 @@ bash scripts/verify-reference-package-locks.sh
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
   cargo test --test schema_compatibility --test reference_package_install \
              --test reference_package_gate --test product_bootstrap
-git add migrations/0084_product_profiles_bootstrap_and_release_manifests.sql \
+git add migrations/0084_product_profiles_bootstrap_and_installed_release_bindings.sql \
   schemas packages/reference crates/vestrace-application/src/product \
   crates/vestrace-infrastructure/src/postgres/product tests scripts
-git commit -m "feat(product): add schemas and reference packages"
+git commit -m "feat(product): add schemas reference packages and bootstrap"
 ```
 
-### Task 11: Build the minimal secure web console
+### Task 11: Build the minimal secure console
 
-**Files:** create `apps/console`, console integration, tests and docs.
+**Files:** create React/Vite app/tests/docs.
 
-- [ ] Use only `sdk-typescript`; no console code may call PostgreSQL, internal admin ports or adapter endpoints directly.
-- [ ] Implement auth modes `LocalTrusted` and `BearerPrompt`. BearerPrompt token exists only in memory and is cleared on logout/tab close.
-- [ ] Add Runs list/detail, plan/step view, event timeline, pending HumanRequests/approvals, Artifact previews/downloads, budget/verification/explanation, Agents/packages, Connections status/auth-start, remote agents, Triggers, evaluations/audit summary and settings/readiness.
-- [ ] Require explicit confirmation and current expected version for cancellation, approval, trigger enable/fire, package activation, export and Connection changes.
-- [ ] Display exact approval challenge, operation fingerprint summary, affected resource and expiry; never reduce approval to an unscoped yes/no control.
-- [ ] Render only safe H6 representations. Untrusted text is escaped; active HTML/SVG is never placed in the DOM.
-- [ ] Add CSP with no `unsafe-eval`, no inline scripts, restricted `connect-src`, frame denial and object denial. Referrer policy is `no-referrer`.
-- [ ] Implement SSE reconnect and projection-lag indicators without treating the console cache as authority.
-- [ ] Meet keyboard navigation, focus management, semantic labels and WCAG AA contrast for release-gate views.
-- [ ] Test token non-persistence, XSS payloads, CSRF-inapplicability under bearer/local mode, stale-version confirmation, approval binding, safe preview, SSE reconnect and basic accessibility.
-- [ ] Run and commit:
+- [ ] Use only TypeScript SDK; no DB/internal repository/adapter calls.
+- [ ] Auth modes LocalTrusted and BearerPrompt. Bearer stays memory-only.
+- [ ] LocalTrusted obtains same-origin process nonce from bootstrap and sends it on writes; exact Origin/Host/Sec-Fetch enforcement.
+- [ ] Pages: Runs/detail/plan/events/HumanRequests/approvals, safe Artifact previews, budget/verification/explanation, Agents/packages, Connections status/auth start, remotes, Triggers, evaluations/audit summary, readiness/settings.
+- [ ] Explicit confirmation + expected version for cancel/approval/trigger/package/export/Connection changes.
+- [ ] Show exact approval challenge/fingerprint/resource/expiry; no unscoped yes/no.
+- [ ] Escape text; active HTML/SVG never enters DOM; only safe H6 representations.
+- [ ] CSP no unsafe-eval/inline script, restricted connect-src, frame/object deny, no-referrer.
+- [ ] SSE reconnect and projection-lag indicators; cache is not authority.
+- [ ] Keyboard/focus/labels/WCAG AA for release views.
+- [ ] Test token/nonce non-persistence, origin/nonce CSRF defense, XSS, stale version, approval binding, preview, reconnect, accessibility.
+- [ ] Run/commit:
 
 ```bash
 npm --prefix apps/console ci
@@ -1154,49 +1350,52 @@ git add apps/console docs/console.md scripts/verify-console-security.sh tests/co
 git commit -m "feat(console): add the minimal secure product UI"
 ```
 
-### Task 12: Package Personal, Team and Embedded deployments
+### Task 12: Package Personal, Team and Embedded release candidates
 
-**Files:** create product configuration, Dockerfiles, Compose profiles, readiness wiring and deployment tests/docs.
+**Files:** config, Dockerfiles, Compose, readiness, release assembly/tests/docs.
 
-- [ ] Generate/validate `schemas/product/config.schema.json`; unknown keys fail unless explicitly namespaced for extensions.
-- [ ] Build one Vestrace image with role commands and one static console image; record exact image digests in the release manifest.
-- [ ] Personal Compose includes PostgreSQL/pgvector, Vestrace all-in-one or explicit local roles, local Artifact volume, encrypted secret volume and rootless-compatible sandbox manager. Public bind defaults to `127.0.0.1`.
-- [ ] Team Compose separates server, scheduler, worker and sandbox manager, supports S3-compatible storage configuration, multiple principals/workspaces and external TLS termination. It refuses wildcard bind without trusted-proxy/TLS acknowledgment.
-- [ ] Embedded Compose disables console/bootstrap, enables only configured HTTP/MCP/A2A surfaces and exposes stable health/readiness endpoints.
-- [ ] Run containers as non-root, use read-only root filesystem where possible, declare writable paths, cap logs and set explicit health checks/restart policies.
-- [ ] Prevent Docker socket from entering server/worker/console containers; only sandbox manager receives the dedicated engine endpoint.
-- [ ] Implement startup preflight for schema head, release manifest, Artifact/secret backends, role compatibility, package/schema hashes and required workers.
-- [ ] `/health/live` remains shallow; `/health/ready` returns the profile-aware readiness report without secrets.
-- [ ] Test all profiles with generated safe config, missing dependencies, wrong migration head, non-loopback Team misconfiguration and degraded optional provider.
-- [ ] Run and commit:
+- [ ] Validate config schema; unknown keys fail except extension namespaces.
+- [ ] Build one role-capable Vestrace image and static console image; non-root/read-only boundaries.
+- [ ] Personal: PostgreSQL, local Artifact/secret volumes, rootless-compatible sandbox manager, loopback bind.
+- [ ] Team: split server/scheduler/worker/sandbox, S3 config, multiple principals/workspaces, external TLS termination; reject unsafe wildcard.
+- [ ] Embedded: console/bootstrap disabled and only configured surfaces.
+- [ ] Docker socket only at sandbox manager dedicated endpoint.
+- [ ] Startup preflight for schema, release binding, Artifact/secret, role, package/schema hashes and workers.
+- [ ] Generate SDK archives, console bundle, CycloneDX/SPDX SBOMs, license report and image digests.
+- [ ] Assemble/sign immutable ProductReleaseManifest from portable assets; persist local InstalledReleaseBinding only after signature/hash validation.
+- [ ] `/health/live` shallow; `/health/ready` profile-aware and secret-free.
+- [ ] Test profiles, missing dependencies, wrong schema, unsafe bind, degraded optional provider and manifest mismatch.
+- [ ] Run/commit:
 
 ```bash
 bash scripts/verify-image-boundary.sh
 bash scripts/verify-compose-profiles.sh
+bash scripts/verify-release-manifest.sh
 docker compose -f deploy/compose.personal.yml config
 docker compose -f deploy/compose.team.yml config
 docker compose -f deploy/compose.embedded.yml config
-cargo test --test deployment_profiles --test compose_smoke
-git add config deploy docs/deployment-*.md schemas/product/config.schema.json \
-  tests scripts .github/workflows/ci.yml
-git commit -m "feat(deploy): add self-hosted product profiles"
+cargo test --test deployment_profiles --test compose_smoke --test release_manifest
+git add config deploy docs/deployment-*.md schemas/product \
+  tests scripts .github/workflows/ci.yml .github/workflows/release.yml
+git commit -m "feat(deploy): assemble self-hosted release profiles"
 ```
 
-### Task 13: Implement backup, restore, upgrade and operator diagnostics
+### Task 13: Implement encrypted backup, disaster recovery, upgrade and doctor
 
-**Files:** create migration `0085`, maintenance services/repositories/CLI/docs and tests.
+**Files:** create `0085`, backup target/store/crypto services/repositories/CLI/docs/tests.
 
-- [ ] `0085` creates deployment-installation state, backup/restore/upgrade runs/events, immutable backup manifests, component links, maintenance locks and preflight reports.
-- [ ] Implement `vestrace backup create`, `backup verify`, `restore`, `upgrade preflight`, `upgrade apply`, `doctor` and `release inspect` through `ProductMaintenancePort`.
-- [ ] Acquire a deployment maintenance lock, reject concurrent restore/upgrade and make repeated idempotency keys return the original operation.
-- [ ] Backup enters write quiescence, pauses new work leases, checks active effectful operations and fails safely on unresolved Dispatching/Unknown beyond the configured limit.
-- [ ] Capture PostgreSQL snapshot/LSN, Artifact inventory/content hashes, encrypted secret-backend inventory and redacted configuration into H6-backed backup components.
-- [ ] Verify every component/hash/reference before marking Ready. The secret master key is excluded and operator instructions name the separate recovery requirement.
-- [ ] Restore verifies empty target, release/schema compatibility and all hashes before application; failed restore never marks the target ready.
-- [ ] Upgrade preflight requires a verified backup, exact target release manifest, migration path, schema/package/API compatibility and H10 release gates.
-- [ ] Apply forward migrations explicitly, restart roles, run doctor/readiness and record the final installed release. No automatic down migration.
-- [ ] Test crash at each phase, repeated command, corrupted component, missing Artifact, wrong key inventory, non-empty target, incompatible binary/schema and post-upgrade readiness failure.
-- [ ] Run and commit:
+- [ ] `0085` creates backup target revisions, backup/restore/upgrade runs/events, immutable manifest metadata, object descriptors, maintenance locks and preflight reports.
+- [ ] Commands: backup create/verify, restore, upgrade preflight/apply, doctor, release inspect.
+- [ ] Acquire deployment maintenance lock; idempotent repeats return same operation.
+- [ ] Quiesce writes/new leasing, wait DB transactions and fail safely if effectful Dispatching/Unknown remains beyond limit.
+- [ ] Capture PostgreSQL snapshot/LSN and all permanent Artifact blobs referenced by snapshot plus encrypted secret-backend ciphertext inventory/redacted config/audit verification.
+- [ ] Encrypt every backup object through BackupCryptographyPort before BackupStorePort; seal manifest.
+- [ ] Verify signature, presence, plaintext/ciphertext hashes and release compatibility before Ready.
+- [ ] Restore only to empty replacement with source deployment fenced; apply DB/blobs/ciphertexts and enter RecoveryValidation.
+- [ ] During RecoveryValidation disable Triggers, outgoing webhooks and external commits until doctor validates Artifact/secret/audit/release/workers and operator confirms fencing.
+- [ ] Upgrade requires verified backup, signed target manifest, migration path, API/package/schema compatibility and H10 gates; no down migration.
+- [ ] Test phase crashes, duplicate command, corruption, missing object, wrong encryption binding, non-empty/unfenced target, incompatible schema and failed recovery validation.
+- [ ] Run/commit:
 
 ```bash
 DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
@@ -1204,56 +1403,55 @@ DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
              --test upgrade_preflight --test release_manifest
 bash scripts/verify-backup-manifest.sh
 bash scripts/verify-release-manifest.sh
-git add migrations/0085_backup_restore_and_upgrade_runs.sql \
+git add migrations/0085_backup_targets_restore_and_upgrade_runs.sql \
   crates/vestrace-domain/src/backup crates/vestrace-application/src/backup \
   crates/vestrace-infrastructure/src/postgres/backup crates/vestrace-channel-cli \
   docs/backup-restore.md docs/upgrade.md docs/operations.md tests scripts
-git commit -m "feat(ops): add backup restore and upgrade workflows"
+git commit -m "feat(ops): add encrypted backup recovery and upgrade"
 ```
 
-### Task 14: Assemble and prove the universal vertical slice
+### Task 14: Assemble and prove the outbound universal vertical slice
 
-**Files:** create deterministic product fixtures, end-to-end orchestration tests and release scenario script.
+**Files:** deterministic product fixtures/E2E tests/script.
 
-- [ ] Start the Personal profile with PostgreSQL, local CAS, secret backend, sandbox manager, deterministic OpenAI-compatible provider, read-only research Tool fixture, workspace export fixture, deterministic external A2A agent and webhook receiver.
-- [ ] Bootstrap the default workspace/principal, install all three reference packages and explicitly activate the Universal Assistant plus required Research/Workspace Automation revisions after H10 gate checks.
-- [ ] Submit the canonical task through the Rust SDK or HTTP:
+- [ ] Start Personal release candidate with DB/local CAS/secret/sandbox, deterministic provider, read-only research tool, export fixture, external A2A agent and webhook receiver.
+- [ ] Bootstrap and locally qualify/activate Universal plus required Research/Workspace Automation revisions.
+- [ ] Submit canonical task:
 
 ```text
 Изучи варианты решения задачи, сравни их,
 подготовь документ и сохрани результат в рабочем пространстве.
 ```
 
-- [ ] Prove the flow:
+- [ ] Prove:
 
 ```text
 Interaction
 → AgentRuntimeSnapshot
-→ Guided ExecutionPlan validation
-→ H6 memory-aware ContextSnapshot
-→ internal Research SubRuns with narrowed grants/budgets
-→ protected outbound H9A delegation
-→ evidence and source comparison
+→ Guided validated plan
+→ memory-aware ContextSnapshot
+→ narrowed internal Research SubRuns
+→ protected outbound A2A delegation
+→ evidence/source comparison
 → H10 independent verification
-→ H4 Docker document render
+→ Docker document render
 → H6 quarantine/inspection/provenance
 → safe preview
-→ exact H7/H2 export approval
-→ H4 verified workspace export
-→ H6 deliverable
-→ memory candidates through v0.1 write policy
+→ exact export approval
+→ verified workspace export
+→ deliverable + memory candidates
 → one-use VerifiedRunCompletion
-→ terminal outcome and explanation
+→ terminal outcome/explanation
 ```
 
-- [ ] Force a complete server/worker/scheduler/sandbox-manager restart after the remote A2A task is accepted and before Artifact finalization. Resume the same Run, SubRuns, remote task and upload/assembly without duplicate effects.
-- [ ] Include one InputRequired continuation from the remote A2A agent and resume the same external Task after a typed HumanResponse and fresh H8 lease.
-- [ ] Deliver final Run events through SSE and one signed webhook; prove duplicate webhook delivery has the same delivery/event IDs.
-- [ ] Verify the exported document hash, Artifact provenance graph, evidence links, budget reconciliation, audit chain, H10 explanation and memory candidate status.
-- [ ] Inject failure variants: model response loss, Tool Unknown, remote response loss, sandbox crash, Artifact inspection outage, approval expiry and export response loss. Each must resolve safely or remain explicit Partial/Unknown without false success.
-- [ ] Run the same safe read/query/response operations through CLI and MCP and compare canonical state with HTTP.
-- [ ] Run with `provider-openai-compatible` and no Rig feature; run the ADR-approved loop feature separately.
-- [ ] Execute the scripted scenario and commit fixtures/tests only after all assertions pass.
+- [ ] Restart server/worker/scheduler/sandbox manager after remote Task acceptance and before Artifact finalize; resume same Run/SubRuns/remote Task/assemblies with no duplicates.
+- [ ] Include remote InputRequired and resume same Task after typed response/fresh H8 lease.
+- [ ] Deliver final events via SSE and signed webhook; duplicate notification retains IDs/body.
+- [ ] Verify deliverable hash/provenance/evidence/budget/audit/explanation/memory candidate.
+- [ ] Failure variants: model loss, Tool Unknown, remote loss, sandbox crash, inspection outage, approval expiry, export response loss. Resolve safely or remain Partial/Unknown.
+- [ ] Compare safe query/response operations through HTTP/CLI/MCP.
+- [ ] Run Rig-free provider-openai-compatible path and ADR-approved loop path separately.
+- [ ] Run/commit:
 
 ```bash
 bash scripts/run-h11-vertical-slice.sh
@@ -1264,52 +1462,17 @@ git add fixtures/product tests/h11_vertical_slice.rs tests/h11_restart_matrix.rs
 git commit -m "test(product): prove the universal vertical slice"
 ```
 
-### Task 15: Prove inbound A2A, RLS, schema/release compatibility and final readiness
+### Task 15: Prove inbound A2A, RLS, compatibility and final release readiness
 
-**Files:** create migration `0086`, final boundary scripts, CI/release workflow, docs and acceptance tests.
+**Files:** create `0086`, scripts, CI/release workflow, docs/tests.
 
-- [ ] `0086` forces RLS and same-workspace/principal consistency for H11 tables, append-only release/schema/backup manifests, one-use download grants and indexes for idempotency, upload resume, webhook queue, maintenance locks and release lookup.
-- [ ] Publish one exact Universal Assistant `AgentRuntimeSnapshot` through H9A with no push callbacks and a deterministic external client.
-- [ ] Prove inbound flow:
-
-```text
-external authenticated A2A client
-→ Agent Card discovery
-→ task/message send
-→ durable H9A intake
-→ one AgentRun
-→ SSE Working
-→ InputRequired
-→ continuation of same task
-→ validated Artifact/result
-→ Completed projection
-```
-
-- [ ] Verify JSON-RPC and HTTP+JSON return equivalent Task hashes and no A2A Task becomes a Run authority.
-- [ ] Add boundary scripts that reject direct repository access from surfaces/console, domain types in SDKs, token persistence, active-content rendering, schema drift, missing idempotency/version checks, unguarded download, webhook secret leakage, auto migration in Team/Embedded, backup master-key inclusion and product state in Run checkpoints.
-- [ ] Generate a release manifest with schema/package/image/SBOM hashes and verify it against built artifacts.
-- [ ] Generate CycloneDX/SPDX-compatible SBOMs, dependency audit, license report and container vulnerability scan outputs as release artifacts; configured severity policy fails the release.
-- [ ] CI jobs:
-
-```text
-format/lint/unit
-PostgreSQL migrations/RLS
-public HTTP/SSE contract
-MCP parity
-Rust SDK
-TypeScript SDK
-console security/a11y
-Artifact transfer
-webhook delivery
-reference packages/H10 gates
-Personal/Team/Embedded compose
-backup/restore/upgrade
-outbound vertical slice/restart matrix
-inbound A2A
-schema/release compatibility
-SBOM/dependency/container security
-```
-
+- [ ] `0086` forces RLS/scope consistency, append-only release/schema/backup manifests, one-use grants and indexes for idempotency/upload/webhook/maintenance/release.
+- [ ] Publish exact Universal snapshot via H9A without push; deterministic external client proves Agent Card → intake → one Run → SSE → InputRequired → same-task continuation → validated completion.
+- [ ] Prove JSON-RPC/HTTP+JSON equivalent Task hashes and projection-only Task ownership.
+- [ ] Boundary scripts reject repository access from surfaces/console, domain types in SDK, token/nonce persistence, active rendering, schema drift, missing idempotency/preconditions, unguarded download, webhook secret leakage, unsafe auto-migrate, backup key inclusion, H6-backed backup circularity and H11 state in Run checkpoints.
+- [ ] Reproduce release manifest from assets and verify signature/schema/package/image/SDK/console/SBOM/license hashes.
+- [ ] Dependency/license/container scans produce release artifacts and fail configured severity/policy.
+- [ ] CI jobs: format/lint/unit; migrations/RLS; HTTP/SSE; MCP parity; Rust/TS SDK; console; transfer; webhook; package/H10 gates; Compose; backup/restore/upgrade; outbound/restart; inbound A2A; schema/release; supply-chain scans.
 - [ ] Run final commands:
 
 ```bash
@@ -1347,11 +1510,11 @@ git commit -m "test(release): add H11 product readiness gates"
 ## Migration ownership
 
 ```text
-0081 Task 3  Public request bindings, schema bundles and release-surface metadata
-0082 Task 5  Artifact upload sessions/parts and download grants
+0081 Task 3  Public request bindings, schema bundles, release manifests and local installation bindings
+0082 Task 5  Multipart upload sessions/parts and download grants
 0083 Task 6  Webhook subscriptions, deliveries and attempts
-0084 Task 10 Product profiles, bootstrap, reference release set and release manifests
-0085 Task 13 Backup, restore and upgrade operations/manifests
+0084 Task 10 Product profiles, bootstrap and reference-package installation bindings
+0085 Task 13 Backup targets, objects, restore and upgrade operations
 0086 Task 15 RLS, indexes, append-only guards and cross-resource bindings
 ```
 
@@ -1365,7 +1528,7 @@ Create/observe Run                yes   yes  yes     yes      yes      yes    in
 Pause/resume/cancel Run           yes   yes  yes     yes      yes      yes    cancel mapping only
 Submit HumanResponse              yes   yes  yes     yes      yes      yes    continuation mapping
 Grant exact approval              yes   yes  gated   yes      yes      yes    no
-Read Run events/explanation       yes   yes  yes     yes      yes      yes    Task projection subset
+Read events/explanation           yes   yes  yes     yes      yes      yes    Task projection subset
 Upload/download Artifact          yes   yes  gated   yes      yes      yes    H9A part mapping
 Manage Trigger                    yes   yes  gated   yes      yes      yes    no
 Manage Connection                 yes   yes  no      yes      yes      yes    no
@@ -1374,91 +1537,86 @@ Backup/restore/upgrade            admin admin no     optional no       no     no
 Remote-agent invocation           indirect through Run/H5/H9A; never a generic Tool command
 ```
 
-`gated` means absent by default and exposed only when the authenticated MCP client has the exact capability and the operation is safe for the MCP surface.
+SDK and console columns are HTTP clients; they do not create separate server authority/idempotency scope. `gated` means absent by default and requires exact MCP capability/safety eligibility.
 
 ## H11 completion definition
 
-H11 is complete only when all fifteen tasks pass and the following product flows are proven:
-
 ```text
 Product bootstrap:
-exact release manifest
-→ profile-safe configuration
-→ migration/readiness checks
-→ reference package install
+signed portable release manifest
+→ local installed-release binding
+→ profile-safe config/readiness
+→ package import + local qualification
 → explicit activation
-→ usable HTTP/CLI/MCP/SDK/console surfaces
+→ HTTP/CLI/MCP/SDK/console
 
-Outbound universal task:
+Outbound task:
 interaction
-→ durable verified AgentRun
-→ internal SubRuns
-→ external A2A delegation
-→ Tool/Sandbox work
-→ Artifact preview
-→ exact approval/export
+→ durable verified Run
+→ internal SubRuns + external A2A
+→ Tool/Sandbox
+→ preview + exact approval/export
 → memory candidates
 → restart/resume
 
 Inbound A2A:
 published exact snapshot
 → authenticated intake
-→ one AgentRun
+→ one Run
 → stream/input continuation
-→ verified Task completion projection
+→ verified Task projection
 
-Release:
-public schemas
-+ reference packages/eval evidence
-+ image/SBOM hashes
-+ compose profiles
-+ backup/restore proof
-+ vertical-slice/restart proof
-→ immutable ProductReleaseManifest
+Release/recovery:
+portable schemas/packages/SDK/console/images/SBOM
+→ signed manifest
+→ Compose profiles
+→ encrypted backup/restore proof
+→ vertical-slice/restart proof
 ```
 
 Required invariants:
 
-1. H11 introduces no new execution authority or Run checkpoint schema.
-2. HTTP/CLI/MCP use the same application/policy layer.
-3. SDKs and console use only public contracts.
-4. Every write is idempotent and version-safe where required.
-5. Async commands return durable references, not long-held requests.
-6. SSE reconnect is cursor-based and idempotent.
-7. Public errors contain no internal or sensitive data.
-8. Published schemas match runtime and remain backward-compatible within v1.
-9. Artifact upload is streaming/resumable/hash-validated.
-10. Upload completion enters H6 quarantine, never direct availability.
-11. Downloads are exact-revision/range/audience authorized.
-12. Webhooks are signed, request-scoped, SSRF-safe and at-least-once with stable IDs.
-13. SDKs never retry Unknown by creating a new logical operation.
-14. Browser tokens are never persisted by SDK/console.
-15. Console renders only safe Artifact representations.
-16. Reference packages are portable, permission-reviewed and H10-gated.
-17. Bootstrap never creates hidden Connections, Triggers, credentials or remote trust.
-18. Personal/Team/Embedded share the same domain contracts.
-19. Team/Embedded do not auto-migrate or expose unsafe default binds.
-20. Sandbox workloads never receive the Docker socket.
-21. Backup manifests are complete, hash-verified and exclude the master key.
-22. Restore refuses non-empty/incompatible targets.
-23. Upgrade requires verified backup and exact release compatibility.
-24. Binary rollback never implies database down-migration.
-25. Release manifest pins schema, migration, package, image, lock and SBOM hashes.
-26. The outbound vertical slice survives complete runtime restart without duplicate local or remote effects.
-27. InputRequired resumes the same remote A2A Task.
-28. Unknown model/Tool/remote/export outcomes never produce false success.
-29. User deliverable has exact hash, provenance, inspections and verified export state.
-30. `Succeeded` consumes exact H10 verification completion.
-31. Memory candidates obey v0.1 write policy.
-32. Inbound A2A creates one intake/Task/Run and preserves Task projection ownership.
-33. HTTP+JSON and JSON-RPC A2A projections are equivalent where required.
-34. Audit chain and product explanation remain valid after restart and content purge.
-35. Release CI requires no public provider, A2A service, telemetry backend or permanent credential.
+1. No new execution authority or Run checkpoint schema.
+2. HTTP/CLI/MCP share application/policy services.
+3. SDK/console use public HTTP/SSE contracts only.
+4. Idempotency is cross-surface for the same principal/workspace/operation.
+5. Writes are version-safe where required.
+6. Async commands return durable references.
+7. SSE reconnect is cursor/idempotent.
+8. Errors contain no internals/secrets.
+9. Schemas match runtime and remain v1-compatible.
+10. Upload is streaming/resumable/hash-validated with restart-accessible opaque staging refs.
+11. Final upload enters H6 quarantine; temporary parts are cleaned.
+12. Downloads are exact revision/range/audience authorized.
+13. Webhook signing secret never reaches application; delivery is SSRF-safe/stable-ID at-least-once.
+14. SDKs never retry Unknown as a new operation.
+15. Browser bearer token/local nonce are not persisted.
+16. LocalTrusted browser writes have origin + nonce CSRF defense.
+17. Console renders only safe H6 representations.
+18. Portable release manifest has no deployment-local UUID and is signed.
+19. Local installed binding exactly matches portable hashes.
+20. Reference packages are portable, permission-reviewed, locally H10-qualified.
+21. Bootstrap creates no hidden Connection/Trigger/credential/remote trust.
+22. Personal/Team/Embedded share domain contracts and safe bind/migration defaults.
+23. Sandbox workloads never receive Docker socket.
+24. Backup is independent of H6/source DB, encrypted, hash-verified and excludes master keys.
+25. Restore is empty-target disaster recovery with source fencing/recovery validation.
+26. Upgrade requires verified backup and signed compatible release; no down migration.
+27. Release manifest pins schemas/migrations/packages/images/SDK/console/SBOM/license assets.
+28. Outbound slice survives full restart without duplicate local/remote effects.
+29. InputRequired resumes same remote Task.
+30. Unknown model/Tool/remote/export never yields false success.
+31. Deliverable has hash/provenance/inspections/verified export.
+32. Succeeded consumes exact H10 completion.
+33. Memory candidates obey v0.1 write policy.
+34. Inbound A2A creates one intake/Task/Run and projection ownership.
+35. Audit/explanation survive restart/purge.
+36. CI needs no public provider/A2A/telemetry service/permanent credential.
 
 ## Explicit non-goals
 
-H11 does not implement managed SaaS, public signup, OIDC/browser SSO, billing, Kubernetes, Kafka/NATS, public marketplace, Python SDK, mobile application, unrestricted browser automation, arbitrary raw Artifact rendering, direct SQL dashboards, mandatory A2A gRPC/SLIMRPC/push callbacks, automatic package/Trigger/Connection activation, effectful canary traffic, database down-migrations, in-place destructive restore, cross-region backup orchestration, automatic public registry publication or a full polished commercial UI.
+H11 does not implement managed SaaS, public signup, OIDC/browser SSO, billing, Kubernetes, Kafka/NATS, public marketplace, Python SDK, mobile app, unrestricted browser automation, raw active Artifact rendering, direct SQL dashboards, mandatory A2A gRPC/SLIMRPC/push, automatic package/Trigger/Connection activation, effectful canary traffic, database down-migrations, in-place destructive restore, cross-deployment cloning, cross-region backup orchestration, public registry publication or polished commercial UI.
 
 ## Documentation-only boundary
 
-Creating this document does not authorize implementation. During the documentation-only phase, do not create `feat/h11-universal-product-surface`, add React/Vite/SDK/release dependencies, create migrations `0081`–`0086`, generate or publish schemas, build images, start Compose, install or activate packages, expose APIs, issue tokens/download grants/webhooks, create backup/restore/upgrade operations, modify CI or execute H11 tests.
+Creating this document does not authorize implementation. During documentation-only work, do not create `feat/h11-universal-product-surface`, add React/Vite/SDK/release dependencies, create migrations `0081`–`0086`, generate/publish schemas, build images, start Compose, install/activate packages, expose APIs, issue tokens/download grants/webhooks, create backup/restore/upgrade operations, modify CI or execute H11 tests.
