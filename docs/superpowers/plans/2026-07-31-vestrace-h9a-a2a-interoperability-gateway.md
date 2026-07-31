@@ -6,64 +6,67 @@
 
 **Goal:** Implement a restart-safe bidirectional A2A v1 gateway that calls independent remote agents and exposes selected Vestrace agent snapshots through JSON-RPC, HTTP+JSON and SSE while preserving Vestrace ownership of Runs, policy, credentials, artifacts, continuations and reconciliation.
 
-**Architecture:** H9A extends the transport-neutral H5 `RemoteAgentInvocation`, H7 continuation/event, H8 credential and H9 remote-definition/publication boundaries. `vestrace-remote-agent-runtime` owns normalized transport requests, observations, event fingerprints, task bindings and reconciliation semantics; `vestrace-a2a-adapter` is an anti-corruption layer around exact-pinned `a2a-rs` crates. Outbound A2A Tasks remain remote-owned observations of a Vestrace invocation. Inbound A2A Tasks are protocol projections over authoritative Vestrace `AgentRun` state. No A2A response can grant authority, bypass Artifact quarantine or declare a Vestrace Run successful.
+**Architecture:** H9A extends the transport-neutral H5 `RemoteAgentInvocation`, H7 continuation/event, H8 credential and H9 remote-definition/publication boundaries. `vestrace-remote-agent-runtime` owns normalized transport requests, observations, event fingerprints, intake/task bindings and reconciliation semantics; `vestrace-a2a-adapter` is an anti-corruption layer around exact-pinned `a2a-rs` crates. Outbound A2A Tasks remain remote-owned observations of a Vestrace invocation. Inbound A2A Tasks are protocol projections over authoritative Vestrace intake and `AgentRun` state. No A2A response can grant authority, bypass Artifact quarantine or declare a Vestrace Run successful.
 
-**Tech Stack:** Existing Vestrace v0.1 plus H1–H9; Rust Edition 2024; Tokio; Serde/Schemars; SQLx and PostgreSQL 17; Axum/Tower; Reqwest with a Vestrace-owned client factory; SSE; SHA-256 and HMAC-SHA-256; H2 ActionGuard; H6 Artifact ingestion; H7 public events and HumanRequest; H8 credential leases; H9 exact Agent/Remote-Agent revisions; exact-pinned `a2a-lf` 0.3.0, `a2a-client-lf` 0.2.1 and `a2a-server-lf` 0.4.1 from source commit `515f6eacf2b4b9b17bd3910e93ac47027afaaf90`; deterministic loopback A2A fixtures; proptest; tracing with mandatory redaction.
+**Tech Stack:** Existing Vestrace v0.1 plus H1–H9; Rust Edition 2024; Tokio; Serde/Schemars; SQLx and PostgreSQL 17; Axum/Tower; Reqwest through a Vestrace-owned client factory; SSE; SHA-256 and HMAC-SHA-256; H2 ActionGuard; H6 Artifact ingestion/fetch; H7 public events and HumanRequest; H8 credential leases; H9 exact Agent/Remote-Agent revisions; exact-pinned `a2a-lf` 0.3.0, `a2a-client-lf` 0.2.1 and `a2a-server-lf` 0.4.1 from source commit `515f6eacf2b4b9b17bd3910e93ac47027afaaf90`; deterministic loopback A2A fixtures; proptest; tracing with mandatory redaction.
 
 ## Global Constraints
 
 - Complete all five v0.1 plans and H1–H9 before implementing H9A.
 - ADR-0003 `A2A Interoperability Boundary` is normative.
-- H5 `RemoteAgentInvocation`, delegation grants, handoff validation and `Unknown` semantics remain authoritative. H9A must not create a second remote-invocation aggregate.
+- H5 `RemoteAgentInvocation`, delegation grants, handoff validation and `Unknown` semantics remain authoritative. H9A never creates another remote-invocation aggregate.
 - H7 owns typed `HumanRequest`, `HumanResponse`, public event cursors and channel-independent continuation.
 - H8 owns outbound remote-agent Connections, exact remote profiles, dual-ticket credential leases and request-scoped secret injection.
 - H9 owns immutable remote-agent declaration revisions, local activation/trust revisions, exact AgentRuntimeSnapshots and Extension activation.
 - A2A Task is never an `AgentRun`, internal `SubRun`, Tool invocation, policy decision, budget account or Artifact.
-- PostgreSQL is authoritative for A2A adapter bindings, route/publication revisions, discovery observations, dispatch attempts, normalized protocol events, local stream cursors, artifact assemblies, reconciliation records, inbound request/task bindings and protocol projections.
+- PostgreSQL is authoritative for A2A adapter/security bindings, route/publication revisions, discovery observations, outbound attempts/events/assemblies/reconciliation, inbound intake/request/task bindings and protocol projections.
 - Vestrace owns all domain/application/persistence/public contracts. `a2a-rs`, Reqwest and Axum types may appear only in `vestrace-a2a-adapter` and explicit A2A wire endpoints.
-- Exact SDK baseline is locked to commit `515f6eacf2b4b9b17bd3910e93ac47027afaaf90`. Upgrades require a new adapter binding revision, conformance run and compatibility report; changing only Cargo version ranges is forbidden.
-- Initial dependencies are only `a2a-lf`, `a2a-client-lf` and `a2a-server-lf`. H9A must not depend on `a2a-pb`, `a2a-grpc`, `a2a-slimrpc` or `a2acli` in production crates.
-- `a2a-client-lf` and `a2a-server-lf` use `default-features = false` and `rustls-no-provider`. The composition root installs one deployment-approved Rustls crypto provider.
-- Do not use `a2a_client::default_reqwest_client` or default transport factories. The SDK workspace enables `system-proxy`; H9A must inject a Vestrace-owned Reqwest client with ambient proxies disabled, redirects disabled, exact TLS roots, bounded timeouts, destination checks and redacted diagnostics.
-- Initial product bindings are A2A v1 JSON-RPC over HTTP, HTTP+JSON/REST and SSE streaming/subscription.
-- gRPC, protobuf, SLIMRPC, collaborative channels and push-notification callbacks are inactive and rejected with stable `unsupported_binding` or `unsupported_operation` errors.
-- Push notification configuration methods are not registered or exposed in the first slice. A remote Agent Card advertising push does not activate it.
-- Agent Card discovery and publication never create trust or authority. Signatures and security declarations are recorded as untrusted compatibility data.
-- A remote declaration can only narrow route eligibility relative to the H9 local activation revision. It cannot add an origin, transport, Skill, data classification or credential scheme.
-- Outbound standard delegation requires a task-based response with an external task ID. A message-only response is accepted only for an explicit `ImmediateMessageAllowed` read-only profile that requires no continuation, cancellation, artifact stream or external reconciliation.
-- Reference packages and the mandatory acceptance path use `TaskRequired`.
-- Every outbound dispatch, continuation, cancellation, subscription, poll, discovery requiring authentication and extended-card request is a separately authorized operation and uses a fresh H8 credential lease.
-- One credential lease is never reused for reconnect, poll, continuation, cancellation or another transport request.
-- Credential material is injected in adapter infrastructure after lease consumption and never enters A2A messages, metadata, Agent Cards, task records, protocol events or errors.
-- Outbound `tenant` is `None` in the standard profile. Inbound `tenant`, task ID, context ID, message ID, headers and metadata are routing/consistency inputs only and never establish workspace, principal or authority.
-- Standard outbound messages use a deterministic opaque message ID derived from invocation ID, continuation sequence and canonical content hash. The SDK random `Message::new` constructor is not used for protected dispatches.
-- Optional correlation metadata uses an opaque HMAC-derived token under a Vestrace namespaced key. It contains no internal UUID and is not a bearer capability.
-- Remote status text, messages, metadata, extensions, Agent Cards, errors and artifacts are untrusted external content.
-- A2A `Completed` maps to H5 `CompletedPendingValidation`, never directly to `Succeeded`.
-- A2A `Canceled` is an observation that remote cancellation was reported; it is not evidence of rollback or compensation.
-- A2A `Unspecified`, invalid state regression, task/context mismatch or malformed field-presence union is a protocol violation and cannot silently advance an invocation.
-- A remote dispatch with a response that may have been accepted becomes `Unknown` unless a durable external task binding and exact observation were persisted.
-- `Unknown` never triggers automatic redispatch. Reconciliation uses known task/context identifiers, local correlation evidence, `GetTask`, `ListTasks` when policy permits, and transport-specific evidence; otherwise it remains `Unknown`.
-- SSE has no assumed authoritative remote event cursor. H9A persists a local monotonic event sequence and canonical event fingerprints. Reconnect performs a fresh subscription or task poll and deduplicates replayed observations.
-- A duplicate canonical event is idempotent. Same external identity with conflicting canonical content is a protocol violation.
-- A terminal remote task cannot regress to a non-terminal state. Duplicate terminal snapshots are allowed only when canonically equivalent.
-- Inbound and outbound A2A raw parts are bounded. A single decoded raw part is at most 8 MiB; aggregate raw content per message is at most 16 MiB; an assembled remote artifact is at most 64 MiB unless a stricter H6/workspace policy applies.
-- Inline text is at most 256 KiB per part and 1 MiB per message. Metadata is at most 64 KiB canonical JSON. A message has 1–64 parts. History length is `0..=50`; task list page size is `1..=100`.
-- Outbound Vestrace Artifact transfer in the first slice supports authorized text, JSON and raw bytes up to the inline limits. Outbound URL parts are disabled. Larger outbound Artifacts fail before dispatch with `remote_content_too_large`.
-- Inbound URL parts are handled only through H6 secure external fetch with scheme, redirect, DNS, SSRF, size and credential policy. The A2A adapter never fetches a URL directly.
-- Raw and incremental Artifact parts enter an H6 quarantine/ingestion session. No remote Artifact becomes Available directly.
-- `append=true` requires an existing open artifact assembly. `last_chunk=true` closes the assembly. A stream ending with an incomplete required assembly prevents successful handoff.
-- A full Task snapshot may reconcile incremental Artifact assembly only after content hashes and external Artifact IDs are consistent.
-- H7 HumanRequest is the sole user-facing continuation for `InputRequired` and `AuthRequired`. Free text does not implicitly continue a remote task.
-- H8 authentication completion produces an opaque continuation cause; the remote service never chooses the local Connection or credential scope.
-- Inbound A2A authentication is resolved by Vestrace HTTP/authentication middleware through a dedicated port. A2A `tenant` or Agent Card security metadata is never accepted as identity.
-- Inbound task creation and continuation are idempotent by authenticated external principal, publication revision, message ID and canonical request hash.
-- An inbound task binding points to one exact AgentRun and publication revision. Reusing the same message ID with changed content is a conflict.
-- Inbound protocol TaskStore data is a projection/cache only. Run status, events, checkpoints, approvals and artifacts remain authoritative in H1–H8 stores.
-- Streaming and transport frames do not increment `RunVersion`. Only canonical logical Run transitions do.
-- Replay never performs discovery, dispatch, subscribe, poll, continue, cancel, fetch, credential injection, inbound Run creation or protocol emission.
+- Exact SDK baseline is commit `515f6eacf2b4b9b17bd3910e93ac47027afaaf90`. Upgrades require a new adapter binding revision, conformance run and compatibility report.
+- Initial dependencies are only `a2a-lf`, `a2a-client-lf` and `a2a-server-lf`. Production crates must not depend on `a2a-pb`, `a2a-grpc`, `a2a-slimrpc` or `a2acli`.
+- Client/server crates use `default-features=false` and `rustls-no-provider`; the composition root installs one deployment-approved Rustls provider.
+- Do not use `a2a_client::default_reqwest_client` or SDK default transport factories. The SDK workspace enables `system-proxy`; H9A injects a Vestrace-owned client with ambient proxies and redirects disabled.
+- Initial bindings are A2A v1 JSON-RPC over HTTP, HTTP+JSON/REST and SSE send/subscription.
+- gRPC/protobuf, SLIMRPC, collaborative channels and push callbacks are inactive and return stable unsupported errors.
+- Push configuration methods are never registered in the first slice, even when a card advertises push support.
+- Agent Card discovery/publication never grants trust or authority. Signatures and security declarations are compatibility evidence only.
+- A remote declaration may only narrow route eligibility relative to the exact H9 activation. It cannot add an origin, transport, Skill, classification or credential scheme.
+- Standard outbound delegation requires a Task response with an external task ID. Message-only completion is allowed only for an explicit read-only `ImmediateMessageAllowed` route requiring no continuation, cancellation, artifact stream or reconciliation.
+- Reference packages and mandatory acceptance use `TaskRequired`.
+- Dispatch, subscribe, poll, continue, cancel and authenticated card retrieval are separate protected operations with separate H2 decisions and fresh H8 leases.
+- A lease is consumed once at the last practical enforcement point and never reused for reconnect or another request.
+- Credentials never enter A2A messages, metadata, cards, tasks, protocol events, artifacts or errors.
+- Outbound `tenant` is `None`. Inbound `tenant`, task/context/message IDs, headers and metadata are consistency inputs only and never identify workspace/principal.
+- Protected outbound messages use deterministic opaque message IDs derived from invocation, sequence and canonical content hash; the random SDK `Message::new` helper is not used.
+- Optional correlation metadata is an HMAC-derived opaque value with no internal UUID and no bearer authority.
+- Remote cards/messages/status/metadata/extensions/errors/artifacts are untrusted input.
+- A2A `Completed` maps to H5 `CompletedPendingValidation`, never directly to success.
+- A2A `Canceled` is an observation, not evidence of rollback or compensation.
+- `Unspecified`, malformed unions, task/context mismatch and terminal state regression are protocol violations.
+- A response that may have been accepted but is not durably known produces `Unknown`.
+- `Unknown` never redispatches automatically. Reconciliation uses known task/context IDs, correlation evidence, authorized Get/Subscribe/List and remains Unknown when evidence is insufficient.
+- No authoritative remote SSE cursor is assumed. H9A stores a local sequence and canonical fingerprints; reconnect resubscribes or polls and deduplicates replay.
+- Exact duplicate events are idempotent; same external identity with conflicting content is a protocol conflict.
+- A terminal remote state cannot regress. Equivalent repeated terminal snapshots are allowed.
+- One decoded raw part is at most 8 MiB, aggregate raw content per message 16 MiB and assembled remote artifact 64 MiB, subject to stricter H6/workspace policy.
+- Text is at most 256 KiB per part and 1 MiB per message; metadata at most 64 KiB canonical JSON; 1–64 parts; history `0..=50`; list page `1..=100`.
+- Outbound v0.2 supports authorized text, JSON and raw bytes within limits. Outbound URL parts and large-file hosting are disabled.
+- Inbound URL parts go through H6 secure external fetch; the A2A adapter never downloads them directly.
+- Raw/URL inbound content creates durable H6 intake work before it can affect Run context or execution.
+- No remote Artifact becomes Available directly. Incremental parts use an H6 ingestion session and quarantine/inspection.
+- `append=true` requires an open assembly; `last_chunk=true` closes it. Incomplete/conflicting required assemblies block success.
+- Full Task snapshots reconcile incremental assemblies only with consistent artifact IDs and hashes.
+- H7 HumanRequest is the only user-facing continuation for `InputRequired` and `AuthRequired`.
+- H8 authentication completion supplies an opaque cause; the remote system cannot select local Connection or scopes.
+- Inbound authentication is resolved by a Vestrace port. `tenant` and Agent Card security metadata are never accepted as identity.
+- Inbound requests are idempotent by authenticated identity, publication revision, message ID and canonical request hash.
+- Requests containing raw/URL parts first create a durable inbound intake and protocol Task in `Submitted`; CreateRun/ContinueRun occurs only after required parts are safely materialized.
+- Text/JSON-only intake may be materialized and applied in the same transaction, but follows the same state machine.
+- Reusing a message ID with changed content is an idempotency conflict.
+- Inbound protocol TaskStore is projection/cache only. Run, policy, checkpoints, events, approvals and Artifacts remain authoritative elsewhere.
+- Transport frames and projections do not increment `RunVersion`.
+- Replay never discovers, dispatches, subscribes, polls, continues, cancels, fetches, injects credentials, applies inbound intake, creates Runs or emits protocol traffic.
 - Existing migrations `0014`–`0067` are never edited. H9A migrations are `0068`–`0072`, each owned once.
-- CI uses deterministic loopback JSON-RPC/REST/SSE fixtures and generated local credentials. No public A2A service, public network, permanent credential or push callback is required.
+- CI uses deterministic loopback JSON-RPC/REST/SSE fixtures and generated local credentials; no public A2A service/network/permanent secret is required.
 - Future implementation branch: `feat/h9a-a2a-interoperability-gateway`.
 
 ---
@@ -77,120 +80,38 @@ Cargo.lock
 
 crates/vestrace-domain/src/
   id.rs
-  remote_agent/
-    mod.rs
-    transport.rs
-    protocol_event.rs
-    artifact_assembly.rs
-    inbound_binding.rs
-    publication.rs
-    reconciliation.rs
-    error.rs
-  run/
-    event.rs
-    work.rs
-    checkpoint.rs
-    mod.rs
+  remote_agent/{mod,transport,protocol_event,artifact_assembly,inbound_binding,publication,reconciliation,error}.rs
+  run/{event,work,checkpoint,mod}.rs
 
 crates/vestrace-application/src/
-  remote_agent_runtime/
-    mod.rs
-    ports.rs
-    commands.rs
-    routing.rs
-    dispatch.rs
-    stream.rs
-    continuation.rs
-    cancellation.rs
-    reconciliation.rs
-    artifact.rs
-    inbound.rs
-    projection.rs
-    publication.rs
-    worker.rs
-  composition/
-    a2a.rs
+  remote_agent_runtime/{mod,ports,commands,routing,dispatch,stream,continuation,cancellation,reconciliation,artifact,inbound,projection,publication,worker}.rs
+  composition/a2a.rs
 
-crates/vestrace-remote-agent-runtime/
-  Cargo.toml
-  src/
-    lib.rs
-    request.rs
-    observation.rs
-    event_fingerprint.rs
-    state_mapping.rs
-    content.rs
-    cursor.rs
-    errors.rs
+crates/vestrace-remote-agent-runtime/src/{lib,request,observation,event_fingerprint,state_mapping,content,cursor,errors}.rs
+crates/vestrace-a2a-adapter/src/{lib,dependency_baseline,client,client_factory,http_client,jsonrpc,rest,sse,interceptor,message_mapping,task_mapping,event_mapping,artifact_mapping,card_discovery,card_publication,server,request_handler,executor,task_projection_store,auth,error}.rs
+crates/vestrace-a2a-test-support/src/{lib,agent_card,remote_agent,client,server,jsonrpc_fixture,rest_fixture,sse_fixture,auth_fixture,artifact_fixture,faults,conformance}.rs
 
-crates/vestrace-a2a-adapter/
-  Cargo.toml
-  src/
-    lib.rs
-    dependency_baseline.rs
-    client.rs
-    client_factory.rs
-    http_client.rs
-    jsonrpc.rs
-    rest.rs
-    sse.rs
-    interceptor.rs
-    message_mapping.rs
-    task_mapping.rs
-    event_mapping.rs
-    artifact_mapping.rs
-    card_discovery.rs
-    card_publication.rs
-    server.rs
-    request_handler.rs
-    executor.rs
-    task_projection_store.rs
-    auth.rs
-    error.rs
+crates/vestrace-channel-http/src/{a2a_mount,a2a_auth}.rs
+crates/vestrace-channel-cli/src/a2a_commands.rs
+crates/vestrace-cli/src/composition/a2a.rs
 
-crates/vestrace-a2a-test-support/
-  Cargo.toml
-  src/
-    lib.rs
-    agent_card.rs
-    remote_agent.rs
-    client.rs
-    server.rs
-    jsonrpc_fixture.rs
-    rest_fixture.rs
-    sse_fixture.rs
-    auth_fixture.rs
-    artifact_fixture.rs
-    faults.rs
-    conformance.rs
-
-crates/vestrace-channel-http/src/
-  a2a_mount.rs
-  a2a_auth.rs
-
-crates/vestrace-channel-cli/src/
-  a2a_commands.rs
-
-crates/vestrace-infrastructure/src/postgres/
-  a2a/
-    mod.rs
-    binding_repository.rs
-    card_repository.rs
-    outbound_repository.rs
-    event_repository.rs
-    artifact_assembly_repository.rs
-    reconciliation_repository.rs
-    inbound_binding_repository.rs
-    projection_repository.rs
-
-crates/vestrace-cli/src/composition/
-  a2a.rs
+crates/vestrace-infrastructure/src/postgres/a2a/
+  mod.rs
+  binding_repository.rs
+  card_repository.rs
+  outbound_repository.rs
+  event_repository.rs
+  artifact_assembly_repository.rs
+  reconciliation_repository.rs
+  inbound_binding_repository.rs
+  intake_repository.rs
+  projection_repository.rs
 
 migrations/
   0068_a2a_adapter_bindings_and_routes.sql
   0069_a2a_card_discovery_and_publication.sql
   0070_a2a_outbound_attempts_events_and_reconciliation.sql
-  0071_a2a_inbound_task_bindings_and_projections.sql
+  0071_a2a_inbound_intake_task_bindings_and_projections.sql
   0072_a2a_rls_indexes_and_run_bindings.sql
 
 tests/
@@ -213,6 +134,7 @@ tests/
   a2a_artifact_assembly.rs
   a2a_artifact_quarantine.rs
   a2a_inbound_authentication.rs
+  a2a_inbound_intake.rs
   a2a_inbound_task_binding.rs
   a2a_inbound_projection.rs
   a2a_inbound_sse.rs
@@ -233,9 +155,7 @@ scripts/
 
 ## Normative contracts
 
-### Exact SDK dependency baseline
-
-The adapter Cargo manifest uses exact git revisions:
+### Exact SDK baseline
 
 ```toml
 [dependencies]
@@ -244,38 +164,33 @@ a2a-client = { package = "a2a-client-lf", git = "https://github.com/a2aproject/a
 a2a-server = { package = "a2a-server-lf", git = "https://github.com/a2aproject/a2a-rs", rev = "515f6eacf2b4b9b17bd3910e93ac47027afaaf90", default-features = false, features = ["rustls-no-provider"] }
 ```
 
-The verified source workspace versions are:
-
 ```text
 a2a-lf        0.3.0
 a2a-client-lf 0.2.1
 a2a-server-lf 0.4.1
-Rust          1.85 minimum
+Rust floor    1.85
 Edition       2024
 ```
 
-`Cargo.lock` must resolve all three crates to the exact commit. `cargo tree -i a2a-lf` must show only `vestrace-a2a-adapter` and its test-support crate as Vestrace dependants.
+`Cargo.lock` resolves all three to the exact commit. Only the adapter and test-support crates may depend on them.
 
-### Binding and route revisions
+### Binding, security and route revisions
 
 ```rust
-pub enum RemoteTransportProtocol {
-    A2A,
-}
+pub enum A2AProtocolBindingKind { JsonRpcHttp, HttpJson }
+pub enum A2AStreamingMode { Disabled, Sse }
+pub enum RemoteCompletionMode { TaskRequired, ImmediateMessageAllowed }
 
-pub enum A2AProtocolBindingKind {
-    JsonRpcHttp,
-    HttpJson,
-}
-
-pub enum A2AStreamingMode {
-    Disabled,
-    Sse,
-}
-
-pub enum RemoteCompletionMode {
-    TaskRequired,
-    ImmediateMessageAllowed,
+pub struct A2AClientSecurityProfileRevision {
+    pub id: A2AClientSecurityProfileRevisionId,
+    pub profile_id: A2AClientSecurityProfileId,
+    pub revision: u32,
+    pub minimum_tls_version: String,
+    pub extra_root_bundle_artifact_revision_id: Option<ArtifactRevisionId>,
+    pub allow_loopback_http: bool,
+    pub allow_ambient_proxy: bool,
+    pub allow_redirects: bool,
+    pub content_hash: [u8; 32],
 }
 
 pub struct A2AAdapterBindingRevision {
@@ -289,7 +204,7 @@ pub struct A2AAdapterBindingRevision {
     pub server_crate_version: String,
     pub supported_bindings: std::collections::BTreeSet<A2AProtocolBindingKind>,
     pub streaming_mode: A2AStreamingMode,
-    pub tls_profile_revision_id: TlsClientProfileRevisionId,
+    pub client_security_profile_revision_id: A2AClientSecurityProfileRevisionId,
     pub maximum_request_bytes: u64,
     pub maximum_response_bytes: u64,
     pub content_hash: [u8; 32],
@@ -320,32 +235,161 @@ pub struct A2ARemoteRouteRevision {
 }
 ```
 
-`NormalizedA2AEndpoint` rejects userinfo, query, fragment, non-HTTPS origins except explicit loopback policy, path traversal and an origin not allowed by the exact H9/H8 revisions. Route revisions are immutable and cannot choose a binding absent from both the remote declaration and adapter binding.
+Active standard security profiles require `allow_ambient_proxy=false` and `allow_redirects=false`. Loopback HTTP is test/local-development policy only. Endpoints reject userinfo/query/fragment/path traversal and origins outside exact H9/H8 allowlists.
 
-### External identifiers and correlation
+### External identifiers and roles
 
 ```rust
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct RemoteTaskKey(String);
+#[serde(transparent)] pub struct RemoteTaskKey(String);
+#[serde(transparent)] pub struct RemoteContextKey(String);
+#[serde(transparent)] pub struct RemoteMessageKey(String);
+#[serde(transparent)] pub struct RemoteArtifactKey(String);
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct RemoteContextKey(String);
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd,
-         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct RemoteMessageKey(String);
+pub enum RemoteMessageRole { User, Agent }
 
 pub struct RemoteCorrelationToken {
     pub hmac: [u8; 32],
 }
 ```
 
-External identifiers are UTF-8, 1–512 bytes, contain no control characters and use redacted bounded Debug. The clear correlation token is derived when constructing the request and is not stored as a bearer secret. It provides correlation only and grants no access.
+External keys are UTF-8, 1–512 bytes, contain no control characters and have redacted bounded Debug. Correlation grants no authority.
+
+### Transport request and observation contracts
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[serde(transparent)]
+pub struct RemoteCredentialUseHandle(String);
+
+pub struct RemoteTransportMessage {
+    pub message_key: RemoteMessageKey,
+    pub task_key: Option<RemoteTaskKey>,
+    pub context_key: Option<RemoteContextKey>,
+    pub role: RemoteMessageRole,
+    pub parts: Vec<OutboundRemoteContentPart>,
+    pub canonical_content_hash: [u8; 32],
+    pub correlation_hmac: [u8; 32],
+}
+
+pub enum OutboundRemoteContentPart {
+    Text { text: String, media_type: Option<String>, filename: Option<String> },
+    Json { value: serde_json::Value, media_type: Option<String>, filename: Option<String> },
+    Raw { revision_id: ArtifactRevisionId, byte_size: u64, media_type: String, filename: Option<String> },
+}
+
+pub struct RemoteTransportDispatchRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub attempt_id: RemoteDispatchAttemptId,
+    pub route: A2ARemoteRouteRevision,
+    pub message: RemoteTransportMessage,
+    pub completion_mode: RemoteCompletionMode,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+    pub idempotency_key: String,
+}
+
+pub struct RemoteTransportSubscribeRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub attempt_id: RemoteDispatchAttemptId,
+    pub route: A2ARemoteRouteRevision,
+    pub task_key: RemoteTaskKey,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+}
+
+pub struct RemoteTransportGetTaskRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub route: A2ARemoteRouteRevision,
+    pub task_key: RemoteTaskKey,
+    pub history_length: u16,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+}
+
+pub struct RemoteTransportListTasksRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub route: A2ARemoteRouteRevision,
+    pub correlation_hmac: [u8; 32],
+    pub page_size: u16,
+    pub opaque_page_token: Option<String>,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+}
+
+pub struct RemoteTransportContinuationRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub route: A2ARemoteRouteRevision,
+    pub task_key: RemoteTaskKey,
+    pub context_key: RemoteContextKey,
+    pub message: RemoteTransportMessage,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+    pub idempotency_key: String,
+}
+
+pub struct RemoteTransportCancellationRequest {
+    pub invocation_id: RemoteAgentInvocationId,
+    pub route: A2ARemoteRouteRevision,
+    pub task_key: RemoteTaskKey,
+    pub credential_handle: Option<RemoteCredentialUseHandle>,
+    pub deadline: Timestamp,
+    pub idempotency_key: String,
+}
+
+pub struct RemoteTaskObservation {
+    pub task_key: RemoteTaskKey,
+    pub context_key: RemoteContextKey,
+    pub state: RemoteProtocolTaskState,
+    pub status_message: Option<RemoteMessageObservation>,
+    pub artifacts: Vec<RemoteArtifactObservation>,
+    pub canonical_hash: [u8; 32],
+    pub source_timestamp: Option<Timestamp>,
+}
+
+pub struct RemoteTransportDispatchObservation {
+    pub task: Option<RemoteTaskObservation>,
+    pub immediate_message: Option<RemoteMessageObservation>,
+    pub completion_may_have_occurred: bool,
+}
+
+pub struct RemoteTaskListObservation {
+    pub tasks: Vec<RemoteTaskObservation>,
+    pub opaque_next_page_token: Option<String>,
+}
+
+pub enum RemoteProtocolWireObservation {
+    Task(RemoteTaskObservation),
+    Message(RemoteMessageObservation),
+    Status(RemoteStatusObservation),
+    Artifact(RemoteArtifactObservation),
+}
+
+pub type RemoteProtocolEventStream = std::pin::Pin<Box<
+    dyn futures_core::Stream<Item = Result<RemoteProtocolWireObservation, RemoteTransportError>> + Send
+>>;
+```
+
+`RemoteCredentialUseHandle` is one-purpose, short-lived, non-Debug in clear form and never persisted. The H8 adapter creates it only after lease issuance; the A2A adapter consumes it once.
+
+### Transport port
+
+```rust
+#[async_trait::async_trait]
+pub trait RemoteTransportPort: Send + Sync {
+    async fn dispatch(&self, request: RemoteTransportDispatchRequest)
+        -> Result<RemoteTransportDispatchObservation, RemoteTransportError>;
+    async fn subscribe(&self, request: RemoteTransportSubscribeRequest)
+        -> Result<RemoteProtocolEventStream, RemoteTransportError>;
+    async fn get_task(&self, request: RemoteTransportGetTaskRequest)
+        -> Result<RemoteTaskObservation, RemoteTransportError>;
+    async fn list_tasks(&self, request: RemoteTransportListTasksRequest)
+        -> Result<RemoteTaskListObservation, RemoteTransportError>;
+    async fn continue_task(&self, request: RemoteTransportContinuationRequest)
+        -> Result<RemoteTransportDispatchObservation, RemoteTransportError>;
+    async fn cancel_task(&self, request: RemoteTransportCancellationRequest)
+        -> Result<RemoteTaskObservation, RemoteTransportError>;
+}
+```
 
 ### Dispatch attempts
 
@@ -372,7 +416,7 @@ pub struct RemoteDispatchAttempt {
     pub operation_fingerprint: OperationFingerprint,
     pub authorization_ticket_id: AuthorizationTicketId,
     pub budget_reservation_id: Option<BudgetReservationId>,
-    pub credential_use_binding_hash: Option<[u8; 32]>,
+    pub credential_binding_hash: Option<[u8; 32]>,
     pub external_task_key: Option<RemoteTaskKey>,
     pub external_context_key: Option<RemoteContextKey>,
     pub status: RemoteDispatchAttemptStatus,
@@ -383,9 +427,9 @@ pub struct RemoteDispatchAttempt {
 }
 ```
 
-One H5 invocation normally owns one initial dispatch attempt. A later attempt is allowed only after H5 reconciliation returns `FailedSafeToRedispatch` and a new ActionGuard/budget/credential decision is issued. Attempt numbers are contiguous and unique.
+A later attempt is permitted only after H5 reconciliation returns positive `FailedSafeToRedispatch` evidence and new guards/reservations/lease are created.
 
-### Protocol states and mapping
+### Protocol states
 
 ```rust
 pub enum RemoteProtocolTaskState {
@@ -401,24 +445,20 @@ pub enum RemoteProtocolTaskState {
 }
 ```
 
-Normative mapping:
-
 ```text
-A2A Submitted      → H5 Dispatching or Working
-A2A Working        → H5 Working
-A2A InputRequired  → H5 WaitingForRemoteInput + H7 HumanRequest
-A2A AuthRequired   → H5 WaitingForAuthentication + H7 HumanRequest
-A2A Completed      → H5 CompletedPendingValidation
-A2A Failed         → H5 Failed
-A2A Rejected       → H5 Rejected
-A2A Canceled       → H5 Cancelled observation, no rollback claim
-A2A Unspecified    → protocol violation / Unknown
-lost response      → H5 Unknown
+Submitted     → H5 Dispatching/Working
+Working       → H5 Working
+InputRequired → H5 WaitingForRemoteInput + H7 HumanRequest
+AuthRequired  → H5 WaitingForAuthentication + H7 HumanRequest
+Completed     → H5 CompletedPendingValidation
+Failed        → H5 Failed
+Rejected      → H5 Rejected
+Canceled      → H5 Cancelled observation
+Unspecified   → protocol violation / Unknown
+lost response → H5 Unknown
 ```
 
-Only H5 handoff validation may move `CompletedPendingValidation` to `Succeeded`.
-
-### Normalized protocol events
+### Normalized events
 
 ```rust
 pub enum RemoteProtocolEventKind {
@@ -432,10 +472,7 @@ pub enum RemoteProtocolEventKind {
     ReconciliationObservation,
 }
 
-pub struct RemoteProtocolEventFingerprint {
-    pub schema: u16,
-    pub hash: [u8; 32],
-}
+pub struct RemoteProtocolEventFingerprint { pub schema: u16, pub hash: [u8; 32] }
 
 pub struct RemoteProtocolEvent {
     pub id: RemoteProtocolEventId,
@@ -448,7 +485,7 @@ pub struct RemoteProtocolEvent {
     pub external_task_key: Option<RemoteTaskKey>,
     pub external_context_key: Option<RemoteContextKey>,
     pub external_message_key: Option<RemoteMessageKey>,
-    pub external_artifact_key: Option<String>,
+    pub external_artifact_key: Option<RemoteArtifactKey>,
     pub event_fingerprint: RemoteProtocolEventFingerprint,
     pub normalized_state: Option<RemoteProtocolTaskState>,
     pub safe_summary: Option<String>,
@@ -459,22 +496,16 @@ pub struct RemoteProtocolEvent {
 }
 ```
 
-Fingerprint schema V1 hashes event kind, task/context/message/artifact IDs, normalized state, canonical message/metadata/content hashes, append/last-chunk flags and source timestamp. Local sequence is allocated transactionally per invocation or inbound task. Raw bodies, headers and secret material are not event fields.
+Fingerprint V1 covers event kind, external IDs, normalized state, canonical content/metadata hashes, append/final flags and source timestamp. Local sequence is transactional per invocation or inbound task.
 
-### Content mapping
+### Inbound content and H6 integration
 
 ```rust
+pub struct RemoteUrlIngestionRequestId(uuid::Uuid);
+
 pub enum RemoteContentPart {
-    Text {
-        text: String,
-        media_type: Option<String>,
-        filename: Option<String>,
-    },
-    Json {
-        value: serde_json::Value,
-        media_type: Option<String>,
-        filename: Option<String>,
-    },
+    Text { text: String, media_type: Option<String>, filename: Option<String> },
+    Json { value: serde_json::Value, media_type: Option<String>, filename: Option<String> },
     RawCandidate {
         ingestion_session_id: ArtifactIngestionSessionId,
         decoded_size: u64,
@@ -482,7 +513,7 @@ pub enum RemoteContentPart {
         filename: Option<String>,
     },
     UrlCandidate {
-        fetch_request_id: ExternalArtifactFetchRequestId,
+        ingestion_request_id: RemoteUrlIngestionRequestId,
         normalized_url_hash: [u8; 32],
         media_type: Option<String>,
         filename: Option<String>,
@@ -497,9 +528,25 @@ pub struct RemoteMessageObservation {
     pub parts: Vec<RemoteContentPart>,
     pub canonical_content_hash: [u8; 32],
 }
+
+pub struct RemoteArtifactObservation {
+    pub artifact_key: RemoteArtifactKey,
+    pub parts: Vec<RemoteContentPart>,
+    pub append: bool,
+    pub last_chunk: bool,
+    pub canonical_content_hash: [u8; 32],
+}
+
+pub struct RemoteStatusObservation {
+    pub task_key: RemoteTaskKey,
+    pub context_key: RemoteContextKey,
+    pub state: RemoteProtocolTaskState,
+    pub message: Option<RemoteMessageObservation>,
+    pub source_timestamp: Option<Timestamp>,
+}
 ```
 
-Outbound mapping accepts only H6-authorized text/JSON/raw material. Inbound raw and URL parts create H6 requests before a normalized observation can reference them. Metadata and extension URIs are not treated as instructions.
+`RemoteUrlIngestionRequestId` is H9A-owned correlation. `RemoteArtifactPartPort` converts it to the existing H6 secure external-ingestion command and returns H6 IDs/references; H9A does not invent a second URL fetcher.
 
 ### Artifact assembly
 
@@ -518,7 +565,7 @@ pub struct RemoteArtifactAssembly {
     pub id: RemoteArtifactAssemblyId,
     pub workspace_id: WorkspaceId,
     pub invocation_id: RemoteAgentInvocationId,
-    pub external_artifact_key: String,
+    pub external_artifact_key: RemoteArtifactKey,
     pub generation: u32,
     pub status: RemoteArtifactAssemblyStatus,
     pub ingestion_session_id: ArtifactIngestionSessionId,
@@ -532,7 +579,7 @@ pub struct RemoteArtifactAssembly {
 }
 ```
 
-An event with `append=false` or absent starts a new generation unless it is an exact duplicate. `append=true` requires one open matching generation. `last_chunk=true` closes the generation and asks H6 to finalize quarantine. Conflicting replay marks `Conflict` and prevents handoff acceptance.
+`append=false`/absent starts a generation unless exact duplicate; `append=true` needs an open generation; `last_chunk=true` asks H6 to finalize quarantine. Conflict blocks handoff.
 
 ### Reconciliation
 
@@ -563,14 +610,50 @@ pub struct RemoteReconciliationRecord {
 }
 ```
 
-`FailedSafeToRedispatch` requires positive evidence that no task/effect was accepted, not merely a timeout or `TaskNotFound` after a previously observed task.
+Timeout or TaskNotFound alone is not positive no-acceptance evidence.
 
 ### Agent Card discovery and publication
 
 ```rust
-pub enum A2ACardObservationKind {
-    PublicWellKnown,
-    ExtendedAuthenticated,
+pub enum A2ACardObservationKind { PublicWellKnown, ExtendedAuthenticated }
+pub enum A2APublicationLifecycle { Draft, Active, Disabled, Revoked }
+
+pub struct A2APublishedAgent {
+    pub id: A2APublishedAgentId,
+    pub workspace_id: WorkspaceId,
+    pub current_revision_id: Option<A2APublishedAgentRevisionId>,
+    pub lifecycle: A2APublicationLifecycle,
+    pub state_revision: u64,
+}
+
+pub struct A2APublishedInterface {
+    pub binding: A2AProtocolBindingKind,
+    pub endpoint: NormalizedA2AEndpoint,
+    pub protocol_version: String,
+}
+
+pub struct A2APublishedSkill {
+    pub stable_id: String,
+    pub display_name: String,
+    pub description: String,
+    pub input_modes: Vec<String>,
+    pub output_modes: Vec<String>,
+    pub input_schema_hash: Option<[u8; 32]>,
+    pub output_schema_hash: Option<[u8; 32]>,
+}
+
+pub struct A2ASecuritySchemeDeclaration {
+    pub stable_name: String,
+    pub scheme_kind: String,
+    pub public_configuration: serde_json::Value,
+}
+
+pub struct A2ASecurityDeclarationRevision {
+    pub id: A2ASecurityDeclarationRevisionId,
+    pub revision: u32,
+    pub schemes: Vec<A2ASecuritySchemeDeclaration>,
+    pub requirements_hash: [u8; 32],
+    pub content_hash: [u8; 32],
 }
 
 pub struct A2ACardDiscoveryObservation {
@@ -589,7 +672,6 @@ pub struct A2ACardDiscoveryObservation {
 pub struct A2APublishedAgentRevision {
     pub id: A2APublishedAgentRevisionId,
     pub publication_id: A2APublishedAgentId,
-    pub workspace_id: WorkspaceId,
     pub revision: u32,
     pub agent_runtime_snapshot_id: AgentRuntimeSnapshotId,
     pub display_name: String,
@@ -603,17 +685,26 @@ pub struct A2APublishedAgentRevision {
     pub maximum_input_classification: DataClassification,
     pub card_artifact_revision_id: ArtifactRevisionId,
     pub card_content_hash: [u8; 32],
-    pub status: A2APublicationStatus,
     pub content_hash: [u8; 32],
 }
 ```
 
-Publication is bound to one exact AgentRuntimeSnapshot. Updating a package/profile requires a new publication revision. Security schemes are generated from deployment authentication configuration; they contain no credential. The first slice publishes no push-notification capability and no trust-bearing signature.
+Mutable lifecycle belongs to `A2APublishedAgent`; revisions are immutable. Publication declares no push capability or trust-bearing signature in the first slice.
 
-### Inbound bindings and projections
+### Inbound intake, bindings and projection
 
 ```rust
+pub enum InboundA2AIntakeStatus {
+    Received,
+    Materializing,
+    Ready,
+    Applied,
+    Rejected,
+    Failed,
+}
+
 pub enum InboundA2ATaskStatus {
+    Submitted,
     Bound,
     Running,
     WaitingForInput,
@@ -628,7 +719,25 @@ pub struct InboundA2ARequestIdentity {
     pub workspace_id: WorkspaceId,
     pub principal_id: PrincipalId,
     pub external_identity_hash: [u8; 32],
-    pub authentication_method_revision_id: AuthenticationMethodRevisionId,
+    pub authentication_scheme: String,
+    pub authentication_evidence_hash: [u8; 32],
+}
+
+pub struct InboundA2AIntake {
+    pub id: InboundA2AIntakeId,
+    pub workspace_id: WorkspaceId,
+    pub publication_revision_id: A2APublishedAgentRevisionId,
+    pub protocol_task_key: RemoteTaskKey,
+    pub protocol_context_key: RemoteContextKey,
+    pub message_key: RemoteMessageKey,
+    pub canonical_request_hash: [u8; 32],
+    pub status: InboundA2AIntakeStatus,
+    pub required_ingestion_session_ids: Vec<ArtifactIngestionSessionId>,
+    pub required_url_ingestion_request_ids: Vec<RemoteUrlIngestionRequestId>,
+    pub applied_interaction_event_id: Option<InteractionEventId>,
+    pub applied_routing_decision_id: Option<InteractionRoutingDecisionId>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 pub struct InboundA2ATaskBinding {
@@ -637,7 +746,7 @@ pub struct InboundA2ATaskBinding {
     pub publication_revision_id: A2APublishedAgentRevisionId,
     pub protocol_task_key: RemoteTaskKey,
     pub protocol_context_key: RemoteContextKey,
-    pub run_id: AgentRunId,
+    pub run_id: Option<AgentRunId>,
     pub requester_principal_id: PrincipalId,
     pub external_identity_hash: [u8; 32],
     pub initial_message_key: RemoteMessageKey,
@@ -652,19 +761,12 @@ pub struct InboundA2ATaskBinding {
 pub struct InboundA2ARequestBinding {
     pub id: InboundA2ARequestBindingId,
     pub task_binding_id: InboundA2ATaskBindingId,
+    pub intake_id: InboundA2AIntakeId,
     pub message_key: RemoteMessageKey,
     pub canonical_request_hash: [u8; 32],
-    pub interaction_event_id: InteractionEventId,
-    pub routing_decision_id: InteractionRoutingDecisionId,
     pub created_at: Timestamp,
 }
-```
 
-The same authenticated identity/publication/message key/hash returns the original result. Changed content with the same message key returns `idempotency_conflict`. Task/context mismatch, foreign workspace or unrelated identity is denied.
-
-### Inbound projection ownership
-
-```rust
 pub struct A2ATaskProjection {
     pub binding_id: InboundA2ATaskBindingId,
     pub protocol_task_key: RemoteTaskKey,
@@ -678,9 +780,9 @@ pub struct A2ATaskProjection {
 }
 ```
 
-Projection is derived from the binding, H1 Run, H7 interactions/public events and H6 Artifacts. SDK `TaskStore::create/update` may persist or refresh this projection only after the authoritative application transaction; it cannot initiate a Run transition.
+A submitted binding may temporarily have no Run while required content is materialized. `Ready → Applied` atomically records H7 interaction/routing, creates or continues the exact Run and sets `run_id`. Projection remains protocol-facing only.
 
-### Normalized error model
+### Error model
 
 ```rust
 pub enum RemoteTransportErrorKind {
@@ -712,21 +814,19 @@ pub struct RemoteTransportError {
 }
 ```
 
-Errors contain no raw URL query, header, body, token fragment, SDK Debug output or remote unbounded text. A transport failure after request body dispatch normally sets `completion_may_have_occurred=true`.
+No raw URL query, header, body, token fragment, SDK Debug output or unbounded remote text is included.
 
 ---
 
-### Task 1: Pin the A2A SDK and enforce the anti-corruption boundary
+### Task 1: Pin the SDK and enforce the anti-corruption boundary
 
-**Files:** modify workspace `Cargo.toml`, `Cargo.lock`; create `vestrace-a2a-adapter`, `vestrace-a2a-test-support`, dependency baseline module and SDK/dependency/type-boundary tests/scripts.
+**Files:** modify workspace manifests/lock; create adapter/test-support baselines, tests and scripts.
 
-- [ ] Add the three exact git dependencies and no other `a2a-rs` production crate.
-- [ ] Use `default-features=false` and `rustls-no-provider` for client/server.
-- [ ] Add `dependency_baseline.rs` constants for source commit, crate versions and protocol version; tests compare constants to SDK exports/package metadata.
-- [ ] `verify-a2a-sdk-pin.sh` asserts Cargo.lock git source ends in `#515f6eacf2b4b9b17bd3910e93ac47027afaaf90`.
-- [ ] `verify-a2a-dependency-boundary.sh` fails if any domain/application/infrastructure/public crate depends on an `a2a-*` crate or if grpc/pb/slimrpc appears.
-- [ ] Add a compile fixture proving all non-adapter crates build with feature `a2a` disabled.
-- [ ] Run and commit:
+- [ ] Add exactly the three git dependencies and `rustls-no-provider` feature setup.
+- [ ] Add constants/tests for source commit, crate versions and `a2a::VERSION`.
+- [ ] Verify Cargo.lock exact commit and fail on grpc/pb/slimrpc/a2acli.
+- [ ] Prove non-adapter crates build with A2A disabled and contain no SDK import/type.
+- [ ] Run/commit:
 
 ```bash
 bash scripts/verify-a2a-sdk-pin.sh
@@ -739,206 +839,159 @@ git add Cargo.toml Cargo.lock crates/vestrace-a2a-adapter \
 git commit -m "build(a2a): pin SDK behind adapter boundary"
 ```
 
-### Task 2: Add transport-neutral remote protocol domain contracts
+### Task 2: Add protocol-neutral domain contracts
 
-**Files:** modify `id.rs`; create remote-agent transport/event/artifact/inbound/publication/reconciliation/error files; extend H5 remote status with `CompletedPendingValidation` if not already present.
+**Files:** modify IDs; create remote-agent transport/event/assembly/intake/publication/reconciliation/error modules.
 
-- [ ] Add every H9A ID and value type defined above.
-- [ ] Unit-test external identifier bounds/control-character rejection, route origin/path validation and immutable content hashes.
-- [ ] Property-test canonical event fingerprints against map insertion order and duplicate metadata ordering.
-- [ ] Test the complete A2A state mapping, terminal regression rejection and `Completed → CompletedPendingValidation`.
-- [ ] Test artifact assembly transition table, exact duplicate replay and conflicting replay.
-- [ ] Test `ImmediateMessageAllowed` rejects write/external-commitment profiles and any profile requiring continuation or artifacts.
+- [ ] Add every H9A ID and all normative values above.
+- [ ] Test security profile, endpoint, external key, lifecycle and hash invariants.
+- [ ] Property-test canonical event and message hashing independent of map insertion order.
+- [ ] Test complete state mapping, terminal regression and CompletedPendingValidation.
+- [ ] Test assembly duplicate/conflict/finalization and inbound intake transitions.
+- [ ] Reject ImmediateMessageAllowed for any non-read-only or continuation/artifact requirement.
 - [ ] Run and commit.
 
-### Task 3: Define H9A application ports and deterministic fixtures
+### Task 3: Define application ports and deterministic fixtures
 
-**Files:** create application remote-agent-runtime modules, `vestrace-remote-agent-runtime` and test-support fixtures.
+**Files:** create application/runtime/test-support modules.
 
-**Interfaces:**
-
-```rust
-#[async_trait::async_trait]
-pub trait RemoteTransportPort: Send + Sync {
-    async fn dispatch(
-        &self,
-        request: RemoteTransportDispatchRequest,
-    ) -> Result<RemoteTransportDispatchObservation, RemoteTransportError>;
-
-    async fn subscribe(
-        &self,
-        request: RemoteTransportSubscribeRequest,
-    ) -> Result<RemoteProtocolEventStream, RemoteTransportError>;
-
-    async fn get_task(
-        &self,
-        request: RemoteTransportGetTaskRequest,
-    ) -> Result<RemoteTaskObservation, RemoteTransportError>;
-
-    async fn list_tasks(
-        &self,
-        request: RemoteTransportListTasksRequest,
-    ) -> Result<RemoteTaskListObservation, RemoteTransportError>;
-
-    async fn continue_task(
-        &self,
-        request: RemoteTransportContinuationRequest,
-    ) -> Result<RemoteTransportDispatchObservation, RemoteTransportError>;
-
-    async fn cancel_task(
-        &self,
-        request: RemoteTransportCancellationRequest,
-    ) -> Result<RemoteTaskObservation, RemoteTransportError>;
-}
-```
-
-- [ ] Add `InboundExternalAgentPort`, `A2ACardDiscoveryPort`, `A2ACardPublicationPort`, `RemoteArtifactPartPort`, `RemoteProtocolEventRepositoryPort` and `InboundTaskProjectionPort`.
+- [ ] Implement the exact RemoteTransportPort and request/observation DTOs above.
+- [ ] Add `InboundExternalAgentPort`, `InboundA2AAuthenticationPort`, `A2ACardDiscoveryPort`, `A2ACardPublicationPort`, `RemoteArtifactPartPort`, event/intake/projection repository ports.
 - [ ] Object-safety compile-test every port.
-- [ ] Deterministic fixtures support JSON-RPC/REST equivalence, SSE replay, duplicate/conflicting events, `InputRequired`, `AuthRequired`, chunked artifacts, response loss after acceptance, terminal regression and task-not-found reconciliation.
-- [ ] Fault points exist after request write, task ID receipt, event persistence, artifact chunk write, HumanRequest creation, continuation dispatch, inbound Run creation and projection persistence.
+- [ ] Fixtures support JSON-RPC/REST equivalence, SSE replay, duplicate/conflicting events, Input/AuthRequired, chunking, response loss, terminal regression and TaskNotFound.
+- [ ] Faults after request write, task bind, event/chunk/intake persistence, HumanRequest, continuation, Run creation and projection.
 - [ ] Run and commit.
 
-### Task 4: Persist adapter bindings and outbound route revisions
+### Task 4: Persist adapter/security bindings and outbound routes
 
-**Files:** create migration `0068`, binding repository/services and persistence tests.
+**Files:** create `0068`, services/repositories/tests.
 
-- [ ] `0068` creates adapter identities/revisions, supported binding rows, TLS profile links, remote route identities/revisions, accepted output modes and route lifecycle/current pointers.
-- [ ] Enforce exact source commit/version fields and immutable revisions.
-- [ ] Route activation verifies exact H9 declaration/activation, H8 remote profile, origin, binding and protocol version intersection.
-- [ ] Reject route changes that widen H9 local activation or select unsupported push/grpc/slimrpc.
-- [ ] New Agent Card or local activation never silently edits an existing route; create a candidate route revision and permission diff.
+- [ ] Create immutable adapter and client-security revisions, exact bindings, route identities/revisions and accepted modes.
+- [ ] Standard active security rejects ambient proxy/redirect and requires TLS except explicit loopback policy.
+- [ ] Route activation intersects exact H9 declaration/activation, H8 profile, origin, protocol and SDK capability.
+- [ ] Reject push/grpc/slimrpc and any local-authority widening.
+- [ ] Card/activation change creates a candidate route revision, never silent mutation.
 - [ ] Run and commit.
 
-### Task 5: Implement secure Agent Card discovery and exact publication
+### Task 5: Implement secure Agent Card discovery and publication
 
-**Files:** create migration `0069`, card discovery/publication services, adapter mapping and tests.
+**Files:** create `0069`, services/mapping/tests.
 
-- [ ] `0069` creates discovery observations, card Artifact links, publication identities/revisions, interfaces, Skills, modes, security declaration revisions and publication lifecycle/current pointers.
-- [ ] Public discovery fetch uses H6 secure URL handling with no ambient proxy/redirect. Authenticated extended-card retrieval uses one exact H8 lease.
-- [ ] Persist received canonical card bytes as an H6 quarantined/inspected Artifact before H9 import.
-- [ ] Normalize interfaces, skills, security declarations and capabilities into an H9 candidate without treating claims/signatures as trust.
-- [ ] Publication builds deterministic card bytes from one exact AgentRuntimeSnapshot and explicit publication revision.
-- [ ] Public and extended card routes return the same revision/hash where policy permits; extended card may add bounded private compatibility fields but no secrets.
-- [ ] Publish `streaming=true` only when inbound SSE is active; publish no push-notification capability.
-- [ ] Card refresh with changed content creates a new H9 candidate; unchanged hash is idempotent.
+- [ ] Persist discovery observations and H6 card Artifact links; create publication identities/revisions/interfaces/skills/security declarations.
+- [ ] Public discovery uses H6 secure fetch; extended-card retrieval uses one H8 lease.
+- [ ] Normalize into H9 candidate without trusting claims/signatures.
+- [ ] Generate deterministic card bytes from one exact AgentRuntimeSnapshot/publication revision.
+- [ ] Publish streaming only when inbound SSE is active; no push capability/signature in reference slice.
+- [ ] Changed hash creates a candidate revision; unchanged is idempotent.
 - [ ] Run and commit.
 
 ### Task 6: Implement hardened JSON-RPC and HTTP+JSON clients
 
-**Files:** create adapter HTTP client, factory, JSON-RPC, REST, interceptor and error modules; add conformance/network tests.
+**Files:** create HTTP/factory/transport/interceptor/mapping/error modules and conformance tests.
 
-- [ ] Build Reqwest through `VestraceA2AHttpClientFactory`: `no_proxy`, redirects disabled, exact TLS roots, connect/request/idle timeouts, response-size limit and redacted tracing.
-- [ ] Register custom JSON-RPC and REST transport factories with `A2AClientFactory::builder().no_defaults()`; never use SDK default factories.
-- [ ] A one-shot interceptor consumes one H8 credential handle and refuses a second `before` call.
-- [ ] Construct deterministic outbound A2A Message IDs without `Message::new`; set `tenant=None`; include only allowlisted metadata.
-- [ ] Map normalized request/response/event/error values without exposing SDK types.
-- [ ] Test JSON-RPC and REST canonical equivalence for send/get/list/cancel/subscribe/extended-card operations.
-- [ ] Set `HTTP_PROXY` and `HTTPS_PROXY` to a trap fixture and prove zero requests reach it.
-- [ ] Prove redirects to same or foreign origin are rejected rather than followed.
+- [ ] Build Reqwest with no proxy, no redirect, exact TLS roots, bounded connect/request/idle/body and redacted tracing.
+- [ ] Use `A2AClientFactory::builder().no_defaults()` and custom transport factories with the injected client.
+- [ ] One-shot credential handle refuses second use.
+- [ ] Build deterministic Message IDs, `tenant=None`, allowlisted metadata only.
+- [ ] Normalize all SDK values/errors behind ports.
+- [ ] Prove JSON-RPC/REST equivalence for send/get/list/cancel/subscribe/extended-card.
+- [ ] Proxy trap receives zero traffic; redirects are rejected.
 - [ ] Run and commit.
 
-### Task 7: Persist outbound attempts, protocol events, artifact assemblies and reconciliation
+### Task 7: Persist outbound attempts, events, assemblies and reconciliation
 
-**Files:** create migration `0070`, outbound/event/assembly/reconciliation repositories and tests.
+**Files:** create `0070`, repositories/tests.
 
-- [ ] `0070` creates dispatch attempts, external task/context bindings, normalized event sequences/fingerprints, stream sessions, artifact assemblies/chunk links and reconciliation records.
-- [ ] Unique constraints enforce `(invocation, attempt_number)`, one active initial attempt, event fingerprint idempotency and external task/context consistency.
-- [ ] Allocate local event sequence transactionally and return existing row for an identical fingerprint.
-- [ ] Same identity/fingerprint slot with changed canonical content records a protocol-conflict event and blocks the invocation.
-- [ ] Persist `Dispatching` before network I/O. Persist task/context keys and first observation atomically after response.
-- [ ] Crash after task binding/event persistence resumes the same attempt without redispatch.
+- [ ] Create attempts, task/context bindings, event sequences/fingerprints, streams, assemblies/chunks and reconciliation records.
+- [ ] Enforce contiguous attempt numbers, one active initial attempt and event idempotency.
+- [ ] Conflicting duplicate identity creates protocol conflict and blocks the invocation.
+- [ ] Persist Dispatching before I/O; persist task binding and first observation atomically.
+- [ ] Crash after task/event persistence resumes without redispatch.
 - [ ] Run and commit.
 
-### Task 8: Implement outbound dispatch, streaming and state projection
+### Task 8: Implement outbound dispatch, SSE and state projection
 
-**Files:** create dispatch/stream/routing services and outbound/SSE/dedup tests.
+**Files:** create dispatch/stream/routing services and tests.
 
-- [ ] Resolve the exact H9 route and H5 delegation scope, build H6-authorized content and consume H2/H8 guards immediately before transport dispatch.
-- [ ] Standard `TaskRequired` rejects a message-only response with `task_required`; `ImmediateMessageAllowed` persists a completed candidate only under its restrictive profile.
-- [ ] Map the initial Task and every SSE response to normalized events before updating H5 invocation status.
-- [ ] Subscription uses a fresh credential lease and persists `StreamOpened` before accepting events.
-- [ ] On disconnect, persist `StreamClosed/TransportError`, then reconnect with a new subscription lease or fall back to authorized `GetTask`.
-- [ ] Do not assume remote SSE event IDs. Deduplicate replay through Vestrace event fingerprints.
-- [ ] Enforce state monotonicity, task/context consistency and idle/total deadlines.
-- [ ] Publish safe H7 remote-progress events only after canonical event persistence; raw remote text is not a public status label.
+- [ ] Resolve exact route/delegation/context; consume H2/H8 immediately before transport.
+- [ ] Enforce TaskRequired or restrictive immediate-message mode.
+- [ ] Persist initial Task and each stream observation before H5 status projection.
+- [ ] Every subscribe/reconnect/poll uses a fresh lease.
+- [ ] Reconnect resubscribes or polls and deduplicates locally; no remote cursor assumption.
+- [ ] Enforce state monotonicity, task/context consistency and deadlines.
+- [ ] Publish only safe H7 progress after persistence.
 - [ ] Run and commit.
 
-### Task 9: Implement remote input/auth continuation, cancellation and reconciliation
+### Task 9: Implement continuation, cancellation and reconciliation
 
-**Files:** create continuation/cancellation/reconciliation services and related tests.
+**Files:** create services/tests.
 
-- [ ] `InputRequired` creates one typed H7 `RemoteInputRequired` HumanRequest bound to invocation/task/context/status event and expected response schema.
-- [ ] A validated HumanResponse creates a deterministic continuation message ID and a new `remote_agent.continue` ActionGuard plus fresh H8 lease.
-- [ ] `AuthRequired` creates H7 AuthenticationRequired using only opaque H8 references; remote text cannot choose a Connection/scope.
-- [ ] After H8 completion, resume rechecks exact remote revision/route/profile/current policy and sends a new continuation request with a fresh lease.
-- [ ] Lost continuation response marks the invocation `Unknown`; it never resends automatically.
-- [ ] Cancellation uses its own ActionGuard/lease, stores the request before dispatch and treats returned `Canceled` as an observation only.
-- [ ] Reconciliation order is: known task `GetTask` → optional `SubscribeToTask` → policy-permitted bounded `ListTasks` correlation → disposition.
-- [ ] `TaskNotFound` after a previously bound task is `StillUnknown` or terminal policy decision, never automatically safe to redispatch.
-- [ ] Only positive no-acceptance evidence produces `FailedSafeToRedispatch`.
+- [ ] InputRequired creates one schema-bound H7 request; response creates deterministic continuation message and fresh guards/lease.
+- [ ] AuthRequired uses opaque H8 references only; after auth, recheck exact route/profile/policy.
+- [ ] Lost continuation response becomes Unknown without resend.
+- [ ] Cancellation is separately guarded/persisted and returned Canceled is no rollback claim.
+- [ ] Reconcile by known Get → optional Subscribe → policy-bounded List correlation.
+- [ ] TaskNotFound after binding is not safe redispatch.
+- [ ] Only positive no-acceptance evidence yields FailedSafeToRedispatch.
 - [ ] Run and commit.
 
-### Task 10: Map remote messages and artifacts through H6 and H5 handoff validation
+### Task 10: Map content/artifacts through H6 and H5 handoff
 
-**Files:** create content/artifact services, adapter mapping and Artifact/handoff tests.
+**Files:** create content/artifact services and tests.
 
-- [ ] Outbound content builder accepts only exact authorized H6 revisions/excerpts and enforces text/JSON/raw limits before network dispatch.
-- [ ] Outbound URL parts are rejected in H9A v0.2.
-- [ ] Inbound Text/Data create bounded H6 ingestion candidates with remote provenance; Raw streams into the exact ingestion session; URL creates an H6 external fetch request.
-- [ ] Artifact update ordering follows the assembly contract. Duplicate chunks are idempotent; conflicting append sequence becomes `Conflict`.
-- [ ] Full Task snapshots reconcile only matching external artifact IDs and content hashes.
-- [ ] H6 quarantine/inspection/secret scan completes before assembly becomes Available.
-- [ ] A2A Completed waits for all required assemblies, output schema, evidence and H5 HandoffArtifact checks.
-- [ ] Rejected/quarantined/incomplete artifact creates a failed or review-required handoff, never success.
-- [ ] Provenance links include remote agent revision, route, invocation, task/context IDs, protocol event IDs and source hashes.
+- [ ] Outbound builder reads exact authorized H6 revisions and enforces limits; URL output is rejected.
+- [ ] Inbound Text/Data become bounded H6 candidates, Raw streams to ingestion, URL calls H6 secure external ingestion via RemoteArtifactPartPort.
+- [ ] Assembly ordering, duplicates, conflicts and full-snapshot reconciliation follow normative rules.
+- [ ] H6 quarantine/inspection/secret scan completes before Available.
+- [ ] Completed waits for required assemblies, schema, evidence and H5 handoff verification.
+- [ ] Rejected/incomplete/conflicting Artifact cannot produce success.
+- [ ] Preserve full remote provenance.
 - [ ] Run and commit.
 
-### Task 11: Implement authenticated inbound A2A request handling
+### Task 11: Implement authenticated inbound request handling and durable intake
 
-**Files:** create adapter server/auth/request-handler/executor modules, HTTP mount and inbound auth/task tests.
+**Files:** create server/auth/request-handler/executor/HTTP mount and intake/auth tests.
 
-- [ ] Mount explicit well-known card, JSON-RPC, REST and SSE routes under a configured A2A base path.
-- [ ] Resolve authentication through `InboundA2AAuthenticationPort`; strip/redact auth headers before protocol metadata persistence.
-- [ ] Ignore `tenant` for identity and workspace selection. Optionally store only an HMAC as diagnostic routing metadata.
-- [ ] Validate protocol version, publication route, request body/part/metadata limits, role, task/context consistency and message ID.
-- [ ] New message without task binding creates one H7 InteractionEvent, routing decision, H1 AgentRun and inbound task binding atomically.
-- [ ] Message with task ID continues only the exact bound Run after identity, participant, publication and H2 checks.
-- [ ] Default response is an A2A Task projection. `returnImmediately` affects waiting behavior but not state authority.
-- [ ] Implement a custom Vestrace-backed `RequestHandler`; SDK handler/executor/task-store helpers may be used only behind the projection boundary and cannot mutate Run state independently.
+- [ ] Mount well-known card, JSON-RPC, REST and SSE under configured base path.
+- [ ] Authenticate through Vestrace port and redact headers before any metadata persistence.
+- [ ] Ignore tenant for identity; validate protocol/publication/body/parts/role/IDs.
+- [ ] Idempotently create task binding, request binding and intake before materialization.
+- [ ] Raw/URL parts enqueue H6 work; Task projects Submitted while intake is pending.
+- [ ] Text/JSON-only intake may become Ready immediately but still passes the same service.
+- [ ] `Ready → Applied` atomically records H7 interaction/routing, creates or continues the exact Run and sets run_id.
+- [ ] Use a custom Vestrace RequestHandler; SDK helpers cannot independently mutate Run.
 - [ ] Run and commit.
 
-### Task 12: Persist inbound task bindings, request idempotency and projections
+### Task 12: Persist inbound intake, task/request bindings and projections
 
-**Files:** create migration `0071`, inbound binding/projection repositories and tests.
+**Files:** create `0071`, repositories/tests.
 
-- [ ] `0071` creates publication-route bindings, inbound task/request bindings, external identity hashes, protocol projection snapshots/events and list pagination indexes.
-- [ ] Atomically create Run, H7 interaction/routing records and inbound task binding through one application transaction/outbox boundary.
-- [ ] Same identity/publication/message/hash returns the existing task. Same message ID with changed hash returns conflict.
-- [ ] `get` and `list` enforce workspace, authenticated identity and publication visibility.
-- [ ] Projection rows reference authoritative Run/public-event/interaction/Artifact IDs and store no prompt, secret or checkpoint.
-- [ ] SDK TaskStore create/update methods can only be invoked by the projection service after an authoritative change.
-- [ ] Restart after Run creation but before response returns the same task binding rather than creating a second Run.
+- [ ] Create intake rows/part links, task/request bindings, identity hashes, projection snapshots/events and pagination indexes.
+- [ ] Same identity/publication/message/hash returns existing intake/task; changed hash conflicts.
+- [ ] Apply Ready intake exactly once and atomically bind the Run.
+- [ ] Get/List enforce identity/workspace/publication.
+- [ ] Projection stores only authoritative IDs/hashes, no prompt/secret/checkpoint.
+- [ ] SDK TaskStore writes are projection-service-only.
+- [ ] Crash before/after intake apply returns the same Task/Run and does not duplicate either.
 - [ ] Run and commit.
 
-### Task 13: Implement inbound Task projections, SSE subscription and transport equivalence
+### Task 13: Implement inbound Task projection, SSE and transport equivalence
 
-**Files:** create projection/SSE services, task projection store and inbound conformance tests.
+**Files:** create projection/SSE/store and conformance tests.
 
-- [ ] Map H1/H7/H6 state to A2A Task/Status/Message/Artifact deterministically.
-- [ ] `WaitingForInput` emits `InputRequired`; `WaitingForAuthentication` emits `AuthRequired`; terminal Run states map without exposing internal errors.
-- [ ] `Completed` is emitted only after Vestrace success criteria and Artifact availability pass.
-- [ ] `GetTask` returns bounded history length and only artifacts authorized for the authenticated external requester.
-- [ ] `ListTasks` uses opaque signed page tokens bound to identity/workspace/publication/filter and page size.
-- [ ] `SubscribeToTask` starts from the persisted H7 cursor, projects subsequent canonical events and deduplicates reconnects.
-- [ ] A slow client is disconnected with a resumable protocol state; it does not block Run workers.
-- [ ] JSON-RPC and HTTP+JSON calls produce equivalent Task hashes and stable error codes.
-- [ ] Cancellation maps to protected Run cancellation and does not claim compensation.
-- [ ] Push config methods return `unsupported_operation`.
+- [ ] Map pending intake to Submitted and H1/H7/H6 state to deterministic Task/Status/Message/Artifact.
+- [ ] WaitingForInput/Auth map to protocol states; Completed only after Vestrace criteria/Artifact availability.
+- [ ] GetTask bounds history and artifact authorization.
+- [ ] ListTasks uses opaque signed identity/workspace/publication-bound page tokens.
+- [ ] Subscribe starts from persisted H7 cursor and deduplicates reconnect.
+- [ ] Slow client disconnects without blocking workers.
+- [ ] JSON-RPC/HTTP+JSON produce equivalent Task hashes/errors.
+- [ ] Cancel maps to protected Run cancellation; push methods unsupported.
 - [ ] Run and commit.
 
 ### Task 14: Integrate workers, Checkpoint V8 and restart recovery
 
-**Files:** modify Run work/event/checkpoint and composition; add worker/restart tests.
+**Files:** modify Run work/event/checkpoint/composition and restart tests.
 
 - [ ] Add work kinds:
 
@@ -953,63 +1006,50 @@ CancelRemoteTask
 ReconcileRemoteTask
 IngestRemoteArtifactPart
 FinalizeRemoteArtifactAssembly
+MaterializeInboundA2AIntake
+ApplyInboundA2AIntake
 ProjectInboundA2ATask
 ```
 
-- [ ] Work payloads contain IDs, exact revisions, hashes, local cursors and deadlines only—no clear URL query, headers, credential handle, raw part, Agent Card bytes or A2A SDK value.
-- [ ] `RunCheckpointV8` extends V7 with active remote attempt IDs, local protocol event cursors, open artifact assembly IDs, pending remote HumanRequest IDs and inbound task binding IDs.
-- [ ] Checkpoint contains no external message body, raw metadata, credentials, H8 lease, protocol frame or Task history.
-- [ ] V7 and older checkpoints remain readable.
-- [ ] Resume rules:
-  - bound external task → fresh authorized Get/Subscribe;
-  - Dispatching without durable task binding after possible send → Unknown and reconciliation;
-  - open assembly → resume H6 ingestion/reconcile full Task snapshot;
-  - inbound binding → rebuild projection from Run/public events, never re-execute request.
-- [ ] Logical Run events are limited to remote delegation start/wait/unknown/completed-candidate/validated outcome and inbound Run state. Transport events remain H9A-local.
+- [ ] Work payloads contain IDs/revisions/hashes/cursors/deadlines only.
+- [ ] Checkpoint V8 adds active attempts, local cursors, open assemblies, pending remote HumanRequests, inbound intake/task IDs; no content/credentials/frames/history.
+- [ ] V7 and older remain readable.
+- [ ] Resume: bound task gets fresh Get/Subscribe; ambiguous unbound Dispatching becomes Unknown; open assembly resumes H6; pending intake resumes materialization; applied inbound binding rebuilds projection only.
+- [ ] Logical Run events are remote start/wait/unknown/completed-candidate/validated outcome and inbound Run state; transport/intake telemetry stays local.
 - [ ] Run and commit.
 
-### Task 15: Add RLS, boundary gates, full conformance and H9A acceptance
+### Task 15: Add RLS, boundary gates, conformance and acceptance
 
-**Files:** create migration `0072`, boundary scripts, CI jobs, RLS and acceptance tests.
+**Files:** create `0072`, scripts, CI, RLS/acceptance tests.
 
-- [ ] `0072` forces RLS, same-workspace/publication/invocation consistency, immutable revision/append-only event guards and indexes for task binding, event fingerprint, open stream/assembly, Unknown reconciliation and inbound list pagination.
-- [ ] Boundary scripts reject:
-  - any `a2a-rs` type/import outside adapter/test-support;
-  - non-exact SDK git source;
-  - grpc/pb/slimrpc dependencies;
-  - SDK default client/factory use;
-  - ambient proxy or redirect enablement;
-  - credentials/headers in durable/public fields;
-  - A2A Task as Run/SubRun/Tool authority;
-  - direct remote Artifact availability;
-  - automatic retry from Unknown;
-  - push callback activation.
-- [ ] Outbound conformance proves JSON-RPC/REST equivalence, task-required behavior, fresh lease per call, SSE replay dedup, status mapping, input/auth continuation, cancellation and artifact quarantine.
-- [ ] Inbound conformance proves authentication, CreateRun/ContinueRun/CancelRun mapping, get/list/subscribe, TaskStore projection-only behavior and transport equivalence.
-- [ ] Mandatory acceptance scenario:
+- [ ] Force RLS, same-workspace/publication/invocation consistency, append-only revisions/events and indexes for task binding, intake, fingerprints, streams, assemblies and Unknown reconciliation.
+- [ ] Scripts reject SDK leakage, non-exact pin, grpc/pb/slimrpc, default clients/factories, proxy/redirect enablement, secret/header fields, Task authority, direct Artifact availability, Unknown retry and push activation.
+- [ ] Outbound conformance covers transport equivalence, task-required mode, fresh leases, SSE dedup, states, continuations, cancel, Artifact quarantine.
+- [ ] Inbound conformance covers authentication, intake, Create/Continue/Cancel, Get/List/Subscribe and projection-only TaskStore.
+- [ ] Mandatory outbound scenario:
 
 ```text
 parent AgentRun
 → protected RemoteAgentInvocation
-→ JSON-RPC or REST A2A dispatch
-→ external Task binding
+→ JSON-RPC or REST dispatch
+→ external Task
 → SSE Working
 → InputRequired
-→ durable H7 pause
+→ durable pause
 → user response
-→ fresh H2/H8 continuation
-→ same external Task
-→ streamed chunked Artifact
-→ H6 quarantine and validation
-→ H5 verified HandoffArtifact
-→ parent continuation after worker restart
+→ fresh continuation authorization/lease
+→ same Task
+→ streamed Artifact
+→ H6 quarantine/validation
+→ H5 verified handoff
+→ parent continuation after restart
 ```
 
-- [ ] Failure scenario drops the initial response after remote acceptance. Vestrace stores Unknown, reconciles through task/correlation evidence or remains Unknown, and the fixture asserts exactly one remote task.
-- [ ] Inbound scenario exposes one exact Vestrace AgentRuntimeSnapshot, creates one Run through an authenticated A2A message, reconnects SSE, retrieves the same task through JSON-RPC and REST and proves the Task projection follows Run state without becoming authority.
-- [ ] Acceptance additionally proves no credential in messages/state, Agent Card claims cannot widen activation, URL Artifact follows H6 SSRF checks, terminal regression is rejected, old snapshot/publication remains unchanged after package/card update and replay performs no network action.
-- [ ] Required CI jobs: SDK pin/boundary, card discovery/publication, JSON-RPC, REST, transport equivalence, outbound lifecycle, SSE/dedup, continuation/auth, artifacts, inbound gateway, restart/reconciliation, RLS and H9A acceptance.
-- [ ] Run and commit:
+- [ ] Lost-response scenario asserts one remote task and Unknown/reconciliation without duplicate dispatch.
+- [ ] Inbound scenario publishes one exact snapshot, creates one Task/intake/Run, reconnects SSE and retrieves equivalent JSON-RPC/REST projection.
+- [ ] Acceptance also proves card claims cannot widen, URL follows H6 SSRF policy, terminal regression rejection, pinning after package/card update and side-effect-free replay.
+- [ ] Required CI jobs: SDK/boundary, cards, JSON-RPC, REST/equivalence, outbound, SSE, continuation/auth, artifacts, inbound intake/gateway, restart/reconciliation, RLS, acceptance.
+- [ ] Run/commit:
 
 ```bash
 bash scripts/verify-a2a-sdk-pin.sh
@@ -1035,10 +1075,10 @@ git commit -m "test(a2a): add H9A interoperability and safety gates"
 ## Migration ownership
 
 ```text
-0068 Task 4  A2A adapter bindings and exact outbound routes
-0069 Task 5  Agent Card discovery observations and published Agent revisions
-0070 Task 7  Outbound attempts, events, streams, Artifact assemblies and reconciliation
-0071 Task 12 Inbound task/request bindings and protocol projections
+0068 Task 4  Adapter/security bindings and exact outbound routes
+0069 Task 5  Agent Card discovery and published Agent revisions
+0070 Task 7  Outbound attempts, events, streams, assemblies and reconciliation
+0071 Task 12 Inbound intake, request/task bindings and projections
 0072 Task 15 RLS, indexes and Run bindings
 ```
 
@@ -1046,69 +1086,69 @@ No later task edits an applied migration.
 
 ## H9A completion definition
 
-H9A is complete only when all fifteen tasks pass and evidence demonstrates both directions:
-
 ```text
 Outbound:
 H5 RemoteAgentInvocation
 → exact H9 remote revision/activation
 → exact H9A route
 → H2 protected operation
-→ H8 one-request credential lease
-→ A2A JSON-RPC or HTTP+JSON
+→ H8 one-request lease
+→ A2A JSON-RPC/HTTP+JSON
 → external Task
 → SSE/local dedup
 → H7 continuation
 → H6 Artifact quarantine
 → H5 verified handoff
-→ parent Run continuation
+→ parent continuation
 
 Inbound:
 authenticated A2A request
 → exact published AgentRuntimeSnapshot
+→ durable intake and Task binding
+→ safe content materialization
 → idempotent Interaction/CreateRun or ContinueRun
 → authoritative AgentRun
-→ H7 public event projection
-→ A2A Task/Message/Artifact/SSE projection
+→ H7/H6 projection
+→ A2A Task/Message/Artifact/SSE
 ```
 
 Required invariants:
 
-1. `a2a-rs` is exact-pinned and isolated to one adapter boundary.
-2. JSON-RPC and HTTP+JSON map to the same canonical Vestrace contracts.
-3. SDK default clients/factories, ambient proxies and redirects are not used.
-4. A2A Task never becomes Run/SubRun/Tool authority.
-5. H5 RemoteAgentInvocation remains the outbound durable aggregate.
-6. H9 remote declaration and local activation remain separate from protocol transport.
-7. Agent Card claims/signatures never grant trust or permission.
-8. Outbound standard delegation requires a durable external Task ID.
-9. Every network action has a distinct H2 authorization and fresh H8 lease.
-10. Credentials never enter messages, cards, protocol events, artifacts or durable errors.
-11. Message/task/context identifiers are bounded correlation values, not authority.
-12. `tenant` never selects workspace or principal.
-13. SSE replay is idempotent through local canonical fingerprints.
-14. Terminal task state cannot regress.
-15. Completed remains pending until H6/H5 validation succeeds.
-16. Raw/URL Artifacts cannot bypass H6 quarantine/fetch security.
-17. Incomplete/conflicting chunk assembly blocks success.
-18. Input/Auth continuation uses H7 typed requests and the same external Task.
-19. Cancellation is not rollback or compensation.
-20. Unknown never redispatches automatically.
-21. Reconciliation records positive evidence and preserves StillUnknown when uncertain.
-22. Inbound message idempotency cannot create duplicate Runs.
-23. Inbound authentication, not tenant/task metadata, resolves identity.
-24. Inbound TaskStore is projection/cache only.
-25. Get/List/Subscribe enforce identity/workspace/publication boundaries.
-26. Existing Runs and publications remain pinned after package/card updates.
-27. Restart does not duplicate a remote task, continuation, inbound Run, event or Artifact chunk.
-28. Replay performs no external or protocol side effect.
-29. H10 can add cross-run remote metrics/evaluation without rewriting H9A history.
-30. Tests require no public A2A service, public network or permanent credential.
+1. Exact-pinned SDK is isolated to the adapter.
+2. JSON-RPC and HTTP+JSON use identical Vestrace contracts.
+3. Default clients/factories, ambient proxies and redirects are absent.
+4. A2A Task never owns Run/SubRun/Tool state.
+5. H5 invocation remains the outbound aggregate.
+6. H9 declaration/local activation remain separate from transport.
+7. Agent Card claims/signatures grant nothing.
+8. Standard outbound requires a durable task ID.
+9. Every network request has distinct authorization and a fresh lease.
+10. Credentials never enter protocol content/state.
+11. IDs/tenant/metadata are correlation, not authority.
+12. SSE replay is locally idempotent.
+13. Terminal states cannot regress.
+14. Completed waits for H6/H5 validation.
+15. Raw/URL content cannot bypass H6.
+16. Incomplete/conflicting assemblies block success.
+17. Input/Auth use typed H7 continuation and same external Task.
+18. Cancellation is no rollback claim.
+19. Unknown never redispatches automatically.
+20. Safe redispatch requires positive evidence.
+21. Inbound raw/URL content cannot create/continue a Run before intake readiness.
+22. Inbound message idempotency cannot duplicate intake, Task or Run.
+23. Authentication, not tenant/task metadata, resolves identity.
+24. Inbound TaskStore is projection only.
+25. Get/List/Subscribe enforce identity/workspace/publication.
+26. Existing Runs/publications remain pinned after updates.
+27. Restart does not duplicate task, continuation, intake, Run, event or chunk.
+28. Replay performs no protocol/network side effect.
+29. H10 can add metrics/evaluation without rewriting H9A history.
+30. Tests require no public A2A service/network/permanent credential.
 
 ## Explicit non-goals
 
-H9A does not implement required gRPC/protobuf, SLIMRPC, collaborative multi-party channels, push-notification callbacks, automatic Agent Card trust, trust federation, cross-organization credential delegation, remote policy negotiation, remote budget enforcement guarantees, full memory sharing, unrestricted Artifact URLs, outbound large-file URL hosting, generic webhooks, remote agents as Tools, A2A as the internal worker protocol, public marketplace discovery or automatic remote-agent fallback after ambiguous completion.
+H9A does not implement required gRPC/protobuf, SLIMRPC, collaborative channels, push callbacks, automatic Agent Card trust, trust federation, cross-organization credential delegation, remote policy negotiation, remote budget guarantees, full memory sharing, unrestricted Artifact URLs, outbound large-file hosting, generic webhooks, remote agents as Tools, A2A as internal worker protocol, marketplace discovery or automatic fallback after ambiguous completion.
 
 ## Documentation-only boundary
 
-Creating this document does not authorize implementation. During the documentation phase, do not create `feat/h9a-a2a-interoperability-gateway`, add or fetch production A2A dependencies, create migrations `0068`–`0072`, start A2A listeners, access a remote Agent Card, issue credentials, publish an Agent Card, send an A2A request, modify CI or execute H9A tests.
+Creating this document does not authorize implementation. During documentation-only work, do not create `feat/h9a-a2a-interoperability-gateway`, add/fetch production A2A dependencies, create migrations `0068`–`0072`, start listeners, access a remote card, issue credentials, publish a card, send A2A traffic, change CI or execute H9A tests.
