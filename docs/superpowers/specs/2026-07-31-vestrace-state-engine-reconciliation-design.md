@@ -24,7 +24,7 @@
 - H2 владеет capabilities, policy, approvals и budgets;
 - H3 и H4 владеют model/tool execution;
 - H5 владеет planning, delegation, SubRun и remote-agent execution;
-- H6 владеет context snapshots, artifacts, evidence, mounts, retention и memory consolidation;
+- H6 владеет context snapshots, artifacts, evidence, Artifact mounts, retention и memory consolidation;
 - H7 владеет conversations, human continuations, public events и triggers;
 - H8 владеет connections, secrets и credential leases;
 - H10 владеет telemetry, security audit, evaluation, verification, safe replay и explanations;
@@ -97,7 +97,7 @@ PostgreSQL остаётся единственным authoritative persistence b
 |---:|---|:---:|---|---|
 | 1 | State Engine — внутренний компонент Vestrace | N | Термин относится только к durable execution-state boundary Harness v0.2. Vestrace v0.1 остаётся самостоятельным продуктом. | v0.1, Harness v0.2, этот документ |
 | 2 | MVP: один пользователь, один локальный компьютер | N | Personal/local deployment является первым operational slice, но schema, RLS и contracts не сужаются до single-principal, поскольку Harness также поддерживает Team и Embedded deployment. | Foundation, Harness v0.2 |
-| 3 | Workspace изолирован; общая память подключается явно | A | Forced RLS и scoped transactions обеспечивают изоляцию; H6 mounts предоставляют явный exact-revision-bound доступ. Cross-workspace доступ не следует из знания ID или hash. | Foundation, H6 |
+| 3 | Workspace изолирован; общая память подключается явно | E | Изоляция уже обеспечена forced RLS и scoped transactions. Но v0.1 прямо запрещает межпространственную память: `global` означает только текущий workspace. Явный cross-workspace memory sharing требует отдельного grant/mount design. | v0.1 memory; amendment F |
 | 4 | Append-only события плюс materialized current state | A | H1 RunEvent является каноническим журналом logical Run mutations; H10 operational views являются производными и могут отставать или перестраиваться. | H1, H10 |
 | 5 | Уровни `minimal/operational/reproducible/forensic` | N | Уровни становятся operator-facing presets для H10 capture modes и retention, но не меняют состав канонических H1/H2/H6/H8 событий и audit facts. | H10; amendment A |
 | 6 | По умолчанию hashes/metadata, полный контекст только по настройке и после очистки | A | H6 ContextSnapshot хранит exact references, hashes, token accounting, omissions и policy; capture bytes опциональны, purgeable и проходят redaction/secret scanning. H10 capture policy ограничивает режим. | H6, H8, H10 |
@@ -132,7 +132,7 @@ PostgreSQL остаётся единственным authoritative persistence b
 | 35 | Критичные projections синхронны, аналитические асинхронны | A | H1 aggregate state/event/work commit атомарны; H10 telemetry/read models являются asynchronous/lossy projections и не управляют Run transitions. | H1, H10 |
 | 36 | Projection failure создаёт lag/rebuild, поведение зависит от criticality | A | Authoritative commit не зависит от optional telemetry exporter; mandatory transactional audit/outbox следует source subsystem policy. Operational projections имеют cursor, lag и rebuild lifecycle. | H10 |
 | 37 | Event schema registry, schema version и upcasters | E | Требуется единая compatibility policy: static versioned event envelopes, generated schemas и read-time upcasters. Mutable runtime schema registry не вводится. | H1, H7, H11; amendment B |
-| 38 | Shared memory mount read-only by default, write отдельным разрешением | A | H6 mounts exact-revision-bound, policy-governed и не являются storage credentials; cross-workspace access никогда не возникает неявно. | H6 |
+| 38 | Shared memory mount read-only by default, write отдельным разрешением | E | v0.1 запрещает cross-workspace memory. H6 mounts относятся к Artifact revisions и не решают memory sharing. Требуется отдельный `MemoryShareGrant`/`MemoryMount` contract; read-only является default, source write — отдельной protected operation. | v0.1 memory, H6 boundary; amendment F |
 | 39 | Memory types включают fact/preference/procedure/summary/decision/lesson/failure_pattern/tool_knowledge | N | Сохраняется утверждённый v0.1 набор `Fact`, `Preference`, `Constraint`, `Decision`, `Task`, `Procedure`, `Observation`, `Outcome`, `Summary`. `lesson`, `failure_pattern` и `tool_knowledge` кодируются structured payload/tags на существующих kinds до появления доказанной retrieval-причины для нового top-level kind. | v0.1 memory, H6 |
 | 40 | Агент предлагает memory; policy/Coordinator подтверждает; sensitive/global может требовать user | A | H6 consolidation создаёт governed candidate memories через существующую write policy и никогда не auto-activates их в обход policy. | v0.1 memory policy, H6 |
 | 41 | Roles как templates, capabilities как фактическая authority | A | v0.1 security задаёт capabilities; H2 принимает их как непреодолимый base ceiling. | v0.1 security, H2 |
@@ -307,6 +307,44 @@ searchable metadata           -> PostgreSQL, classified and minimized
 5. Backup/restore документирует key dependencies и не обещает восстановление без key material.
 6. Search projection не может раскрывать исходный sensitive content после erasure.
 
+### Amendment F — Cross-workspace memory sharing
+
+v0.1 сохраняет строгий запрет межпространственной памяти. Будущее расширение должно быть отдельной protected capability, а не новым значением `MemoryScope`.
+
+Минимальная модель:
+
+```text
+MemoryShareGrantRevision
+├── source_workspace_id
+├── target_workspace_id
+├── allowed memory IDs/revisions or bounded source scope
+├── allowed kinds and labels
+├── maximum sensitivity
+├── valid_from / valid_until
+├── policy decision and approver
+└── immutable content hash
+
+MemoryMount
+├── target_workspace_id
+├── share_grant_revision_id
+├── status
+├── read policy
+└── retrieval projection cursor
+```
+
+Инварианты:
+
+1. Read-only является default и не выдаёт source-workspace write capability.
+2. Target retrieval сохраняет source workspace, exact memory revision и provenance; shared result не выглядит локальной памятью.
+3. Знание memory ID, embedding или content hash не даёт доступа.
+4. Query выполняется через source-authorized application port либо policy-filtered projection; прямой cross-workspace SQL/RLS bypass запрещён.
+5. Изменение target copy создаёт новую локальную Memory с derivation reference, а не изменяет source.
+6. Изменение source требует отдельной operation-bound capability/approval и не следует из mount.
+7. Revocation немедленно блокирует новые reads/context assembly; уже созданные captures и derived local memories следуют собственной provenance/retention policy.
+8. Shared embeddings, search documents и summaries не становятся глобальными authoritative records и должны удаляться при revoke/purge.
+9. `Restricted`/`Secret` memory не монтируется без explicit source policy, target policy и user approval.
+10. Cross-workspace physical dedup остаётся disabled by default.
+
 ## 6. Нормативные последствия
 
 После утверждения этого reconciliation design должны быть подготовлены отдельные documentation-only изменения:
@@ -317,7 +355,8 @@ searchable metadata           -> PostgreSQL, classified and minimized
 4. design + implementation plan для signed Run export;
 5. design + implementation plan для webhook extension после стабилизации H11;
 6. security design + implementation plan для workspace envelope encryption;
-7. cross-plan wording correction, запрещающая параллельные generic `Task/Action/Attempt` aggregates и direct SQL boundary.
+7. memory-sharing design + implementation plan без изменения v0.1 workspace boundary;
+8. cross-plan wording correction, запрещающая параллельные generic `Task/Action/Attempt` aggregates и direct SQL boundary.
 
 Эти документы должны ссылаться на существующие Horizons и не создавать `H12 State Engine` как новый параллельный runtime.
 
@@ -327,7 +366,8 @@ searchable metadata           -> PostgreSQL, classified and minimized
 
 - H1 остаётся единственным владельцем `AgentRun`, `RunStep`, `RunEvent`, checkpoint, lease и logical replay;
 - H2 остаётся единственным владельцем final action authorization, approvals и budgets;
-- H6 остаётся единственным владельцем Artifact/ContextSnapshot bytes, provenance, mounts, retention и consolidation;
+- H6 остаётся единственным владельцем Artifact/ContextSnapshot bytes, provenance, Artifact mounts, retention и consolidation;
+- v0.1 memory boundary остаётся workspace-local до отдельного утверждённого memory-sharing amendment;
 - H8 остаётся единственным владельцем secret material и credential leases;
 - H10 telemetry/projections не управляют authoritative state;
 - H11 public APIs не предоставляют arbitrary SQL или storage credentials;
@@ -342,4 +382,4 @@ searchable metadata           -> PostgreSQL, classified and minimized
 
 Нормативный результат:
 
-> Vestrace State Engine — не новый слой рядом с Vestrace, а согласованное имя для уже распределённой durable-state ответственности Harness. Его ядром остаются H1 atomic Run journal и checkpoints; authority принадлежит H2; typed execution — H3–H5; context/artifacts/memory — H6; interactions/triggers — H7; secrets — H8; audit/evaluation/projections — H10; public access — H11.
+> Vestrace State Engine — не новый слой рядом с Vestrace, а согласованное имя для уже распределённой durable-state ответственности Harness. Его ядром остаются H1 atomic Run journal и checkpoints; authority принадлежит H2; typed execution — H3–H5; context/artifacts/local memory consolidation — H6; interactions/triggers — H7; secrets — H8; audit/evaluation/projections — H10; public access — H11. Cross-workspace memory остаётся отдельным будущим extension boundary.
