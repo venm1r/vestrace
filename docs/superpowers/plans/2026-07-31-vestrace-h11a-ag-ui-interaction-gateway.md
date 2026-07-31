@@ -6,40 +6,39 @@
 
 **Goal:** Add a durable, policy-governed AG-UI interaction gateway that lets the built-in console and independent AG-UI clients create, stream, interrupt, resume, reconnect and complete Vestrace Runs without making AG-UI state, messages, Tools or Run identifiers authoritative.
 
-**Architecture:** H11A is an anti-corruption and projection layer over H1–H11. Inbound AG-UI envelopes are authenticated, bounded and materialized through H6/H7 before an existing application command creates or resumes an `AgentRun`; outbound AG-UI events are deterministic projections of H7 public events and current viewer-authorized state. PostgreSQL stores only Vestrace-owned endpoint revisions, external-key bindings, intake/projection state, interrupt bindings and conformance evidence. AG-UI SDK types remain inside one adapter crate and the TypeScript client/console integration. No `RunCheckpointV10` is introduced.
+**Architecture:** H11A is an anti-corruption and projection layer over H1–H11. Inbound AG-UI envelopes are authenticated, bounded and materialized through H6/H7 before existing application commands create or resume an `AgentRun`; outbound AG-UI events are deterministic projections of H7 public events and viewer-authorized state. PostgreSQL stores Vestrace-owned endpoint revisions, external-key bindings, intake state, projection state, interrupt bindings, frontend-action catalogues and release evidence. AG-UI SDK types remain inside one adapter crate and the TypeScript integration. No `RunCheckpointV10` is introduced.
 
-**Tech Stack:** Existing Vestrace H1–H11 and H9A; Rust Edition 2024; Tokio; Axum/Tower; SQLx and PostgreSQL 17; H7 durable public events and SSE cursors; H6 Artifact intake/quarantine; H2 policy/approval; H10 verification; H11 HTTP authentication, TypeScript SDK, console, schema bundle and release tooling; JSON Patch RFC 6902; exact AG-UI source revision `bb1c2afddb4880309879b9564cfb3a635a5da4eb`; TypeScript `@ag-ui/core` `0.0.57`; optional community Rust conformance crates `ag-ui-core`/`ag-ui-client` `0.1.0`; deterministic network-isolated AG-UI fixtures.
+**Tech Stack:** Existing H1–H11 and H9A; Rust Edition 2024; Tokio; Axum/Tower; SQLx/PostgreSQL 17; H6 Artifact intake; H7 public events/SSE cursors; H2 approvals; H10 verification; H11 HTTP authentication, TypeScript SDK, console, schema bundle and release tooling; JSON Patch RFC 6902; exact AG-UI source revision `bb1c2afddb4880309879b9564cfb3a635a5da4eb`; exact TypeScript `@ag-ui/core` `0.0.57`; optional community Rust conformance crates `ag-ui-core`/`ag-ui-client` `0.1.0`; deterministic offline fixtures.
 
 ## Global Constraints
 
-- ADR-0004 and the H11A roadmap amendment are normative.
-- Complete H1–H11, H9A and the binding ADR-0002 outcome before implementing H11A.
-- The implementation pin is exactly AG-UI source revision `bb1c2afddb4880309879b9564cfb3a635a5da4eb` until an explicit dependency-upgrade change passes schema diff, security review, adapter conformance and H10 regression evidence.
-- `@ag-ui/core` is exactly `0.0.57` in the TypeScript lockfile for this plan.
-- Community Rust AG-UI crates are optional conformance/test dependencies only; Vestrace production domain/application/persistence crates do not depend on them.
-- AG-UI SDK/schema types are confined to `vestrace-ag-ui-adapter`, the TypeScript AG-UI integration layer, the console workspace and explicit wire/conformance tests.
-- `AgentRun`, `RunStep`, `RunEvent`, `Conversation`, `InteractionEvent`, `HumanRequest`, Tool invocations, Artifacts, approvals, policy, budgets, credentials and terminal completion remain owned by H1–H11.
+- ADR-0004 and `2026-07-31-vestrace-h11a-ag-ui-roadmap-amendment.md` are normative.
+- Complete H1–H11, H9A and the binding ADR-0002 outcome before implementation.
+- The implementation pin is exactly AG-UI revision `bb1c2afddb4880309879b9564cfb3a635a5da4eb` until an explicit upgrade passes schema diff, security review, adapter conformance and H10 regression evidence.
+- `@ag-ui/core` is exactly `0.0.57`; community Rust crates are optional conformance dependencies only.
+- AG-UI SDK/schema types are confined to `vestrace-ag-ui-adapter`, the TypeScript integration, console workspace and wire tests.
+- H1–H11 remain authoritative for Runs, conversations, Tools, Artifacts, approvals, policy, budgets, credentials and completion.
 - AG-UI `threadId`, `runId` and `parentRunId` are untrusted external correlation keys, never Vestrace IDs.
-- H7 `PublicEventRecord` and workspace cursor remain the durable event source.
-- No `RunCheckpointV10` or AG-UI payload is added to a Run checkpoint.
-- `RUN_FINISHED success` is emitted only for an authoritative terminal Run whose H10 one-use completion gate was consumed.
-- `RUN_FINISHED interrupt` ends the current AG-UI stream but does not make the `AgentRun` terminal.
-- A transport disconnect never changes Run state and is not projected as `RUN_ERROR`.
-- Inbound state, transcript, context, Tools, metadata, forwarded properties, URLs and binary parts are untrusted.
-- Inbound developer/system/assistant/Tool/reasoning messages never become trusted runtime instructions or canonical conversation history.
-- Client Tool definitions may reference only exact server-published frontend-action definitions and cannot create H4 Tools or capabilities.
-- AG-UI state snapshots and deltas are UI projections only. JSON Patch never applies to domain aggregates.
-- Multimedia, document, binary and URL content pass H6 intake, quarantine and inspection before an Interaction can start or resume execution.
-- Frontend effects use ordinary H11 commands with authentication, cross-surface idempotency, expected version and H2 authorization.
-- Generic interrupt resolution, free-form “yes” or a boolean approval cannot create an H2 ApprovalGrant.
-- `RAW`, `rawEvent`, all deprecated `THINKING_*`, all `REASONING_*`, `REASONING_ENCRYPTED_VALUE` and arbitrary `CUSTOM` events are prohibited.
+- H7 `PublicEventRecord` and workspace cursor remain the only durable event-stream source.
+- No AG-UI payload or state is stored in a Run checkpoint.
+- `RUN_FINISHED success` requires authoritative terminal Run state after H10 one-use completion consumption.
+- `RUN_FINISHED interrupt` ends one interaction stream but does not terminate the underlying Run.
+- Disconnect/backpressure is not `RUN_ERROR` and never changes Run state.
+- Inbound state, transcript, context, Tools, metadata, URLs and binary parts are untrusted.
+- Inbound developer/system/assistant/Tool/reasoning messages never become trusted runtime instructions.
+- Client Tool definitions may reference only exact server-published frontend actions and cannot create H4 Tools/capabilities.
+- State snapshots/deltas are UI projections. JSON Patch never applies to domain aggregates.
+- Rich input passes H6 intake, quarantine and inspection before execution starts or resumes.
+- Frontend effects use ordinary H11 commands with authentication, idempotency, expected version and H2 authorization.
+- Generic interrupt resolution, free-form “yes” or boolean approval cannot create an ApprovalGrant.
+- `RAW`, `rawEvent`, `THINKING_*`, `REASONING_*`, `REASONING_ENCRYPTED_VALUE` and arbitrary `CUSTOM` events are prohibited.
 - Only exact schema-pinned `vestrace.*` custom events are allowed.
-- Secrets, credentials, policy tickets, internal paths, hidden reasoning, unsafe Tool arguments/results and active Artifact content never enter AG-UI payloads.
-- SSE `id` is the H7 cursor. `Last-Event-ID` and an explicit cursor parameter may not disagree.
-- Delivery is at-least-once; clients deduplicate by Vestrace event ID and projection key.
-- Personal may enable the loopback AG-UI console surface by safe default. Team and Embedded require explicit configuration.
-- Initial transport is authenticated HTTP POST returning SSE. WebSocket and AG-UI binary transport are deferred.
-- H11 migrations `0081`–`0086` are never edited. H11A migrations are `0087`–`0091`, each created once by one task.
+- Secrets, tickets, internal paths, hidden reasoning, unsafe Tool arguments/results and active Artifact content never enter AG-UI payloads.
+- SSE `id` is the H7 cursor; `Last-Event-ID` and explicit cursor may not disagree.
+- Delivery is at-least-once; clients deduplicate by Vestrace event ID plus deterministic projection key.
+- Initial transport is authenticated HTTP POST returning SSE. WebSocket/binary are deferred.
+- Personal may enable loopback AG-UI for its console; Team/Embedded require explicit configuration.
+- H11 migrations `0081`–`0086` are never edited. H11A owns `0087`–`0092`, one migration per task owner.
 - Future implementation branch: `feat/harness-ag-ui-gateway`.
 
 ---
@@ -47,122 +46,50 @@
 ## Locked file structure
 
 ```text
-Cargo.toml
-Cargo.lock
-
-crates/vestrace-domain/src/
-  id.rs
-  ag_ui/{mod,endpoint,binding,intake,projection,interrupt,frontend_action,release}.rs
-
-crates/vestrace-application/src/
-  ag_ui/{mod,ports,input_service,projection_service,resume_service,frontend_action_service,release_service}.rs
-  composition/ag_ui.rs
-
-crates/vestrace-ag-ui-adapter/
-  Cargo.toml
-  src/
-    lib.rs
-    pin.rs
-    wire/{mod,input,event,error,extension}.rs
-    decode.rs
-    encode.rs
-    input_mapper.rs
-    event_mapper.rs
-    state_patch.rs
-    http_sse.rs
-    bounds.rs
-  tests/{golden_vectors,forbidden_events,cross_language}.rs
-
-crates/vestrace-channel-http/src/
-  routes/ag_ui.rs
-  dto/ag_ui.rs
-  sse/ag_ui.rs
-
+crates/vestrace-domain/src/ag_ui/
+  mod.rs endpoint.rs binding.rs intake.rs projection.rs interrupt.rs frontend_action.rs release.rs
+crates/vestrace-application/src/ag_ui/
+  mod.rs ports.rs input_service.rs projection_service.rs resume_service.rs
+  frontend_action_service.rs release_service.rs
+crates/vestrace-ag-ui-adapter/src/
+  lib.rs pin.rs decode.rs encode.rs input_mapper.rs event_mapper.rs state_patch.rs bounds.rs
+  wire/{mod,input,event,error,extension}.rs
+crates/vestrace-channel-http/src/routes/ag_ui.rs
+crates/vestrace-channel-http/src/dto/ag_ui.rs
+crates/vestrace-channel-http/src/sse/ag_ui.rs
 crates/vestrace-infrastructure/src/postgres/ag_ui/
-  mod.rs
-  endpoint_repository.rs
-  binding_repository.rs
-  intake_repository.rs
-  projection_repository.rs
-  interrupt_repository.rs
-  frontend_action_repository.rs
-  conformance_repository.rs
-
+  endpoint_repository.rs binding_repository.rs intake_repository.rs projection_repository.rs
+  interrupt_repository.rs frontend_action_repository.rs conformance_repository.rs
 packages/sdk-typescript/src/ag-ui/
-  index.ts
-  client.ts
-  types.ts
-  cursor.ts
-  reducer.ts
-  interrupts.ts
-  frontendActions.ts
-  errors.ts
-
-apps/console/src/
-  ag-ui/{client,session,reducer,events,interrupts,frontendActions,generativeUi}.ts
-  components/ag-ui/{AgentWorkspace,ConversationPane,ActivityTimeline,InterruptForm,ApprovalCard,ArtifactCard,ToolActivityCard,StateInspector}.tsx
-  pages/AgentWorkspace.tsx
-
+apps/console/src/ag-ui/
+apps/console/src/components/ag-ui/
 schemas/ag-ui/v1/
-  source-pin.json
-  run-agent-input.schema.json
-  event.schema.json
-  extension.schema.json
-  state-projection.schema.json
-  frontend-action.schema.json
-
 fixtures/ag-ui/
-  inputs/
-  events/
-  forbidden/
-  multimedia/
-  reconnect/
-  console/
 
 migrations/
   0087_ag_ui_endpoints_run_bindings_and_intakes.sql
   0088_ag_ui_projection_snapshots_events_and_cursors.sql
-  0089_ag_ui_interrupt_bindings_and_frontend_actions.sql
-  0090_ag_ui_schema_pins_conformance_and_release_evidence.sql
-  0091_ag_ui_rls_indexes_and_cross_resource_guards.sql
+  0089_ag_ui_interrupt_bindings_and_resume_idempotency.sql
+  0090_ag_ui_frontend_action_catalogues.sql
+  0091_ag_ui_schema_pins_conformance_and_release_evidence.sql
+  0092_ag_ui_rls_indexes_and_cross_resource_guards.sql
 
 tests/
-  ag_ui_pin_boundary.rs
-  ag_ui_input_contract.rs
-  ag_ui_binding_idempotency.rs
-  ag_ui_multimedia_intake.rs
-  ag_ui_event_projection.rs
-  ag_ui_state_patch.rs
-  ag_ui_interrupt_resume.rs
-  ag_ui_approval_boundary.rs
-  ag_ui_frontend_actions.rs
-  ag_ui_http_sse.rs
-  ag_ui_reconnect.rs
-  ag_ui_console_contract.rs
-  ag_ui_release_manifest.rs
-  ag_ui_rls.rs
-  ag_ui_vertical_slice.rs
-  ag_ui_restart_matrix.rs
+  ag_ui_pin_boundary.rs ag_ui_input_contract.rs ag_ui_binding_idempotency.rs
+  ag_ui_multimedia_intake.rs ag_ui_event_projection.rs ag_ui_state_patch.rs
+  ag_ui_interrupt_resume.rs ag_ui_approval_boundary.rs ag_ui_frontend_actions.rs
+  ag_ui_http_sse.rs ag_ui_reconnect.rs ag_ui_console_contract.rs
+  ag_ui_release_manifest.rs ag_ui_rls.rs ag_ui_vertical_slice.rs ag_ui_restart_matrix.rs
 
 scripts/
-  generate-ag-ui-schemas.sh
-  verify-ag-ui-pin.sh
-  verify-ag-ui-type-boundary.sh
-  verify-ag-ui-forbidden-events.sh
-  verify-ag-ui-release-evidence.sh
+  generate-ag-ui-schemas.sh verify-ag-ui-pin.sh verify-ag-ui-type-boundary.sh
+  verify-ag-ui-forbidden-events.sh verify-ag-ui-release-evidence.sh
   run-h11a-ag-ui-vertical-slice.sh
-
-docs/
-  ag-ui.md
-  ag-ui-security.md
-  ag-ui-console.md
 ```
-
----
 
 ## Normative contracts
 
-### Exact protocol pin
+### Protocol pin
 
 ```rust
 pub struct AgUiProtocolPin {
@@ -188,13 +115,10 @@ rust_core_version       0.1.0
 rust_client_version     0.1.0
 ```
 
-Schema hashes are generated from the exact pinned source and committed as deterministic release inputs.
-
-### Endpoint revision
+### Endpoint and binding
 
 ```rust
 pub enum AgUiEndpointLifecycle { Draft, Active, Disabled, Revoked }
-
 pub enum AgUiTransportBinding { HttpPostSse }
 
 pub struct AgUiInputLimits {
@@ -227,32 +151,16 @@ pub struct AgUiEndpointRevision {
     pub maximum_classification: DataClassification,
     pub content_hash: [u8; 32],
 }
-```
 
-Lifecycle changes create a new revision; active Runs remain bound to the exact revision selected at intake.
-
-### External keys and binding
-
-```rust
-pub struct AgUiExternalThreadKeyHash(pub [u8; 32]);
-pub struct AgUiExternalRunKeyHash(pub [u8; 32]);
-
-pub enum AgUiRunBindingLifecycle {
-    IntakePending,
-    Bound,
-    Interrupted,
-    Streaming,
-    Terminal,
-    Rejected,
-}
+pub enum AgUiRunBindingLifecycle { IntakePending, Bound, Interrupted, Streaming, Terminal, Rejected }
 
 pub struct AgUiRunBinding {
     pub id: AgUiRunBindingId,
     pub workspace_id: WorkspaceId,
     pub principal_id: PrincipalId,
     pub endpoint_revision_id: AgUiEndpointRevisionId,
-    pub external_thread_key_hash: AgUiExternalThreadKeyHash,
-    pub external_run_key_hash: AgUiExternalRunKeyHash,
+    pub external_thread_key_hash: [u8; 32],
+    pub external_run_key_hash: [u8; 32],
     pub canonical_input_hash: [u8; 32],
     pub conversation_id: Option<ConversationId>,
     pub run_id: Option<AgentRunId>,
@@ -264,21 +172,12 @@ pub struct AgUiRunBinding {
 }
 ```
 
-Uniqueness is `(workspace_id, principal_id, endpoint_revision_id, external_run_key_hash)`. Same hash and same canonical input returns the existing binding. Same key with changed canonical input conflicts.
+Uniqueness is `(workspace, principal, endpoint_revision, external_run_key_hash)`. Same key/input returns the existing binding; changed canonical input conflicts.
 
-### Intake
+### Durable intake
 
 ```rust
-pub enum AgUiIntakeStatus {
-    Received,
-    Validating,
-    Materializing,
-    Ready,
-    Applied,
-    Rejected,
-    Expired,
-}
-
+pub enum AgUiIntakeStatus { Received, Validating, Materializing, Ready, Applied, Rejected, Expired }
 pub enum AgUiInputPartKind { Text, Image, Audio, Video, Document, Binary, Url }
 
 pub struct AgUiInputPartReference {
@@ -306,9 +205,9 @@ pub struct AgUiIntake {
 }
 ```
 
-`Ready → Applied` is one transaction that creates or resumes the H7/H1 authoritative state and binds IDs. No Run work is leased while required input parts remain uninspected.
+`Ready → Applied` binds the result of an existing H7/H1 command atomically. Required uninspected parts prevent Run work from being scheduled.
 
-### Protocol-neutral inbound DTO
+### Protocol-neutral input
 
 ```rust
 pub enum AgUiInboundMessageRole { User, UntrustedImportedHistory }
@@ -346,9 +245,9 @@ pub struct AgUiInboundEnvelope {
 }
 ```
 
-Only user messages are accepted in the standard profile. Compatibility import maps other allowed transcript entries to `UntrustedImportedHistory`; it never maps developer/system/assistant/Tool/reasoning content to authoritative roles.
+Standard mode accepts only user messages. Compatibility imports are explicitly untrusted and cannot become developer/system/assistant/Tool/reasoning authority.
 
-### Projection and extension envelope
+### Projection
 
 ```rust
 pub struct AgUiVestraceExtension {
@@ -361,25 +260,12 @@ pub struct AgUiVestraceExtension {
 }
 
 pub enum AgUiProjectedEventKind {
-    RunStarted,
-    RunFinishedSuccess,
-    RunFinishedInterrupt,
-    RunError,
-    StepStarted,
-    StepFinished,
-    TextMessageStart,
-    TextMessageContent,
-    TextMessageEnd,
-    ToolCallStart,
-    ToolCallArgs,
-    ToolCallEnd,
-    ToolCallResult,
-    StateSnapshot,
-    StateDelta,
-    MessagesSnapshot,
-    ActivitySnapshot,
-    ActivityDelta,
-    Custom,
+    RunStarted, RunFinishedSuccess, RunFinishedInterrupt, RunError,
+    StepStarted, StepFinished,
+    TextMessageStart, TextMessageContent, TextMessageEnd,
+    ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult,
+    StateSnapshot, StateDelta, MessagesSnapshot,
+    ActivitySnapshot, ActivityDelta, Custom,
 }
 
 pub struct AgUiProjectedEvent {
@@ -392,9 +278,9 @@ pub struct AgUiProjectedEvent {
 }
 ```
 
-Projection uniqueness is `(binding_id, event_id, projection_key)`. The same public event may produce multiple ordered AG-UI events; `projection_key` is deterministic, such as `text:start:<message-id>`.
+Uniqueness is `(binding_id, public_event_id, projection_key)`. One H7 event may yield multiple ordered events with deterministic keys.
 
-### State projection
+### State projection and patch
 
 ```rust
 pub struct AgUiStateProjection {
@@ -418,20 +304,7 @@ pub struct AgUiStatePatch {
 }
 ```
 
-Allowed JSON Pointer prefixes:
-
-```text
-/run/status
-/run/version
-/plan
-/activity
-/humanRequests
-/artifacts
-/budget
-/verification
-```
-
-Maximum 128 operations and 256 KiB encoded patch. On base mismatch, invalid path or invalid resulting schema, emit a full snapshot instead of applying the patch.
+Allowed pointer prefixes: `/run/status`, `/run/version`, `/plan`, `/activity`, `/humanRequests`, `/artifacts`, `/budget`, `/verification`. Maximum 128 operations and 256 KiB. Invalid/stale patches fall back to a full snapshot.
 
 ### Interrupt and resume
 
@@ -456,22 +329,13 @@ pub struct AgUiResumeEntry {
 }
 ```
 
-A resume entry binds to exactly one open HumanRequest. Repeated identical resume returns the existing response. Changed payload conflicts. Approval requests call the H7/H2 approval path; no generic resolved state can create an ApprovalGrant.
+Each entry binds to one open HumanRequest. Identical replay returns the existing response; changed payload conflicts. Approval uses the exact H7/H2 path.
 
 ### Frontend actions
 
 ```rust
-pub enum AgUiFrontendActionAuthority {
-    ClientOnly,
-    ServerCommand,
-}
-
-pub enum AgUiFrontendActionRisk {
-    Navigation,
-    ReadOnly,
-    UserInput,
-    ProtectedMutation,
-}
+pub enum AgUiFrontendActionAuthority { ClientOnly, ServerCommand }
+pub enum AgUiFrontendActionRisk { Navigation, ReadOnly, UserInput, ProtectedMutation }
 
 pub struct AgUiFrontendActionDefinitionRevision {
     pub id: AgUiFrontendActionDefinitionRevisionId,
@@ -494,7 +358,7 @@ pub struct AgUiFrontendActionCatalogueRevision {
 }
 ```
 
-Initial client-only actions:
+Initial client-only stable IDs:
 
 ```text
 vestrace.ui.navigate.run
@@ -504,7 +368,7 @@ vestrace.ui.copy.reference
 vestrace.ui.expand.activity
 ```
 
-Initial server-command actions:
+Initial server-command stable IDs:
 
 ```text
 vestrace.command.submit-human-response
@@ -515,45 +379,7 @@ vestrace.command.create-download-grant
 vestrace.command.export-artifact
 ```
 
-Server-command actions invoke the ordinary H11 command facade. An AG-UI Tool-call event alone never invokes them.
-
-### Event profile
-
-Enabled:
-
-```text
-RUN_STARTED
-RUN_FINISHED
-RUN_ERROR
-STEP_STARTED
-STEP_FINISHED
-TEXT_MESSAGE_START
-TEXT_MESSAGE_CONTENT
-TEXT_MESSAGE_END
-TOOL_CALL_START
-TOOL_CALL_ARGS when safe
-TOOL_CALL_END
-TOOL_CALL_RESULT when safe
-STATE_SNAPSHOT
-STATE_DELTA
-MESSAGES_SNAPSHOT
-ACTIVITY_SNAPSHOT
-ACTIVITY_DELTA
-schema-pinned vestrace.* CUSTOM
-```
-
-Forbidden:
-
-```text
-RAW
-rawEvent
-THINKING_*
-REASONING_START
-REASONING_MESSAGE_*
-REASONING_END
-REASONING_ENCRYPTED_VALUE
-arbitrary CUSTOM
-```
+An emitted Tool-call is presentation only; server effects require a separate authenticated H11 command.
 
 ### Conformance and release evidence
 
@@ -581,473 +407,222 @@ pub struct AgUiReleaseEvidence {
 }
 ```
 
-A release cannot advertise `ProductSurface::AgUiHttpSse` without passing exact evidence.
+`ProductSurface::AgUiHttpSse` may be advertised only with valid exact evidence.
 
 ---
 
-### Task 1: Add protocol-neutral AG-UI domain contracts
+### Task 1: Add protocol-neutral domain contracts
 
-**Files:** create domain modules, modify ID exports and add unit/property tests.
+**Files:** domain `ag_ui` modules and ID exports.
 
-**Consumes:** H1 Run IDs/state, H6 Artifact revision IDs/classification, H7 Conversation/HumanRequest/public cursor, H9 runtime snapshot, H10 completion, H11 release IDs.
+**Produces:** all H11A domain values above.
 
-**Produces:** every H11A domain type in the normative contracts.
+- [ ] Write transition tests for endpoint, binding and intake lifecycles.
+- [ ] Write golden canonical-hash tests for endpoint, binding identity, intake, projection, state, interrupt, action and conformance report.
+- [ ] Write negative serialization tests proving no clear external key, SDK type, secret, raw event or checkpoint field exists.
+- [ ] Implement IDs and contracts exactly as specified.
+- [ ] Run `cargo test -p vestrace-domain ag_ui::`.
+- [ ] Commit `feat(ag-ui): add interaction gateway contracts`.
 
-- [ ] Add IDs: `AgUiEndpointId`, `AgUiEndpointRevisionId`, `AgUiRunBindingId`, `AgUiIntakeId`, `AgUiInterruptBindingId`, `AgUiFrontendActionDefinitionRevisionId`, `AgUiFrontendActionCatalogueRevisionId`, `AgUiConformanceReportId`.
-- [ ] Write transition tests for endpoint lifecycle, binding lifecycle and intake lifecycle. Reject terminal-to-active, Applied-to-Materializing and consumed interrupt reuse.
-- [ ] Write canonical hash golden tests for endpoint, binding request identity, intake, projection, state projection, frontend action and conformance report.
-- [ ] Write serialization-negative tests proving no AG-UI SDK type, raw event, secret, checkpoint or clear external key is represented.
-- [ ] Implement the domain contracts and validation bounds exactly as above.
-- [ ] Run:
+### Task 2: Pin AG-UI and isolate wire types
 
-```bash
-cargo test -p vestrace-domain ag_ui::
-```
+**Files:** `vestrace-ag-ui-adapter`, pin/schema scripts and golden fixtures.
 
-- [ ] Commit:
+**Produces:** `decode_run_agent_input`, `encode_projected_event`, exact pin metadata and cross-language vectors.
 
-```bash
-git add crates/vestrace-domain/src/ag_ui crates/vestrace-domain/src/id.rs
-git commit -m "feat(ag-ui): add interaction gateway contracts"
-```
+- [ ] Add no AG-UI dependency outside the adapter/TypeScript integration.
+- [ ] Record exact source/package versions and deterministic schema hashes.
+- [ ] Implement pinned wire DTOs for input, messages, parts, Tools, interrupts/resume and enabled events.
+- [ ] Decoder rejects prohibited roles, unknown frontend actions, non-`vestrace.*` forwarded properties and bound violations.
+- [ ] Encoder has no constructors for RAW/reasoning and rejects arbitrary custom names.
+- [ ] Validate vectors with pinned TypeScript and optional community Rust crates.
+- [ ] Run adapter tests plus pin/type-boundary scripts.
+- [ ] Commit `feat(ag-ui): pin protocol and isolate wire types`.
 
-### Task 2: Pin AG-UI and create the anti-corruption wire crate
+### Task 3: Add application ports and intake orchestration
 
-**Files:** create `vestrace-ag-ui-adapter`, pin/schema scripts, fixtures and boundary tests.
+**Files:** application `ag_ui` modules and deterministic fixtures.
 
-**Consumes:** Task 1 domain-neutral DTOs.
+**Produces:** repository ports, H6 materialization port, H7/H11 command port and `AgUiInputService`.
 
-**Produces:** `decode_run_agent_input`, `encode_projected_event`, exact pin metadata and golden vectors.
+- [ ] Define endpoint/binding/intake/projection/interrupt/action/conformance repository ports.
+- [ ] Define `AgUiInputMaterializationPort` and `AgUiInteractionCommandPort` using Vestrace DTOs only.
+- [ ] Implement begin, part recording, reject and `apply_ready` flows.
+- [ ] Hash external keys immediately; return New/ExistingSameInput/Conflict.
+- [ ] Ensure `apply_ready` creates/resumes H7/H1 state once and binds returned IDs.
+- [ ] Add crash fixtures before/after command commit.
+- [ ] Run `cargo test -p vestrace-application ag_ui::`.
+- [ ] Commit `feat(ag-ui): add intake and projection application ports`.
 
-- [ ] Add the adapter crate without adding AG-UI dependencies to domain/application/infrastructure crates.
-- [ ] Record the exact source commit and package versions in `pin.rs` and `schemas/ag-ui/v1/source-pin.json`.
-- [ ] Generate deterministic schemas from pinned TypeScript source and store hashes in `AgUiProtocolPin` fixture.
-- [ ] Implement wire DTOs only inside the adapter for pinned `RunAgentInput`, messages, content parts, Tools, interrupts/resume and enabled events.
-- [ ] Decoder rejects prohibited message roles in standard mode, unknown frontend Tool definitions, non-`vestrace.*` forwarded properties and all input limits.
-- [ ] Encoder has no constructors for RAW or reasoning events and rejects arbitrary custom names.
-- [ ] Add cross-language vectors validated by pinned TypeScript `@ag-ui/core` and optional Rust community crates.
-- [ ] Boundary script fails if `ag_ui_core`, `@ag-ui/*` names or wire DTO imports appear outside allowed paths.
-- [ ] Run:
+### Task 4: Persist endpoints, bindings and intake
 
-```bash
-cargo test -p vestrace-ag-ui-adapter
-bash scripts/generate-ag-ui-schemas.sh
-bash scripts/verify-ag-ui-pin.sh
-bash scripts/verify-ag-ui-type-boundary.sh
-```
+**Files:** migration `0087`, repositories and tests.
 
-- [ ] Commit:
+- [ ] Create endpoint identities/revisions, external-key bindings, intake records, message/context hashes, part references and H6/H7/H1 links.
+- [ ] Persist keyed hashes only; never raw request or clear external keys.
+- [ ] Enforce scoped uniqueness and transactional New/Same/Conflict behavior.
+- [ ] Recover Received/Validating/Materializing/Ready records without duplicate Runs.
+- [ ] Test concurrent duplicate, changed input, expiry and both crash boundaries.
+- [ ] Run `ag_ui_binding_idempotency` and `ag_ui_input_contract` integration tests.
+- [ ] Commit `feat(ag-ui): persist endpoints bindings and intake`.
 
-```bash
-git add crates/vestrace-ag-ui-adapter schemas/ag-ui fixtures/ag-ui scripts Cargo.toml Cargo.lock
-git commit -m "feat(ag-ui): pin protocol and isolate wire types"
-```
+### Task 5: Route rich input through H6
 
-### Task 3: Define application ports, intake orchestration and deterministic fixtures
+**Files:** input materializer, multimedia fixtures and tests.
 
-**Files:** create application AG-UI modules and fixture adapters.
+- [ ] Stream inline media/documents/binary into H6 without whole-body buffering.
+- [ ] Route URL parts through H6 secure fetch with SSRF/DNS/redirect/MIME/size/time controls.
+- [ ] Keep intake Materializing until required inspections pass.
+- [ ] Reuse same source hash binding without duplicate ingestion.
+- [ ] Test document success, malware, oversized data, private IP, DNS rebinding, lost response and restart.
+- [ ] Run `cargo test --test ag_ui_multimedia_intake`.
+- [ ] Commit `feat(ag-ui): route rich input through artifact intake`.
 
-**Consumes:** Task 1 contracts and Task 2 protocol-neutral decoder output.
+### Task 6: Persist deterministic projections and cursors
 
-**Produces:** services and ports consumed by persistence/HTTP/projection tasks.
+**Files:** migration `0088`, projection repository and tests.
 
-- [ ] Define `AgUiEndpointRepositoryPort`, `AgUiBindingRepositoryPort`, `AgUiIntakeRepositoryPort`, `AgUiProjectionRepositoryPort`, `AgUiInterruptRepositoryPort`, `AgUiFrontendActionRepositoryPort`, `AgUiConformanceRepositoryPort`.
-- [ ] Define `AgUiInputMaterializationPort` over H6 ingestion/fetch and `AgUiInteractionCommandPort` over H7/H11 commands.
-- [ ] Implement `AgUiInputService::begin`, `record_materialized_part`, `reject`, `apply_ready`.
-- [ ] `begin` hashes clear external keys immediately and returns ExistingSameInput/Conflict/New.
-- [ ] `apply_ready` atomically creates or resumes H7 state and binds Conversation/Run; no model work is scheduled before Ready.
-- [ ] Build fixtures for text-only, inspected document, rejected URL, duplicate key, changed key, crash before/after H7 command commit.
-- [ ] Test no application port accepts AG-UI wire types.
-- [ ] Run:
-
-```bash
-cargo test -p vestrace-application ag_ui::
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-application/src/ag_ui crates/vestrace-application/src/composition/ag_ui.rs fixtures/ag-ui
-git commit -m "feat(ag-ui): add intake and projection application ports"
-```
-
-### Task 4: Persist endpoints, run bindings and durable intake
-
-**Files:** create migration `0087`, repositories and integration tests.
-
-**Consumes:** Task 3 repository ports.
-
-**Produces:** restart-safe endpoint/binding/intake storage.
-
-- [ ] `0087` creates endpoint identities/revisions/lifecycle, external-key bindings, intake records, message/context hashes, part references and H6/H7/H1 foreign-key bindings.
-- [ ] Store only keyed hashes of external thread/run/message/interrupt keys; never clear values or raw request JSON.
-- [ ] Unique constraint enforces workspace/principal/endpoint/external-run key.
-- [ ] `begin_binding_and_intake` is one transaction and returns same/conflict/new deterministically.
-- [ ] `apply_ready` locks binding/intake and atomically records Conversation/Run IDs after the existing H7/H1 command result.
-- [ ] Work recovery finds Received/Validating/Materializing/Ready records without creating duplicate Runs.
-- [ ] Test RLS preliminarily, concurrent duplicate, changed body, expired intake, crash before command, crash after command before binding acknowledgement.
-- [ ] Run:
-
-```bash
-DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test ag_ui_binding_idempotency --test ag_ui_input_contract
-```
-
-- [ ] Commit:
-
-```bash
-git add migrations/0087_ag_ui_endpoints_run_bindings_and_intakes.sql \
-  crates/vestrace-infrastructure/src/postgres/ag_ui tests/ag_ui_binding_idempotency.rs tests/ag_ui_input_contract.rs
-git commit -m "feat(ag-ui): persist endpoints bindings and intake"
-```
-
-### Task 5: Implement H6 multimedia, document and URL intake
-
-**Files:** extend input service/materialization adapter and add fixtures/tests.
-
-**Consumes:** H6 ingestion, secure URL fetch, inspections and Task 4 intake persistence.
-
-**Produces:** inspected `AgUiInputPartReference` values and Ready intake.
-
-- [ ] Text parts are bounded and hashed; inline image/audio/video/document/binary data streams into H6 without whole-body buffering.
-- [ ] URL parts call H6 secure external ingestion with SSRF, DNS, redirect, MIME, size and timeout policies.
-- [ ] Required parts keep intake Materializing until exact Artifact revisions are available and pass required inspections.
-- [ ] Rejected/quarantined-for-review part rejects or pauses intake according to endpoint policy; it never starts Run execution.
-- [ ] Same source hash reuses the same intake part binding without duplicating H6 ingestion.
-- [ ] Test document success, malware rejection, oversized base64/data, URL private IP, DNS rebinding, response loss and restart.
-- [ ] Run:
-
-```bash
-cargo test --test ag_ui_multimedia_intake
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-application/src/ag_ui/input_service.rs fixtures/ag-ui/multimedia tests/ag_ui_multimedia_intake.rs
-git commit -m "feat(ag-ui): route rich input through artifact intake"
-```
-
-### Task 6: Persist projection snapshots, projected events and durable cursors
-
-**Files:** create migration `0088`, repository and tests.
-
-**Consumes:** Task 4 bindings and H7 public events.
-
-**Produces:** deduplicated projection records and state snapshots.
-
-- [ ] `0088` creates projection snapshots, projected event records, public-event links, projection keys, cursor checkpoints and stream-session observations.
-- [ ] Unique `(binding_id, public_event_id, projection_key)` prevents duplicate logical events.
-- [ ] Projection snapshots store safe JSON, schema/hash/version and source cursor; they are rebuildable projections, not authority.
-- [ ] Cursor advancement occurs only after all deterministic projections for a public event are persisted.
-- [ ] Rebuilding the same cursor range is idempotent; changed mapping output for the same pin is a conformance conflict.
-- [ ] Test multi-event projection, restart during batch, duplicate H7 delivery, cursor disagreement and cross-workspace isolation.
-- [ ] Run:
-
-```bash
-DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test ag_ui_event_projection --test ag_ui_reconnect
-```
-
-- [ ] Commit:
-
-```bash
-git add migrations/0088_ag_ui_projection_snapshots_events_and_cursors.sql \
-  crates/vestrace-infrastructure/src/postgres/ag_ui/projection_repository.rs \
-  tests/ag_ui_event_projection.rs tests/ag_ui_reconnect.rs
-git commit -m "feat(ag-ui): persist durable interaction projections"
-```
+- [ ] Create state snapshots, projected events, H7 links, projection keys, cursor checkpoints and stream observations.
+- [ ] Enforce `(binding, public_event, projection_key)` uniqueness.
+- [ ] Advance cursor only after all projections for one H7 event persist.
+- [ ] Treat changed output for the same pin/input as conformance conflict.
+- [ ] Test restart mid-batch, duplicate H7 delivery, cursor disagreement and isolation.
+- [ ] Run `ag_ui_event_projection` and `ag_ui_reconnect` tests.
+- [ ] Commit `feat(ag-ui): persist durable interaction projections`.
 
 ### Task 7: Project lifecycle, messages and steps
 
-**Files:** implement projection service and adapter event mapping.
+**Files:** projection service and adapter mapper.
+
+- [ ] Emit one RUN_STARTED after durable binding.
+- [ ] Map assistant streaming into stable text start/content/end keys.
+- [ ] Map viewer-visible step start/finish without private plan context.
+- [ ] Gate success on terminal Run plus H10 completion reference.
+- [ ] Emit interrupt only for open HumanRequest and leave Run non-terminal.
+- [ ] Never map disconnect/backpressure/projection lag to RUN_ERROR.
+- [ ] Test chunk restart/dedup, terminal gate, interrupt semantics and redaction.
+- [ ] Commit `feat(ag-ui): project run lifecycle messages and steps`.
+
+### Task 8: Project state, activity and allowed custom events
+
+**Files:** state patcher, schemas and forbidden-event tests.
+
+- [ ] Build closed viewer-authorized state projection.
+- [ ] Emit patch only for exact base version/hash, allowed paths, ≤128 ops, ≤256 KiB and valid result; otherwise snapshot.
+- [ ] Add planning/research/wait/artifact/sandbox/verification/reconciliation/budget activities.
+- [ ] Add exact schemas for approved `vestrace.*` events.
+- [ ] Make RAW/reasoning/arbitrary custom generation impossible at compile and runtime boundaries.
+- [ ] Test pointer abuse, stale base, oversized patch and viewer filtering.
+- [ ] Run state tests and forbidden-event script.
+- [ ] Commit `feat(ag-ui): add safe state and activity projection`.
+
+### Task 9: Persist interrupts and idempotent resume
+
+**Files:** migration `0089`, resume service/repository and approval tests.
+
+- [ ] Create interrupt bindings, external interrupt hashes, schema/challenge links, consumed response links and resume idempotency rows.
+- [ ] Validate participant, request, schema, status and expiry before H7 response.
+- [ ] Return existing response for identical replay; conflict on changed payload/status.
+- [ ] Route approval through exact H7/H2 challenge/fingerprint path.
+- [ ] Reconcile lost response after H7 commit before retry.
+- [ ] Test clarification, choice, review, approval, expiry, cancellation, cross-Run replay and restart.
+- [ ] Commit `feat(ag-ui): add durable interrupt and resume mapping`.
+
+### Task 10: Project safe Tool, Artifact and remote activity
+
+**Files:** projection mapper, schemas and security fixtures.
+
+- [ ] Classify Tool views as publishable-args, summary-only or hidden.
+- [ ] Exclude credentials, tickets, headers, environment, internal paths and unsafe results.
+- [ ] Use activity/custom summary for sensitive Tools.
+- [ ] Emit exact Artifact revision plus safe preview/download-command references only.
+- [ ] Never embed active HTML/SVG/document content.
+- [ ] Expose safe remote status without A2A frames/credentials.
+- [ ] Test secret fixtures, destructive Tool, shell-like args, quarantined/purged Artifact, SVG and remote Unknown.
+- [ ] Commit `feat(ag-ui): project safe tool and artifact activity`.
+
+### Task 11: Persist governed frontend actions
+
+**Files:** migration `0090`, action service/repository/schema/tests.
+
+- [ ] Create immutable action definitions/catalogues and endpoint bindings; migration seeds no active authority.
+- [ ] Import exact definitions through application commands.
+- [ ] Validate stable ID and revision hash against endpoint catalogue.
+- [ ] Client-only actions call no server service.
+- [ ] Server-command actions call exact H11 operations with normal idempotency/version/auth/H2 checks.
+- [ ] Require a separate authenticated action request; emitted Tool events remain presentation-only.
+- [ ] Test all initial actions, stale schema/version, hidden capability and cross-workspace target.
+- [ ] Commit `feat(ag-ui): add governed frontend actions`.
+
+### Task 12: Expose authenticated POST + durable SSE
+
+**Files:** H11 HTTP route/DTO/SSE integration and contract tests.
+
+- [ ] Authenticate before decoding keys/content; reuse H11 bearer/local nonce/CORS rules.
+- [ ] Decode to neutral envelope, begin intake, materialize parts, apply Ready and stream projections.
+- [ ] Include Vestrace extension on every event.
+- [ ] Use H7 cursor as SSE ID; reject cursor disagreement.
+- [ ] Heartbeats do not advance cursor; slow-client disconnect returns resumable cursor without Run mutation.
+- [ ] Same key/input reconnects; changed input conflicts.
+- [ ] Return bounded errors without stack/SQL/raw body/adapter Debug.
+- [ ] Test auth, limits, duplicate, interrupt stream, reconnect, slow client and disconnect.
+- [ ] Commit `feat(ag-ui): expose authenticated HTTP SSE gateway`.
+
+### Task 13: Add TypeScript client and console workspace
+
+**Files:** TypeScript integration, console components, docs and tests.
+
+- [ ] Pin `@ag-ui/core@0.0.57` exactly.
+- [ ] Preserve external keys, H7 cursor and event IDs; bearer remains memory-only.
+- [ ] Reducer validates projection version/hash and requests snapshot on mismatch.
+- [ ] Render schema-driven interrupt forms and exact approval cards.
+- [ ] Render text, activities, safe Tool summaries, Artifact cards and allowlisted generative UI.
+- [ ] Never render raw HTML/SVG or arbitrary component names.
+- [ ] Client-only actions remain local; server commands use H11 SDK.
+- [ ] Persist cursor only under bounded session policy; never persist bearer or console nonce.
+- [ ] Test independent client, console security and accessibility.
+- [ ] Commit `feat(console): add AG-UI interactive workspace`.
+
+### Task 14: Bind schemas, pin and release evidence
+
+**Files:** migration `0091`, H11 schema/profile/release integration and scripts.
+
+- [ ] Create immutable protocol pins, schema bindings, conformance reports and release evidence.
+- [ ] Add AG-UI schemas to the H11 public schema bundle.
+- [ ] Add source pin, schema digest, adapter revision, TS version and report to release evidence.
+- [ ] Add `AgUiHttpSse` product surface; Personal loopback may enable, Team/Embedded opt in.
+- [ ] Fail readiness for enabled surface with missing/mismatched evidence.
+- [ ] Require schema/security/H10 evidence for upgrades.
+- [ ] Test stale pin, hash/signature mismatch, console mismatch and profile defaults.
+- [ ] Commit `feat(release): bind AG-UI pin and conformance evidence`.
 
-**Consumes:** H7 public events, H1 Run/step query views, Task 6 repository.
+### Task 15: Add RLS and final restart-safe acceptance
 
-**Produces:** lifecycle/text/step AG-UI events.
+**Files:** migration `0092`, final tests/scripts/docs and future CI job definition.
 
-- [ ] Map visible Run start to one `RUN_STARTED` after binding is durable.
-- [ ] Map assistant message stream to stable `TEXT_MESSAGE_START/CONTENT/END` projection keys and safe bounded deltas.
-- [ ] Map visible steps to `STEP_STARTED/STEP_FINISHED` without exposing private plan nodes or hidden SubRun context.
-- [ ] Emit `RUN_FINISHED success` only when the authoritative Run is terminal and H10 completion consumption reference is visible.
-- [ ] Emit interrupt outcome only for an open typed HumanRequest and keep binding lifecycle Interrupted, not Terminal.
-- [ ] Map safe application errors to `RUN_ERROR`; do not map disconnect, backpressure or projection lag to Run error.
-- [ ] Viewer-policy change causes omission/full snapshot, never retroactive disclosure.
-- [ ] Test message chunk restart/dedup, terminal gate, interrupt non-terminal and projection redaction.
-- [ ] Run:
-
-```bash
-cargo test --test ag_ui_event_projection --test ag_ui_restart_matrix
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-application/src/ag_ui/projection_service.rs \
-  crates/vestrace-ag-ui-adapter/src/event_mapper.rs fixtures/ag-ui/events tests
-git commit -m "feat(ag-ui): project run lifecycle messages and steps"
-```
-
-### Task 8: Add state, activity and allowlisted custom projections
-
-**Files:** implement state builder/patcher/activity/custom schemas and tests.
-
-**Consumes:** H1/H5/H6/H7/H10 viewer-authorized query views.
-
-**Produces:** `STATE_SNAPSHOT`, safe `STATE_DELTA`, activity and custom events.
-
-- [ ] Build closed `AgUiStateProjection` from Run status/version, plan summary, activities, HumanRequests, safe Artifacts, budget and verification.
-- [ ] Produce RFC 6902 patch only when base version/hash matches, operations ≤128, bytes ≤256 KiB, paths are allowed and resulting state validates.
-- [ ] Otherwise persist and emit a full snapshot.
-- [ ] Activities cover planning, research, waits, Artifact processing, sandbox render, verification, reconciliation and budget warnings.
-- [ ] Implement exact schemas for the seven allowed `vestrace.*` custom event names.
-- [ ] Reject RAW, rawEvent, THINKING, REASONING and arbitrary custom events at compile/mapping/runtime boundaries.
-- [ ] Test pointer escaping, prototype-like keys, stale base, oversized patch, forbidden event generation and viewer filtering.
-- [ ] Run:
-
-```bash
-cargo test --test ag_ui_state_patch
-bash scripts/verify-ag-ui-forbidden-events.sh
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-ag-ui-adapter/src/state_patch.rs \
-  crates/vestrace-application/src/ag_ui/projection_service.rs schemas/ag-ui fixtures/ag-ui/forbidden \
-  tests/ag_ui_state_patch.rs scripts/verify-ag-ui-forbidden-events.sh
-git commit -m "feat(ag-ui): add safe state and activity projection"
-```
-
-### Task 9: Bind HumanRequests, interrupts, resume and exact approvals
-
-**Files:** create relevant `0089` tables, resume service and tests.
-
-**Consumes:** H7 HumanRequest/response/continuation and H2 approval path.
-
-**Produces:** durable interrupt binding and idempotent resume.
-
-- [ ] `0089` creates interrupt bindings, external interrupt hashes, response schema hashes, optional approval challenge link, consumed response link and resume idempotency rows.
-- [ ] Project open HumanRequest to an interrupt with exact schema, reason, expiry and safe metadata.
-- [ ] Resume authenticates participant, resolves binding/request, validates schema/status/expiry and calls H7 response command.
-- [ ] Repeated identical resume returns existing HumanResponse; changed payload/status conflicts.
-- [ ] Approval interrupt calls exact H2 approval command with ApprovalChallenge and operation fingerprint; generic resolved payload is rejected.
-- [ ] Cancelled resume follows HumanRequest kind policy and never grants approval.
-- [ ] Lost response after H7 commit is reconciled by response binding before retry.
-- [ ] Test clarification, choice, review, approval, expired, cancelled, cross-Run replay and restart.
-- [ ] Run:
-
-```bash
-DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test ag_ui_interrupt_resume --test ag_ui_approval_boundary
-```
-
-- [ ] Commit:
-
-```bash
-git add migrations/0089_ag_ui_interrupt_bindings_and_frontend_actions.sql \
-  crates/vestrace-application/src/ag_ui/resume_service.rs \
-  crates/vestrace-infrastructure/src/postgres/ag_ui/interrupt_repository.rs \
-  tests/ag_ui_interrupt_resume.rs tests/ag_ui_approval_boundary.rs
-git commit -m "feat(ag-ui): add durable interrupt and resume mapping"
-```
-
-### Task 10: Project safe Tool and Artifact activity
-
-**Files:** extend projection mapper, schemas and security tests.
-
-**Consumes:** H4 Tool public views, H6 Artifact safe representations/export policy and H5/H9A remote progress.
-
-**Produces:** safe Tool call/result, Artifact cards and remote activities.
-
-- [ ] Classify each Tool projection as publishable arguments, summary-only or hidden.
-- [ ] Never emit credentials, tickets, headers, raw command/environment, undelegated paths or unsafe result bodies.
-- [ ] Sensitive Tools use Activity/Custom summary rather than argument/result events.
-- [ ] Artifact event contains exact revision reference, classification-safe title/media/status and safe preview/download-command references only.
-- [ ] Active HTML/SVG/document content is never embedded; use H6 Preview/RedactedCopy/PageImage.
-- [ ] Remote-agent activity exposes safe status and wait/reconciliation state, not A2A frames or remote credentials.
-- [ ] Test secret fixtures, destructive Tool, shell-like args, quarantined Artifact, purged Artifact, unsafe SVG and remote Unknown.
-- [ ] Run:
-
-```bash
-cargo test --test ag_ui_event_projection --test ag_ui_frontend_actions
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-application/src/ag_ui/projection_service.rs \
-  crates/vestrace-ag-ui-adapter/src/event_mapper.rs schemas/ag-ui fixtures/ag-ui/events tests
-git commit -m "feat(ag-ui): project safe tool and artifact activity"
-```
-
-### Task 11: Implement frontend-action catalogue and command boundary
-
-**Files:** complete `0089` action tables, service/repository/schemas/tests.
-
-**Consumes:** H11 ProductCommandFacade and H2 command authorization.
-
-**Produces:** exact client-only and server-command action catalogue.
-
-- [ ] Add frontend action definitions/catalogue revisions and endpoint binding tables to `0089`; no later task edits the migration.
-- [ ] Seed no global active actions in migration; bootstrap imports exact definitions through application commands.
-- [ ] Validate client declarations by stable ID and revision hash against endpoint catalogue.
-- [ ] Client-only actions return typed UI instructions and call no server command.
-- [ ] Server-command actions map to the exact H11 operation, require ordinary idempotency/expected version/authentication and pass H2.
-- [ ] An emitted AG-UI Tool call is presentation only; execution requires a separate authenticated action request.
-- [ ] Reject unknown action, changed schema, hidden capability, stale version and cross-workspace target.
-- [ ] Test all initial actions and prove approval/export/cancel cannot bypass application commands.
-- [ ] Run:
-
-```bash
-cargo test --test ag_ui_frontend_actions
-```
-
-- [ ] Commit:
-
-```bash
-git add migrations/0089_ag_ui_interrupt_bindings_and_frontend_actions.sql \
-  crates/vestrace-domain/src/ag_ui/frontend_action.rs \
-  crates/vestrace-application/src/ag_ui/frontend_action_service.rs \
-  crates/vestrace-infrastructure/src/postgres/ag_ui/frontend_action_repository.rs \
-  schemas/ag-ui/v1/frontend-action.schema.json tests/ag_ui_frontend_actions.rs
-git commit -m "feat(ag-ui): add governed frontend actions"
-```
-
-### Task 12: Expose authenticated HTTP POST plus durable SSE
-
-**Files:** add H11 route/DTO/SSE integration and contract tests.
-
-**Consumes:** Tasks 3–11 services and H11 authentication/error/idempotency middleware.
-
-**Produces:** `/v1/ag-ui/{endpoint_id}:run` and reconnect stream.
-
-- [ ] POST authenticates before decoding external keys/content and applies endpoint/body/concurrency limits.
-- [ ] Reuse H11 LocalTrusted origin/nonce and BearerToken rules; AG-UI grants no new authentication mode.
-- [ ] Decode into protocol-neutral envelope, begin intake, materialize required parts, apply Ready and stream projections.
-- [ ] Response content type follows pinned AG-UI SSE contract and every event carries the Vestrace extension.
-- [ ] SSE `id` is H7 cursor; validate `Last-Event-ID` against explicit cursor.
-- [ ] Heartbeats do not advance cursor; slow client disconnect returns last resumable cursor without changing Run.
-- [ ] Same run key/input reconnects existing binding; changed input returns idempotency conflict.
-- [ ] Map bounded public errors; no stack, SQL, raw body or adapter Debug output.
-- [ ] Test HTTP auth, nonce/CORS, limits, duplicate, conflict, interrupt stream, cursor reconnect, slow client and disconnect.
-- [ ] Run:
-
-```bash
-cargo test -p vestrace-channel-http ag_ui::
-cargo test --test ag_ui_http_sse --test ag_ui_reconnect
-```
-
-- [ ] Commit:
-
-```bash
-git add crates/vestrace-channel-http/src/routes/ag_ui.rs crates/vestrace-channel-http/src/dto/ag_ui.rs \
-  crates/vestrace-channel-http/src/sse/ag_ui.rs tests/ag_ui_http_sse.rs tests/ag_ui_reconnect.rs
-git commit -m "feat(ag-ui): expose authenticated HTTP SSE gateway"
-```
-
-### Task 13: Add TypeScript AG-UI client integration and console workspace
-
-**Files:** create TypeScript integration, console workspace/components/tests/docs.
-
-**Consumes:** Task 12 endpoint and schemas; H11 TypeScript SDK/auth/security.
-
-**Produces:** built-in interactive Agent Workspace and reusable client integration.
-
-- [ ] Pin `@ag-ui/core@0.0.57` exactly and verify package integrity in lockfile.
-- [ ] Implement an integration client that preserves external thread/run keys, H7 cursor and event IDs; bearer remains memory-only.
-- [ ] Reducer treats snapshots/deltas as projections, validates projection version/hash and requests full snapshot on mismatch.
-- [ ] Interrupt form renders only server schema; approval card shows exact challenge/resource/fingerprint/expiry and submits through governed action command.
-- [ ] Render text, activities, steps, safe Tool summaries, Artifact cards and allowlisted generative UI components.
-- [ ] Never render raw HTML/SVG or arbitrary custom component names.
-- [ ] Client-only frontend actions are local; server-command actions call H11 SDK with idempotency/expected version.
-- [ ] Persist reconnect cursor only in bounded application session storage policy; never persist bearer token or local console nonce.
-- [ ] Add independent deterministic client test and console accessibility/security tests.
-- [ ] Run:
-
-```bash
-npm --prefix packages/sdk-typescript ci
-npm --prefix packages/sdk-typescript test
-npm --prefix apps/console ci
-npm --prefix apps/console test
-cargo test --test ag_ui_console_contract
-```
-
-- [ ] Commit:
-
-```bash
-git add packages/sdk-typescript apps/console docs/ag-ui*.md tests/ag_ui_console_contract.rs
-git commit -m "feat(console): add AG-UI interactive workspace"
-```
-
-### Task 14: Persist pin/conformance/release evidence and integrate product profiles
-
-**Files:** create migration `0090`, release/profile/schema integration, scripts/tests.
-
-**Consumes:** H11 schema bundle, release manifest, ProductProfile and Tasks 2/13 evidence.
-
-**Produces:** release-advertised `ProductSurface::AgUiHttpSse` only with valid evidence.
-
-- [ ] `0090` creates protocol pin records, schema bundle bindings, conformance reports and release-evidence rows; all immutable and content-hashed.
-- [ ] Add AG-UI input/event/extension/state/action schemas to H11 public schema bundle.
-- [ ] Add protocol source revision, schema digest, adapter revision, TypeScript package version and conformance report to release manifest assets/evidence.
-- [ ] Add `AgUiHttpSse` to ProductSurface. Personal safe profile may enable loopback console endpoint; Team/Embedded require explicit config.
-- [ ] Startup readiness fails when an enabled surface lacks exact pin/schema/evidence or console bundle mismatch.
-- [ ] Dependency upgrade script compares schema/event profile and requires security/H10 evidence before creating a new pin revision.
-- [ ] Test invalid signature/hash, stale pin, wrong console version, disabled surface and profile-safe defaults.
-- [ ] Run:
-
-```bash
-DATABASE_URL=postgres://vestrace:vestrace@localhost:5432/vestrace_test \
-  cargo test --test ag_ui_pin_boundary --test ag_ui_release_manifest
-bash scripts/verify-ag-ui-release-evidence.sh
-```
-
-- [ ] Commit:
-
-```bash
-git add migrations/0090_ag_ui_schema_pins_conformance_and_release_evidence.sql \
-  crates/vestrace-application/src/ag_ui/release_service.rs \
-  crates/vestrace-infrastructure/src/postgres/ag_ui/conformance_repository.rs \
-  schemas/ag-ui config deploy scripts/verify-ag-ui-release-evidence.sh \
-  tests/ag_ui_pin_boundary.rs tests/ag_ui_release_manifest.rs
-git commit -m "feat(release): bind AG-UI pin and conformance evidence"
-```
-
-### Task 15: Add RLS, final boundary gates and restart-safe vertical acceptance
-
-**Files:** create `0091`, final tests/scripts/CI plan/docs.
-
-**Consumes:** all H11A tasks.
-
-**Produces:** release-ready H11A exit gate.
-
-- [ ] `0091` forces RLS on endpoint/binding/intake/projection/interrupt/action/conformance tables and adds indexes/append-only/immutability guards.
-- [ ] Prove external key hashes cannot resolve across workspace/principal/endpoint revisions.
-- [ ] Boundary scripts reject AG-UI SDK types outside allowed directories, forbidden events, raw request persistence, Run checkpoint fields and direct repository use by console.
-- [ ] Mandatory vertical scenario:
+- [ ] Force RLS on all H11A tables; add indexes and append-only/immutability guards.
+- [ ] Prove external hashes cannot resolve across workspace/principal/endpoint.
+- [ ] Boundary scripts reject SDK-type escape, forbidden events, raw request persistence, checkpoint fields and console repository access.
+- [ ] Run the mandatory flow:
 
 ```text
 authenticated AG-UI client
-→ user message plus document
-→ H6 quarantine/inspection
-→ one Conversation and one AgentRun
-→ RUN_STARTED
-→ text/step/activity/state stream
-→ typed HumanRequest interrupt
+→ user message + inspected document
+→ one Conversation + one AgentRun
+→ lifecycle/text/step/activity/state stream
+→ typed interrupt
 → exact resume of same Run
-→ safe Tool and Artifact projections
-→ full server/worker restart
-→ reconnect from H7 cursor
-→ H10 verified terminal completion
+→ safe Tool/Artifact projections
+→ full runtime restart
+→ H7 cursor reconnect
+→ H10 verified completion
 → RUN_FINISHED success
 ```
 
-- [ ] Restart points: after binding claim, during document intake, after Run creation before binding acknowledgement, mid-message, after interrupt emission, after HumanResponse commit, during Tool projection, before terminal event persistence.
-- [ ] Negative matrix proves all 15 roadmap gates: no duplicate Run, changed-input conflict, no domain mutation from state, no client Tool authority, no generic approval, no instruction override, no H6 bypass, no sensitive Tool disclosure, no reasoning/RAW, no duplicate reconnect events, no disconnect failure, no SDK type escape, no frontend effect bypass, no premature success, no terminal Run on interrupt.
-- [ ] Run independent pinned TypeScript client and built-in console against the same deterministic fixture.
-- [ ] Generate and verify conformance report/release evidence entirely offline.
-- [ ] Add the eventual CI job plan without changing CI during documentation-only work.
+- [ ] Restart after binding claim, during intake, after Run creation before binding acknowledgement, mid-message, after interrupt, after HumanResponse, during Tool projection and before terminal persistence.
+- [ ] Prove all 15 negative gates from the roadmap amendment.
+- [ ] Run the built-in console and independent pinned client against the same fixture.
+- [ ] Generate conformance/release evidence offline.
 - [ ] Final implementation commands:
 
 ```bash
@@ -1068,84 +643,77 @@ npm --prefix apps/console ci
 npm --prefix apps/console test
 ```
 
-- [ ] Commit:
-
-```bash
-git add migrations/0091_ag_ui_rls_indexes_and_cross_resource_guards.sql \
-  tests scripts docs schemas crates packages apps config deploy Cargo.toml Cargo.lock
-git commit -m "test(release): add H11A AG-UI readiness gates"
-```
+- [ ] Commit `test(release): add H11A AG-UI readiness gates`.
 
 ---
 
 ## Migration ownership
 
 ```text
-0087 Task 4   Endpoints, external-key Run bindings and durable intake
+0087 Task 4   Endpoints, scoped external-key bindings and durable intake
 0088 Task 6   Projection snapshots, projected events and durable cursors
-0089 Task 9/11 Interrupt bindings, resume idempotency and frontend-action catalogues
-0090 Task 14  Protocol pins, schema bindings, conformance and release evidence
-0091 Task 15  RLS, indexes, append-only and cross-resource guards
+0089 Task 9   Interrupt bindings and resume idempotency
+0090 Task 11  Frontend-action definitions, catalogues and endpoint bindings
+0091 Task 14  Protocol pins, schema bindings, conformance and release evidence
+0092 Task 15  RLS, indexes, append-only and cross-resource guards
 ```
 
-`0089` is created in Task 9 and completed in Task 11 before application; the implementation branch must keep it un-applied until Task 11 review. After Task 11 no task edits it. All other migrations have one task owner and are never edited later.
+Each migration has exactly one owner and is never edited by a later task.
 
-## H11A public interaction flow
+## Authoritative flow
 
 ```text
 POST /v1/ag-ui/{endpoint}:run
 → authenticate workspace/principal
-→ decode and bound pinned RunAgentInput
-→ hash external thread/run keys
-→ begin/reuse AGUIRunBinding + Intake
-→ materialize H6 parts
+→ decode and bound pinned input
+→ hash external keys
+→ begin/reuse binding + intake
+→ H6 materialization/inspection
 → Ready → Applied
-→ H7 Interaction / HumanResponse command
+→ H7 Interaction or HumanResponse command
 → H1 AgentRun
 → H7 PublicEventRecord
-→ deterministic AG-UI projection
-→ persisted projection event + cursor
-→ SSE client
+→ deterministic persisted projection
+→ SSE
 ```
 
 Resume:
 
 ```text
-AG-UI interrupt
-→ durable HumanRequest + InterruptBinding
-→ stream closes with interrupt outcome
-→ authenticated resume entry
+HumanRequest
+→ interrupt binding + RUN_FINISHED interrupt
+→ authenticated resume
 → exact response/approval validation
 → H7/H2 command
-→ same AGUIRunBinding and AgentRun
-→ new SSE stream from durable cursor
+→ same binding and Run
+→ new stream from durable cursor
 ```
 
-## H11A completion definition
+## Completion definition
 
-1. Exact AG-UI source/package/schema pin is reproducible and release-bound.
-2. No AG-UI SDK type enters domain, application, persistence or checkpoints.
-3. External run/thread keys are hashed, scoped and idempotent.
-4. Rich input cannot start/resume execution before H6 inspection.
-5. H7 cursor/public events remain the sole durable stream source.
-6. Lifecycle/message/step/state/activity projections are deterministic and deduplicated.
+1. Exact source/package/schema pin is reproducible and release-bound.
+2. AG-UI SDK types do not enter domain/application/persistence/checkpoints.
+3. External keys are hashed, scoped and idempotent.
+4. Rich input cannot execute before H6 inspection.
+5. H7 remains the sole durable stream source.
+6. Projections are deterministic and deduplicated.
 7. Interrupt stream completion is non-terminal for the Run.
 8. Resume is exact, idempotent and approval-safe.
-9. Client state and Tool definitions create no authority.
-10. Frontend effects use ordinary H11/H2 commands.
-11. Reasoning, RAW and arbitrary CUSTOM events are impossible in the standard profile.
+9. Client state/Tools create no authority.
+10. Frontend effects use H11/H2 commands.
+11. Reasoning, RAW and arbitrary CUSTOM are impossible.
 12. Sensitive Tool/Artifact/remote information is not disclosed.
 13. Disconnect/backpressure does not mutate Run state.
-14. Console and independent client both pass create/stream/interrupt/resume/reconnect/complete.
-15. Full restart creates no duplicate Run, response, Tool projection, message or terminal event.
-16. `RUN_FINISHED success` follows H10 verified completion only.
-17. Product profiles and release manifest advertise AG-UI only with exact passing evidence.
-18. CI acceptance requires no public AG-UI service or permanent credential.
+14. Console and independent client pass create/stream/interrupt/resume/reconnect/complete.
+15. Full restart creates no duplicate Run, response, message, Tool projection or terminal event.
+16. Success follows H10 verified completion only.
+17. Profiles/releases advertise AG-UI only with passing exact evidence.
+18. CI needs no public AG-UI service or permanent credential.
 
 ## Explicit non-goals
 
-H11A does not replace H7 or H11, persist AG-UI objects as domain state, accept client-defined backend Tools, expose hidden reasoning, support arbitrary custom events, add WebSocket/binary transport, implement public CopilotKit-specific server behavior, enable unrestricted generative UI, create a second conversation store, add browser SSO/OIDC, permit direct Artifact HTML rendering, make AG-UI mandatory for Embedded deployments, or modify the authoritative Run checkpoint.
+H11A does not replace H7/H11, persist AG-UI objects as domain state, accept client-defined backend Tools, expose hidden reasoning, allow arbitrary custom events, add WebSocket/binary transport, implement unrestricted generative UI, create another conversation store, add OIDC, render active Artifact content, make AG-UI mandatory for Embedded or modify the Run checkpoint.
 
 ## Documentation-only boundary
 
-Creating this plan does not authorize implementation. During documentation-only work, do not create `feat/harness-ag-ui-gateway`, add `@ag-ui/core` or Rust AG-UI crates, create migrations `0087`–`0091`, expose `/v1/ag-ui`, generate schemas, modify the console, enable the product surface, update release manifests, alter CI or execute H11A tests.
+Creating this plan does not authorize implementation. Do not create `feat/harness-ag-ui-gateway`, add AG-UI packages, create migrations `0087`–`0092`, expose `/v1/ag-ui`, generate schemas, modify the console, enable the product surface, update release assets/CI or execute H11A tests during the documentation-only phase.
