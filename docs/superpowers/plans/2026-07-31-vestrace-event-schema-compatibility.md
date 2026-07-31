@@ -15,9 +15,9 @@
 
 **Goal:** Implement repository-owned durable event schema descriptors, deterministic canonical serialization, immutable per-event schema bindings, pure read-time upcasters, compatibility baselines, public schema publication and fail-closed reader/producer rollout across H1, H7, H10 and H11 without creating a global event store or changing owning-Horizon authority.
 
-**Architecture:** Each owning Horizon continues to persist and order its own authoritative records. A shared library defines `StableEventKind`, positive per-kind `EventSchemaVersion`, immutable schema descriptors, canonical document hashing and pure upcaster contracts. A content-free sidecar binding records which exact descriptor and payload hash apply to each durable source record; it stores no event payload and owns no lifecycle. Existing historical source rows are never rewritten. H11 publishes public descriptors and compatibility metadata, while internal replay/import paths refuse unknown versions or incomplete upcast chains.
+**Architecture:** Each owning Horizon continues to persist and order its own authoritative records. A shared library defines `StableEventKind`, positive per-kind `EventSchemaVersion`, immutable schema descriptors, canonical document hashing and pure upcaster contracts. A content-free sidecar binding records which exact descriptor and original payload hash apply to each durable source record; it stores no event payload and owns no lifecycle. Existing historical source rows are never rewritten. H11 publishes public descriptors and compatibility metadata, while internal replay/import paths refuse unknown versions, corrupted bindings or incomplete upcast chains.
 
-**Tech stack:** Existing Vestrace v0.1 plus H1, H7, H10 and H11; Rust Edition 2024; Tokio; Serde/Schemars; SQLx; PostgreSQL 17; repository canonical JSON; SHA-256; JSON Schema 2020-12; H1 logical replay; H7 durable public cursors; H10 audit-chain verification; H11 release/schema generation; proptest; deterministic fixtures and fake clocks.
+**Tech stack:** Existing Vestrace v0.1 plus H1, H7, H10 and H11; Rust Edition 2024; Tokio; Serde/Schemars; SQLx; PostgreSQL 17; repository canonical JSON; SHA-256; JSON Schema 2020-12; H1 logical replay; H7 durable public cursors; H10 audit/evaluation integrity; H11 release/schema generation; proptest; deterministic fixtures and fake clocks.
 
 ---
 
@@ -25,7 +25,7 @@
 
 - H1 remains the only authority for `AgentRun`, `RunEvent`, Run sequence/version and logical replay.
 - H7 remains the only authority for interaction events, public-event records and workspace public cursors.
-- H10 remains the only authority for security-audit chains, evaluation records and safe replay.
+- H10 remains the only authority for audit chains, evaluation/verification records and safe replay.
 - H11 remains the only authority for public DTO publication, generated SDK contracts and release compatibility assets.
 - This concern does not create H12, a global event sequence, a global event payload table or a second journal.
 - Every durable serialized event is identified by:
@@ -43,12 +43,13 @@
 - Upcasters are pure, deterministic, one-event-to-one-event read transformations. They perform no I/O, clock reads, randomness, policy decisions, authorization, decryption, secret lookup, external calls or durable writes.
 - An upcaster never changes source event ID, workspace, owning authority, source sequence/cursor, recorded timestamp or historical payload hash.
 - Unknown kind/version, descriptor-hash mismatch, invalid source payload, ambiguous upcast path or missing binding fail closed for semantic interpretation, replay, resume, import and mutation.
-- H10 audit-chain verification always verifies original stored bytes and original chain hashes before any presentation upcast.
+- H10 integrity verification checks original stored bytes and original chain/hash evidence before any presentation upcast.
 - Public transports may preserve an already-authorized unknown public envelope as an opaque SDK value, but cannot execute typed behavior, replay it or map it to a known semantic variant.
 - Models, packages, extensions, webhooks and administrators cannot register Vestrace-owned stable kinds at runtime.
 - Registry descriptors and generated schema assets change only through reviewed repository changes owned by the source Horizon.
 - Registry metadata is compiled/generated repository content, not a mutable PostgreSQL schema registry.
 - A schema hash for an existing `(surface, stable_event_kind, schema_version)` never changes.
+- Documentation-only edits cannot change descriptor bytes, schema bytes, test-vector hashes or the compiled registry hash.
 - Producers of a new version are activated only after all live required readers advertise support for that version.
 - Rollout state and reader capability heartbeats are operational metadata; they never alter event authority or ordering.
 - Existing applied migrations are never edited. This concern reserves:
@@ -74,17 +75,15 @@ Cargo.lock
 
 crates/vestrace-domain/src/
   id.rs
-  event_schema/{mod,kind,version,reference,descriptor,compatibility,error}.rs
-  run/event.rs
-  conversation/interaction.rs
-  channel/event.rs
-  audit/record.rs
+  event_schema/{mod,kind,version,reference,descriptor,compatibility,binding,rollout,error}.rs
 
 crates/vestrace-application/src/
   event_schema/{mod,ports,registry,writer,reader,upcast,backfill,rollout}.rs
+  event_schema/owners/{mod,h1,h7,h10}.rs
   run/replay.rs
   channel/projection.rs
   audit/query.rs
+  evaluation/query.rs
   composition/event_schema.rs
 
 crates/vestrace-application/tests/
@@ -109,6 +108,7 @@ crates/vestrace-infrastructure/src/postgres/
   conversation/interaction_repository.rs
   channel/event_repository.rs
   audit/record_repository.rs
+  evaluation/run_repository.rs
 
 crates/vestrace-domain/src/public_api/
   event.rs
@@ -147,6 +147,7 @@ tests/
   interaction_event_schema_persistence.rs
   public_event_schema_cursor.rs
   audit_event_schema_integrity.rs
+  evaluation_event_schema_integrity.rs
   event_schema_backfill_restart.rs
   event_schema_binding_atomicity.rs
   event_schema_rollout_readers_first.rs
@@ -188,7 +189,6 @@ Validation:
 - each segment is 1–64 bytes;
 - total length is at most 255 bytes;
 - empty segments, leading/trailing dots, whitespace and transport-specific names are rejected;
-- kind names describe facts in past tense or durable fact form;
 - Rust `Debug` output and enum variant names are never used implicitly as wire names.
 
 ### Per-kind version
@@ -233,7 +233,7 @@ pub enum EventSchemaExposure {
 }
 ```
 
-The initial compatibility slice must support H1 Run events, H7 interaction/public events and H10 audit records. H10 evaluation events use the same registry contracts and may be registered when their owning implementation exists; no placeholder descriptor is published.
+The initial implementation registers every durable serialized record that exists in the implemented H1, H7 and H10 owners at implementation time. A source owner cannot ship a new durable event variant without adding its descriptor, schema fixture and mapping in the same change.
 
 ### Schema reference
 
@@ -248,26 +248,26 @@ pub struct EventSchemaRef {
 
 `EventSchemaRef` identifies a serialized contract, not a permission or event instance.
 
-### Compatibility classification
+### Version change class
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq,
          serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum EventSchemaChangeClass {
+pub enum EventSchemaVersionClass {
     Initial,
     WireChange,
-    NewSemanticKind,
-    DocumentationOnly,
+    SemanticSuccessor,
 }
 ```
 
 Rules:
 
 - version 1 is `Initial`;
-- any changed schema bytes, validation, canonicalization, bounds or serialized enum set are `WireChange` with a new version;
-- changed business meaning is `NewSemanticKind` and cannot reuse the old stable kind;
-- `DocumentationOnly` requires byte-identical generated schema and descriptor hashes.
+- changed schema bytes, validation, canonicalization, bounds or serialized enum set are `WireChange` with a new version;
+- changed business meaning uses a new stable kind whose first descriptor may identify the old kind as a `SemanticSuccessor` for documentation only;
+- a semantic successor does not create an upcast path between different kinds;
+- documentation-only edits create no descriptor version and do not alter registry assets.
 
 ### Descriptor
 
@@ -281,8 +281,9 @@ pub struct EventSchemaDescriptor {
     pub json_schema_bytes: &'static [u8],
     pub schema_hash: [u8; 32],
     pub canonicalization_revision: &'static str,
-    pub change_class: EventSchemaChangeClass,
+    pub version_class: EventSchemaVersionClass,
     pub previous_version: Option<EventSchemaVersion>,
+    pub semantic_predecessor_kind: Option<StableEventKind>,
     pub upcaster_key_from_previous: Option<&'static str>,
     pub test_vector_hash: [u8; 32],
 }
@@ -293,8 +294,9 @@ Descriptor invariants:
 - `(kind, version)` is globally unique in the compiled registry;
 - versions for one kind are contiguous from 1;
 - schema hash matches exact generated bytes;
-- V1 has no predecessor/upcaster;
-- V2+ has exactly one predecessor and one registered upcaster;
+- V1 has no previous version or upcaster;
+- V2+ has exactly one previous version and one registered upcaster;
+- `SemanticSuccessor` is V1 of a new kind and has no cross-kind upcaster;
 - exposure `Public` has a generated public JSON Schema asset;
 - authority agrees with the module that exports the descriptor;
 - a descriptor cannot be constructed from runtime JSON, SQL or extension content.
@@ -424,30 +426,29 @@ pub trait EventSchemaRegistryPort: Send + Sync {
 The production registry is assembled explicitly in `composition/event_schema.rs` from source-owned descriptor lists:
 
 ```rust
-h1_run_event_descriptors()
-h7_interaction_event_descriptors()
-h7_public_event_descriptors()
-h10_audit_event_descriptors()
+h1_event_schema_descriptors()
+h7_event_schema_descriptors()
+h10_event_schema_descriptors()
 ```
 
-No dynamic plugin discovery, inventory submitted by models or SQL-loaded descriptor is allowed.
+No dynamic plugin discovery, model submission or SQL-loaded descriptor is allowed.
 
-### Baseline inventory
+### Owner inventory
 
-Each source owner adds an exhaustive descriptor function beside its typed event definitions.
+Each owner adapter contains exhaustive mappings from persisted record types to stable kinds and versions.
 
 Requirements:
 
-- every persisted H1 `RunEvent` variant maps through an exhaustive match to one stable kind and schema version;
+- every persisted H1 `RunEvent` variant maps through an exhaustive match;
 - every persisted H7 interaction/public event representation has an explicit descriptor;
-- H10 audit record-body schema and chain-record envelope are separately identified when their serialized contracts differ;
-- no wildcard match maps unknown future enum variants to a generic kind;
-- descriptor tests fail when an owning enum gains a variant without a registered mapping;
-- internal and public mappings are explicit and may use different stable kinds only through a reviewed mapping table.
+- H10 audit, evaluation, verification and replay records that are serialized durably have explicit descriptors;
+- no wildcard match maps future enum variants to a generic kind;
+- descriptor tests fail when an owner enum gains a variant without a mapping;
+- internal and public mappings are explicit and may differ only through a reviewed mapping table.
 
 ### Generated assets
 
-`generate-event-schemas.sh` performs deterministic generation and writes:
+`generate-event-schemas.sh` writes deterministic assets:
 
 ```text
 schemas/events/internal/h1/<kind>.v<version>.json
@@ -459,21 +460,7 @@ schemas/events/v1/compatibility.json
 schemas/compatibility/event-schema-baseline.json
 ```
 
-Generated index entries contain:
-
-```text
-stable kind
-schema version
-schema hash
-owning authority
-exposure
-previous version
-upcaster key
-canonicalization revision
-test-vector hash
-```
-
-Generation sorts entries deterministically and rejects duplicate paths or keys.
+Index entries contain stable kind, schema version/hash, owner, exposure, previous version, upcaster key, canonicalization revision and test-vector hash. Generation sorts entries and rejects duplicate paths or keys.
 
 ---
 
@@ -496,17 +483,16 @@ Purity and identity invariants:
 
 - source and target stable kind are equal;
 - target version is source version + 1;
-- event ID, workspace, authority, sequence/cursor, correlation, causation and recorded timestamp are byte-for-byte preserved;
-- original payload hash is not overwritten or recomputed as historical truth;
+- event ID, workspace, authority, sequence/cursor, correlation, causation and recorded timestamp are preserved;
+- original payload hash is not overwritten or presented as a hash of the current view;
 - generated fields derive only from source fields and descriptor constants;
 - no current clock, random UUID, environment variable, locale, network, database, policy, secret or mutable registry access;
 - one input produces exactly one output or an error;
 - split/merge semantics require new stable kinds and are not represented as an upcaster;
 - every output validates against the exact target schema before the next step;
-- the complete path validates against the current target schema;
 - unsupported source versions fail before typed interpretation.
 
-`verify-event-upcaster-purity.sh` statically rejects imports/usages of SQLx, Reqwest, Tokio time, random generators, environment access, H2/H8 ports and filesystem APIs from upcaster modules.
+`verify-event-upcaster-purity.sh` rejects SQLx, Reqwest, Tokio time, random generators, environment access, H2/H8 ports and filesystem APIs from upcaster modules.
 
 ---
 
@@ -535,35 +521,27 @@ Writer behavior:
 
 1. resolve exact compiled descriptor;
 2. serialize through the owner adapter into a canonical document;
-3. validate source document against exact schema;
+3. validate against the exact source schema;
 4. compute canonical payload hash;
-5. return a binding payload for the owner transaction;
-6. refuse an unregistered kind/version or descriptor hash mismatch.
+5. return binding data for the owner transaction;
+6. refuse unregistered kind/version or descriptor hash mismatch.
 
-The owning repository inserts source row and schema binding in one transaction. The shared writer never writes event rows itself.
+The owning repository inserts source row and schema binding in one transaction. The shared writer never writes source event rows itself.
 
-### H1 atomicity
+### Owner atomicity
 
-`RunStorePort` transaction remains authoritative:
+H1 transaction:
 
 ```text
-updated AgentRun aggregate
+updated AgentRun
 + exactly one RunEvent
 + optional step/checkpoint changes
-+ follow-up work items
-+ exactly one schema binding for the RunEvent
++ follow-up work
++ one schema binding for the RunEvent
 = one transaction
 ```
 
-Failure to create the schema binding rolls back the logical Run mutation.
-
-### H7 atomicity
-
-Interaction/public-event writes keep their existing ownership. Each durable interaction or public record receives its binding in the same transaction as source creation and cursor allocation.
-
-### H10 atomicity
-
-Audit intent/record ownership remains H10. The schema binding is committed with the audit record append. Existing audit chain hash covers the exact original audit body according to its own versioned algorithm; the sidecar payload hash is additional evidence, not a replacement chain.
+H7 interaction/public-event rows and bindings commit in their existing append/cursor transactions. H10 audit/evaluation source records and bindings commit in their owning transactions. Binding failure rolls back the source mutation.
 
 ---
 
@@ -577,29 +555,24 @@ pub trait DurableEventSourceLoaderPort: Send + Sync {
         source: &DurableEventSourceRef,
     ) -> Result<CanonicalEventDocument, ApplicationError>;
 }
-
-pub struct DurableEventReader<R, L> {
-    registry: R,
-    loader: L,
-}
 ```
 
 Reader algorithm:
 
 ```text
-1. authorize/read source through owning Horizon
+1. authorize and load source through the owning Horizon
 2. load immutable schema binding
-3. resolve exact descriptor and verify schema hash
-4. reconstruct canonical original document from source row
+3. resolve descriptor and verify schema hash
+4. reconstruct canonical original document
 5. validate original document against source schema
 6. recompute and compare original payload hash
 7. resolve one unique contiguous upcast path
-8. apply and validate each pure step
+8. apply and validate every pure step
 9. deserialize only the final validated document
 10. return original and interpreted views
 ```
 
-Reader errors are typed:
+Typed failures:
 
 ```rust
 pub enum EventSchemaReadError {
@@ -617,17 +590,13 @@ pub enum EventSchemaReadError {
 }
 ```
 
-No error falls back to the current Rust enum or best-effort field guessing.
+No error falls back to the current Rust enum or field guessing.
 
 ---
 
 ## Legacy binding and backfill
 
-### Principle
-
-Historical source rows remain byte/column identical. Backfill creates only `durable_event_schema_bindings` rows and operational progress records.
-
-### Backfill job
+Historical source rows remain unchanged. Backfill creates only sidecar bindings and operational progress records.
 
 ```rust
 pub struct EventSchemaBackfillJob {
@@ -649,40 +618,27 @@ pub struct EventSchemaBackfillJob {
 }
 ```
 
-Status:
-
-```text
-Created
-Running
-Paused
-Completed
-Failed
-Cancelled
-```
+Status values: `Created`, `Running`, `Paused`, `Completed`, `Failed`, `Cancelled`.
 
 Backfill behavior:
 
-- reads rows in stable UUID order in bounded batches;
-- reconstructs the exact V1 document using an owner-specific legacy adapter;
-- validates against the frozen V1 descriptor;
-- computes payload hash;
+- reads stable UUID-ordered bounded batches;
+- reconstructs exact frozen V1 documents using owner adapters;
+- validates and hashes the source representation;
 - inserts binding idempotently;
 - equal existing binding is success;
 - conflicting binding is a hard integrity failure;
-- restart resumes after the durable cursor;
+- restart resumes after durable cursor;
 - source row update/delete is never issued;
-- source payload is never copied into the backfill table;
-- failure stores bounded code and source reference, not payload;
-- backfill does not advance Run/public/audit sequence;
-- backfill never emits a new canonical source event for each historical row.
-
-`verify-no-event-source-row-rewrite.sh` rejects `UPDATE` statements against H1/H7/H10 source tables from event-schema backfill modules.
+- failure stores bounded code/reference, never source payload;
+- no Run/public/audit sequence advances;
+- no replacement canonical source event is emitted.
 
 ---
 
 ## Rollout and readers-first activation
 
-### Rollout phase
+### Rollout state
 
 ```rust
 pub enum EventSchemaRolloutPhase {
@@ -697,15 +653,22 @@ pub struct EventSchemaRolloutState {
     pub deployment_id: DeploymentId,
     pub phase: EventSchemaRolloutPhase,
     pub required_registry_hash: [u8; 32],
-    pub expected_revision: u64,
     pub state_revision: u64,
     pub changed_by: PrincipalId,
     pub policy_decision_id: PolicyDecisionId,
     pub updated_at: Timestamp,
 }
+
+pub struct AdvanceEventSchemaRollout {
+    pub deployment_id: DeploymentId,
+    pub target_phase: EventSchemaRolloutPhase,
+    pub required_registry_hash: [u8; 32],
+    pub expected_state_revision: u64,
+    pub idempotency_key: String,
+}
 ```
 
-`expected_revision` belongs to the phase-change command and is not persisted in the aggregate. Persisted state contains only `state_revision`.
+`expected_state_revision` belongs only to the command.
 
 ### Reader capability
 
@@ -722,7 +685,7 @@ pub struct EventSchemaReaderCapability {
 }
 ```
 
-Capabilities are operational and expire. They are not capabilities in the authorization sense.
+These are operational capability advertisements, not authorization capabilities.
 
 ### Producer activation
 
@@ -740,17 +703,16 @@ pub struct EventSchemaProducerActivation {
 }
 ```
 
-Activation rules:
+Activation requires:
 
-- descriptor exists in the installed release;
-- every non-expired required reader advertises the target schema reference;
-- no live reader reports a conflicting registry hash;
-- all backfill jobs required for `BindingsRequired` completed without unresolved conflict;
-- H2 authorizes rollout-state and producer-activation changes;
-- activation never changes old event rows;
-- revocation stops new writes of that version but leaves existing events readable;
-- an unavailable rollout repository prevents producing a new version;
-- V1 dual-write can continue according to explicit safe deployment configuration.
+- descriptor in installed release;
+- all non-expired required readers support the schema;
+- no conflicting live registry hash;
+- required backfills completed without unresolved conflicts;
+- H2-authorized rollout change;
+- no change to historical rows.
+
+Revocation stops new writes of that version but does not invalidate existing events.
 
 ---
 
@@ -766,7 +728,7 @@ event_schema_backfill_jobs
 event_schema_backfill_failures
 ```
 
-Required columns for bindings:
+Binding columns:
 
 ```text
 id uuid primary key
@@ -787,11 +749,10 @@ Constraints:
 - unique `(authority_family, source_id)`;
 - positive schema version;
 - hashes exactly 32 bytes;
-- valid authority/origin enums;
 - application role cannot update/delete bindings;
-- failures contain bounded error code/reference only;
-- backfill job state uses optimistic concurrency and leases;
-- no payload JSON/body/blob column exists in these tables.
+- failures contain bounded code/reference only;
+- backfill state uses optimistic concurrency and leases;
+- no payload/body/blob column exists.
 
 ### Migration `0090_event_schema_rollout_capabilities_and_activations.sql`
 
@@ -807,140 +768,87 @@ event_schema_rollout_history
 Constraints:
 
 - one rollout state per deployment;
-- one current reader capability per `(deployment_id, node_id)`;
-- one active producer activation per `(deployment_id, stable_event_kind, schema_version, producer_component)`;
+- one current reader advertisement per `(deployment_id, node_id)`;
+- one active producer activation per exact deployment/schema/component;
 - rollout history append-only;
-- activation/revocation use optimistic state revision;
+- activation/revocation use optimistic revision;
 - hashes exactly 32 bytes;
-- reader heartbeats are operational and do not emit canonical Run/public/audit events.
+- heartbeat writes are operational and emit no canonical event.
 
 ### Migration `0091_event_schema_rls_constraints_and_indexes.sql`
 
 Add:
 
-- forced RLS for workspace-owned bindings/backfill failures;
-- deployment-admin policies for rollout/capability/activation tables;
-- indexes by workspace/source, kind/version, backfill status/cursor, reader expiry and active activation;
-- deferred source-existence validation by `authority_family` for new atomic-writer bindings;
-- a privileged backfill validation path that verifies source ownership without disabling RLS;
+- forced RLS for workspace-owned bindings/failures;
+- deployment-admin policies for rollout tables;
+- indexes by workspace/source, kind/version, backfill cursor/status, reader expiry and activation;
+- deferred source-existence validation by authority family for atomic writes;
+- a scoped privileged backfill validation path that never disables RLS;
 - append-only triggers for bindings and rollout history;
-- application-role denial of direct arbitrary inserts outside repository functions/transactions;
-- migration ownership comments for `0089`–`0091`.
+- denial of arbitrary direct application inserts outside owner repositories;
+- migration ownership comments.
 
-No migration modifies historical source event rows.
-
----
-
-## H1 integration
-
-### Source-owned mapping
-
-Modify `run/event.rs` so every `RunEvent` provides:
-
-```rust
-pub trait DurableRunEventSchema {
-    fn stable_kind(&self) -> StableEventKind;
-    fn schema_version(&self) -> EventSchemaVersion;
-    fn to_canonical_document(&self) -> Result<CanonicalEventDocument, EventSchemaError>;
-}
-```
-
-Requirements:
-
-- exhaustive variant match;
-- one logical Run mutation still emits exactly one RunEvent;
-- schema binding insert is part of the existing `RunStorePort` transaction;
-- lease/heartbeat/work-queue operational changes remain outside Run events and event-schema bindings unless they already have an owning durable event contract;
-- replay reads source binding and schema before applying event semantics;
-- unknown/invalid version produces `RunReplayDisposition::SchemaUnsupported` and does not partially mutate the reconstructed aggregate;
-- replay from checkpoint validates every later event binding in sequence order;
-- upcasting does not increment `RunVersion` and emits no new RunEvent.
-
-### H1 tests
-
-Required tests:
-
-- create Run commits `run.created` source row and binding atomically;
-- forced binding failure rolls back Run creation;
-- every later mutation has sequence equal to RunVersion and one binding;
-- V1 fixture replays through a V1→V2 upcaster without rewriting fixture bytes;
-- unknown V99 blocks replay before applying the unknown event;
-- payload-hash corruption is detected;
-- an upcaster cannot change sequence, Run ID or recorded timestamp;
-- restart produces the same reconstructed state and applied-upcaster list.
+No migration updates historical H1/H7/H10 source rows.
 
 ---
 
-## H7 integration
+## Owner integration
 
-### Interaction events
+### H1
 
-Every persisted `InteractionEvent` receives an explicit stable kind/version binding in the same transaction as the append-only interaction row.
+- owner adapter exhaustively maps every `RunEvent` variant;
+- binding insert participates in existing `RunStorePort` transaction;
+- logical mutation still increments `RunVersion` exactly once and appends exactly one event;
+- replay validates binding/schema/hash before applying semantics;
+- unsupported version yields `SchemaUnsupported` before partial aggregate mutation;
+- upcasting emits no Run event and changes no Run version.
 
-Rules:
+Required H1 tests:
 
-- corrections/retractions/redaction notices remain new events with their own bindings;
-- external channel metadata cannot choose kind or version;
-- large H6 references remain references and do not enter schema registry as embedded bytes;
-- legacy interaction rows are bound through the owner-specific V1 adapter.
+- Run creation source/binding atomicity;
+- binding failure rolls back mutation;
+- V1 fixture replays through V2 reader without byte rewrite;
+- unknown V99 blocks before application;
+- corruption is detected;
+- sequence, Run ID and timestamp are preserved through upcast;
+- restart yields identical state and upcaster list.
 
-### Public events
+### H7
 
-`PublicEventRecord` remains the sole source for H11 event streaming.
+- every append-only interaction receives an explicit binding;
+- channel/external metadata cannot choose kind/version;
+- internal-to-public mapping is explicit;
+- public payload validates before cursor allocation;
+- public source row, mapping reference, binding and cursor commit atomically;
+- projection failure is durable and cannot fabricate another semantic event;
+- old SDKs expose bounded `UnknownPublicEvent` without typed behavior.
 
-Public projection rules:
+Required H7 tests:
 
-- internal source event is read and validated through its owner reader;
-- mapping to public kind/version is explicit and repository-owned;
-- public payload validates against the exact public schema before cursor allocation;
-- source reference and public schema binding commit with the public record/cursor transaction;
-- failure to project one event does not fabricate a different semantic event;
-- a projection failure is durable and operator-visible;
-- cursor ordering remains H7-owned and is not replaced by event ID or schema sequence.
+- idempotent duplicate interaction returns original binding;
+- reconnect remains at-least-once and cursor-stable;
+- same cursor cannot represent changed schema/payload;
+- unknown internal schema blocks typed public projection;
+- internal-only descriptor cannot be published;
+- HTTP/SSE/CLI/SDK agree on kind/version.
 
-### H7 tests
+### H10
 
-Required tests:
+- audit chain and evaluation evidence verify original bytes before upcast;
+- sidecar payload hash is additional evidence, not a replacement for record/chain hash;
+- upcasted view never changes chain head, checkpoint signature input or stored evaluation evidence;
+- unknown schema produces incomplete/unsupported disposition, never optimistic validity;
+- query/export exposes original schema/hash plus applied upcasters;
+- purge keeps only content-free binding/tombstone according to H10 policy.
 
-- duplicate interaction idempotency key returns original event/binding;
-- public reconnect remains at-least-once and deduplicable by event ID/cursor;
-- same cursor never represents different schema/payload bytes;
-- unknown internal source schema blocks typed public projection;
-- public mapping cannot expose an internal-only descriptor;
-- public schema version is stable across HTTP SSE, CLI follow and SDK decoding;
-- an older SDK receives a bounded `UnknownPublicEvent` rather than treating it as a known variant;
-- opaque unknown public event cannot invoke command helpers or continuation behavior.
+Required H10 tests:
 
----
-
-## H10 integration
-
-### Audit records
-
-H10 audit-chain bytes remain authoritative.
-
-Integration rules:
-
-- schema descriptor identifies exact audit body/envelope format;
-- binding payload hash is computed from exact original canonical audit document;
-- existing `record_hash`/previous-hash chain remains unchanged;
-- audit verification first checks chain sequence/hashes/signatures against original bytes;
-- optional upcast occurs only after integrity succeeds;
-- upcast result is presentation/query state and never replaces chain evidence;
-- old audit rows are not re-signed after upcast;
-- unknown schema produces `AuditIntegrityDisposition::Incomplete` or a typed schema-unsupported result, never `Valid` by assumption;
-- purge leaves content-free schema binding/tombstone according to H10 policy.
-
-### H10 tests
-
-Required tests:
-
-- V1 audit fixture retains identical chain head before and after new-reader deployment;
-- upcasted view does not alter record hash or checkpoint signature input;
-- payload hash and chain record hash are distinguished and both verified;
-- unknown version prevents semantic audit query but preserves raw integrity diagnostics;
-- schema binding missing is detected as incomplete evidence;
-- audit export includes original schema reference, original payload hash and applied-upcaster metadata without claiming rewritten history.
+- old audit chain head remains identical;
+- upcast does not alter record hash;
+- payload hash and chain hash are separately checked;
+- missing binding produces incomplete evidence;
+- evaluation/replay records fail closed on unsupported schema;
+- exported diagnostics never claim rewritten history.
 
 ---
 
@@ -957,15 +865,13 @@ pub struct PublicEventEnvelope {
     pub recorded_at: Timestamp,
     pub correlation: PublicCorrelationRefs,
     pub payload: serde_json::Value,
-    pub payload_hash: [u8; 32],
+    pub payload_hash_hex: String,
 }
 ```
 
 The DTO contains no internal schema path, database type, secret, backend reference or authority shortcut.
 
-### Schema endpoints
-
-Add read-only routes:
+### Schema routes
 
 ```text
 GET /v1/schemas/events
@@ -973,14 +879,7 @@ GET /v1/schemas/events/{stable_kind}/versions/{schema_version}
 GET /v1/schemas/events/compatibility
 ```
 
-Rules:
-
-- routes serve installed immutable generated assets;
-- ETag is the exact schema/index hash;
-- unknown kind/version returns bounded `not_found`;
-- authorization follows public schema visibility policy;
-- internal/audit/export-only descriptors are never served from public routes;
-- routes do not create runtime schema registrations.
+Routes serve installed immutable assets with exact ETags, never expose internal/audit-only schemas and never register schemas at runtime.
 
 ### SDKs
 
@@ -993,43 +892,45 @@ PublicEventEnvelope
 EventSchemaRef
 ```
 
-Known decoding requires exact generated `(kind, version)` support and schema validation. Unknown decoding preserves only already-authorized bounded public payload and metadata. It never casts to the latest known type.
+Known decode requires exact generated support and validation. Unknown decode preserves only the already-authorized bounded public envelope and never casts it to the latest known type.
 
-### Compatibility baseline
+### Baseline gate
 
-`verify-event-schema-baseline.sh` fails when:
+CI fails when:
 
-- an existing key has changed schema hash;
-- a schema file disappeared without explicit public-major removal policy;
-- a version was skipped;
+- an existing key changes schema hash;
+- a schema disappears without public-major removal policy;
+- a version is skipped;
 - V2+ lacks one predecessor/upcaster;
-- a stable kind changed owner or exposure unexpectedly;
+- owner/exposure changes unexpectedly;
 - generated bytes differ from committed assets;
-- SDK generated unions omit a public descriptor;
-- release manifest omits exact event-schema registry/baseline hashes.
+- SDK unions omit a public descriptor;
+- release manifest omits registry/baseline hashes.
 
 ---
 
-## Import/export interaction
+## Portable export/import interaction
 
-Signed Run export and other portable bundles preserve original event identity:
+Portable event entries preserve:
 
 ```text
 stable kind
 original schema version
 schema hash
 original payload hash
-original serialized document or referenced bytes
+original serialized document or exact reference
 ```
 
-Import behavior:
+Rules:
 
-- integrity verification may succeed for an unknown future schema;
-- semantic import, replay, resume and activation remain blocked until the reader supports it;
-- import never rewrites unknown payload to the current version;
-- upcast occurs only in the interpreted view after original integrity verification;
-- exported bundle records applied-upcaster metadata separately from original event files;
-- event schema support grants no Run/memory/artifact capability.
+- integrity may succeed for an unknown future schema;
+- semantic import, replay, resume and activation remain blocked;
+- unknown payload is never rewritten to the current version;
+- upcast occurs only in an interpreted view after original verification;
+- applied-upcaster metadata is separate from original event files;
+- schema support grants no resource capability.
+
+The signed Run export implementation consumes `DurableEventReaderPort` and `EventSchemaRegistryPort`; this plan provides fixture-backed conformance tests without implementing Run export itself.
 
 ---
 
@@ -1037,15 +938,7 @@ Import behavior:
 
 ### Missing binding
 
-After rollout reaches `BindingsRequired`, a missing binding is an integrity error. The reader does not infer the current schema from Rust types.
-
-During explicit `LegacyReaders`/`DualWriteBindings` transition only, owner-specific V1 inference may be used for read diagnostics and backfill. Inference:
-
-- is limited to frozen source tables/rows predating the rollout boundary;
-- cannot interpret rows written after dual-write activation;
-- cannot enable V2+ production;
-- records a bounded diagnostic;
-- is removed from the normal read path when `BindingsRequired` activates.
+After `BindingsRequired`, a missing binding is an integrity error. During explicit transition phases only, frozen owner-specific V1 inference may support diagnostics/backfill for rows predating the dual-write boundary. It cannot enable V2 production or mutate source rows.
 
 ### Unknown kind/version
 
@@ -1053,205 +946,149 @@ During explicit `LegacyReaders`/`DualWriteBindings` transition only, owner-speci
 - no replay/resume/import mutation;
 - no automatic downcast;
 - no model-assisted guess;
-- no new source event emitted merely to hide the failure;
-- operator receives exact safe schema reference and supported-version range.
+- no substitute event emitted to hide failure;
+- operator receives safe schema reference and supported range.
 
 ### Hash mismatch
 
-Descriptor hash mismatch or payload hash mismatch is an integrity failure. It is never treated as a compatibility warning.
+Descriptor or payload hash mismatch is an integrity failure, never a compatibility warning.
 
 ### Upcaster failure
 
-- source event remains immutable;
-- reader returns typed failure with failing step key;
-- partial upcast output is discarded;
-- no current aggregate mutation occurs;
-- H10 records content-free diagnostic/audit intent when required.
+- source remains immutable;
+- reader returns failing step key;
+- partial output is discarded;
+- no aggregate mutation occurs;
+- content-free diagnostic/audit intent is recorded where required.
 
-### Registry unavailable
+### Registry construction failure
 
-The production registry is compiled into the binary. A construction/validation failure prevents service readiness rather than starting with a partial registry.
+The service fails readiness rather than running with a partial registry.
 
-### Rollout repository unavailable
+### Rollout repository failure
 
-Existing enabled V1 writers may continue only under the exact safe rollout configuration. A new schema version producer fails closed.
+A new-version producer fails closed. Existing V1 writing continues only under the exact safe rollout phase configured for that deployment.
 
 ---
 
 ## Implementation tasks
 
-### Task 1: Add event-schema value types and registry invariants
+### Task 1: Add value types and registry invariants
 
-**Files:**
+**Files:** domain event-schema modules and `event_schema_registry.rs` tests.
 
-- create `crates/vestrace-domain/src/event_schema/*`;
-- modify `crates/vestrace-domain/src/id.rs` and `lib.rs`;
-- create `crates/vestrace-application/tests/event_schema_registry.rs`.
-
-- [ ] Write failing tests for kind validation, positive versions, descriptor uniqueness, contiguous version chains, owner/exposure rules and deterministic registry hash.
-- [ ] Implement IDs and domain types.
-- [ ] Implement descriptor construction validation.
-- [ ] Implement explicit registry assembly with no runtime registration method.
+- [ ] Write failing tests for kind validation, positive versions, uniqueness, contiguous chains, semantic successors, owner/exposure rules and deterministic registry hash.
+- [ ] Implement IDs and value types.
+- [ ] Implement descriptor validation and explicit registry assembly.
+- [ ] Prove there is no runtime registration method.
 - [ ] Run domain/application tests and clippy.
 
-### Task 2: Implement canonical serialization, validation and payload hashing
+### Task 2: Implement canonical serialization and hashing
 
-**Files:**
+**Files:** runtime/test-support crates and writer tests.
 
-- create `crates/vestrace-event-schema-runtime/*`;
-- create `crates/vestrace-event-schema-test-support/*`;
-- create `crates/vestrace-application/tests/event_schema_writer.rs`.
+- [ ] Write failing vectors for nested maps, arrays, Unicode, integers, timestamps and non-finite rejection.
+- [ ] Implement canonical bytes and SHA-256.
+- [ ] Implement exact schema validation.
+- [ ] Implement writer preparation.
+- [ ] Verify identical bytes/hash across restart.
 
-- [ ] Write failing canonicalization vectors covering nested maps, arrays, Unicode, integers, timestamps and non-finite-number rejection.
-- [ ] Implement canonical document serialization and SHA-256 hashing.
-- [ ] Implement descriptor-schema validation.
-- [ ] Implement `DurableEventSchemaWriterPort`.
-- [ ] Verify same logical document produces identical bytes/hash across process restarts.
+### Task 3: Implement pure upcasters and reader
 
-### Task 3: Add pure upcasters and the fail-closed reader
+**Files:** application reader/upcast modules, runtime upcaster and purity script.
 
-**Files:**
-
-- create application `event_schema/{reader,upcast}.rs`;
-- create runtime `upcaster.rs`;
-- create tests `event_schema_reader.rs` and `event_schema_upcast.rs`;
-- create `scripts/verify-event-upcaster-purity.sh`.
-
-- [ ] Write failing tests for missing, ambiguous and cyclic paths.
-- [ ] Write identity-preservation and no-I/O conformance tests.
-- [ ] Implement contiguous one-step upcaster registration and path resolution.
-- [ ] Implement source/target validation around every step.
-- [ ] Implement typed reader errors and original/current view preservation.
-- [ ] Run purity script and test suite.
+- [ ] Write failing missing/ambiguous/cyclic path tests.
+- [ ] Write identity-preservation and no-I/O tests.
+- [ ] Implement contiguous one-step registration/path resolution.
+- [ ] Validate source and each target step.
+- [ ] Preserve original/current views and typed failures.
+- [ ] Run purity and conformance suites.
 
 ### Task 4: Add binding/backfill persistence
 
-**Files:**
+**Files:** migration `0089`, repositories and backfill tests.
 
-- create migrations `0089` and binding/backfill repositories;
-- create `tests/event_schema_backfill_restart.rs`, `event_schema_binding_atomicity.rs` and `event_schema_rls.rs`.
+- [ ] Write failing append-only, uniqueness, RLS, equal-idempotency and conflict tests.
+- [ ] Write bounded lease/cursor restart tests.
+- [ ] Create tables without payload columns.
+- [ ] Implement binding/backfill ports and owner adapters.
+- [ ] Prove source-row updates are absent.
 
-- [ ] Write failing database tests for append-only bindings, uniqueness, RLS, idempotent equal insert and conflicting insert.
-- [ ] Write failing restart tests for bounded backfill leases/cursors.
-- [ ] Create binding/backfill tables without payload columns.
-- [ ] Implement repository ports and owner-specific legacy adapters.
-- [ ] Prove no source-row update occurs during backfill.
-- [ ] Run PostgreSQL tests and migration ownership script.
+### Task 5: Integrate H1
 
-### Task 5: Integrate H1 Run events and replay
+- [ ] Write failing source/binding atomicity and replay tests.
+- [ ] Add exhaustive owner mapping.
+- [ ] Insert binding in `RunStorePort` transaction.
+- [ ] Gate replay on binding/schema/hash/upcast.
+- [ ] Preserve exactly-one-event and RunVersion semantics.
+- [ ] Run H1 restart/replay/atomicity suites.
 
-**Files:**
-
-- modify H1 domain/application/infrastructure files listed above;
-- create `tests/run_event_schema_persistence.rs` and `run_replay_schema_compatibility.rs`.
-
-- [ ] Write failing atomicity and replay tests.
-- [ ] Add exhaustive stable-kind/version mapping for Run events.
-- [ ] Insert binding in the existing `RunStorePort` transaction.
-- [ ] Gate replay on binding/schema/hash/upcast validation.
-- [ ] Preserve exactly-one-event-per-logical-mutation and RunVersion semantics.
-- [ ] Run H1 restart, replay and atomicity suites.
-
-### Task 6: Integrate H7 interaction and public events
-
-**Files:**
-
-- modify H7 domain/application/repositories;
-- modify public projection and cursor logic;
-- create `tests/interaction_event_schema_persistence.rs` and `public_event_schema_cursor.rs`.
+### Task 6: Integrate H7
 
 - [ ] Write failing interaction binding/idempotency tests.
-- [ ] Add explicit source-owned descriptors.
-- [ ] Add explicit internal-to-public mappings.
+- [ ] Add explicit interaction/public descriptors and mappings.
 - [ ] Validate public schema before cursor allocation.
-- [ ] Preserve at-least-once cursor semantics and opaque unknown SDK handling.
-- [ ] Run H7 SSE/reconnect/parity tests.
+- [ ] Preserve at-least-once cursor semantics.
+- [ ] Add opaque unknown SDK behavior tests.
+- [ ] Run H7 SSE/reconnect/parity suites.
 
-### Task 7: Integrate H10 audit records
+### Task 7: Integrate H10
 
-**Files:**
+- [ ] Write failing audit/evaluation integrity fixtures.
+- [ ] Register exact audit/evaluation/verification/replay record schemas.
+- [ ] Verify original evidence before upcast.
+- [ ] Return original/interpreted query views.
+- [ ] Preserve honest incomplete/unsupported disposition.
+- [ ] Run H10 integrity/checkpoint/replay suites.
 
-- modify H10 audit domain/query/repository files;
-- create `tests/audit_event_schema_integrity.rs`.
+### Task 8: Implement readers-first rollout
 
-- [ ] Write failing fixtures proving chain head/signatures remain unchanged.
-- [ ] Bind exact audit body/envelope versions.
-- [ ] Verify chain before upcast.
-- [ ] Return original and interpreted views in audit queries/exports.
-- [ ] Preserve incomplete/unsupported dispositions honestly.
-- [ ] Run audit integrity/checkpoint/purge suites.
+**Files:** migration `0090`, rollout service and tests.
 
-### Task 8: Implement readers-first rollout and producer activation
-
-**Files:**
-
-- create migrations `0090` and rollout/capability repositories;
-- create application rollout service;
-- create `tests/event_schema_rollout_readers_first.rs`.
-
-- [ ] Write failing phase-transition and expired-reader tests.
-- [ ] Implement operational reader capability heartbeat.
-- [ ] Implement H2-authorized rollout phase changes.
+- [ ] Write failing phase, expired-reader and conflicting-registry tests.
+- [ ] Implement reader advertisements.
+- [ ] Implement H2-authorized phase commands with expected revision in the command.
 - [ ] Implement per-schema producer activation/revocation.
-- [ ] Reject V2 production while any required live reader lacks support.
-- [ ] Verify rollout changes do not affect Run/public/audit sequences.
+- [ ] Reject unsupported production.
+- [ ] Verify operational writes do not change domain sequences.
 
-### Task 9: Add RLS, source validation and indexes
+### Task 9: Add RLS, validation and indexes
 
-**Files:**
+**Files:** migration `0091` and database tests.
 
-- create migration `0091`;
-- extend `tests/event_schema_rls.rs` and binding atomicity tests.
+- [ ] Write failing cross-workspace/admin-boundary tests.
+- [ ] Add forced RLS and deployment-admin policies.
+- [ ] Add deferred source-existence validation.
+- [ ] Add indexes and append-only triggers.
+- [ ] Deny arbitrary direct application inserts.
 
-- [ ] Write failing cross-workspace and unauthorized-admin tests.
-- [ ] Add forced RLS and deployment-admin boundaries.
-- [ ] Add deferred source-existence validation for atomic writes.
-- [ ] Add bounded indexes and append-only triggers.
-- [ ] Verify direct application SQL cannot create arbitrary bindings/activations.
+### Task 10: Generate/publish H11 schemas
 
-### Task 10: Generate and publish H11 public schemas
+- [ ] Write failing deterministic generation and baseline tests.
+- [ ] Generate internal/public assets and indexes.
+- [ ] Add schema routes with ETag.
+- [ ] Generate known unions and unknown variants.
+- [ ] Include registry/baseline hashes in release assets.
+- [ ] Run H11 API/SSE/SDK/release tests.
 
-**Files:**
+### Task 11: Add portable-boundary and unknown-version conformance
 
-- add generator/runtime files, schema assets and public routes;
-- modify Rust/TypeScript SDK event files;
-- create `tests/event_schema_release_baseline.rs`.
+- [ ] Verify unknown portable schema may pass integrity but cannot semantic-import/replay.
+- [ ] Verify original files remain unchanged after upcast.
+- [ ] Verify manifest schema/hash inclusion.
+- [ ] Verify schema references grant no access.
+- [ ] Verify unsupported records never call model/tool/remote/human ports.
 
-- [ ] Write failing deterministic-generation and baseline tests.
-- [ ] Generate internal/public schema documents and indexes.
-- [ ] Add read-only schema endpoints with ETag.
-- [ ] Generate known unions and `UnknownPublicEvent` SDK variants.
-- [ ] Include registry/baseline hashes in H11 release assets.
-- [ ] Run H11 public API, SSE, SDK and release-manifest tests.
+### Task 12: Add repository-wide acceptance gates
 
-### Task 11: Add import/export and unknown-version conformance tests
-
-**Files:**
-
-- create `tests/event_schema_unknown_fail_closed.rs` and acceptance fixtures;
-- integrate with signed Run export/import readers when that implementation exists.
-
-- [ ] Verify unknown bundle schema can pass byte integrity but cannot semantic-import or replay.
-- [ ] Verify original event files remain unchanged after interpreted upcast.
-- [ ] Verify schema references/hashes are included in export manifests.
-- [ ] Verify no event schema reference grants resource access.
-- [ ] Verify unsupported versions never call model/tool/remote/human ports.
-
-### Task 12: Add repository-wide boundary and acceptance gates
-
-**Files:**
-
-- create verification scripts and `tests/event_schema_acceptance.rs`;
-- update `.github/workflows/ci.yml` only during implementation.
-
-- [ ] Verify no runtime registration API exists.
-- [ ] Verify no source-row rewrite SQL exists.
-- [ ] Verify no duplicate `(kind, version)` and no changed baseline hash.
-- [ ] Verify every current V2+ descriptor has exactly one pure predecessor upcaster.
-- [ ] Verify every owning enum variant has an explicit descriptor.
-- [ ] Verify unknown versions fail replay/resume/import/mutation.
-- [ ] Verify H1/H7/H10 authority and ordering remain unchanged.
-- [ ] Run formatting, clippy, unit, PostgreSQL, schema-generation, SDK and acceptance suites.
+- [ ] Verify no runtime registration API.
+- [ ] Verify no source-row rewrite SQL.
+- [ ] Verify no duplicate key or changed baseline hash.
+- [ ] Verify every V2+ descriptor has one pure predecessor upcaster.
+- [ ] Verify every durable owner variant has an explicit descriptor.
+- [ ] Verify unknown versions fail semantic operations.
+- [ ] Verify H1/H7/H10 ownership/order remain unchanged.
+- [ ] Run formatting, clippy, unit, PostgreSQL, generator, SDK and acceptance suites.
 
 ---
 
@@ -1259,44 +1096,44 @@ Existing enabled V1 writers may continue only under the exact safe rollout confi
 
 | Scenario | Required result |
 |---|---|
-| Existing H1 V1 Run journal read by new binary | validates original bytes, optionally upcasts, replays deterministically |
-| V1 source row after backfill | source row unchanged; one append-only sidecar binding exists |
-| New H1 mutation | source event and binding commit atomically |
-| Unknown H1 version | replay stops before applying unknown event |
-| Invalid payload hash | integrity failure, no best-effort decode |
+| Existing H1 V1 journal read by new binary | original validates; view may upcast; replay deterministic |
+| V1 source row after backfill | source unchanged; one append-only binding exists |
+| New H1 mutation | source event and binding atomic |
+| Unknown H1 V99 | replay stops before application |
+| Invalid payload hash | integrity failure |
 | Missing binding after enforcement | integrity failure |
-| V1→V2 upcast | event identity/order/timestamps preserved |
-| Upcaster output invalid | read fails; partial output discarded |
-| H7 public projection | exact explicit public schema validates before cursor allocation |
-| Old SDK sees new public version | bounded `UnknownPublicEvent`, no typed behavior |
-| H10 audit query with upcast | original chain/hash verified first and unchanged |
-| Generated schema same key changed bytes | CI fails baseline check |
-| Runtime extension requests canonical kind | rejected; no registry mutation path |
+| V1→V2 upcast | identity/order/timestamps preserved |
+| Invalid upcast output | read fails; partial output discarded |
+| H7 public projection | exact public schema validates before cursor |
+| Old SDK sees new public version | bounded unknown value; no typed behavior |
+| H10 query with upcast | original integrity verified first and unchanged |
+| Same schema key with changed bytes | CI fails |
+| Runtime extension requests canonical kind | rejected |
 | New producer before readers | activation denied |
-| Reader heartbeat expires | new-version producer gate fails closed |
-| Run export contains unknown future schema | integrity may pass; semantic import/replay blocked |
-| Backfill restart | resumes cursor idempotently without source updates |
-| Cross-workspace binding access | denied by forced RLS |
+| Reader advertisement expires | new-version gate fails closed |
+| Portable bundle has unknown future schema | integrity may pass; semantics blocked |
+| Backfill restart | cursor resumes idempotently, no source update |
+| Cross-workspace binding access | denied by RLS |
 | Binding conflict | hard integrity failure |
-| Schema registry construction invalid | service readiness fails |
+| Invalid compiled registry | readiness fails |
 
 ---
 
 ## Completion gate
 
-The implementation may be considered complete only when all of the following are proven:
+Implementation is complete only when:
 
-1. registry descriptors are repository-owned and immutable at runtime;
-2. every in-scope H1/H7/H10 durable serialized event has an exact schema reference;
-3. source rows are never rewritten by compatibility/backfill code;
-4. new source events and bindings commit atomically;
-5. canonical bytes and payload hashes are deterministic;
+1. descriptors are repository-owned and runtime-immutable;
+2. every implemented H1/H7/H10 durable serialized record has an exact schema reference;
+3. compatibility/backfill code never rewrites source rows;
+4. new source records and bindings commit atomically;
+5. canonical bytes/hashes are deterministic;
 6. upcasters are pure, contiguous, validated and identity-preserving;
 7. unknown versions fail closed for semantic operations;
-8. H1 Run ordering, H7 cursor ordering and H10 audit-chain authority remain unchanged;
+8. H1 Run ordering, H7 cursor ordering and H10 integrity authority remain unchanged;
 9. readers-first rollout blocks unsupported producers;
-10. H11 generated schemas, SDK unions and release baselines are deterministic;
+10. H11 schemas, SDK unions and baselines are deterministic;
 11. migrations are limited to `0089`–`0091`;
-12. RLS, restart, import/export and corruption tests pass;
-13. no new event store, H12 authority, direct agent SQL or runtime schema registration exists;
-14. no implementation work starts merely because this plan is merged.
+12. RLS, restart, portable-boundary and corruption tests pass;
+13. no second event store, H12 authority, direct agent SQL or runtime schema registration exists;
+14. merging this plan authorizes no implementation work.
