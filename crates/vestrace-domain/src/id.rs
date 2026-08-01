@@ -79,3 +79,7 @@ domain_id!(RoutingDecisionId);
 domain_id!(ModelExecutionId);
 domain_id!(AgentId);
 domain_id!(SkillId);
+domain_id!(AgentRunId);
+domain_id!(RunStepId);
+domain_id!(RunEventId);
+domain_id!(RunCheckpointId);
