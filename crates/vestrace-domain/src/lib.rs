@@ -1,11 +1,23 @@
 #![forbid(unsafe_code)]
 
 mod error;
+pub mod event;
 mod id;
+pub mod job;
+pub mod memory;
+pub mod policy;
+pub mod provenance;
+pub mod relation;
 mod time;
 
 pub use error::DomainError;
-pub use id::{CorrelationId, OperationId, PrincipalId, RequestId, WorkspaceId};
+pub use event::{ActorRef, Event, SubjectRef};
+pub use id::*;
+pub use job::{Job, JobState};
+pub use memory::*;
+pub use policy::{ActivationDecision, MemoryWritePolicy};
+pub use provenance::{Derivation, DerivationMethod, EvidenceRole, MemorySource};
+pub use relation::{KnowledgeRelation, RelationType};
 pub use time::{Timestamp, now};
 
 pub fn crate_name() -> &'static str {
