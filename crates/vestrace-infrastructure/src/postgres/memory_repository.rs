@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
 use vestrace_application::{ApplicationError, MemoryRepository};
-use vestrace_domain::{id::*, Memory, MemoryRevision};
+use vestrace_domain::{Memory, MemoryId, MemoryRevision, MemoryRevisionId};
 
 pub struct PgMemoryRepository {
     pool: PgPool,
