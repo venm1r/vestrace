@@ -83,3 +83,6 @@ domain_id!(AgentRunId);
 domain_id!(RunStepId);
 domain_id!(RunEventId);
 domain_id!(RunCheckpointId);
+domain_id!(PolicyBundleId);
+domain_id!(AuthorizationTicketId);
+domain_id!(BudAccountId);
