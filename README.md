@@ -4,7 +4,7 @@ Vestrace is an evidence-first knowledge and execution platform. This repository 
 
 ## Local container environment
 
-Prerequisites: Docker Engine with Docker Compose v2, plus `curl` and Bash for the smoke check. The Compose file uses fixed credentials named `local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
+Prerequisites: Docker Engine with Docker Compose v2, plus `curl` and Bash for the smoke checks. The Compose file uses distinct fixed credentials named `bootstrap-local-development-only` and `runtime-local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
 
 Build and start both services:
 
@@ -21,6 +21,15 @@ VESTRACE_HTTP_PORT=18080 docker compose -p vestrace-foundation up --build -d
 ```
 
 Compose waits for PostgreSQL to report healthy before it starts the server container. Once started, the server connects to PostgreSQL, applies the embedded forward-only migrations, and only then begins serving. `/health/live` reports process liveness. `/health/ready` also checks database access and exact migration compatibility. The smoke script retries for a bounded startup window and requires HTTP 200 with the exact safe JSON body from both endpoints.
+
+The PostgreSQL image bootstraps with the local-only `vestrace_bootstrap` administrator, then provisions a separate `vestrace` login for the server. The server receives only the restricted runtime URL. That runtime role owns the local development database and schema so it can apply migrations, but it is explicitly `NOSUPERUSER`, `NOBYPASSRLS`, and has no membership in the bootstrap role. Verify both the HTTP endpoints and real runtime row-level isolation with:
+
+```bash
+./scripts/foundation-smoke.sh
+./scripts/foundation-runtime-rls.sh
+```
+
+Production deployments must supply managed secrets and independently provisioned least-privilege bootstrap/migration and runtime identities; the fixed Compose credentials are not a production template.
 
 Stop the services while keeping database data:
 
