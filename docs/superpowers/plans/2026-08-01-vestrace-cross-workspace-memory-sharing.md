@@ -24,7 +24,7 @@
 
 **Goal:** Implement explicit, disabled-by-default cross-workspace memory disclosure through source-owned immutable grant revisions and target-owned read-only mounts, with RLS-safe federated retrieval, independent source/target authorization, provenance-preserving import, immediate revocation fencing and no silent copy, indexing, authority elevation or transitive sharing.
 
-**Architecture:** Vestrace keeps every authoritative `Memory`, `MemoryRevision`, source, derivation, conflict and lifecycle transition inside one workspace. A source workspace publishes a bounded `MemoryShareGrantRevision`; a target workspace separately accepts that exact revision into a `MemoryMount`. Activation uses a reconciled two-sided handshake rather than a cross-workspace SQL transaction. Live retrieval opens a separate source-workspace transaction under source RLS for each mount, returns only policy-bounded DTOs, and then applies target policy and reranking. Persistent target derivatives use ordinary Memory Core writes, complete `SharedMemoryRef` provenance and fresh target encryption.
+**Architecture:** Vestrace keeps every authoritative `Memory`, `MemoryRevision`, source, derivation, conflict and lifecycle transition inside one workspace. A source workspace publishes a bounded `MemoryShareGrantRevision`; a target workspace separately accepts that exact revision into a `MemoryMount`. Activation uses a reconciled two-sided handshake rather than a cross-workspace SQL transaction. Live retrieval opens a separate source-workspace transaction under source RLS for each mount, returns only policy-bounded DTOs, and then applies target policy and origin-aware reranking. Persistent target derivatives use ordinary Memory Core writes, complete `SharedMemoryRef` provenance and fresh target encryption.
 
 **Tech Stack:** Existing Vestrace v0.1 plus Memory Core, H1, H2, H6, H8, H10 and H11; Rust Edition 2024; Tokio; SQLx; PostgreSQL 17 with forced RLS; Serde/Schemars for safe contracts; repository-owned durable event schemas; existing outbox/job infrastructure; H6 Context Pack and cache lifecycle; H8 envelope encryption; FTS/pgvector adapters; deterministic policy/clock/provider fixtures; proptest; load and fault-injection test support.
 
@@ -55,15 +55,20 @@
 - Target policy can reduce access immediately but cannot widen the source grant.
 - A later broader target policy does not expand an existing grant.
 - Source policy changes can reduce access immediately and can make a mount stale.
+- Effective permission is the intersection of source grant, source current policy, target acceptance, target current policy, principal capability and exact Run/provider constraints.
+- Effective content mode is the least-disclosing mode permitted by source revision, source current policy, target acceptance and target current policy.
 - Read-only is the default.
 - `DiscoverMetadata` does not imply `ReadContent`.
 - `ReadContent` does not imply deterministic context, model context, derivation, import or export.
-- Deterministic context use and model context use are separate permissions.
+- Deterministic context use and model context use are separate permissions and both require `ReadContent`.
 - Model/provider use is denied unless explicitly permitted by source grant and target policy.
+- Tool arguments derived from mounted content still pass ordinary H2 authorization, validation and risk checks.
+- Mounted content never authorizes an external commitment.
 - Export is denied unless explicitly permitted by source grant and target policy.
 - Local derivation and exact import are separate governed operations.
 - Search, display, Context Pack inclusion, conflict detection and model invocation never create a local Memory automatically.
 - Target-side FTS, pgvector, text or embedding indexes are disabled by default.
+- `MetadataIndexOnly` requires `DiscoverMetadata`; content-bearing indexes require `ReadContent` and `GenerateDerivedIndex`.
 - Persistent target cache/index/snapshot modes require explicit source permission, target acceptance, target encryption and cleanup obligations.
 - Mounted content is foreign/untrusted data and never enters system/developer authority channels.
 - Mounted content cannot grant capabilities, approvals, roles, budgets or execution authority.
@@ -71,6 +76,7 @@
 - Source confidence and importance remain source facts and are never copied into local trust scores without a target assessment.
 - Mount-of-mount is prohibited.
 - A target cannot re-share a mounted reference to a third workspace.
+- A locally imported Memory may be shared later only as a local Memory and only when accepted downstream obligations and provenance policy permit it.
 - Relation traversal cannot escape the grant selection.
 - A relation edge never grants access to its target node.
 - Source wrapped DEKs, KEKs, backend paths and decrypt handles never enter target rows, logs, exports or DTOs.
@@ -92,6 +98,7 @@
 - Downstream purge or erasure with ambiguous outcome remains `OutcomeUnknown`.
 - Source does not directly delete target workspace data.
 - Persistent imports/derivatives are tracked through downstream obligations accepted by target.
+- `ReviewOnSourceChange` creates target review work and never rewrites a local derivative automatically.
 - Exact import creates a new local Memory Candidate by default and never edits source memory.
 - Import uses ordinary Memory Core idempotency, provenance, write-policy and activation rules.
 - Imported Run bundles do not create grants, mounts or active foreign Memory.
@@ -118,7 +125,7 @@
 
 ---
 
-## Compatibility with Memory Core and owning Horizons
+## Compatibility with Memory Core and Owning Horizons
 
 This extension leaves the v0.1 Memory Core invariants intact.
 
@@ -129,9 +136,10 @@ Implementation rules:
 - `global` scope storage and query behavior are unchanged;
 - source-side grant selection adapters load ordinary Memory Core revisions under source RLS;
 - target-side mounted views never write to `memories`;
-- persistent local import calls the existing Memory Core `RememberMemory`/candidate lifecycle rather than inserting directly;
+- persistent local import calls the existing Memory Core candidate lifecycle rather than inserting directly;
 - `SourceRef` gains a typed namespaced shared-memory provenance variant only where Memory Core source contracts support it;
 - the shared provenance variant stores identifiers/hashes but no cross-workspace foreign key;
+- local relations may reference a local provenance proxy/typed shared reference but never a source-row foreign key;
 - H2 authorizes exact grant, mount, read/use/import/export and revoke operations;
 - H6 owns Context Pack inclusion, disclosed large-content handling, target cache/snapshot representations and cleanup;
 - H8 owns source decrypt and fresh target re-encryption operations;
@@ -163,11 +171,13 @@ crates/vestrace-domain/src/
     share_permissions.rs
     share_limits.rs
     share_obligations.rs
+    share_retention.rs
     share_collection.rs
     mount.rs
     mounted_view.rs
     import_proposal.rs
     offline_snapshot.rs
+    downstream_status.rs
     share_event.rs
     share_error.rs
   provenance.rs
@@ -270,6 +280,7 @@ crates/vestrace-infrastructure/src/postgres/memory_sharing/
   snapshot_repository.rs
   obligation_repository.rs
   cleanup_repository.rs
+  inbox_repository.rs
   reconciliation_repository.rs
   worker_repository.rs
 
@@ -331,6 +342,7 @@ tests/memory_share_context_invalidation.rs
 tests/memory_share_import_provenance.rs
 tests/memory_share_target_encryption.rs
 tests/memory_share_revocation_restart.rs
+tests/memory_share_source_change_review.rs
 tests/memory_share_purge_cascade.rs
 tests/memory_share_outcome_unknown.rs
 tests/memory_share_run_export.rs
@@ -352,8 +364,6 @@ scripts/verify-memory-share-migration-ownership.sh
 ## Normative Domain Contracts
 
 ### Identifiers
-
-Add strongly typed IDs:
 
 ```text
 MemoryShareGrantId
@@ -390,16 +400,21 @@ pub enum MemorySharingCapabilityState {
     LiveReadAndPersistentUse,
 }
 
-pub struct MemorySharingCapabilitySnapshot {
+pub struct WorkspaceMemorySharingCapabilitySnapshot {
+    pub workspace_id: WorkspaceId,
     pub deployment_state: MemorySharingCapabilityState,
     pub workspace_state: MemorySharingCapabilityState,
     pub policy_bundle_revision_id: PolicyBundleRevisionId,
 }
+
+pub struct EffectiveMemorySharingCapability {
+    pub source: WorkspaceMemorySharingCapabilitySnapshot,
+    pub target: WorkspaceMemorySharingCapabilitySnapshot,
+    pub effective_state: MemorySharingCapabilityState,
+}
 ```
 
-Effective capability is the strict intersection of deployment state, source workspace state, target workspace state and current H2 policy.
-
-`Disabled` is the default for both source and target workspaces.
+`effective_state` is the strict intersection of deployment, source workspace, target workspace and current H2 policy. `Disabled` is the default for both workspaces.
 
 ### Grant lifecycle identity
 
@@ -435,13 +450,13 @@ Grant invariants:
 
 - source and target workspace differ;
 - target is exact and never wildcarded;
-- `activation_epoch` is monotonic and changes on activation, suspension, revision replacement and revocation;
+- `activation_epoch` is monotonic and changes on submission, activation, suspension, revision replacement and revocation;
 - `Revoked`, `Expired` and `Deleted` are terminal;
-- `Active` requires an accepted exact revision and completed handshake;
+- `Active` requires accepted exact revision and completed handshake;
 - lifecycle transitions require expected state revision in commands;
 - grant identity contains no content or secret material.
 
-### Grant lifecycle commands
+### Grant commands
 
 ```rust
 pub struct SubmitGrantForAcceptance {
@@ -461,7 +476,7 @@ pub struct ChangeMemoryShareGrantState {
 }
 ```
 
-Commands do not accept target changes for an existing grant. A different target requires a new grant identity.
+A different target requires a new grant identity.
 
 ### Grant revision
 
@@ -485,7 +500,7 @@ pub struct MemoryShareGrantRevision {
     pub downstream_obligations: BTreeSet<DownstreamObligation>,
     pub limits: MemoryShareLimits,
     pub valid_from: Timestamp,
-    pub valid_until: Timestamp,
+    pub valid_until: Option<Timestamp>,
     pub source_policy_decision_id: PolicyDecisionId,
     pub approval_grant_ids: Vec<ApprovalGrantId>,
     pub canonical_hash: [u8; 32],
@@ -498,12 +513,13 @@ Revision invariants:
 
 - revision is positive and immutable;
 - source/target match grant identity;
-- `valid_until` is later than `valid_from`;
-- restricted, support/evaluation, model-use, export and exact-import revisions always expire;
+- when present, `valid_until` is later than `valid_from`;
+- `valid_until` is mandatory for Restricted content, support/evaluation access, provider/model use, export, exact import and run-scoped sharing;
 - permissions are internally consistent;
-- `UseInModelContext` requires `ReadContent`;
+- deterministic/model context permissions require `ReadContent`;
 - derivation/import/export permissions do not imply one another;
-- target indexing permission requires `ReadContent` and a persistent-use capability ceiling;
+- `MetadataIndexOnly` requires `DiscoverMetadata`;
+- content-bearing indexing requires `ReadContent`, `GenerateDerivedIndex` and persistent-use capability;
 - `NoRetention` rejects all persistent target modes;
 - canonical hash includes every semantic field in stable order;
 - any semantic change creates a new revision.
@@ -515,18 +531,10 @@ Revision invariants:
          serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum MemoryShareSelection {
-    ExplicitRevisionSet {
-        revisions: Vec<ExactSharedRevisionSelector>,
-    },
-    ExplicitMemorySetCurrentRevision {
-        memory_ids: Vec<MemoryId>,
-    },
-    NamedSourceCollection {
-        collection_revision_id: MemoryShareCollectionRevisionId,
-    },
-    BoundedTypedFilter {
-        filter: BoundedMemoryShareFilter,
-    },
+    ExplicitRevisionSet { revisions: Vec<ExactSharedRevisionSelector> },
+    ExplicitMemorySetCurrentRevision { memory_ids: Vec<MemoryId> },
+    NamedSourceCollection { collection_revision_id: MemoryShareCollectionRevisionId },
+    BoundedTypedFilter { filter: BoundedMemoryShareFilter },
     RunScopedReferenceSet {
         run_id: AgentRunId,
         revisions: Vec<ExactSharedRevisionSelector>,
@@ -543,13 +551,13 @@ pub struct ExactSharedRevisionSelector {
 
 Selection limits:
 
-- all explicit sets are nonempty and bounded;
-- explicit revisions must belong to source workspace and pass source policy at revision creation;
-- current-revision sets revalidate kind, status, classification and policy on every read;
-- run-scoped selections bind exact Run and expiry;
+- explicit sets are nonempty and deployment-bounded;
+- explicit revisions belong to source workspace and pass source policy at revision creation;
+- current-revision sets revalidate kind/status/classification/policy on every read;
+- run-scoped selections bind exact Run and mandatory expiry;
 - source collection revisions are immutable;
-- filters compile only from approved typed predicates;
-- future unknown Memory kinds are not automatically included.
+- filters compile only approved typed predicates;
+- future unknown Memory kinds are not included automatically.
 
 ### Bounded filter
 
@@ -571,7 +579,7 @@ pub struct BoundedMemoryShareFilter {
 }
 ```
 
-The compiler produces parameterized repository predicates. It rejects raw SQL, JSONPath, regex, executable expressions and target-controlled source widening.
+The compiler emits parameterized repository predicates and rejects raw SQL, JSONPath, regex, executable expressions and target-controlled source widening.
 
 ### Source collection
 
@@ -588,9 +596,9 @@ pub struct MemoryShareCollectionRevision {
 }
 ```
 
-Collection revisions are source-owned and immutable. Membership changes create a new revision.
+Collection revisions are source-owned and immutable.
 
-### Operation permissions
+### Permissions and modes
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd,
@@ -608,13 +616,7 @@ pub enum MemoryShareOperation {
     InspectRelations,
     GenerateDerivedIndex,
 }
-```
 
-Permissions are checked per operation, principal, Run, provider and source revision.
-
-### Content, query and indexing modes
-
-```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq,
          serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -647,8 +649,6 @@ pub enum TargetIndexingPolicy {
 }
 ```
 
-`Disabled` is the default. Persistent modes require explicit permissions, compatible obligations and H8 target encryption availability.
-
 ### Downstream obligations
 
 ```rust
@@ -674,6 +674,25 @@ pub enum DownstreamObligation {
 
 Target acceptance stores the exact obligation set and cannot remove source obligations.
 
+### Retention classes
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryShareRetentionClass {
+    GrantLifecycleMetadata,
+    DisclosureAudit,
+    TargetUseAudit,
+    TransientQueryData,
+    TargetDerivedIndex,
+    ImportedMemoryContent,
+    DownstreamPurgeEvidence,
+}
+```
+
+Raw query and disclosed content are not retained solely for diagnostics.
+
 ### Limits
 
 ```rust
@@ -692,7 +711,7 @@ pub struct MemoryShareLimits {
 }
 ```
 
-All values are positive, deployment-bounded and intersected with stricter target limits.
+Values are positive, deployment-bounded and intersected with stricter target limits.
 
 ### Mount lifecycle identity
 
@@ -732,7 +751,7 @@ pub struct MemoryMount {
 }
 ```
 
-Mount persistence stores source identifiers as namespaced values without a SQL foreign key to source tables.
+Mount persistence stores namespaced source identifiers without source-table foreign keys.
 
 ### Two-sided handshake
 
@@ -749,14 +768,18 @@ pub struct GrantInvitationSnapshot {
     pub content_mode: MemoryShareContentMode,
     pub operation_permissions: BTreeSet<MemoryShareOperation>,
     pub obligations: BTreeSet<DownstreamObligation>,
-    pub valid_until: Timestamp,
+    pub offer_expires_at: Timestamp,
     pub envelope_hash: [u8; 32],
 }
 
 pub struct TargetMountAcceptance {
     pub handshake_id: MemoryShareHandshakeId,
     pub invitation_id: MemoryShareInvitationId,
+    pub source_workspace_id: WorkspaceId,
     pub target_workspace_id: WorkspaceId,
+    pub grant_id: MemoryShareGrantId,
+    pub grant_revision_id: MemoryShareGrantRevisionId,
+    pub source_activation_epoch: u64,
     pub mount_id: MemoryMountId,
     pub grant_revision_hash: [u8; 32],
     pub target_policy_revision_id: PolicyBundleRevisionId,
@@ -773,13 +796,14 @@ pub struct SourceGrantActivationAck {
     pub grant_id: MemoryShareGrantId,
     pub grant_revision_id: MemoryShareGrantRevisionId,
     pub grant_revision_hash: [u8; 32],
+    pub target_acceptance_hash: [u8; 32],
     pub activation_epoch: u64,
     pub activated_at: Timestamp,
     pub canonical_hash: [u8; 32],
 }
 ```
 
-Handshake envelopes are not capabilities. Source and target independently authorize every transition and re-read current state. A target mount becomes `Active` only after the exact activation acknowledgement is durably applied.
+Envelopes are not capabilities. Source and target independently authorize every transition. A mount becomes `Active` only after applying an acknowledgement that binds the exact target acceptance hash.
 
 ### Shared reference
 
@@ -797,11 +821,11 @@ pub struct SharedMemoryRef {
 
 Rules:
 
-- no `From<SharedMemoryRef> for MemoryId` implementation;
-- reference is checked at every content access;
-- a tombstoned reference may remain in provenance/audit;
-- target repositories never use it as a foreign key to source memory;
-- mount-of-mount constructors reject any source that is already mounted.
+- no conversion to local `MemoryId`;
+- checked at every content access;
+- may remain as content-free tombstone provenance;
+- never used as a source-row foreign key;
+- mount-of-mount constructors reject already-mounted sources.
 
 ### Mounted view
 
@@ -827,7 +851,7 @@ pub struct MountedMemoryView {
 }
 ```
 
-This is transient/read-only and cannot be passed to Memory Core write repositories.
+This is transient/read-only and cannot enter Memory write repositories.
 
 ### Import proposal
 
@@ -879,7 +903,7 @@ pub struct MemoryShareImportProposal {
 }
 ```
 
-Proposal content is stored through H6 target-side encrypted representation when persistence is required. Commit calls ordinary Memory Core services.
+Proposal content uses target H6 encryption when persistence is required. Commit calls ordinary Memory Core services.
 
 ### Pinned offline snapshot
 
@@ -901,7 +925,36 @@ pub struct PinnedOfflineMemorySnapshot {
 }
 ```
 
-Offline snapshots are disabled by default, exact-revision-only, encrypted under target keys, non-authoritative and non-transitive.
+Offline snapshots are disabled by default, exact-revision-only, target-encrypted, non-authoritative and non-transitive.
+
+### Downstream statuses
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DownstreamObligationStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Blocked,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceErasureCascadeStatus {
+    NotRequired,
+    SourceErasedDownstreamPending,
+    Completed,
+    Blocked,
+    OutcomeUnknown,
+}
+```
+
+`SourceErasedDownstreamPending` is not reported as completed erasure.
 
 ---
 
@@ -914,19 +967,9 @@ Offline snapshots are disabled by default, exact-revision-only, encrypted under 
 pub trait MemoryShareGrantRepository: Send {
     async fn insert_grant(&mut self, grant: &MemoryShareGrant) -> Result<(), ApplicationError>;
     async fn insert_revision(&mut self, revision: &MemoryShareGrantRevision) -> Result<(), ApplicationError>;
-    async fn load_grant_for_update(
-        &mut self,
-        grant_id: MemoryShareGrantId,
-    ) -> Result<MemoryShareGrant, ApplicationError>;
-    async fn load_revision(
-        &mut self,
-        revision_id: MemoryShareGrantRevisionId,
-    ) -> Result<MemoryShareGrantRevision, ApplicationError>;
-    async fn save_grant(
-        &mut self,
-        grant: &MemoryShareGrant,
-        expected_state_revision: u64,
-    ) -> Result<(), ApplicationError>;
+    async fn load_grant_for_update(&mut self, grant_id: MemoryShareGrantId) -> Result<MemoryShareGrant, ApplicationError>;
+    async fn load_revision(&mut self, revision_id: MemoryShareGrantRevisionId) -> Result<MemoryShareGrantRevision, ApplicationError>;
+    async fn save_grant(&mut self, grant: &MemoryShareGrant, expected_state_revision: u64) -> Result<(), ApplicationError>;
 }
 ```
 
@@ -937,11 +980,7 @@ pub trait MemoryShareGrantRepository: Send {
 pub trait MemoryMountRepository: Send {
     async fn insert_pending_mount(&mut self, mount: &MemoryMount) -> Result<(), ApplicationError>;
     async fn load_mount_for_update(&mut self, mount_id: MemoryMountId) -> Result<MemoryMount, ApplicationError>;
-    async fn save_mount(
-        &mut self,
-        mount: &MemoryMount,
-        expected_state_revision: u64,
-    ) -> Result<(), ApplicationError>;
+    async fn save_mount(&mut self, mount: &MemoryMount, expected_state_revision: u64) -> Result<(), ApplicationError>;
     async fn list_active_mounts(
         &mut self,
         target_workspace_id: WorkspaceId,
@@ -955,29 +994,18 @@ pub trait MemoryMountRepository: Send {
 ```rust
 #[async_trait::async_trait]
 pub trait SourceMemoryDisclosurePort: Send + Sync {
-    async fn inspect_invitation(
-        &self,
-        request: InspectGrantInvitation,
-    ) -> Result<GrantInvitationInspection, MemoryShareError>;
-
-    async fn confirm_acceptance(
-        &self,
-        acceptance: TargetMountAcceptance,
-    ) -> Result<SourceGrantActivationAck, MemoryShareError>;
-
-    async fn disclose(
-        &self,
-        request: SourceDisclosureRequest,
-    ) -> Result<SourceDisclosureBatch, MemoryShareError>;
-
-    async fn check_lifecycle(
-        &self,
-        request: SourceLifecycleCheck,
-    ) -> Result<SourceLifecycleSnapshot, MemoryShareError>;
+    async fn inspect_invitation(&self, request: InspectGrantInvitation)
+        -> Result<GrantInvitationInspection, MemoryShareError>;
+    async fn confirm_acceptance(&self, acceptance: TargetMountAcceptance)
+        -> Result<SourceGrantActivationAck, MemoryShareError>;
+    async fn disclose(&self, request: SourceDisclosureRequest)
+        -> Result<SourceDisclosureBatch, MemoryShareError>;
+    async fn check_lifecycle(&self, request: SourceLifecycleCheck)
+        -> Result<SourceLifecycleSnapshot, MemoryShareError>;
 }
 ```
 
-The infrastructure implementation opens a fresh transaction, sets source workspace context, relies on forced RLS, performs source H2/H6 checks and returns bounded safe DTOs only.
+The infrastructure adapter opens a fresh source transaction, sets source workspace context, relies on forced RLS, performs source H2/H6 checks and returns bounded safe DTOs only.
 
 ### Disclosure request
 
@@ -1001,35 +1029,25 @@ pub struct SourceDisclosureRequest {
 }
 ```
 
-Source ignores any target request to widen selection, mode or limits.
+Source ignores attempts to widen selection, permission, content mode or limits.
 
 ### Policy ports
 
 ```rust
 #[async_trait::async_trait]
 pub trait SourceMemorySharePolicyPort: Send + Sync {
-    async fn authorize_grant_revision(
-        &self,
-        request: SourceGrantPolicyRequest,
-    ) -> Result<SourceGrantPolicyDecision, PolicyError>;
-
-    async fn authorize_disclosure(
-        &self,
-        request: SourceDisclosurePolicyRequest,
-    ) -> Result<SourceDisclosurePolicyDecision, PolicyError>;
+    async fn authorize_grant_revision(&self, request: SourceGrantPolicyRequest)
+        -> Result<SourceGrantPolicyDecision, PolicyError>;
+    async fn authorize_disclosure(&self, request: SourceDisclosurePolicyRequest)
+        -> Result<SourceDisclosurePolicyDecision, PolicyError>;
 }
 
 #[async_trait::async_trait]
 pub trait TargetMemoryMountPolicyPort: Send + Sync {
-    async fn authorize_mount_acceptance(
-        &self,
-        request: TargetMountPolicyRequest,
-    ) -> Result<TargetMountPolicyDecision, PolicyError>;
-
-    async fn authorize_use(
-        &self,
-        request: TargetUsePolicyRequest,
-    ) -> Result<TargetUsePolicyDecision, PolicyError>;
+    async fn authorize_mount_acceptance(&self, request: TargetMountPolicyRequest)
+        -> Result<TargetMountPolicyDecision, PolicyError>;
+    async fn authorize_use(&self, request: TargetUsePolicyRequest)
+        -> Result<TargetUsePolicyDecision, PolicyError>;
 }
 ```
 
@@ -1038,47 +1056,32 @@ pub trait TargetMemoryMountPolicyPort: Send + Sync {
 ```rust
 #[async_trait::async_trait]
 pub trait MountedContextPort: Send + Sync {
-    async fn add_mounted_entries(
-        &self,
-        request: MountedContextAssemblyRequest,
-    ) -> Result<Vec<MountedContextEntry>, ContextError>;
-
-    async fn invalidate_mount_generation(
-        &self,
-        request: MountContextInvalidation,
-    ) -> Result<InvalidationDisposition, ContextError>;
+    async fn add_mounted_entries(&self, request: MountedContextAssemblyRequest)
+        -> Result<Vec<MountedContextEntry>, ContextError>;
+    async fn invalidate_mount_generation(&self, request: MountContextInvalidation)
+        -> Result<InvalidationDisposition, ContextError>;
 }
 
 #[async_trait::async_trait]
 pub trait RunContextDependencyInvalidationPort: Send + Sync {
-    async fn invalidate_dependency(
-        &self,
-        request: RunContextDependencyInvalidation,
-    ) -> Result<RunInvalidationDisposition, ApplicationError>;
+    async fn invalidate_dependency(&self, request: RunContextDependencyInvalidation)
+        -> Result<RunInvalidationDisposition, ApplicationError>;
 }
 ```
 
 The H1 adapter uses existing Run commands/events and never updates Run tables directly.
 
-### Target persistence and encryption ports
+### Target representation port
 
 ```rust
 #[async_trait::async_trait]
 pub trait TargetSharedRepresentationPort: Send + Sync {
-    async fn persist_encrypted_representation(
-        &self,
-        request: PersistTargetSharedRepresentation,
-    ) -> Result<TargetSharedRepresentation, ApplicationError>;
-
-    async fn quarantine_representation(
-        &self,
-        request: QuarantineTargetSharedRepresentation,
-    ) -> Result<QuarantineDisposition, ApplicationError>;
-
-    async fn purge_representation(
-        &self,
-        request: PurgeTargetSharedRepresentation,
-    ) -> Result<PurgeDisposition, ApplicationError>;
+    async fn persist_encrypted_representation(&self, request: PersistTargetSharedRepresentation)
+        -> Result<TargetSharedRepresentation, ApplicationError>;
+    async fn quarantine_representation(&self, request: QuarantineTargetSharedRepresentation)
+        -> Result<QuarantineDisposition, ApplicationError>;
+    async fn purge_representation(&self, request: PurgeTargetSharedRepresentation)
+        -> Result<PurgeDisposition, ApplicationError>;
 }
 ```
 
@@ -1092,25 +1095,25 @@ The handshake avoids cross-workspace database transactions and cross-workspace f
 
 ### Source submission transaction
 
-Source transaction atomically writes:
+Source atomically writes:
 
 1. immutable grant revision;
 2. grant transition to `PendingAcceptance`;
 3. monotonic activation epoch;
 4. durable event;
-5. outbox invitation intent;
+5. existing outbox invitation intent;
 6. idempotency result.
 
 ### Target acceptance transaction
 
-Target transaction:
+Target:
 
-1. inspects exact current invitation through source disclosure port;
-2. checks target capability and policy;
-3. validates exact revision hash, expiry and obligations;
-4. creates `MemoryMount` in `PendingActivation`;
-5. writes target acceptance record;
-6. writes event/outbox;
+1. inspects exact current invitation through source port;
+2. checks target capability/policy;
+3. validates exact revision hash, epoch, offer expiry and obligations;
+4. creates mount in `PendingActivation`;
+5. writes target acceptance and its canonical hash;
+6. writes event/existing outbox intent;
 7. stores idempotency result.
 
 ### Source confirmation transaction
@@ -1118,17 +1121,18 @@ Target transaction:
 Source reconciler:
 
 1. loads grant/revision under source RLS;
-2. verifies target, revision hash, epoch, expiry and source policy;
-3. rejects if source changed, suspended or revoked;
+2. verifies source/target IDs, revision hash, epoch, acceptance hash, grant validity and source policy;
+3. rejects changed, suspended, expired or revoked source state;
 4. transitions grant to `Active` idempotently;
-5. writes activation acknowledgement and event/outbox.
+5. writes acknowledgement binding target acceptance hash;
+6. writes event/outbox.
 
 ### Target activation transaction
 
 Target reconciler:
 
 1. loads pending mount under target RLS;
-2. verifies acknowledgement hash and exact IDs;
+2. verifies acknowledgement, target acceptance hash and exact IDs;
 3. rechecks target policy;
 4. transitions mount to `Active`;
 5. increments mount generation;
@@ -1136,20 +1140,18 @@ Target reconciler:
 
 No read occurs while mount is `Pending` or `PendingActivation`.
 
-### Race handling
+Race rules:
 
-- source revision change before source confirmation returns conflict;
-- source revoke always wins over acceptance;
-- duplicate messages return original durable result;
-- lost acknowledgement is safely replayed;
+- source revision change before confirmation conflicts;
+- source revoke wins over acceptance;
+- duplicate messages return original result;
+- lost acknowledgement replays idempotently;
 - unknown message schema fails closed;
-- activation does not rely on target possessing an ID or hash.
+- possessing IDs/hashes never activates access.
 
 ---
 
 ## Federated Retrieval
-
-### Target request
 
 ```rust
 pub struct SearchMemoriesWithMounts {
@@ -1164,7 +1166,7 @@ pub struct SearchMemoriesWithMounts {
 }
 ```
 
-### Pipeline
+Pipeline:
 
 ```text
 target request
@@ -1172,29 +1174,29 @@ target request
 → load exact active mounts under target RLS
 → target policy and budgets
 → local Memory retrieval
-→ per-mount source disclosure call
+→ bounded per-mount source disclosure call
 → source transaction + source RLS
 → current grant/revision/epoch/policy validation
-→ bounded source candidate response
+→ source-side least-disclosure resolution
+→ bounded source response
 → target policy/classification/provider validation
+→ target-side least-disclosure resolution
 → origin-aware reranking
-→ final result/content/token limits
-→ durable content-free disclosure/use receipts
+→ combined result/content/token limits
+→ content-free source/target receipts
 ```
 
-### Source transaction rules
+Source transaction rules:
 
 - one transaction has exactly one source workspace context;
 - source repository receives compiled typed selection only;
-- no source query includes target table joins;
-- target query is transformed according to query-disclosure mode before transmission;
-- exact query text is omitted from source audit unless policy explicitly permits it;
-- rows are read at a consistent snapshot;
-- metadata and content are returned from the same revision;
-- source generation and revision hash are included in every result;
-- result limit enforcement happens before response serialization.
-
-### Combined ranking
+- no source query joins target tables;
+- target query is transformed according to query-disclosure mode;
+- exact query text is omitted from source audit unless explicitly permitted;
+- rows use a consistent snapshot;
+- metadata/content come from the same revision;
+- generation/hash accompany every result;
+- limits are enforced before serialization.
 
 ```rust
 pub struct FederatedMemoryCandidate {
@@ -1210,35 +1212,29 @@ pub struct FederatedMemoryCandidate {
 }
 ```
 
-Rules:
+Ranking rules:
 
-- mounted origin remains visible;
+- mounted origin stays visible;
 - foreign score cannot exceed target trust ceiling;
-- foreign constraints never override H2 or local policy;
-- local conflict/supersession is not automatically inferred;
-- deterministic tie-breaking includes origin and namespaced reference;
-- final limits apply across local and mounted results.
+- foreign constraints never override H2/local policy;
+- local conflict/supersession is not inferred automatically;
+- deterministic ties include origin and namespaced reference;
+- combined limits apply across local and mounted results.
 
-### Query privacy
+Query privacy:
 
 - `ExactQueryAllowed` sends bounded exact terms;
-- `RedactedQueryTerms` applies target-approved redaction before source call;
-- `StructuredFilterOnly` sends typed categories and no free text;
+- `RedactedQueryTerms` applies target-approved redaction;
+- `StructuredFilterOnly` sends typed categories only;
 - `PrecomputedCollectionOnly` sends no target query;
-- source audit stores query hash and safe categories;
+- source audit stores hash/safe categories;
 - sensitive target purpose is not disclosed beyond policy.
 
-### Quotas and budgets
-
-Source and target maintain durable bounded counters keyed by grant revision, mount generation, time window and optional Run.
-
-A disclosure is denied before content is read when a hard budget is exhausted.
+Budgets are durable and keyed by grant revision, mount generation, window and optional Run. Hard exhaustion denies before content read.
 
 ---
 
 ## Context Pack and Active Run Integration
-
-### Mounted context entry
 
 ```rust
 pub struct MountedContextEntry {
@@ -1256,170 +1252,93 @@ pub struct MountedContextEntry {
 }
 ```
 
-### Assembly rules
-
-Context inclusion requires:
-
-- active exact mount;
-- current active grant revision and activation epoch;
-- `ReadContent`;
-- deterministic or model-context permission as appropriate;
-- source/target current policy;
-- provider/model locality compatibility;
-- Run purpose/capability/budget;
-- current content mode;
-- unexpired approvals and grant;
-- successful source disclosure receipt.
-
-### Revocation after assembly
+Inclusion requires active exact mount, current active grant/epoch, `ReadContent`, exact deterministic/model permission, source/target policy, provider locality, Run purpose/budget, effective content mode, valid approvals and disclosure receipt.
 
 Revocation, suspension, expiry, purge, erasure, policy reduction or source generation change:
 
-1. marks mount generation stale/revoked;
-2. quarantines target caches/indexes immediately;
-3. invalidates H6 Context Pack cache entries;
-4. emits a durable context dependency invalidation through the H1 port;
-5. causes future invocation/retry to pause, rebuild or fail closed under Run policy;
+1. makes mount generation stale/revoked;
+2. quarantines target persistent representations;
+3. invalidates H6 Context Pack caches;
+4. emits durable H1 dependency invalidation through the port;
+5. causes future invocation/retry to pause, rebuild or fail closed;
 6. preserves historical invocation evidence;
 7. never reconstructs missing content from a hash.
 
-Replay without retained lawful bytes reports `NotReplayable` or `Inconclusive`.
+Replay without lawful retained bytes is `NotReplayable` or `Inconclusive`.
 
 ---
 
 ## Target Indexing and Pinned Offline Mode
 
-### Default
+Default live mounts create no target index or persistent content representation.
 
-No target-side index or persistent content representation is created for live mounts.
+Metadata index requires `DiscoverMetadata`. Content-bearing index requires `ReadContent`, `GenerateDerivedIndex`, compatible obligations, source/target provider approvals, H8 target encryption, exact mount/grant/source generations and downstream cleanup tracking.
 
-### Explicit index creation
+Quarantine-first invalidation:
 
-An index job requires:
-
-- `GenerateDerivedIndex` permission;
-- compatible target indexing policy;
-- no `NoRetention`/`NoModelUse` conflict;
-- source and target provider-use approvals;
-- H8 target encryption availability;
-- exact mount and grant generation;
-- downstream purge obligations;
-- bounded exact source revision manifest.
-
-Index rows include source workspace, grant revision, mount ID/generation, exact shared ref, origin and expiry.
-
-### Quarantine-first invalidation
-
-On revoke/purge/expiry:
-
-1. index generation state becomes `Quarantined` in target transaction;
+1. target marks generation `Quarantined`;
 2. query adapters exclude it immediately;
-3. cleanup job deletes embeddings/text/metadata representations;
-4. target writes cleanup receipt;
-5. source downstream status is reconciled;
-6. ambiguous cleanup remains `OutcomeUnknown`.
-
-### Pinned offline snapshot
+3. cleanup removes embedding/text/metadata representation;
+4. target writes receipt;
+5. source downstream status reconciles;
+6. ambiguity remains `OutcomeUnknown`.
 
 Pinned offline mode:
 
-- is disabled by default;
-- supports only `ExplicitRevisionSet` or run-scoped exact revisions;
-- requires explicit retention permission;
-- records exact source hashes and snapshot timestamp;
-- encrypts bytes under fresh target DEK;
-- cannot be presented as current source content;
-- expires fail-closed;
-- respects periodic revocation checks where configured;
-- cannot be re-shared or imported without separate permission.
+- disabled by default;
+- exact-revision or run-scoped exact selections only;
+- explicit retention permission;
+- target encryption with fresh DEK;
+- exact hashes/snapshot time;
+- never shown as current source content;
+- expiry fail-closed;
+- periodic revocation checks where configured;
+- no re-share or import without separate permission.
 
 ---
 
 ## Local Derivation, Exact Import and Conflict Handling
 
-### Derivation proposal
+Derivation proposal stores source provenance and proposed target content but writes no local Memory before governed commit. Target confidence/importance are independently assessed.
 
-A derivation proposal stores source provenance and target proposed content but does not write local Memory until approved/committed.
-
-Target confidence and importance are independently assessed.
-
-### Exact import flow
+Exact import:
 
 ```text
-active mount and exact permission
+active mount + exact permission
 → source disclosure authorization
-→ exact revision read under source RLS
+→ exact source revision under source RLS
 → target classification/redaction
-→ fresh target DEK encrypted representation
-→ target import proposal approval
+→ fresh target DEK representation
+→ target proposal approval
 → ordinary Memory Core candidate creation
 → first local revision
-→ SharedMemoryRef source provenance
-→ optional Derivation record
+→ SharedMemoryRef provenance
+→ optional Derivation
 → target activation/write-policy review
-→ source and target audit receipts
+→ source/target audit receipts
 ```
 
-Source key references, wrapped DEKs and blob paths are never copied.
+Source keys/wrapped DEKs/blob paths are never copied.
 
-### Import idempotency
+Idempotency scope includes target workspace, mount, shared ref, operation and canonical proposed-content hash. Ambiguous completion loads local Memory/provenance before retry; blind duplicate import is prohibited.
 
-The idempotency scope includes target workspace, mount, shared ref, operation and canonical proposed content hash.
+A local-vs-foreign conflict proposal stores namespaced `SharedMemoryRef` without source FK. Resolution may create a local derived revision or review outcome; source memory is never changed.
 
-An ambiguous completion loads target Memory/source provenance before any retry. Blind duplicate import is prohibited.
-
-### Conflict handling
-
-A target conflict proposal may compare local revision with `SharedMemoryRef`.
-
-Persistence stores the foreign reference as namespaced fields without a foreign key.
-
-Resolving the conflict can create a local derived revision or human-review outcome; source memory is never changed.
+A later share of an imported local Memory must evaluate retained downstream obligations and preserve source provenance.
 
 ---
 
-## Revocation, Purge, Erasure and Downstream Obligations
+## Revocation, Source Change, Purge, Erasure and Obligations
 
-### Source revocation transaction
+Source revoke atomically writes grant `Revoked`, incremented epoch, authoritative event, existing outbox intent, obligation intents and audit. Revocation is irreversible for that grant identity.
 
-Source transaction atomically writes:
+Target receipt marks mount revoked/stale, increments generation, quarantines persistent representations, invalidates contexts/Runs, creates cleanup/review items and emits receipt.
 
-- grant state `Revoked`;
-- incremented activation epoch;
-- authoritative event;
-- target revocation outbox intent;
-- downstream obligation intents;
-- audit fact.
+A missing target receipt does not weaken source revoke. Live read always checks source lifecycle.
 
-Revocation is irreversible for the grant identity.
+Source revision/status/classification change immediately affects eligibility. `ReviewOnSourceChange` creates target review work for tracked derivatives/imports without modifying them.
 
-### Target receipt
-
-Target transaction:
-
-- marks mount `Revoked` or `Stale`;
-- increments mount generation;
-- quarantines persistent representations;
-- invalidates contexts/Runs;
-- creates cleanup/obligation items;
-- emits target receipt.
-
-A missing target receipt does not make source revoke ineffective. Live reads always perform source lifecycle checks.
-
-### Source purge and erasure
-
-Source Memory status/classification/generation changes update eligibility immediately.
-
-Hard purge or cryptographic erasure:
-
-- removes live queryability;
-- returns content-free tombstones;
-- increments source generation;
-- emits invalidation messages;
-- schedules target cleanup where obligations require it;
-- never reconstructs content from hashes.
-
-### Downstream obligation job
+Hard purge/cryptographic erasure removes live queryability, returns content-free tombstones, increments source generation, emits invalidation and schedules target cleanup where accepted obligations require it.
 
 ```rust
 pub struct DownstreamObligationJob {
@@ -1431,6 +1350,7 @@ pub struct DownstreamObligationJob {
     pub obligation: DownstreamObligation,
     pub scope_hash: [u8; 32],
     pub status: DownstreamObligationStatus,
+    pub source_erasure_cascade_status: SourceErasureCascadeStatus,
     pub total_items: u64,
     pub completed_items: u64,
     pub failed_items: u64,
@@ -1440,15 +1360,13 @@ pub struct DownstreamObligationJob {
 }
 ```
 
-Source cannot directly delete target content. Target performs governed cleanup and reports content-free receipts.
-
-`OutcomeUnknown` remains nonterminal until reconciled.
+Source cannot directly delete target content. Target performs governed cleanup and reports content-free receipts. `SourceErasedDownstreamPending` and `OutcomeUnknown` remain non-complete.
 
 ---
 
 ## Durable Event Contracts
 
-Repository-owned descriptors are added for version 1 of:
+Repository-owned v1 descriptors:
 
 ```text
 memory_share.grant_created
@@ -1476,9 +1394,7 @@ memory_share.index_purged
 memory_share.downstream_purge_unknown
 ```
 
-Event payloads contain safe IDs, hashes, counts, modes, reason categories and policy references only. They never contain unrestricted Memory content, queries, secrets or target plaintext.
-
-Readers/upcasters ship before producer activation according to the event compatibility plan.
+Payloads contain safe IDs, hashes, counts, modes, reason categories and policy references only. Readers/upcasters ship before producer activation.
 
 ---
 
@@ -1486,7 +1402,7 @@ Readers/upcasters ship before producer activation according to the event compati
 
 ### Migration `0105`
 
-Create source-owned tables:
+Create:
 
 ```text
 memory_share_capability_settings
@@ -1501,20 +1417,20 @@ memory_share_grant_state_history
 
 Constraints:
 
-- source and target workspace differ;
-- target workspace is non-null and exact;
-- unique grant revision number per grant;
+- source and target differ;
+- target non-null/exact;
+- unique revision per grant;
 - immutable revision rows;
-- exact positive expiry interval;
-- bounded canonical JSON for typed selection/permissions/limits;
-- collection members belong to source workspace;
-- no target-controlled arbitrary query fields;
-- one active revision binding per grant;
-- terminal grant states cannot reopen.
+- optional expiry with conditional mandatory-expiry checks for Restricted/support/model/export/import/run-scoped grants;
+- bounded canonical typed contracts;
+- collection members same source workspace;
+- no arbitrary query fields;
+- one active revision binding;
+- terminal states cannot reopen.
 
 ### Migration `0106`
 
-Create target-owned handshake tables:
+Create:
 
 ```text
 memory_share_invitations
@@ -1527,17 +1443,17 @@ memory_mount_state_history
 
 Constraints:
 
-- target tables store namespaced source IDs/hashes without cross-workspace foreign keys;
-- unique active mount per target/grant identity unless a new grant is issued;
-- accepted revision/hash/epoch are immutable for a mount generation;
-- pending mounts are non-queryable;
-- terminal mount states cannot reopen;
-- duplicate handshake envelope hashes are idempotent;
-- invitation expiry is enforced.
+- namespaced source IDs/hashes without source FKs;
+- unique active mount per target/grant identity;
+- revision/hash/epoch and acceptance hash immutable per generation;
+- pending mounts non-queryable;
+- terminal states cannot reopen;
+- duplicate envelope hashes idempotent;
+- offer expiry enforced.
 
 ### Migration `0107`
 
-Create disclosure/accounting tables:
+Create:
 
 ```text
 memory_share_disclosure_receipts
@@ -1549,18 +1465,11 @@ memory_share_run_dependencies
 memory_share_query_category_audit
 ```
 
-Constraints:
-
-- content/query text columns do not exist;
-- receipt uniqueness binds correlation, mount generation, shared ref and operation;
-- counters are nonnegative and bounded;
-- lifecycle checks record exact epoch/hash;
-- Run dependency rows store content hashes/tombstones, not unrestricted content;
-- expired budget windows are retained/purged by policy.
+No content/raw-query columns. Receipt uniqueness binds correlation, mount generation, shared ref and operation. Counters are bounded. Run dependency rows store hashes/tombstones only.
 
 ### Migration `0108`
 
-Create persistent-use tables:
+Create:
 
 ```text
 memory_share_import_proposals
@@ -1577,39 +1486,42 @@ memory_share_foreign_conflict_refs
 
 Constraints:
 
-- no SQL FK from shared refs to source Memory rows;
-- local imported Memory FK exists only after local commit and within target workspace;
-- target representation refs belong to target workspace;
-- source key/backend reference columns do not exist;
-- persistent items bind exact mount/grant/source generations;
-- quarantined indexes/snapshots are not queryable;
-- unknown cleanup outcomes cannot be marked succeeded;
-- proposal expected revisions remain command-only.
+- no source Memory FK;
+- local imported Memory FK only after local commit and within target;
+- target representation belongs to target workspace;
+- no source key/backend columns;
+- exact mount/grant/source generations;
+- quarantined representations non-queryable;
+- unknown cleanup cannot become succeeded;
+- expected revisions remain command-only.
 
 ### Migration `0109`
 
-Add:
+Create/extend exactly:
 
-- forced RLS to all workspace-owned tables;
-- separate source and target policies;
-- composite same-workspace foreign keys where ownership is local;
-- explicit absence tests for cross-workspace Memory/grant foreign keys;
-- outbox/inbox message tables or typed extensions to existing infrastructure;
-- reconciliation records;
-- worker leases and indexes;
-- event-schema binding rows;
-- lifecycle partial indexes;
-- feature-state constraints;
-- migration-ownership comments;
-- application-role restrictions preventing multi-workspace reads.
+```text
+memory_share_inbox_receipts
+memory_share_reconciliation_records
+memory_share_worker_leases
+```
 
-Database tests prove that no supported role can execute a raw target-to-source Memory join.
+And:
+
+- reuse existing outbox tables with typed memory-sharing event/message kinds;
+- force RLS on all new workspace-owned tables;
+- add separate source/target policies;
+- add same-workspace composite FKs where ownership is local;
+- assert absence of cross-workspace Memory/grant FKs;
+- add event-schema binding rows;
+- add lifecycle/worker indexes and terminal protections;
+- add feature-state constraints and migration-ownership comments;
+- restrict application roles from multi-workspace reads.
+
+Database tests prove no supported role can execute a raw target-to-source Memory join.
 
 ---
 
 ## H11 Surfaces
-
-### Administrative HTTP
 
 ```text
 POST /admin/v1/memory-share-grants
@@ -1630,16 +1542,16 @@ POST /v1/memory-import-proposals/{id}/commit
 
 Rules:
 
-- all mutations use idempotency keys;
+- mutations use idempotency;
 - lifecycle mutations use expected revisions;
-- grant acceptance displays exact source/target, revision hash, expiry, operations, provider use, indexing and obligations;
-- revoke is not displayed as a reversible toggle;
-- public DTOs expose safe IDs/status/counts/reason codes only;
-- search results always include local/mounted origin;
-- no source key material, storage path or unrestricted content appears in management endpoints;
-- HTTP, CLI and SDK call the same application services.
+- acceptance shows exact source/target/hash/expiry/operations/provider/indexing/obligations;
+- revoke is not a reversible toggle;
+- DTOs expose safe IDs/status/counts/reasons only;
+- results always label origin;
+- no source key/path or unrestricted content in management surfaces;
+- HTTP/CLI/SDK share application services.
 
-### CLI
+CLI:
 
 ```text
 vestrace memory-share grant create
@@ -1657,576 +1569,363 @@ vestrace memory-share import commit
 vestrace memory-share doctor
 ```
 
-### MCP
-
-Default MCP tools may search through already-active mounts when capability permits. They cannot create/accept/revise/revoke grants or exact-import content.
-
-### Public schemas and SDKs
-
-Schemas provide stable enums, lifecycle summaries, shared references, result origins and safe error variants. Unknown future kinds remain opaque/fail-closed according to the event/schema compatibility plan.
+MCP default is search-only through active mounts; no grant management or exact import.
 
 ---
 
 ## Failure Semantics
 
-### Source unavailable
-
-- live read returns `SourceUnavailableFailClosed`;
-- target stale cache is not returned;
-- no local Memory/index is created;
-- metadata-only health state may be shown without content.
-
-### Unknown or changed grant revision
-
-- mount becomes stale or request conflicts;
-- no fallback to last-known revision;
-- target must inspect and accept a new exact revision.
-
-### Source policy reduced
-
-- effective permission reduces immediately;
-- persistent modes quarantine when no longer permitted;
-- target widening never compensates for source reduction.
-
-### Target policy reduced
-
-- target denies/reduces immediately;
-- source grant remains unchanged;
-- contexts and indexes invalidated as required.
-
-### Source revision changes during read
-
-- repository returns one exact revision snapshot or conflict;
-- metadata/content mixing across revisions is prohibited;
-- safe retry reauthorizes from the start.
-
-### Revoke races with read
-
-- disclosure commit proves current active epoch;
-- if proof cannot be committed, no content is returned;
-- revoke boundary wins fail-closed.
-
-### Handshake acknowledgement lost
-
-- target remains `PendingActivation` and cannot read;
-- reconciliation replays exact acknowledgement idempotently.
-
-### Target cleanup partially fails
-
-- representation remains non-queryable quarantine;
-- obligation stays pending/failed/unknown;
-- source does not claim successful cascade.
-
-### Import completion unknown
-
-- target checks idempotency, local Memory and `SharedMemoryRef` provenance;
-- blind second import is prohibited;
-- unresolved state is `OutcomeUnknown`.
-
-### H8 unavailable for persistent target representation
-
-- live read may continue only when no retention is required and policy allows transient use;
-- persistent index/snapshot/import fails closed;
-- no plaintext fallback is written.
-
-### Provider locality mismatch
-
-- deterministic/local display may remain allowed;
-- remote model or embedding use is denied;
-- no implicit provider downgrade/redirect occurs.
-
-### Graph expansion outside selection
-
-- inaccessible node is omitted/denied;
-- edge does not reveal hidden content or existence beyond bounded policy response.
+- **Source unavailable:** live read is `SourceUnavailableFailClosed`; no stale content/local copy.
+- **Unknown/changed revision:** mount stale/conflict; no last-known fallback.
+- **Source policy reduced:** immediate reduction/deny; persistent modes quarantine.
+- **Target policy reduced:** immediate target deny/reduction; source grant unchanged.
+- **Source revision changes during read:** one exact snapshot or conflict; no metadata/content mixing.
+- **Revoke races with read:** disclosure must prove active epoch; otherwise no content.
+- **Acknowledgement lost:** target remains pending; replay exact ack idempotently.
+- **Cleanup partial:** representation stays non-queryable; source cascade not complete.
+- **Import unknown:** reconcile idempotency/local provenance before retry.
+- **H8 unavailable:** transient live read only when policy allows; persistence fails closed; no plaintext fallback.
+- **Provider mismatch:** remote model/embedding denied; local deterministic use may remain.
+- **Graph escape:** inaccessible node omitted/denied; edge grants no access.
 
 ---
 
 ## Implementation Sequence
 
-### Task 1: Add failing boundary, compile-fail and migration-ownership tests
+### Task 1: Add failing boundary and migration-ownership tests
 
-**Files:**
-- Create the boundary scripts and initial tests listed in the locked structure.
-- Modify CI only to run deterministic local checks.
-
-- [ ] Add compile-fail tests proving `SharedMemoryRef` cannot convert to `MemoryId` and `MountedMemoryView` cannot enter Memory write repositories.
-- [ ] Add database tests proving `global` remains workspace-local.
-- [ ] Add static checks rejecting raw cross-workspace SQL joins and RLS bypass helpers.
-- [ ] Add tests proving default capability and target indexing are disabled.
-- [ ] Add migration-number ownership assertions for `0105`–`0109`.
-- [ ] Run tests and verify they fail for missing implementation.
+- [ ] Add compile-fail tests: no `SharedMemoryRef -> MemoryId`; no mounted view into write repositories.
+- [ ] Add database tests that `global` remains local.
+- [ ] Add static checks rejecting raw cross-workspace SQL/RLS bypass.
+- [ ] Add default-disabled and no-default-index tests.
+- [ ] Add `0105`–`0109` ownership assertions.
+- [ ] Run and verify failures.
 - [ ] Commit tests only.
 
-### Task 2: Implement domain identifiers, capability and safe value types
+### Task 2: Implement IDs, capability and safe value types
 
-**Files:**
-- Add IDs and memory-sharing domain modules.
+- [ ] Implement IDs/nil rejection.
+- [ ] Implement source/target capability snapshots and intersection.
+- [ ] Implement lifecycle/operation/content/query/index/obligation/retention/status enums.
+- [ ] Implement bounded limits and canonical hashes.
+- [ ] Add invalid combination property tests.
+- [ ] Run and commit.
 
-- [ ] Implement typed IDs and nil rejection.
-- [ ] Implement capability, lifecycle, operation, content, query, indexing and obligation enums.
-- [ ] Implement bounded limits and constructor validation.
-- [ ] Implement canonical hashing for safe semantic contracts.
-- [ ] Add property tests for invalid permission/obligation combinations.
-- [ ] Run domain tests and commit.
+### Task 3: Implement grant, revision, collection and selection domain
 
-### Task 3: Implement grant, revision, collection and selection contracts
+- [ ] Write lifecycle/revision/selection failures.
+- [ ] Implement grant transition table and epochs.
+- [ ] Implement immutable revisions with conditional expiry.
+- [ ] Implement explicit selections/typed filter input.
+- [ ] Implement source collection revisions.
+- [ ] Reject wildcard/empty/unknown/arbitrary expressions.
+- [ ] Run and commit.
 
-- [ ] Write failing lifecycle/revision/selection tests.
-- [ ] Implement `MemoryShareGrant` transition table.
-- [ ] Implement immutable `MemoryShareGrantRevision`.
-- [ ] Implement explicit selections and bounded filter compiler input.
-- [ ] Implement immutable source collection revisions.
-- [ ] Reject wildcard targets, empty sets, unknown kinds and arbitrary expressions.
-- [ ] Run tests and commit.
+### Task 4: Create `0105` and source repositories
 
-### Task 4: Create migration `0105` and source repositories
-
-- [ ] Add source grant/revision/collection tables.
-- [ ] Add forced source-workspace RLS and same-workspace member constraints.
-- [ ] Add immutable-revision and terminal-state constraints.
-- [ ] Implement SQLx source repositories.
-- [ ] Add transaction/idempotency tests.
-- [ ] Verify no target table/query is needed for source grant writes.
-- [ ] Run tests and commit.
+- [ ] Add source tables, RLS and constraints.
+- [ ] Implement SQLx repositories.
+- [ ] Add immutable/terminal/idempotency tests.
+- [ ] Verify source writes require no target query/table.
+- [ ] Run and commit.
 
 ### Task 5: Implement source grant services and invitation outbox
 
 - [ ] Add create/revise/submit/suspend/revoke commands.
-- [ ] Bind exact H2/H6 decisions and approvals.
-- [ ] Create canonical invitation snapshots.
-- [ ] Write source event and outbox in the same transaction.
-- [ ] Add race and idempotency tests.
-- [ ] Register event readers/descriptors before producer activation.
-- [ ] Run tests and commit.
+- [ ] Bind exact H2/H6 decisions/approvals.
+- [ ] Create canonical time-bounded invitation offers.
+- [ ] Write event and existing outbox atomically.
+- [ ] Add races/idempotency.
+- [ ] Register readers/descriptors before producers.
+- [ ] Run and commit.
 
-### Task 6: Implement mount and handshake domain/application contracts
+### Task 6: Implement mount and handshake contracts
 
-- [ ] Write failing target acceptance and lifecycle tests.
-- [ ] Implement mount identity and transition table.
-- [ ] Implement target acceptance and source activation acknowledgement contracts.
-- [ ] Ensure envelopes are references, not capabilities.
-- [ ] Add stale revision and source-revoke race tests.
-- [ ] Run tests and commit.
+- [ ] Write acceptance/lifecycle failures.
+- [ ] Implement mount transition table.
+- [ ] Implement acceptance/ack contracts binding exact hashes/epoch.
+- [ ] Ensure envelopes are not capabilities.
+- [ ] Add stale/revoke races.
+- [ ] Run and commit.
 
-### Task 7: Create migration `0106` and target handshake repositories
+### Task 7: Create `0106` and target handshake repositories
 
-- [ ] Add invitations, mounts, acceptances, handshake and acknowledgement tables.
-- [ ] Store source identifiers/hashes without source-table foreign keys.
-- [ ] Add forced target RLS.
-- [ ] Implement inbox/idempotency handling.
-- [ ] Add restart tests for every handshake boundary.
-- [ ] Prove pending mounts are non-queryable.
-- [ ] Run tests and commit.
+- [ ] Add invitation/mount/acceptance/handshake/ack tables.
+- [ ] Store source IDs without source FKs.
+- [ ] Add target RLS/inbox idempotency.
+- [ ] Add restart tests at each boundary.
+- [ ] Prove pending mounts non-queryable.
+- [ ] Run and commit.
 
 ### Task 8: Implement reconciled activation handshake
 
-- [ ] Implement invitation inspection through a source-workspace transaction.
-- [ ] Implement target policy/acceptance transaction.
-- [ ] Implement source confirmation and activation epoch update.
-- [ ] Implement target acknowledgement application.
-- [ ] Add duplicate/lost/out-of-order message tests.
-- [ ] Add conflict tests for changed/revoked/expired source state.
-- [ ] Run tests and commit.
+- [ ] Inspect source invitation in source transaction.
+- [ ] Execute target acceptance transaction.
+- [ ] Execute source confirmation/epoch transition.
+- [ ] Apply target activation ack bound to acceptance hash.
+- [ ] Test duplicate/lost/out-of-order envelopes.
+- [ ] Test changed/revoked/expired conflicts.
+- [ ] Run and commit.
 
 ### Task 9: Implement RLS-safe source disclosure runtime
 
-- [ ] Add source workspace executor that opens one exact source transaction.
-- [ ] Implement typed selection compiler and parameterized predicates.
-- [ ] Implement current grant/revision/epoch/policy validation.
-- [ ] Enforce query privacy and result/content bounds before serialization.
-- [ ] Return revision-consistent DTOs with generation/hash.
-- [ ] Add tests proving no target transaction context is reused.
-- [ ] Run tests and commit.
+- [ ] Add exact source workspace executor.
+- [ ] Implement typed selection compiler/parameterized predicates.
+- [ ] Validate current grant/revision/epoch/policy.
+- [ ] Resolve least-disclosing source mode.
+- [ ] Enforce query privacy/bounds before serialization.
+- [ ] Return revision-consistent DTOs.
+- [ ] Prove target transaction context is never reused.
+- [ ] Run and commit.
 
-### Task 10: Create migration `0107` and disclosure accounting
+### Task 10: Create `0107` and disclosure accounting
 
-- [ ] Add content-free source disclosure and target-use receipts.
-- [ ] Add query budgets/rate windows and lifecycle-check records.
-- [ ] Add Run context dependency records.
-- [ ] Add uniqueness/idempotency constraints.
-- [ ] Implement repositories and quota transactions.
-- [ ] Verify no content/raw query columns exist.
-- [ ] Run tests and commit.
+- [ ] Add content-free receipts/budgets/windows/lifecycle checks/Run dependencies.
+- [ ] Add uniqueness/idempotency and bounded counters.
+- [ ] Implement quota transactions.
+- [ ] Verify no content/raw-query columns.
+- [ ] Run and commit.
 
-### Task 11: Implement federated retrieval and origin-aware ranking
+### Task 11: Implement federated retrieval and reranking
 
-- [ ] Load exact active target mounts.
-- [ ] Retrieve local candidates normally.
-- [ ] Dispatch bounded per-mount source calls with concurrency limits.
-- [ ] Apply target policy/classification/provider checks.
-- [ ] Rerank with explicit Local/Mounted origins and trust ceilings.
-- [ ] Apply combined result/token/content limits.
-- [ ] Add UUID-guess, source-unavailable, multi-mount and load tests.
-- [ ] Run tests and commit.
+- [ ] Load active target mounts.
+- [ ] Retrieve local candidates.
+- [ ] Dispatch bounded source calls with concurrency limits.
+- [ ] Apply target policy/provider and least-disclosure resolution.
+- [ ] Rerank with origin/trust ceilings.
+- [ ] Apply combined limits.
+- [ ] Test UUID guess/source unavailable/multi-mount/load.
+- [ ] Run and commit.
 
-### Task 12: Integrate Context Pack, model use and active Run invalidation
+### Task 12: Integrate Context Pack, model/tool use and Run invalidation
 
-- [ ] Add `MountedContextEntry` manifest support.
-- [ ] Separate deterministic and model-context authorization.
-- [ ] Enforce provider locality and NoExternalProvider.
-- [ ] Add H1 dependency invalidation application port.
-- [ ] Invalidate cache/context on mount/grant generation changes.
-- [ ] Add no-stale-retry and historical-audit tests.
-- [ ] Run tests and commit.
+- [ ] Add mounted context manifests.
+- [ ] Separate deterministic/model permissions.
+- [ ] Enforce provider locality/NoExternalProvider.
+- [ ] Keep tool commitments behind ordinary H2.
+- [ ] Add H1 invalidation port.
+- [ ] Invalidate cache/context on generations/lifecycle.
+- [ ] Test no stale retry/historical audit.
+- [ ] Run and commit.
 
-### Task 13: Create migration `0108` and persistent-use state
+### Task 13: Create `0108` and persistent-use state
 
-- [ ] Add import proposal/source-ref tables.
-- [ ] Add index/snapshot generation tables.
-- [ ] Add downstream obligation and cleanup tables.
-- [ ] Add foreign-conflict reference sidecars.
-- [ ] Enforce target-workspace representation ownership.
-- [ ] Prove no source key/path or cross-workspace FK columns exist.
-- [ ] Run tests and commit.
+- [ ] Add import/source-ref/index/snapshot/obligation/cleanup/conflict tables.
+- [ ] Enforce target representation ownership.
+- [ ] Prove no source keys/paths/FKs.
+- [ ] Add quarantine/unknown-state constraints.
+- [ ] Run and commit.
 
-### Task 14: Implement target indexing and pinned offline snapshots
+### Task 14: Implement target indexing and pinned snapshots
 
-- [ ] Keep feature disabled by default.
-- [ ] Require exact permissions/obligations and target H2/H6/H8 decisions.
-- [ ] Encrypt persistent representations with fresh target DEKs.
-- [ ] Include mount/grant/source generations in keys and manifests.
-- [ ] Quarantine before asynchronous cleanup.
-- [ ] Add expiry/revocation/provider/index tests.
-- [ ] Run tests and commit.
+- [ ] Keep disabled by default.
+- [ ] Distinguish metadata-only vs content-bearing requirements.
+- [ ] Require exact permissions/obligations/H2/H6/H8.
+- [ ] Use fresh target DEKs.
+- [ ] Include exact generations/manifests.
+- [ ] Quarantine before cleanup.
+- [ ] Test expiry/revoke/provider/indexing.
+- [ ] Run and commit.
 
-### Task 15: Implement derivation, exact import and conflict proposals
+### Task 15: Implement derivation, exact import and conflicts
 
-- [ ] Create governed import proposals.
-- [ ] Persist proposed bytes through target H6 encryption.
-- [ ] Extend provenance with namespaced `SharedMemoryRef`.
-- [ ] Commit through ordinary Memory Core candidate/write policy.
+- [ ] Create governed proposals.
+- [ ] Persist target-encrypted proposal content.
+- [ ] Extend provenance with `SharedMemoryRef` without source FK.
+- [ ] Commit through Memory Core candidate/write policy.
 - [ ] Assess local confidence independently.
-- [ ] Add idempotency and `OutcomeUnknown` reconciliation.
-- [ ] Add local-vs-foreign conflict proposal handling.
-- [ ] Run tests and commit.
+- [ ] Reconcile idempotency/OutcomeUnknown.
+- [ ] Handle local-vs-foreign conflicts.
+- [ ] Preserve obligations for later local sharing.
+- [ ] Run and commit.
 
-### Task 16: Implement revocation, purge/erasure propagation and cleanup
+### Task 16: Implement source-change review, revoke, purge/erasure and cleanup
 
-- [ ] Implement source authoritative revoke transaction.
-- [ ] Implement target mount invalidation and quarantine.
+- [ ] Implement authoritative source revoke.
+- [ ] Implement `ReviewOnSourceChange` target work.
+- [ ] Implement mount invalidation/quarantine.
 - [ ] Implement active Run/context invalidation.
-- [ ] Implement downstream obligation jobs/receipts.
-- [ ] Integrate source hard purge and cryptographic erasure signals.
-- [ ] Keep source and target cleanup authorities separate.
-- [ ] Add lost-receipt/restart/unknown-outcome tests.
-- [ ] Run tests and commit.
+- [ ] Implement obligation jobs/receipts/cascade statuses.
+- [ ] Integrate hard purge/erasure signals.
+- [ ] Keep source/target cleanup authority separate.
+- [ ] Test lost receipt/restart/unknown outcomes.
+- [ ] Run and commit.
 
-### Task 17: Create migration `0109`, complete RLS/outbox/events/workers
+### Task 17: Create `0109`, complete RLS/inbox/reconciliation/events/workers
 
-- [ ] Force RLS on every new table.
-- [ ] Add source/target composite constraints and indexes.
-- [ ] Add/extend outbox/inbox and reconciliation records.
-- [ ] Add worker leases and terminal-state protections.
-- [ ] Register durable event schema bindings/readers.
-- [ ] Add database-role tests for raw multi-workspace access denial.
-- [ ] Run migration/RLS/restart tests and commit.
+- [ ] Create exact inbox/reconciliation/worker tables.
+- [ ] Reuse existing outbox with typed messages.
+- [ ] Force RLS/add constraints/indexes.
+- [ ] Register event schema bindings/readers.
+- [ ] Add raw multi-workspace denial tests.
+- [ ] Run and commit.
 
 ### Task 18: Add H11 HTTP/CLI/MCP/SDK/schema surfaces
 
-- [ ] Add admin grant/mount routes with exact review DTOs.
-- [ ] Add shared search and import-proposal routes.
-- [ ] Add CLI commands and safe doctor output.
-- [ ] Add MCP search-only surface for active mounts.
-- [ ] Generate Rust/TypeScript SDKs and schemas.
-- [ ] Add parity, unknown-schema and secret-redaction tests.
-- [ ] Run tests and commit.
+- [ ] Add admin grant/mount review routes.
+- [ ] Add shared search/import routes.
+- [ ] Add CLI and safe doctor.
+- [ ] Add MCP active-mount search only.
+- [ ] Generate SDKs/schemas.
+- [ ] Add parity/unknown-schema/redaction tests.
+- [ ] Run and commit.
 
-### Task 19: Add security, load and operational acceptance gates
+### Task 19: Security, load and operational gates
 
-- [ ] Run all boundary/static scripts.
+- [ ] Run boundary/static scripts.
 - [ ] Run unit/integration/property/migration/RLS suites.
-- [ ] Run crash-at-every-handshake/revoke/import boundary tests.
+- [ ] Run crash-at-every-handshake/revoke/import tests.
 - [ ] Run bounded multi-mount load tests.
-- [ ] Measure revocation-to-nonqueryable latency under the approved local test profile.
-- [ ] Verify no source keys/content/raw queries in logs, metrics or public schemas.
+- [ ] Measure revocation-to-nonqueryable latency in approved local profile.
+- [ ] Verify no source keys/content/raw queries in logs/metrics/schemas.
 - [ ] Verify no silent copy/index/model/export/transitive behavior.
-- [ ] Use `superpowers:verification-before-completion` before reporting success.
-- [ ] Commit final verification/documentation updates.
+- [ ] Use verification-before-completion.
+- [ ] Commit verification/docs.
 
 ---
 
 ## Rollout Order
 
-1. ship domain/readers/schemas with deployment and workspace capability disabled;
-2. apply migrations `0105`–`0109`;
-3. verify forced RLS and database-role denial tests;
-4. enable metadata-only invitation/inspection in isolated test workspaces;
-5. exercise reconciled handshake and restart paths;
-6. enable live read for explicit revision sets only;
-7. verify source-unavailable and revoke fail-closed behavior;
-8. add bounded typed filters and source collections;
-9. enable deterministic Context Pack use for selected workspaces;
-10. enable model use only after provider/locality tests;
-11. enable derivation/import proposals only after envelope encryption and provenance tests;
-12. enable target indexing/pinned snapshots only for explicit cohorts;
-13. exercise purge/erasure/downstream cleanup before broad rollout;
-14. publish H11 admin/SDK surfaces after parity/security review;
-15. keep wildcard/transitive/mount-of-mount behavior permanently unsupported.
+1. ship domain/readers/schemas disabled;
+2. apply `0105`–`0109`;
+3. verify RLS/role denial;
+4. enable metadata invitation/inspection in test workspaces;
+5. exercise handshake/restart;
+6. enable live read for explicit revisions only;
+7. verify source-unavailable/revoke fail-closed;
+8. enable typed filters/collections;
+9. enable deterministic Context Pack use;
+10. enable model use after provider/locality tests;
+11. enable derivation/import after encryption/provenance tests;
+12. enable indexes/snapshots for explicit cohorts;
+13. exercise source-change/revoke/purge/erasure cleanup;
+14. publish H11 surfaces after security/parity review;
+15. permanently reject wildcard/transitive/mount-of-mount behavior.
 
-Rollback rules:
+Rollback:
 
-- disabling capability blocks new grant/mount/read/use operations but does not rewrite history;
-- existing active mounts become suspended/stale according to policy;
+- capability disable blocks future operations without rewriting history;
+- active mounts suspend/stale by policy;
 - persistent representations quarantine before cleanup;
-- no database down migrations are generated;
-- local Memories/imports remain governed by their own lifecycle and accepted obligations;
-- a rollback never re-enables revoked access or restores erased content.
+- no down migrations;
+- local imports remain under local lifecycle/obligations;
+- rollback never re-enables revoked access or erased content.
 
 ---
 
 ## Acceptance Scenarios
 
-### Scenario 1: Default disabled
-
-Source and target have no enabled capability. Grant creation and mount acceptance are denied without any sharing rows.
-
-### Scenario 2: `global` remains local
-
-A workspace-global Memory is not visible in another workspace without an exact active grant/mount.
-
-### Scenario 3: Exact read-only procedures library
-
-Source grants structured-only deterministic use of explicit procedure revisions. Target reads them through source RLS. No local Memory, embedding or index is created.
-
-### Scenario 4: Guessed source UUID
-
-Target requests a source Memory outside selection. Response is denied/not-found without revealing existence.
-
-### Scenario 5: Wildcard target attempt
-
-Grant constructor rejects missing or wildcard target workspace.
-
-### Scenario 6: Stale acceptance
-
-Source replaces revision while target accepts the old hash. Source confirmation conflicts and target remains non-active.
-
-### Scenario 7: Lost activation acknowledgement
-
-Target remains pending. Reconciliation replays exact acknowledgement and activates once.
-
-### Scenario 8: Duplicate acceptance
-
-Same idempotency key/canonical input returns the original mount; changed input conflicts.
-
-### Scenario 9: Source unavailable
-
-Live read fails closed and stale cached content is not returned.
-
-### Scenario 10: Query privacy structured-only
-
-Target free-text query is not sent; source receives only typed filter categories.
-
-### Scenario 11: Result budget exhausted
-
-Content is denied before source bytes are disclosed; content-free receipt records budget denial.
-
-### Scenario 12: Source revision changes during read
-
-Result contains one exact revision or conflict; metadata/content never mix.
-
-### Scenario 13: Source policy becomes stricter
-
-Read is immediately reduced/denied and mount becomes stale where required.
-
-### Scenario 14: Target policy becomes stricter
-
-Target denies model use while source grant remains unchanged.
-
-### Scenario 15: Target policy becomes broader
-
-Existing source grant remains the ceiling; no access expansion occurs.
-
-### Scenario 16: Remote model prohibited
-
-Search/display may succeed, but remote model context is denied by `NoExternalProvider`.
-
-### Scenario 17: Prompt injection content
-
-Mounted procedure is marked foreign/untrusted and cannot change capabilities or policy.
-
-### Scenario 18: Foreign fact conflicts locally
-
-Target creates conflict proposal; foreign fact does not supersede local Memory.
-
-### Scenario 19: Read creates no local copy
-
-Row counts in target `memories`, revisions and indexes remain unchanged after search/context use.
-
-### Scenario 20: Target embedding without permission
-
-No index job or H8 target representation is created.
-
-### Scenario 21: Explicit target embedding
-
-Fresh target DEK and exact provenance are used; source key material is absent.
-
-### Scenario 22: Index revoke
-
-Index becomes non-queryable quarantine before physical cleanup finishes.
-
-### Scenario 23: Pinned offline denied by default
-
-Live grant cannot create retained snapshot without exact revision/retention permission.
-
-### Scenario 24: Valid pinned snapshot
-
-Exact revisions are target-encrypted, time-bound and clearly non-current.
-
-### Scenario 25: Mount-of-mount
-
-Target attempts to grant a mounted reference. Constructor/service denies it.
-
-### Scenario 26: Transitive sharing
-
-Workspace B cannot re-share A content to C; A must issue a direct grant.
-
-### Scenario 27: Graph escape
-
-Relation traversal stops at nodes outside selection and reveals no hidden content.
-
-### Scenario 28: Deterministic context use
-
-Mounted entry includes exact decisions, hash, grant/mount generation and origin.
-
-### Scenario 29: Model context without permission
-
-Read succeeds but model Context Pack inclusion is denied.
-
-### Scenario 30: Revoke during active Run
-
-Context dependency invalidates; future invocation pauses/rebuilds; historical invocation remains audited.
-
-### Scenario 31: Revoke races with read
-
-Disclosure cannot commit active epoch proof and returns no content.
-
-### Scenario 32: Source hard purge
-
-Live result disappears immediately; target caches/indexes quarantine; tombstone remains.
-
-### Scenario 33: Source cryptographic erasure
-
-No source bytes/keys are recoverable through mount; target obligations run truthfully.
-
-### Scenario 34: Downstream cleanup response lost
-
-Status remains `OutcomeUnknown`; source does not claim completed cascade.
-
-### Scenario 35: Exact import
-
-Target creates fresh encrypted representation and local Memory Candidate with complete shared provenance.
-
-### Scenario 36: Foreign confidence import
-
-Target local confidence is independently assessed and not copied automatically.
-
-### Scenario 37: Import duplicate retry
-
-Existing local Memory/source provenance is detected; no duplicate is created.
-
-### Scenario 38: Import completion ambiguous
-
-Proposal remains `OutcomeUnknown` until reconciliation.
-
-### Scenario 39: Source key material scan
-
-Target rows/logs/exports contain no source KEK, wrapped DEK, lease or backend path.
-
-### Scenario 40: Cross-workspace SQL attempt
-
-Application role cannot join target mounts to source Memory rows under supported interfaces.
-
-### Scenario 41: Run export without permission
-
-Mounted content is omitted/reference/tombstone according to export profile; no grant authority is transferred.
-
-### Scenario 42: Run export with permission
-
-Exact source/target decisions and provenance are included; importing bundle creates no mount or Memory.
-
-### Scenario 43: Restricted content expiry
-
-Expired grant denies content even if target cache exists.
-
-### Scenario 44: Secret-like content
-
-Source denies/quarantines it and target receives bounded tombstone without raw value.
-
-### Scenario 45: Multi-mount bounded load
-
-Concurrency, result and token limits hold; one slow/unavailable source cannot cause unbounded resource use.
-
-### Scenario 46: RLS target isolation
-
-One target workspace cannot see another target's mounts, acceptances or receipts.
-
-### Scenario 47: RLS source isolation
-
-One source workspace cannot manage another source's grants or collections.
-
-### Scenario 48: Unknown event/schema version
-
-Handshake/read/import blocks semantic processing and preserves safe opaque evidence only.
-
-### Scenario 49: Audit parity
-
-Source disclosure and target use receipts share correlation without storing content or raw sensitive query.
-
-### Scenario 50: Feature disabled after activation
-
-Future reads/uses stop fail-closed; history is retained and persistent representations quarantine according to policy.
+1. Default disabled: no grant/mount rows.
+2. `global` remains local.
+3. Explicit structured-only procedures read creates no local copy/index.
+4. Guessed source UUID denied without existence leak.
+5. Wildcard target rejected.
+6. Stale revision acceptance conflicts.
+7. Lost activation ack replays once.
+8. Duplicate acceptance idempotent; changed input conflicts.
+9. Source unavailable fails closed.
+10. Structured-only query privacy sends no free text.
+11. Budget exhaustion denies before content.
+12. Revision change during read returns exact snapshot/conflict.
+13. Source policy reduction immediately reduces/denies.
+14. Target policy reduction immediately denies model use.
+15. Broader target policy does not widen source grant.
+16. `NoExternalProvider` blocks remote model but may allow local display.
+17. Prompt injection remains untrusted data.
+18. Foreign conflict proposal does not supersede local Memory.
+19. Search/context creates no local Memory/index.
+20. Embedding without permission creates no job/representation.
+21. Explicit embedding uses fresh target DEK/no source key.
+22. Revoke quarantines index before cleanup.
+23. Pinned offline denied by default.
+24. Valid pinned snapshot is exact/time-bound/non-current.
+25. Mount-of-mount denied.
+26. Transitive sharing denied.
+27. Graph traversal cannot escape selection.
+28. Deterministic context records exact decisions/generations/origin.
+29. Model context without permission denied.
+30. Tool commitment still requires ordinary H2 approval.
+31. Revoke during active Run invalidates future invocation only.
+32. Revoke/read race returns no content.
+33. Source hard purge removes live result immediately.
+34. Source erasure with downstream cleanup is pending until receipts.
+35. Lost cleanup response remains `OutcomeUnknown`.
+36. Source revision change creates review work without rewriting derivative.
+37. Exact import creates fresh target-encrypted local Candidate with provenance.
+38. Foreign confidence is independently assessed.
+39. Duplicate import retry creates no duplicate.
+40. Ambiguous import remains `OutcomeUnknown`.
+41. Target/public/log scan contains no source key/path.
+42. Application role cannot raw-join target mounts to source Memory.
+43. Run export without permission omits/reference/tombstone only.
+44. Run export with permission transfers provenance, not authority.
+45. Bundle import creates no mount or Memory.
+46. Restricted content expiry denies despite cache.
+47. Secret-like content denied/quarantined without raw leak.
+48. Multi-mount load remains bounded despite slow source.
+49. Source and target RLS isolation both pass.
+50. Unknown event/schema blocks semantic handling.
+51. Source/target audit correlation stores no content/raw query.
+52. Disabling feature after activation blocks future use and quarantines persistence.
+53. Metadata-only indexing works without content read.
+54. Content-bearing indexing fails without `ReadContent`/`GenerateDerivedIndex`.
+55. Non-expiring low-risk metadata grant is allowed when policy permits.
+56. Model/export/import/run-scoped grant without expiry is rejected.
+57. Acceptance ack mismatch cannot activate mount.
+58. Imported local Memory re-share is blocked when obligations prohibit it.
+59. `SourceErasedDownstreamPending` is never displayed as completed.
+60. Existing outbox is reused; no parallel outbox/event runtime exists.
 
 ---
 
 ## Definition of Done
 
-Implementation is complete only when:
-
-1. `global` remains workspace-local;
-2. every grant binds one exact source and target;
-3. target acceptance and source activation acknowledgement are both required;
-4. grant revisions are immutable and lifecycle transitions use optimistic concurrency;
-5. no cross-workspace Memory/grant SQL foreign key exists in target persistence;
-6. no raw cross-workspace SQL/RLS bypass path exists;
-7. source reads execute under source workspace RLS;
-8. UUID/hash/reference alone never grants access;
-9. live reads create no local Memory/index by default;
-10. target indexing and offline snapshots remain disabled by default;
-11. source and target policies intersect fail-closed;
-12. source unavailable/stale/revoked/expired states disclose no content;
-13. metadata/content are revision-consistent;
-14. mounted origin/trust/provenance remain explicit;
-15. mounted content cannot supersede local memory or elevate authority;
-16. mount-of-mount and transitive sharing are rejected;
-17. model, import, derivation, index and export require separate permissions;
-18. persistent target representations use fresh target encryption material;
-19. no source key/backend material enters target/public/export contracts;
-20. revocation/purge invalidates caches, indexes, contexts and active Run dependencies;
-21. ambiguous downstream cleanup remains `OutcomeUnknown`;
-22. import uses ordinary Memory Core candidate/provenance/write-policy lifecycle;
-23. Run export/import never recreates grant/mount authority;
-24. durable event schemas/readers are registered before producers;
-25. migrations `0105`–`0109` are forward-only and uniquely owned;
-26. RLS, restart, idempotency, security, load and 50 acceptance scenarios pass;
-27. implementation begins only after explicit authorization ending the documentation-only phase.
+1. `global` remains workspace-local.
+2. Every grant binds one exact source/target.
+3. Target acceptance and source ack are both required and hash-bound.
+4. Grant revisions immutable; mutable transitions optimistic.
+5. No cross-workspace Memory/grant FK in target persistence.
+6. No raw cross-workspace SQL/RLS bypass.
+7. Source reads execute under source RLS.
+8. UUID/hash/reference alone grants nothing.
+9. Live reads create no local Memory/index by default.
+10. Indexing/offline disabled by default.
+11. Source/target policies and content modes intersect fail-closed.
+12. Source unavailable/stale/revoked/expired disclose no content.
+13. Metadata/content revision-consistent.
+14. Mounted origin/trust/provenance explicit.
+15. Mounted content cannot supersede/elevate authority.
+16. Mount-of-mount/transitive sharing rejected.
+17. Model/import/derivation/index/export are separate permissions.
+18. Persistent target representations use fresh target keys.
+19. No source key/backend material enters target/public/export.
+20. Source change/revoke/purge invalidates dependent system state.
+21. Ambiguous cleanup remains `OutcomeUnknown`.
+22. Source erasure cascade status is truthful.
+23. Import uses Memory Core lifecycle/provenance/write policy.
+24. Run export/import never recreates grant/mount authority.
+25. Event readers ship before producers.
+26. Existing outbox is reused.
+27. `0105`–`0109` are forward-only/uniquely owned.
+28. RLS/restart/idempotency/security/load and 60 scenarios pass.
+29. Implementation starts only after explicit authorization ending documentation-only phase.
 
 ---
 
 ## Documentation-Only Boundary
 
-Merging this plan authorizes only the implementation sequence and contracts. It does not authorize:
+Merging this plan authorizes only implementation sequence/contracts. It does not authorize:
 
 - creating `feat/cross-workspace-memory-sharing`;
-- changing Rust code or dependencies;
-- applying migrations `0105`–`0109`;
-- enabling deployment/workspace sharing capability;
-- creating real grants, invitations or mounts;
+- changing Rust/dependencies;
+- applying `0105`–`0109`;
+- enabling sharing capability;
+- creating real grants/invitations/mounts;
 - opening source workspace reads;
-- building target indexes or offline snapshots;
+- building indexes/offline snapshots;
 - persisting imported/derived shared content;
 - sending mounted content to models;
-- publishing admin, MCP or SDK surfaces;
-- propagating revocation/purge against real data.
+- publishing admin/MCP/SDK surfaces;
+- propagating revoke/purge against real data.
 
 A separate explicit instruction is required before implementation.
