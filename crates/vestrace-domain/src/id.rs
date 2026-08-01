@@ -69,3 +69,7 @@ domain_id!(OutboxId);
 domain_id!(EmbeddingSpaceId);
 domain_id!(RetrievalRunId);
 domain_id!(ContextPackId);
+domain_id!(AccessTokenId);
+domain_id!(PolicyId);
+domain_id!(ApprovalRecordId);
+domain_id!(AuditEventId);

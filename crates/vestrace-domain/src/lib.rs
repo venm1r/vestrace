@@ -9,6 +9,7 @@ pub mod policy;
 pub mod provenance;
 pub mod relation;
 pub mod retrieval;
+pub mod security;
 mod time;
 
 pub use error::DomainError;
