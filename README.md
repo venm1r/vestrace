@@ -43,6 +43,16 @@ To also remove the Compose-owned development database volume:
 docker compose -p vestrace-foundation down -v --remove-orphans
 ```
 
+## Documentation
+
+Comprehensive project documentation is available in the [`docs/`](docs/) directory:
+
+- **[Architecture Guide](docs/architecture.md)** — Workspace crate boundaries, clean architecture layers, and module design.
+- **[Domain Model Reference](docs/domain-model.md)** — Entities (`Memory`, `Event`, `ContextPack`), invariants, and security capabilities.
+- **[Database Schema & Migrations](docs/database-schema.md)** — Relational tables, `pgvector`/`pg_trgm` indexes, and RLS policies.
+- **[Security & RLS Architecture](docs/security-and-rls.md)** — Tenant isolation, RBAC capabilities, and sensitivity redaction.
+- **[Getting Started Guide](docs/getting-started.md)** — Local setup, CLI usage, and test commands.
+
 ## Configuration
 
 Configuration precedence is: built-in defaults, an optional non-secret TOML file selected with `--config`, `VESTRACE_` environment variables using `__` for nesting, then typed CLI overrides such as `--http-bind`. TOML accepts only non-secret settings and rejects unknown fields. The database URL is secret-bearing and must come from `VESTRACE_DATABASE__URL` or a secret-management environment, never from TOML or a CLI argument. See `.env.example` for variable names; do not commit populated `.env` files.
