@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - ADR-0004 and `2026-07-31-vestrace-h11a-ag-ui-roadmap-amendment.md` are normative.
+- `docs/superpowers/specs/2026-08-01-vestrace-v0.2-migration-ownership-amendment.md` is normative for migration numbers.
 - Complete H1–H11, H9A and the binding ADR-0002 outcome before implementation.
 - The implementation pin is exactly AG-UI revision `bb1c2afddb4880309879b9564cfb3a635a5da4eb` until an explicit upgrade passes schema diff, security review, adapter conformance and H10 regression evidence.
 - `@ag-ui/core` is exactly `0.0.57`; community Rust crates are optional conformance dependencies only.
@@ -38,7 +39,7 @@
 - Delivery is at-least-once; clients deduplicate by Vestrace event ID plus deterministic projection key.
 - Initial transport is authenticated HTTP POST returning SSE. WebSocket/binary are deferred.
 - Personal may enable loopback AG-UI for its console; Team/Embedded require explicit configuration.
-- H11 migrations `0081`–`0086` are never edited. H11A owns `0087`–`0092`, one migration per task owner.
+- H11 migrations `0081`–`0086` are never edited. State Engine extensions own `0087`–`0109`. H11A follows them and owns `0110`–`0115`, one migration per task owner.
 - Future implementation branch: `feat/harness-ag-ui-gateway`.
 
 ---
@@ -67,12 +68,12 @@ schemas/ag-ui/v1/
 fixtures/ag-ui/
 
 migrations/
-  0087_ag_ui_endpoints_run_bindings_and_intakes.sql
-  0088_ag_ui_projection_snapshots_events_and_cursors.sql
-  0089_ag_ui_interrupt_bindings_and_resume_idempotency.sql
-  0090_ag_ui_frontend_action_catalogues.sql
-  0091_ag_ui_schema_pins_conformance_and_release_evidence.sql
-  0092_ag_ui_rls_indexes_and_cross_resource_guards.sql
+  0110_ag_ui_endpoints_run_bindings_and_intakes.sql
+  0111_ag_ui_projection_snapshots_events_and_cursors.sql
+  0112_ag_ui_interrupt_bindings_and_resume_idempotency.sql
+  0113_ag_ui_frontend_action_catalogues.sql
+  0114_ag_ui_schema_pins_conformance_and_release_evidence.sql
+  0115_ag_ui_rls_indexes_and_cross_resource_guards.sql
 
 tests/
   ag_ui_pin_boundary.rs ag_ui_input_contract.rs ag_ui_binding_idempotency.rs
@@ -456,7 +457,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 4: Persist endpoints, bindings and intake
 
-**Files:** migration `0087`, repositories and tests.
+**Files:** migration `0110`, repositories and tests.
 
 - [ ] Create endpoint identities/revisions, external-key bindings, intake records, message/context hashes, part references and H6/H7/H1 links.
 - [ ] Persist keyed hashes only; never raw request or clear external keys.
@@ -480,7 +481,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 6: Persist deterministic projections and cursors
 
-**Files:** migration `0088`, projection repository and tests.
+**Files:** migration `0111`, projection repository and tests.
 
 - [ ] Create state snapshots, projected events, H7 links, projection keys, cursor checkpoints and stream observations.
 - [ ] Enforce `(binding, public_event, projection_key)` uniqueness.
@@ -518,7 +519,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 9: Persist interrupts and idempotent resume
 
-**Files:** migration `0089`, resume service/repository and approval tests.
+**Files:** migration `0112`, resume service/repository and approval tests.
 
 - [ ] Create interrupt bindings, external interrupt hashes, schema/challenge links, consumed response links and resume idempotency rows.
 - [ ] Validate participant, request, schema, status and expiry before H7 response.
@@ -543,7 +544,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 11: Persist governed frontend actions
 
-**Files:** migration `0090`, action service/repository/schema/tests.
+**Files:** migration `0113`, action service/repository/schema/tests.
 
 - [ ] Create immutable action definitions/catalogues and endpoint bindings; migration seeds no active authority.
 - [ ] Import exact definitions through application commands.
@@ -585,7 +586,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 14: Bind schemas, pin and release evidence
 
-**Files:** migration `0091`, H11 schema/profile/release integration and scripts.
+**Files:** migration `0114`, H11 schema/profile/release integration and scripts.
 
 - [ ] Create immutable protocol pins, schema bindings, conformance reports and release evidence.
 - [ ] Add AG-UI schemas to the H11 public schema bundle.
@@ -598,7 +599,7 @@ pub struct AgUiReleaseEvidence {
 
 ### Task 15: Add RLS and final restart-safe acceptance
 
-**Files:** migration `0092`, final tests/scripts/docs and future CI job definition.
+**Files:** migration `0115`, final tests/scripts/docs and future CI job definition.
 
 - [ ] Force RLS on all H11A tables; add indexes and append-only/immutability guards.
 - [ ] Prove external hashes cannot resolve across workspace/principal/endpoint.
@@ -650,12 +651,12 @@ npm --prefix apps/console test
 ## Migration ownership
 
 ```text
-0087 Task 4   Endpoints, scoped external-key bindings and durable intake
-0088 Task 6   Projection snapshots, projected events and durable cursors
-0089 Task 9   Interrupt bindings and resume idempotency
-0090 Task 11  Frontend-action definitions, catalogues and endpoint bindings
-0091 Task 14  Protocol pins, schema bindings, conformance and release evidence
-0092 Task 15  RLS, indexes, append-only and cross-resource guards
+0110 Task 4   Endpoints, scoped external-key bindings and durable intake
+0111 Task 6   Projection snapshots, projected events and durable cursors
+0112 Task 9   Interrupt bindings and resume idempotency
+0113 Task 11  Frontend-action definitions, catalogues and endpoint bindings
+0114 Task 14  Protocol pins, schema bindings, conformance and release evidence
+0115 Task 15  RLS, indexes, append-only and cross-resource guards
 ```
 
 Each migration has exactly one owner and is never edited by a later task.
@@ -716,4 +717,4 @@ H11A does not replace H7/H11, persist AG-UI objects as domain state, accept clie
 
 ## Documentation-only boundary
 
-Creating this plan does not authorize implementation. Do not create `feat/harness-ag-ui-gateway`, add AG-UI packages, create migrations `0087`–`0092`, expose `/v1/ag-ui`, generate schemas, modify the console, enable the product surface, update release assets/CI or execute H11A tests during the documentation-only phase.
+Creating this plan does not authorize implementation. Do not create `feat/harness-ag-ui-gateway`, add AG-UI packages, create migrations `0110`–`0115`, expose `/v1/ag-ui`, generate schemas, modify the console, enable the product surface, update release assets/CI or execute H11A tests during the documentation-only phase.
