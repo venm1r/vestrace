@@ -25,19 +25,19 @@ impl RelationRepository for PgRelationRepository {
             vestrace_domain::RelationType::RelatesTo => "relates_to",
         };
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO knowledge_relations (id, workspace_id, source_memory_id, target_memory_id, relation_type, confidence, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
-            relation.id.as_uuid(),
-            relation.workspace_id.as_uuid(),
-            relation.source_memory_id.as_uuid(),
-            relation.target_memory_id.as_uuid(),
-            type_str,
-            relation.confidence.value(),
-            relation.created_at.as_datetime()
         )
+        .bind(relation.id.as_uuid())
+        .bind(relation.workspace_id.as_uuid())
+        .bind(relation.source_memory_id.as_uuid())
+        .bind(relation.target_memory_id.as_uuid())
+        .bind(type_str)
+        .bind(relation.confidence.value())
+        .bind(relation.created_at.as_datetime())
         .execute(&self.pool)
         .await
         .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;

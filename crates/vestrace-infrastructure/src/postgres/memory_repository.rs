@@ -37,7 +37,7 @@ impl MemoryRepository for PgMemoryRepository {
             vestrace_domain::MemoryKind::Summary => "summary",
         };
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO memories (id, workspace_id, kind, status, active_revision_id, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -46,14 +46,14 @@ impl MemoryRepository for PgMemoryRepository {
                 active_revision_id = EXCLUDED.active_revision_id,
                 updated_at = EXCLUDED.updated_at
             "#,
-            memory.id.as_uuid(),
-            memory.workspace_id.as_uuid(),
-            kind_str,
-            status_str,
-            memory.active_revision_id.map(|r| r.as_uuid()),
-            memory.created_at.as_datetime(),
-            memory.updated_at.as_datetime()
         )
+        .bind(memory.id.as_uuid())
+        .bind(memory.workspace_id.as_uuid())
+        .bind(kind_str)
+        .bind(status_str)
+        .bind(memory.active_revision_id.map(|r| r.as_uuid()))
+        .bind(memory.created_at.as_datetime())
+        .bind(memory.updated_at.as_datetime())
         .execute(&self.pool)
         .await
         .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
@@ -62,21 +62,21 @@ impl MemoryRepository for PgMemoryRepository {
     }
 
     async fn save_revision(&mut self, revision: &MemoryRevision) -> Result<(), ApplicationError> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO memory_revisions (id, memory_id, workspace_id, revision_number, content, structured, confidence, importance, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
-            revision.id.as_uuid(),
-            revision.memory_id.as_uuid(),
-            revision.workspace_id.as_uuid(),
-            revision.revision_number as i32,
-            revision.content,
-            revision.structured.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()),
-            revision.confidence.value(),
-            revision.importance.value(),
-            revision.created_at.as_datetime()
         )
+        .bind(revision.id.as_uuid())
+        .bind(revision.memory_id.as_uuid())
+        .bind(revision.workspace_id.as_uuid())
+        .bind(revision.revision_number as i32)
+        .bind(&revision.content)
+        .bind(revision.structured.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()))
+        .bind(revision.confidence.value())
+        .bind(revision.importance.value())
+        .bind(revision.created_at.as_datetime())
         .execute(&self.pool)
         .await
         .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;

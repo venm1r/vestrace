@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
-use crate::providers::ports::{
+use vestrace_application::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse,
     ProviderError, TextGenerationProvider,
 };

@@ -16,20 +16,20 @@ impl PgEventRepository {
 #[async_trait]
 impl EventRepository for PgEventRepository {
     async fn save(&mut self, event: &Event) -> Result<(), ApplicationError> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO events (id, workspace_id, session_id, event_type, actor, subject, payload, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            event.id.as_uuid(),
-            event.workspace_id.as_uuid(),
-            event.session_id.map(|s| s.as_uuid()),
-            event.event_type,
-            serde_json::to_value(&event.actor).unwrap_or_default(),
-            event.subject.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()),
-            event.payload,
-            event.created_at.as_datetime()
         )
+        .bind(event.id.as_uuid())
+        .bind(event.workspace_id.as_uuid())
+        .bind(event.session_id.map(|s| s.as_uuid()))
+        .bind(&event.event_type)
+        .bind(serde_json::to_value(&event.actor).unwrap_or_default())
+        .bind(event.subject.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()))
+        .bind(&event.payload)
+        .bind(event.created_at.as_datetime())
         .execute(&self.pool)
         .await
         .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;

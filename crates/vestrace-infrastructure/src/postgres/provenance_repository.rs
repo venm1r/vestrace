@@ -22,19 +22,19 @@ impl ProvenanceRepository for PgProvenanceRepository {
             vestrace_domain::EvidenceRole::ContradictingEvidence => "contradicting_evidence",
         };
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO memory_sources (id, memory_id, workspace_id, event_id, role, derivation_id, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
-            source.id.as_uuid(),
-            source.memory_id.as_uuid(),
-            source.workspace_id.as_uuid(),
-            source.event_id.as_uuid(),
-            role_str,
-            source.derivation_id.map(|d| d.as_uuid()),
-            source.created_at.as_datetime()
         )
+        .bind(source.id.as_uuid())
+        .bind(source.memory_id.as_uuid())
+        .bind(source.workspace_id.as_uuid())
+        .bind(source.event_id.as_uuid())
+        .bind(role_str)
+        .bind(source.derivation_id.map(|d| d.as_uuid()))
+        .bind(source.created_at.as_datetime())
         .execute(&self.pool)
         .await
         .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
