@@ -3,11 +3,14 @@
 mod context;
 mod error;
 mod health;
+pub mod memory;
+pub mod outbox;
 mod ports;
 
 pub use context::RequestContext;
 pub use error::ApplicationError;
 pub use health::HealthRepository;
+pub use outbox::OutboxMessage;
 pub use ports::{TransactionManager, UnitOfWork};
 
 #[cfg(test)]
