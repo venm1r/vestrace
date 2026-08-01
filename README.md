@@ -20,7 +20,7 @@ VESTRACE_HTTP_PORT=18080 docker compose -p vestrace-foundation up --build -d
 ./scripts/foundation-smoke.sh http://127.0.0.1:18080
 ```
 
-At startup the server waits for PostgreSQL, applies the embedded forward-only migrations, and only then begins serving. `/health/live` reports process liveness. `/health/ready` also checks database access and exact migration compatibility. The smoke script retries for a bounded startup window and requires HTTP 200 with the exact safe JSON body from both endpoints.
+Compose waits for PostgreSQL to report healthy before it starts the server container. Once started, the server connects to PostgreSQL, applies the embedded forward-only migrations, and only then begins serving. `/health/live` reports process liveness. `/health/ready` also checks database access and exact migration compatibility. The smoke script retries for a bounded startup window and requires HTTP 200 with the exact safe JSON body from both endpoints.
 
 Stop the services while keeping database data:
 

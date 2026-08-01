@@ -4,17 +4,16 @@ set -euo pipefail
 base_url="${1:-http://127.0.0.1:8080}"
 attempts=10
 umask 077
-body_file="${TMPDIR:-/tmp}/vestrace-foundation-smoke.$$.body"
-expected_file="${TMPDIR:-/tmp}/vestrace-foundation-smoke.$$.expected"
-: >"$body_file"
+temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/vestrace-foundation-smoke.XXXXXXXXXX")"
+trap 'rm -rf -- "$temp_dir"' EXIT
+body_file="$temp_dir/body"
+expected_file="$temp_dir/expected"
 printf '%s' '{"status":"ok"}' >"$expected_file"
-trap 'rm -f "$body_file" "$expected_file"' EXIT
 
 check_endpoint() {
   local endpoint="$1"
   local attempt
   local status
-  local body
 
   for ((attempt = 1; attempt <= attempts; attempt += 1)); do
     status="$(
@@ -26,8 +25,6 @@ check_endpoint() {
         --write-out '%{http_code}' \
         "${base_url}${endpoint}" || true
     )"
-    body="$(<"$body_file")"
-
     if [[ "$status" == "200" ]] && cmp --silent "$body_file" "$expected_file"; then
       return 0
     fi
@@ -37,8 +34,8 @@ check_endpoint() {
     fi
   done
 
-  printf 'health check failed for %s (HTTP %s, body %q)\n' \
-    "$endpoint" "${status:-unavailable}" "$body" >&2
+  printf 'health check failed for %s (HTTP %s; expected HTTP 200 with exact safe JSON body)\n' \
+    "$endpoint" "${status:-unavailable}" >&2
   return 1
 }
 
