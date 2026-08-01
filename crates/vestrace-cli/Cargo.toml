@@ -8,3 +8,8 @@ rust-version.workspace = true
 [[bin]]
 name = "vestrace"
 path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+vestrace-infrastructure = { path = "../vestrace-infrastructure" }

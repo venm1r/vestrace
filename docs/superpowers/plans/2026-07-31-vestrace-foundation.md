@@ -416,7 +416,8 @@ git commit -m "feat(application): define request context and ports"
 - Test: `crates/vestrace-cli/tests/cli.rs`
 
 **Interfaces:**
-- Produces `AppConfig::load()` with precedence CLI > environment > file > safe defaults.
+- Produces `AppConfig::load()` and `AppConfig::load_from_with_overrides(...)` with precedence typed non-secret CLI overrides > environment > file > safe defaults.
+- Produces `ConfigOverrides { http_bind: Option<SocketAddr> }`; database URL and future secret fields are intentionally absent from CLI overrides and remain secret-typed environment/secret-source values.
 - Produces subcommands `server`, `worker`, `mcp`, `migrate`, `doctor`, and `rebuild`.
 
 - [ ] **Step 1: Write a failing config precedence test**
@@ -456,11 +457,17 @@ pub struct DatabaseConfig {
 
 Implement redacted `Debug`; never print the database URL value.
 
+Add a failing test proving an explicit `ConfigOverrides::http_bind` wins over `VESTRACE_HTTP__BIND`, while the existing test proves environment wins over file. `AppConfig::load()` and `load_from(...)` delegate to the same loader with empty CLI overrides.
+
 - [ ] **Step 3: Implement CLI parsing**
 
 ```rust
 #[derive(clap::Parser)]
 struct Cli {
+    #[arg(long, global = true)]
+    config: Option<std::path::PathBuf>,
+    #[arg(long, global = true)]
+    http_bind: Option<std::net::SocketAddr>,
     #[command(subcommand)]
     command: Command,
 }
@@ -477,6 +484,7 @@ enum Command {
 ```
 
 Every command returns `anyhow::Result<()>`; unimplemented runtime behavior returns a clear command-specific error only after successful parsing.
+The CLI maps `--http-bind` into `ConfigOverrides`. It has no `--database-url` flag and never accepts a secret value through process arguments.
 
 - [ ] **Step 4: Verify and commit**
 
