@@ -28,7 +28,7 @@
 ## Global constraints
 
 - Webhook capability is disabled by default at deployment and workspace scope.
-- An endpoint definition or route handle does not activate an endpoint.
+- An endpoint definition, endpoint revision or route handle does not activate an endpoint.
 - H1 remains the sole owner of `AgentRun`, `RunStep`, `RunEvent`, Run version and checkpoint state.
 - An inbound webhook never invokes an H1 mutation directly.
 - An inbound request may create only a durable receipt and, after successful verification, a bounded `WebhookSourceFact` owned by H7.
@@ -36,14 +36,16 @@
 - A source fact remains external/untrusted data even when its transport signature is valid.
 - Fields such as `approved=true`, `run_status=completed` or `role=admin` never create approvals, completion, roles or capabilities.
 - H7 trigger autonomy ceilings and H2 policy determine every optional consequence.
-- Outbound delivery begins only from an already-committed source event and a durable subscription revision.
+- Outbound delivery begins only from an already-committed H7 source/public event and an active immutable subscription revision.
 - Webhook delivery success/failure never rewrites the source event or owning aggregate.
 - Existing H7 public-event stream remains authoritative; webhooks are at-least-once notification adapters.
 - A model, package, extension or incoming payload cannot choose an arbitrary destination URL, secret reference, event kind, template program or retry policy.
 - Endpoint revisions, subscription revisions, filters, templates, auth profiles and network policies are immutable.
+- Endpoint and subscription lifecycle identities are mutable aggregates with optimistic concurrency.
 - Mutable lifecycle changes use expected revision in commands; expected revisions are not persisted as aggregate fields.
 - Endpoint handles, endpoint IDs, event IDs, hashes, URLs, signature key IDs and delivery receipts are references, not capabilities.
 - Inbound route handles have high entropy, contain no workspace identifier and never replace authentication/signature verification.
+- Route-handle bytes are returned only at creation/rotation time; persistence stores only a keyed hash and bounded fingerprint.
 - Unknown and revoked handles return indistinguishable bounded responses.
 - Raw Authorization headers, cookies, proxy credentials, private keys, MAC secrets and bearer tokens never enter domain/application DTOs, PostgreSQL webhook payloads, logs or telemetry.
 - Whole request/response header sets are never persisted.
@@ -66,8 +68,8 @@
 - Delivery is at-least-once. Receivers are expected to deduplicate by immutable delivery ID.
 - A timeout or connection loss after request bytes may have reached the receiver produces `OutcomeUnknown`.
 - `OutcomeUnknown` is never blindly retried unless exact receiver idempotency or reconciliation support is configured and current policy permits it.
-- Current endpoint lifecycle, H2 policy, destination classification and H8 availability are rechecked before each external attempt.
-- Disabling or revoking an endpoint prevents new attempts. Existing successful evidence is retained according to policy.
+- Current endpoint lifecycle, active revision, subscription lifecycle, H2 policy, destination classification and H8 availability are rechecked before each external attempt.
+- Disabling or revoking an endpoint/subscription prevents new attempts. Existing successful evidence is retained according to policy.
 - H10 audit/metrics are content-free and bounded-cardinality.
 - No second event store, trigger scheduler, policy engine, secret store or delivery authority is introduced.
 - H11 migration `0083_webhook_subscriptions_deliveries_and_attempts.sql` is a baseline and is never edited.
@@ -105,7 +107,7 @@ Implementation rules:
 - reuse existing IDs when their semantics match;
 - extend baseline subscription/delivery rows through migrations `0096`–`0099`;
 - do not create `WebhookSubscriptionV2` or a parallel delivery table merely to avoid a forward migration;
-- introduce new IDs only for endpoint identity/revision, inbound receipt/source fact, payload revision, reconciliation and network-resolution evidence;
+- introduce new IDs only for endpoint identity/revision, route handles, immutable subscription/filter/template revisions, inbound receipt/source fact, reconciliation and network-resolution evidence;
 - adapt H11 routes/SDKs to the richer application contracts without leaving the baseline worker active in parallel;
 - exactly one composition root registers webhook workers;
 - exactly one durable worker lease namespace owns outbound attempts;
@@ -126,6 +128,7 @@ crates/vestrace-domain/src/
     mod.rs
     capability.rs
     endpoint.rs
+    route_handle.rs
     revision.rs
     authentication.rs
     network.rs
@@ -144,6 +147,7 @@ crates/vestrace-application/src/
     ports.rs
     commands.rs
     endpoint_service.rs
+    route_handle_service.rs
     inbound_service.rs
     inbound_verifier.rs
     source_fact_service.rs
@@ -159,9 +163,11 @@ crates/vestrace-application/src/
 
 crates/vestrace-application/tests/
   webhook_endpoint_lifecycle.rs
+  webhook_route_handle.rs
   inbound_webhook_verification.rs
   inbound_webhook_dedup.rs
   inbound_webhook_h7_integration.rs
+  outbound_webhook_subscription.rs
   outbound_webhook_projection.rs
   outbound_webhook_payload.rs
   outbound_webhook_retry.rs
@@ -203,6 +209,7 @@ crates/vestrace-infrastructure/src/postgres/
   webhook/
     mod.rs
     endpoint_repository.rs
+    route_handle_repository.rs
     revision_repository.rs
     inbound_repository.rs
     source_fact_repository.rs
@@ -251,10 +258,12 @@ migrations/
 tests/
   webhook_endpoint_persistence.rs
   webhook_endpoint_revision_immutability.rs
+  webhook_route_handle_security.rs
   inbound_webhook_atomicity.rs
   inbound_webhook_replay.rs
   inbound_webhook_quarantine.rs
   inbound_webhook_restart.rs
+  outbound_webhook_subscription_lifecycle.rs
   outbound_webhook_intent_dedup.rs
   outbound_webhook_payload_immutability.rs
   outbound_webhook_signature.rs
@@ -286,9 +295,15 @@ Reuse existing H11 identifiers where present and add:
 ```text
 WebhookEndpointId
 WebhookEndpointRevisionId
+WebhookRouteHandleId
 InboundWebhookReceiptId
 WebhookSourceFactId
-WebhookPayloadRevisionId
+WebhookSubscriptionRevisionId
+WebhookEventFilterRevisionId
+WebhookPayloadTemplateRevisionId
+WebhookPayloadSchemaRevisionId
+WebhookProviderProfileRevisionId
+WebhookReconciliationProfileId
 WebhookReconciliationId
 WebhookNetworkResolutionSnapshotId
 WebhookWorkerLeaseId
@@ -364,7 +379,7 @@ Rules:
 - active revision must belong to the endpoint and match direction;
 - endpoint identity contains no secret or destination authority.
 
-### Lifecycle commands
+### Endpoint lifecycle commands
 
 ```rust
 pub struct ActivateWebhookEndpoint {
@@ -386,6 +401,31 @@ pub struct ChangeWebhookEndpointState {
 
 Expected revisions belong to commands and are not persisted as historical expectations.
 
+### Route handle binding
+
+```rust
+pub struct WebhookRouteHandleBinding {
+    pub id: WebhookRouteHandleId,
+    pub workspace_id: WorkspaceId,
+    pub endpoint_revision_id: WebhookEndpointRevisionId,
+    pub handle_hash: [u8; 32],
+    pub handle_fingerprint: [u8; 8],
+    pub valid_from: Timestamp,
+    pub valid_until: Option<Timestamp>,
+    pub revoked_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+}
+```
+
+Rules:
+
+- handle bytes use at least 256 bits of CSPRNG entropy;
+- raw handle is returned once and never persisted;
+- hash uses a deployment-bound keyed domain separator;
+- binding belongs only to an inbound endpoint revision;
+- rotation creates a new binding and revokes the previous binding according to explicit overlap policy;
+- handle lookup returns no workspace-specific error detail.
+
 ### Endpoint revision
 
 ```rust
@@ -396,6 +436,7 @@ pub struct WebhookEndpointRevision {
     pub revision: u32,
     pub direction: WebhookDirection,
     pub protocol_version: WebhookProtocolVersion,
+    pub route_handle_id: Option<WebhookRouteHandleId>,
     pub authentication: WebhookAuthenticationProfile,
     pub signing: Option<WebhookSigningProfile>,
     pub network_policy: WebhookNetworkPolicy,
@@ -415,10 +456,8 @@ Revision invariants:
 
 - revision is positive and contiguous per endpoint;
 - direction agrees with endpoint identity;
-- inbound revisions have replay policy and no retry policy;
-- outbound revisions have retry policy and no inbound replay policy;
-- exact normalized destination is present only for outbound revisions;
-- inbound route handle hash is present only for inbound revisions;
+- inbound revisions require `route_handle_id`, replay policy and no retry policy;
+- outbound revisions require an exact normalized destination in network policy, retry policy and no route handle/replay policy;
 - secret bindings are exact H8 references, never raw secrets;
 - canonical hash covers all semantic configuration;
 - revision is immutable.
@@ -448,9 +487,7 @@ pub enum WebhookAuthenticationProfile {
 }
 ```
 
-Initial production support must include HMAC-SHA-256 and Ed25519. mTLS and provider-specific profiles use the same registry/conformance contracts and remain disabled until their adapters pass dedicated acceptance tests.
-
-No profile permits unsigned fallback.
+Initial production support must include HMAC-SHA-256 and Ed25519. mTLS and provider-specific profiles use the same registry/conformance contracts and remain disabled until their adapters pass dedicated acceptance tests. No profile permits unsigned fallback.
 
 ### Network policy
 
@@ -594,9 +631,45 @@ Source fact invariants:
 - dedup key is deterministic for exact endpoint revision and external identity/body policy;
 - one accepted dedup key maps to one source fact.
 
-### Outbound subscription
+### Subscription lifecycle identity
 
-Reuse H11 `WebhookSubscriptionId` and define an immutable revision:
+Reuse H11 `WebhookSubscriptionId`:
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq,
+         serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookSubscriptionState {
+    Draft,
+    Disabled,
+    Active,
+    Suspended,
+    Revoked,
+}
+
+pub struct WebhookSubscription {
+    pub id: WebhookSubscriptionId,
+    pub workspace_id: WorkspaceId,
+    pub state: WebhookSubscriptionState,
+    pub active_revision_id: Option<WebhookSubscriptionRevisionId>,
+    pub state_revision: u64,
+    pub created_by: PrincipalId,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct ActivateWebhookSubscription {
+    pub subscription_id: WebhookSubscriptionId,
+    pub revision_id: WebhookSubscriptionRevisionId,
+    pub expected_state_revision: u64,
+    pub idempotency_key: String,
+    pub requested_by: PrincipalId,
+}
+```
+
+Subscription lifecycle does not live inside immutable revisions.
+
+### Subscription revision
 
 ```rust
 pub struct WebhookSubscriptionRevision {
@@ -608,7 +681,6 @@ pub struct WebhookSubscriptionRevision {
     pub source_event_filter_revision_id: WebhookEventFilterRevisionId,
     pub payload_template_revision_id: WebhookPayloadTemplateRevisionId,
     pub classification_policy_revision_id: PolicyRevisionId,
-    pub state: WebhookSubscriptionState,
     pub canonical_hash: [u8; 32],
     pub created_by: PrincipalId,
     pub policy_decision_id: PolicyDecisionId,
@@ -871,23 +943,23 @@ request accepted by bounded route
 
 ### Atomicity
 
-The accepted transaction writes:
+For large payloads, H6 quarantine finalizes first and returns an exact revision reference. The accepted PostgreSQL transaction then writes:
 
 ```text
 InboundWebhookReceipt
 WebhookSourceFact
 dedup binding
-optional H6 Artifact reference
-content-free H10 audit intent
+H6 Artifact reference
+content-free H10 audit intent/outbox
 ```
+
+If the database transaction fails after H6 staging/finalization, orphan cleanup follows the H6 ingestion/retention contract and never converts the bytes into an accepted source fact.
 
 H7 trigger evaluation is post-commit and idempotent by source fact ID.
 
 A crash after commit but before evaluation is recovered by a durable source-fact evaluation cursor. A crash before commit leaves no accepted source fact.
 
 ### Deduplication
-
-Dedup rules:
 
 - exact duplicate external event ID/nonce and body hash returns `AcceptedDuplicate` and original receipt/source-fact references;
 - same ID/nonce with different body hash returns a replay/conflict rejection and security audit fact;
@@ -912,13 +984,14 @@ Normative order:
 ```text
 committed H7 public/source event
 → subscription projector reads durable cursor
+→ active subscription/revision check
 → exact filter evaluation
 → unique delivery intent creation
 → bounded payload rendering
 → classification and H2 export/delivery authorization
 → immutable H6 payload Artifact
 → Pending delivery
-→ current endpoint/policy/H8 checks
+→ current endpoint/subscription/policy/H8 checks
 → fresh DNS resolution and SSRF validation
 → attempt row + lease
 → H8 signing
@@ -928,8 +1001,6 @@ committed H7 public/source event
 ```
 
 ### Source projector
-
-The projector is restart-safe and does not require a cross-Horizon transaction.
 
 - H7 cursor is persisted after delivery intents are committed;
 - unique `(subscription_revision_id, source_event_ref)` prevents duplicates on cursor replay;
@@ -954,10 +1025,9 @@ Reference initial outbound signature contract:
 
 ```text
 signature_input = timestamp + "." + delivery_id + "." + exact_body_bytes
-signature_header = v1=<lowercase signature encoding defined by profile>
 ```
 
-Each wire profile defines exact header names, timestamp format and algorithm.
+Each wire profile defines exact header names, signature encoding and algorithm.
 
 - delivery ID and exact body remain stable;
 - timestamp/signature are attempt-scoped;
@@ -971,7 +1041,7 @@ Initial classification:
 
 ```text
 2xx                         -> Succeeded
-408, 425, 429, selected 5xx -> FailedRetryable when body outcome is known not accepted or receiver idempotency is configured
+408, 425, 429, selected 5xx -> FailedRetryable only when retry safety is known
 other bounded 4xx           -> FailedPermanent
 connect failure before send -> FailedRetryable
 TLS/SSRF/policy failure      -> FailedPermanent or suspended endpoint
@@ -1013,9 +1083,8 @@ pub struct WebhookRetryPolicy {
 Rules:
 
 - all fields are bounded by deployment policy;
-- jitter uses deterministic seeded scheduling for tests but secure operational randomness or approved scheduler semantics in production;
 - maximum attempts include the first attempt;
-- retry policy cannot override endpoint revocation, H2 denial or H8 unavailability policy;
+- retry policy cannot override endpoint/subscription revocation, H2 denial or H8 unavailability policy;
 - retry does not rerender payload;
 - retry does not create a new delivery ID;
 - dead-letter transition is terminal until an explicit new authorized redelivery command creates a new logical delivery linked to the old one.
@@ -1043,7 +1112,7 @@ Constraints:
 - revision uniqueness `(endpoint_id, revision)`;
 - canonical hash uniqueness per exact revision;
 - one active revision per endpoint lifecycle identity;
-- route handle stored only as keyed hash;
+- raw route handle never stored;
 - immutable revision and history rows;
 - no secret bytes or destination credentials;
 - optimistic concurrency on endpoint state;
@@ -1077,6 +1146,7 @@ Forward-extend H11 baseline tables and create:
 
 ```text
 webhook_subscription_revisions
+webhook_subscription_state_history
 webhook_event_filter_revisions
 webhook_payload_template_revisions
 webhook_delivery_payload_bindings
@@ -1084,12 +1154,13 @@ webhook_reconciliations
 webhook_dead_letters
 ```
 
-Extend baseline delivery/attempt rows with exact revision, payload, network, outcome and state-revision fields.
+Extend baseline subscription/delivery/attempt rows with exact revision, active revision, payload, outcome and state-revision fields.
 
 Constraints:
 
+- mutable subscription identity separated from immutable revision;
 - unique logical intent `(subscription_revision_id, source_event_authority, source_event_id)`;
-- immutable filter/template revisions;
+- immutable filter/template/subscription revisions;
 - exact H6 payload revision/hash binding;
 - attempts append-only and sequential;
 - reconciliation append-only;
@@ -1114,12 +1185,12 @@ Add:
 - due-delivery partial indexes;
 - source-fact evaluation indexes;
 - dedup expiry indexes;
-- endpoint lifecycle indexes;
+- endpoint/subscription lifecycle indexes;
 - lease fencing tokens;
 - retention/purge indexes;
 - constraints preventing cross-workspace endpoint/subscription/delivery bindings.
 
-Worker leases and heartbeats are operational state and do not increment endpoint or delivery logical revisions unless a lifecycle transition occurs.
+Worker leases and heartbeats are operational state and do not increment endpoint, subscription or delivery logical revisions unless a lifecycle transition occurs.
 
 ---
 
@@ -1132,10 +1203,12 @@ webhook.endpoint_revision_created
 webhook.endpoint_activated
 webhook.endpoint_suspended
 webhook.endpoint_revoked
+webhook.route_handle_rotated
 webhook.inbound_rejected_authentication
 webhook.inbound_replay_conflict
 webhook.inbound_source_fact_recorded
 webhook.subscription_revision_created
+webhook.subscription_activated
 webhook.delivery_intent_created
 webhook.delivery_attempted
 webhook.delivery_outcome_unknown
@@ -1143,7 +1216,7 @@ webhook.delivery_reconciled
 webhook.delivery_dead_lettered
 ```
 
-Audit fields may include IDs, revisions, hashes, disposition, policy decision references and bounded reason codes. They exclude raw payloads, signatures, URLs with credentials, secret references that reveal backend details and receiver response bodies.
+Audit fields may include IDs, revisions, hashes, disposition, policy decision references and bounded reason codes. They exclude raw payloads, signatures, URLs with credentials, secret backend details and receiver response bodies.
 
 Bounded metrics:
 
@@ -1173,9 +1246,13 @@ POST   /v1/workspaces/{workspace}/webhook-endpoints/{id}:activate
 POST   /v1/workspaces/{workspace}/webhook-endpoints/{id}:disable
 POST   /v1/workspaces/{workspace}/webhook-endpoints/{id}:suspend
 POST   /v1/workspaces/{workspace}/webhook-endpoints/{id}:revoke
+POST   /v1/workspaces/{workspace}/webhook-endpoints/{id}:rotate-handle
 GET    /v1/workspaces/{workspace}/webhook-endpoints/{id}
 POST   /v1/workspaces/{workspace}/webhook-subscriptions
 POST   /v1/workspaces/{workspace}/webhook-subscriptions/{id}/revisions
+POST   /v1/workspaces/{workspace}/webhook-subscriptions/{id}:activate
+POST   /v1/workspaces/{workspace}/webhook-subscriptions/{id}:disable
+POST   /v1/workspaces/{workspace}/webhook-subscriptions/{id}:revoke
 GET    /v1/workspaces/{workspace}/webhook-deliveries/{id}
 POST   /v1/workspaces/{workspace}/webhook-deliveries/{id}:reconcile
 POST   /v1/workspaces/{workspace}/webhook-deliveries/{id}:redeliver
@@ -1252,57 +1329,42 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 
 ## Implementation tasks
 
-### Task 1: Freeze baseline compatibility and boundary tests
-
-**Files:**
-
-- Modify: H11 webhook domain/application files and baseline tests only as enumerated in the locked structure.
-- Create: `scripts/verify-webhook-boundary.sh`
-- Test: `crates/vestrace-application/tests/webhook_endpoint_lifecycle.rs`
+### Task 1: Freeze H11 baseline compatibility and boundary tests
 
 - [ ] Write failing compile/boundary tests proving one webhook composition root, reuse of H11 IDs and absence of direct H1 mutation ports.
 - [ ] Add forbidden-import checks for SQLx/Axum/H8 adapter types in domain/application contracts.
 - [ ] Add migration-ownership assertions that `0083` is unchanged and `0096`–`0099` are uniquely reserved.
-- [ ] Run the focused boundary tests and confirm failure before implementation.
 - [ ] Add minimal module/type scaffolding until tests compile and pass.
-- [ ] Commit the task independently.
+- [ ] Commit independently.
 
-### Task 2: Implement endpoint identity, immutable revisions and capability posture
+### Task 2: Implement endpoint identity, route handles, immutable revisions and capability posture
 
-**Files:** domain endpoint/revision/capability modules, endpoint service, tests.
-
-- [ ] Write failing constructor tests for disabled defaults, immutable direction, revision hashes and invalid auth/network combinations.
-- [ ] Write failing service tests for expected revision, idempotent activation and terminal revocation.
-- [ ] Implement domain constructors and state transitions without persistence.
+- [ ] Write failing constructor tests for disabled defaults, immutable direction, route-handle one-time exposure, revision hashes and invalid auth/network combinations.
+- [ ] Write failing service tests for expected revision, idempotent activation, handle rotation and terminal revocation.
+- [ ] Implement domain constructors/state transitions without persistence.
 - [ ] Implement H2 authorization requests and content-free audit intents.
-- [ ] Verify no endpoint activation occurs from definition creation alone.
+- [ ] Verify definition/revision/handle creation cannot activate an endpoint.
 - [ ] Commit.
 
-### Task 3: Add endpoint persistence migrations
+### Task 3: Add endpoint persistence migration
 
-**Files:** migration `0096`, endpoint/revision repositories, persistence tests.
-
-- [ ] Write failing PostgreSQL tests for revision immutability, route-handle hashing, disabled defaults, workspace ownership and optimistic concurrency.
+- [ ] Write failing PostgreSQL tests for revision immutability, keyed route-handle hashing, disabled defaults, workspace ownership and optimistic concurrency.
 - [ ] Add migration `0096` without editing `0083`.
 - [ ] Implement repositories using scoped transactions and forced RLS.
-- [ ] Test migration forward application from the exact H11 migration head.
+- [ ] Test migration forward application from exact H11 migration head.
 - [ ] Test restart and idempotent command recovery.
 - [ ] Commit.
 
 ### Task 4: Implement bounded inbound runtime verification
 
-**Files:** webhook runtime raw request/header/body/signature/replay/json modules.
-
 - [ ] Write failing unit/property tests for wire/decoded limits, JSON depth, compression ratio, header allowlist and canonicalization profiles.
 - [ ] Add HMAC/Ed25519 fixture conformance tests including algorithm downgrade and malformed signatures.
 - [ ] Add trusted-proxy tests proving spoofed forwarding headers are ignored.
-- [ ] Implement streaming gates and verification in the normative order.
+- [ ] Implement streaming gates and verification in normative order.
 - [ ] Verify invalid authentication never reaches schema/trigger evaluation.
 - [ ] Commit.
 
 ### Task 5: Persist inbound receipts/source facts and integrate H7
-
-**Files:** migration `0097`, inbound/source repositories/services, H7 adapter, tests.
 
 - [ ] Write failing atomicity tests for accepted receipt + source fact + dedup binding.
 - [ ] Write failing duplicate tests for same body and conflict tests for changed body.
@@ -1312,20 +1374,17 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 - [ ] Prove no direct Run mutation occurs and duplicate delivery creates no second trigger occurrence.
 - [ ] Commit.
 
-### Task 6: Implement outbound subscription revisions and source projector
+### Task 6: Implement subscription lifecycle, revisions and source projector
 
-**Files:** subscription/filter/template modules, projector, migration `0098`, tests.
-
-- [ ] Write failing tests for immutable revisions and declarative filter/template bounds.
+- [ ] Write failing tests proving mutable subscription lifecycle is separate from immutable revisions.
+- [ ] Write failing tests for declarative filter/template bounds.
 - [ ] Write failing projector restart test and unique source-event intent test.
-- [ ] Add forward migration extensions to H11 baseline tables.
+- [ ] Add forward migration extensions to H11 baseline tables in `0098`.
 - [ ] Implement durable H7 cursor projection and unique delivery creation.
 - [ ] Verify unsupported event schema fails closed without cursor data loss.
 - [ ] Commit.
 
 ### Task 7: Render and persist immutable outbound payloads
-
-**Files:** payload renderer, H6 adapter, delivery payload bindings, tests.
 
 - [ ] Write failing tests that retries receive byte-identical payloads.
 - [ ] Write failing tests for classification ceiling, missing Artifact authorization and secret/redaction failure.
@@ -1336,8 +1395,6 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 
 ### Task 8: Implement safe resolver, egress and H8 signing
 
-**Files:** resolver/egress/tls/signature runtime, network snapshot repository, tests.
-
 - [ ] Write failing SSRF tests for loopback, private, link-local, metadata, mixed answers and DNS rebinding.
 - [ ] Write failing tests for redirects, ambient proxies, invalid TLS and credential-bearing URLs.
 - [ ] Write failing H8 tests for key unavailability, rotation and no secret leakage.
@@ -1346,8 +1403,6 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 - [ ] Commit.
 
 ### Task 9: Implement delivery state machine, retries and reconciliation
-
-**Files:** delivery worker/retry/reconciliation, migration `0099`, tests.
 
 - [ ] Write failing state-machine tests for 2xx, bounded 4xx, 429, 5xx, pre-send failures and post-body timeout.
 - [ ] Write failing `OutcomeUnknown` tests proving no ordinary retry scheduling.
@@ -1359,29 +1414,23 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 
 ### Task 10: Add H10 audit, metrics and retention/purge integration
 
-**Files:** webhook audit adapter, telemetry, H6 lifecycle hooks, tests.
-
 - [ ] Write failing no-secrets audit/log tests.
 - [ ] Write failing bounded-cardinality tests.
 - [ ] Write failing purge tests for inbound/outbound H6 payload Artifacts and retained content-free evidence.
-- [ ] Implement audit intents and metrics from the approved allowlists.
-- [ ] Verify endpoint URL IDs and workspace IDs never become metric labels.
+- [ ] Implement audit intents and metrics from approved allowlists.
+- [ ] Verify endpoint URLs/IDs and workspace IDs never become metric labels.
 - [ ] Commit.
 
 ### Task 11: Add H11 routes, CLI, SDK and schema parity
 
-**Files:** HTTP/CLI/public schema/SDK files and parity tests.
-
-- [ ] Write failing contract tests for idempotency, expected revision, safe errors and bounded DTOs.
+- [ ] Write failing contract tests for idempotency, expected revision, one-time handle return, safe errors and bounded DTOs.
 - [ ] Write failing parity tests across HTTP, local CLI and SDK clients for overlapping operations.
 - [ ] Add inbound route with opaque handle and indistinguishable failure responses.
-- [ ] Generate schemas and update compatibility baseline in the same change.
+- [ ] Generate schemas and update compatibility baseline in same change.
 - [ ] Verify public surfaces cannot retrieve raw payload without separate H6 authorization.
 - [ ] Commit.
 
 ### Task 12: Complete security, restart and acceptance gates
-
-**Files:** integration tests, verification scripts, CI.
 
 - [ ] Run PostgreSQL RLS tests across all webhook tables.
 - [ ] Run restart tests at every inbound and outbound state boundary.
@@ -1390,48 +1439,50 @@ HTTP, CLI, MCP where applicable, Rust SDK and TypeScript SDK call the same appli
 - [ ] Run migration ownership and forward-only checks.
 - [ ] Run all webhook acceptance scenarios.
 - [ ] Run repository formatting, linting, unit, integration and schema-baseline checks.
-- [ ] Use `superpowers:verification-before-completion` and record exact command evidence in the implementation PR.
+- [ ] Use `superpowers:verification-before-completion` and record exact command evidence in implementation PR.
 
 ---
 
 ## Acceptance scenarios
 
 1. Deployment/workspace defaults keep inbound and outbound disabled.
-2. Creating a revision does not activate an endpoint.
-3. Unknown and revoked inbound handles return indistinguishable bounded responses.
-4. Invalid HMAC/Ed25519 signatures create no source fact.
-5. Stale timestamps and replayed nonces are rejected.
-6. Exact duplicate body/event ID returns the original accepted binding.
-7. Reused event ID with changed body is a security conflict.
-8. Spoofed forwarding headers from an untrusted proxy are ignored.
-9. Wire, decoded, depth, array, string and expansion limits fail before unbounded allocation.
-10. Large allowed inbound content enters H6 quarantine and cannot enter Run context directly.
-11. Accepted receipt/source fact commit is atomic.
-12. Crash after source-fact commit resumes one H7 evaluation without a duplicate occurrence.
-13. `approved=true` in payload creates no approval.
-14. A verified source fact cannot directly mutate a Run.
-15. One source event and subscription revision create one delivery intent across projector restart.
-16. Payload rendering is deterministic and retries use exact same body bytes/hash.
-17. Missing H8 key causes no network request and no unsigned fallback.
-18. H8 key rotation affects new attempt signatures without rewriting prior attempts.
-19. A public HTTPS destination with valid resolution/TLS can receive one attempt.
-20. Loopback/private/link-local/metadata/multicast/reserved targets are denied by default.
-21. Mixed public/private DNS answers fail closed.
-22. DNS rebinding between validation and connection is prevented.
-23. Redirects, cookies and ambient proxies are not used.
-24. 2xx marks delivery succeeded without mutating source state.
-25. Permanent 4xx terminates according to policy.
-26. Bounded 429/5xx retries preserve delivery ID and payload bytes.
-27. Connection failure before send is safely retryable.
-28. Timeout after body may have been sent produces `OutcomeUnknown`.
-29. Receiver without idempotency/reconciliation is not blindly retried from `OutcomeUnknown`.
-30. Receiver idempotency or reconciliation can resolve an unknown outcome under explicit policy.
-31. Endpoint revocation prevents new attempts immediately.
-32. Receiver response bodies remain bounded and are not stored raw.
-33. RLS prevents cross-workspace endpoint, receipt, source fact and delivery access.
-34. Purge removes governed H6 payload bytes while retaining minimal content-free evidence.
-35. HTTP/CLI/SDK parity produces the same canonical state and idempotency binding.
-36. No webhook path creates a second event store, trigger runtime, policy engine or H1 authority.
+2. Creating endpoint/revision/route handle does not activate endpoint.
+3. Raw route handle is returned once and never retrievable from persistence.
+4. Unknown/revoked inbound handles return indistinguishable bounded responses.
+5. Invalid HMAC/Ed25519 signatures create no source fact.
+6. Stale timestamps and replayed nonces are rejected.
+7. Exact duplicate body/event ID returns original accepted binding.
+8. Reused event ID with changed body is a security conflict.
+9. Spoofed forwarding headers from untrusted proxy are ignored.
+10. Wire, decoded, depth, array, string and expansion limits fail before unbounded allocation.
+11. Large allowed inbound content enters H6 quarantine and cannot enter Run context directly.
+12. Accepted receipt/source fact commit is atomic.
+13. Crash after source-fact commit resumes one H7 evaluation without duplicate occurrence.
+14. `approved=true` in payload creates no approval.
+15. A verified source fact cannot directly mutate a Run.
+16. Subscription revision creation does not activate subscription.
+17. One source event and active subscription revision create one delivery intent across projector restart.
+18. Payload rendering is deterministic and retries use exact same body bytes/hash.
+19. Missing H8 key causes no network request and no unsigned fallback.
+20. H8 key rotation affects new attempt signatures without rewriting prior attempts.
+21. Public HTTPS destination with valid resolution/TLS can receive one attempt.
+22. Loopback/private/link-local/metadata/multicast/reserved targets are denied by default.
+23. Mixed public/private DNS answers fail closed.
+24. DNS rebinding between validation and connection is prevented.
+25. Redirects, cookies and ambient proxies are not used.
+26. 2xx marks delivery succeeded without mutating source state.
+27. Permanent 4xx terminates according to policy.
+28. Bounded 429/5xx retries preserve delivery ID and payload bytes.
+29. Connection failure before send is safely retryable.
+30. Timeout after body may have been sent produces `OutcomeUnknown`.
+31. Receiver without idempotency/reconciliation is not blindly retried from `OutcomeUnknown`.
+32. Receiver idempotency or reconciliation can resolve unknown outcome under explicit policy.
+33. Endpoint or subscription revocation prevents new attempts immediately.
+34. Receiver response bodies remain bounded and are not stored raw.
+35. RLS prevents cross-workspace endpoint, receipt, source fact, subscription and delivery access.
+36. Purge removes governed H6 payload bytes while retaining minimal content-free evidence.
+37. HTTP/CLI/SDK parity produces same canonical state and idempotency binding.
+38. No webhook path creates a second event store, trigger runtime, policy engine or H1 authority.
 
 ---
 
@@ -1445,8 +1496,10 @@ cargo nextest run -p vestrace-application webhook
 cargo nextest run -p vestrace-webhook-runtime
 cargo nextest run -p vestrace-webhook-test-support
 cargo nextest run --test webhook_endpoint_persistence
+cargo nextest run --test webhook_route_handle_security
 cargo nextest run --test inbound_webhook_atomicity
 cargo nextest run --test inbound_webhook_replay
+cargo nextest run --test outbound_webhook_subscription_lifecycle
 cargo nextest run --test outbound_webhook_intent_dedup
 cargo nextest run --test outbound_webhook_payload_immutability
 cargo nextest run --test outbound_webhook_ssrf
@@ -1464,22 +1517,22 @@ bash scripts/verify-webhook-outcome-unknown.sh
 bash scripts/verify-webhook-migration-ownership.sh
 ```
 
-Exact package/test selectors may be adjusted to repository conventions only when the implementation PR records the equivalent full evidence.
+Exact package/test selectors may be adjusted to repository conventions only when the implementation PR records equivalent full evidence.
 
 ---
 
 ## Rollout order
 
 1. Land domain/application contracts and disabled capability defaults.
-2. Apply migrations `0096`–`0099` with every endpoint still disabled.
+2. Apply migrations `0096`–`0099` with every endpoint/subscription disabled.
 3. Deploy readers, management queries and audit support.
 4. Deploy inbound verification/source-fact code with routes unavailable externally.
 5. Deploy outbound projector/worker code with no active endpoints/subscriptions.
 6. Run local conformance, restart, RLS and security suites.
 7. Enable one fixture workspace and local receiver under exact policy.
 8. Verify duplicate, retry, `OutcomeUnknown`, reconciliation and purge behavior.
-9. Enable production workspaces individually through explicit H2-authorized endpoint activation.
-10. Keep a global deployment kill switch that suspends new inbound acceptance and outbound attempts without rewriting historical evidence.
+9. Enable production workspaces individually through explicit H2-authorized endpoint/subscription activation.
+10. Keep a global deployment kill switch that rejects new inbound acceptance and suspends outbound attempts without rewriting historical evidence.
 
 Rollback disables endpoint capability and workers. It never down-migrates or deletes accepted receipts, source facts, delivery intents or attempts.
 
