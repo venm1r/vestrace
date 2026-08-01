@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, path::Path};
+use std::{fmt, fs, net::SocketAddr, path::Path};
 
 use config::{Environment, File, FileFormat};
 use secrecy::SecretString;
@@ -7,6 +7,38 @@ use serde::Deserialize;
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
 const DEFAULT_DATABASE_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_LOG_FILTER: &str = "info";
+
+// These fields are consumed by Serde only: the validated TOML text is then
+// passed to the normal config source so precedence remains centralized.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileConfig {
+    database: Option<FileDatabaseConfig>,
+    http: Option<FileHttpConfig>,
+    observability: Option<FileObservabilityConfig>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileDatabaseConfig {
+    max_connections: Option<u32>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileHttpConfig {
+    bind: Option<SocketAddr>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileObservabilityConfig {
+    log_filter: Option<String>,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
@@ -65,7 +97,19 @@ impl AppConfig {
             .set_default("observability.log_filter", DEFAULT_LOG_FILTER)?;
 
         if let Some(path) = path {
-            builder = builder.add_source(File::from(path).format(FileFormat::Toml).required(true));
+            let contents = fs::read_to_string(path).map_err(|error| {
+                config::ConfigError::Message(format!(
+                    "failed to read configuration file {}: {error}",
+                    path.display()
+                ))
+            })?;
+            let file = File::from_str(&contents, FileFormat::Toml);
+            let _: FileConfig = config::Config::builder()
+                .add_source(file)
+                .build()?
+                .try_deserialize()?;
+
+            builder = builder.add_source(File::from_str(&contents, FileFormat::Toml));
         }
 
         builder = builder.add_source(

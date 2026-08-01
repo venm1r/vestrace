@@ -22,6 +22,25 @@ fn environment_overrides_file_value() {
 }
 
 #[test]
+fn rejects_database_url_in_file_even_when_environment_overrides_it() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        file.path(),
+        "[database]\nurl = 'postgres://file-user:file-password@localhost/file-db'\n",
+    )
+    .unwrap();
+
+    temp_env::with_var("VESTRACE_DATABASE__URL", Some(TEST_DATABASE_URL), || {
+        let result = AppConfig::load_from(Some(file.path()));
+
+        assert!(
+            result.is_err(),
+            "database.url in a configuration file must be rejected even when the environment supplies a replacement"
+        );
+    });
+}
+
+#[test]
 fn typed_http_override_wins_over_environment() {
     temp_env::with_vars(
         [
