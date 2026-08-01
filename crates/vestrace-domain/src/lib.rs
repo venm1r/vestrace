@@ -8,6 +8,7 @@ pub mod memory;
 pub mod policy;
 pub mod provenance;
 pub mod relation;
+pub mod retrieval;
 mod time;
 
 pub use error::DomainError;
@@ -18,6 +19,7 @@ pub use memory::*;
 pub use policy::{ActivationDecision, MemoryWritePolicy};
 pub use provenance::{Derivation, DerivationMethod, EvidenceRole, MemorySource};
 pub use relation::{KnowledgeRelation, RelationType};
+pub use retrieval::{ContextPack, RetrievalCandidate, RetrievalIntent};
 pub use time::{Timestamp, now};
 
 pub fn crate_name() -> &'static str {

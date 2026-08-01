@@ -66,3 +66,6 @@ domain_id!(DerivationId);
 domain_id!(RelationId);
 domain_id!(JobId);
 domain_id!(OutboxId);
+domain_id!(EmbeddingSpaceId);
+domain_id!(RetrievalRunId);
+domain_id!(ContextPackId);
