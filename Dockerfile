@@ -7,7 +7,7 @@ COPY src ./src
 COPY crates ./crates
 COPY migrations ./migrations
 
-RUN cargo build --locked --release --package vestrace-cli --bin vestrace \
+RUN cargo build --release --package vestrace-cli --bin vestrace \
     && strip target/release/vestrace
 
 FROM debian:bookworm-slim AS runtime

@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-mod error;
+pub mod error;
 pub mod event;
-mod id;
+pub mod id;
 pub mod job;
 pub mod memory;
 pub mod policy;
@@ -12,7 +12,7 @@ pub mod models;
 pub mod relation;
 pub mod retrieval;
 pub mod security;
-mod time;
+pub mod time;
 
 pub use error::DomainError;
 pub use event::{ActorRef, Event, SubjectRef};

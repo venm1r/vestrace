@@ -42,7 +42,7 @@ where
         let at = now();
         let event = Event::new(
             cmd.id,
-            ctx.workspace_id(),
+            ctx.workspace_id,
             cmd.session_id,
             cmd.event_type,
             cmd.actor,
@@ -60,13 +60,13 @@ where
         cmd: RememberMemoryCommand,
     ) -> Result<Memory, ApplicationError> {
         let at = now();
-        let memory = Memory::new(cmd.memory_id, ctx.workspace_id(), cmd.kind, at);
+        let memory = Memory::new(cmd.memory_id, ctx.workspace_id, cmd.kind, at);
 
         let rev_id = vestrace_domain::id::MemoryRevisionId::new();
         let revision = MemoryRevision {
             id: rev_id,
             memory_id: cmd.memory_id,
-            workspace_id: ctx.workspace_id(),
+            workspace_id: ctx.workspace_id,
             revision_number: 1,
             content: cmd.content,
             structured: cmd.structured,
@@ -84,7 +84,7 @@ where
         let source = MemorySource::new_direct(
             source_id,
             cmd.memory_id,
-            ctx.workspace_id(),
+            ctx.workspace_id,
             cmd.source_event_id,
             at,
         );
@@ -101,7 +101,7 @@ where
         let at = now();
         let relation = KnowledgeRelation::new(
             cmd.relation_id,
-            ctx.workspace_id(),
+            ctx.workspace_id,
             cmd.source_memory_id,
             cmd.target_memory_id,
             cmd.relation_type,
