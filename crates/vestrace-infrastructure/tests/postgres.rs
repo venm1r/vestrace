@@ -220,3 +220,71 @@ async fn health_check_rejects_migration_checksum_mismatch(pool: sqlx::PgPool) {
     assert!(!error.to_string().contains("checksum"));
     assert!(!error.to_string().contains("_sqlx_migrations"));
 }
+
+async fn assert_health_is_opaquely_unavailable(pool: sqlx::PgPool) {
+    let store = PgStore::from_pool(pool);
+    let error = HealthRepository::check(&store).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        vestrace_application::ApplicationError::Unavailable(ref message)
+            if message == "database is not ready"
+    ));
+    let message = error.to_string();
+    assert_eq!(message, "unavailable: database is not ready");
+    assert!(!message.contains("_sqlx_migrations"));
+    assert!(!message.contains("checksum"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_rejects_missing_migration(pool: sqlx::PgPool) {
+    sqlx::query(
+        "DELETE FROM _sqlx_migrations \
+         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_health_is_opaquely_unavailable(pool).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_rejects_unsuccessful_migration(pool: sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET success = false \
+         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_health_is_opaquely_unavailable(pool).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_rejects_extra_migration(pool: sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations \
+         (version, description, success, checksum, execution_time) \
+         VALUES (9999, 'unrecognized migration', true, decode('00', 'hex'), 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_health_is_opaquely_unavailable(pool).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_rejects_same_count_version_mismatch(pool: sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET version = -1 \
+         WHERE version = (SELECT min(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_health_is_opaquely_unavailable(pool).await;
+}

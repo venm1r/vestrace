@@ -52,13 +52,18 @@ async fn add_request_context(mut request: Request<Body>, next: Next) -> Response
     request
         .headers_mut()
         .insert(CORRELATION_ID_HEADER, correlation_id_value.clone());
+    let route = match request.uri().path() {
+        "/health/live" => "/health/live",
+        "/health/ready" => "/health/ready",
+        _ => "unmatched",
+    };
 
     let span = tracing::info_span!(
         "http_request",
         request_id = %request_id,
         correlation_id = %correlation_id,
         method = %request.method(),
-        path = request.uri().path(),
+        route,
     );
     let mut response = next.run(request).instrument(span).await;
     response
