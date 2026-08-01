@@ -56,6 +56,7 @@ crates/vestrace-infrastructure/
   Cargo.toml
   src/lib.rs
   src/config.rs
+  src/error.rs
   src/postgres/mod.rs
   src/postgres/pool.rs
   src/postgres/transaction.rs
@@ -552,6 +553,7 @@ git commit -m "feat(storage): add PostgreSQL identity schema"
 ### Task 6: Implement PostgreSQL pool, migrations and scoped transactions
 
 **Files:**
+- Create: `crates/vestrace-infrastructure/src/error.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/mod.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/pool.rs`
 - Create: `crates/vestrace-infrastructure/src/postgres/transaction.rs`
@@ -559,6 +561,7 @@ git commit -m "feat(storage): add PostgreSQL identity schema"
 - Test: `crates/vestrace-infrastructure/tests/postgres.rs`
 
 **Interfaces:**
+- Produces `InfrastructureError` in the infrastructure crate according to the normative cross-plan error contract; it may wrap SQLx and migration failures but never enters domain or public wire types.
 - Produces `PgStore::connect(&DatabaseConfig) -> Result<PgStore, InfrastructureError>`.
 - Produces `PgStore::migrate() -> Result<(), InfrastructureError>`.
 - Produces `PgTransactionManager` implementing `TransactionManager`.
