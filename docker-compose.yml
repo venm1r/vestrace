@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17-bookworm
+    environment:
+      # Fixed credentials are for isolated local development only.
+      POSTGRES_DB: vestrace
+      POSTGRES_USER: vestrace
+      POSTGRES_PASSWORD: local-development-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vestrace -d vestrace"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  vestrace-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # This URL contains local-development credentials, never production secrets.
+      VESTRACE_DATABASE__URL: postgres://vestrace:local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 10
+      VESTRACE_HTTP__BIND: 0.0.0.0:8080
+      VESTRACE_OBSERVABILITY__LOG_FILTER: info
+      VESTRACE_OBSERVABILITY__FORMAT: text
+    ports:
+      - "127.0.0.1:${VESTRACE_HTTP_PORT:-8080}:8080"
+
+volumes:
+  postgres-data:

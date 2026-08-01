@@ -10,6 +10,8 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://vestrace:vestrace@localhost:5432/vestrace_test
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -29,4 +31,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --all-targets --all-features
+
+  compose-acceptance:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: vestrace-foundation-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: timeout 300s docker compose up --build --detach --wait --wait-timeout 180
+      - run: ./scripts/foundation-smoke.sh
+      - if: always()
+        run: docker compose down --volumes --remove-orphans
