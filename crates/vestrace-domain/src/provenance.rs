@@ -1,7 +1,6 @@
 use crate::{
     id::{DerivationId, EventId, MemoryId, MemorySourceId, WorkspaceId},
     time::Timestamp,
-    DomainError,
 };
 use serde::{Deserialize, Serialize};
 
