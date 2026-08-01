@@ -7,6 +7,8 @@ pub mod job;
 pub mod memory;
 pub mod policy;
 pub mod provenance;
+pub mod cognitive;
+pub mod models;
 pub mod relation;
 pub mod retrieval;
 pub mod security;
