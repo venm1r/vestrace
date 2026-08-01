@@ -3,6 +3,7 @@
 mod context;
 mod error;
 mod health;
+pub mod jobs;
 pub mod memory;
 pub mod outbox;
 mod ports;
@@ -10,6 +11,7 @@ mod ports;
 pub use context::RequestContext;
 pub use error::ApplicationError;
 pub use health::HealthRepository;
+pub use jobs::*;
 pub use outbox::OutboxMessage;
 pub use ports::{TransactionManager, UnitOfWork};
 
