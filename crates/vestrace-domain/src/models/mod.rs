@@ -5,9 +5,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderLocality {
+pub mod runtime;
+
+pub use runtime::*;
     Local,
     Remote,
 }

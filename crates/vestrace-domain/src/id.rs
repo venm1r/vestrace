@@ -86,3 +86,4 @@ domain_id!(RunCheckpointId);
 domain_id!(PolicyBundleId);
 domain_id!(AuthorizationTicketId);
 domain_id!(BudAccountId);
+domain_id!(ModelExecutionAttemptId);
