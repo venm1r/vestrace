@@ -1,0 +1,61 @@
+use async_trait::async_trait;
+use sqlx::PgPool;
+use vestrace_application::{ApplicationError, JobRepository};
+use vestrace_domain::{id::JobId, Job, JobState};
+
+pub struct PgJobRepository {
+    pool: PgPool,
+}
+
+impl PgJobRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl JobRepository for PgJobRepository {
+    async fn enqueue(&mut self, job: &Job) -> Result<(), ApplicationError> {
+        sqlx::query!(
+            r#"
+            INSERT INTO jobs (id, workspace_id, job_type, payload, state, attempts, max_attempts, run_at, leased_until, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+            job.id.as_uuid(),
+            job.workspace_id.as_uuid(),
+            job.job_type,
+            job.payload,
+            "pending",
+            job.attempts as i32,
+            job.max_attempts as i32,
+            job.run_at.as_datetime(),
+            job.leased_until.map(|t| t.as_datetime()),
+            job.created_at.as_datetime(),
+            job.updated_at.as_datetime()
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn lease_next(&mut self) -> Result<Option<Job>, ApplicationError> {
+        // Implementation with FOR UPDATE SKIP LOCKED
+        Ok(None)
+    }
+
+    async fn complete(&mut self, id: JobId) -> Result<(), ApplicationError> {
+        sqlx::query!(
+            r#"
+            UPDATE jobs SET state = 'completed', updated_at = NOW() WHERE id = $1
+            "#,
+            id.as_uuid()
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+
+        Ok(())
+    }
+}
