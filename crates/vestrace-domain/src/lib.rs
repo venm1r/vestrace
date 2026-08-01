@@ -15,6 +15,7 @@ pub mod retrieval;
 pub mod run;
 pub mod security;
 pub mod time;
+pub mod tool;
 
 pub use error::DomainError;
 pub use event::{ActorRef, Event, SubjectRef};

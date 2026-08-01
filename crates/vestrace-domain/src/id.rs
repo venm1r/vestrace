@@ -87,3 +87,5 @@ domain_id!(PolicyBundleId);
 domain_id!(AuthorizationTicketId);
 domain_id!(BudAccountId);
 domain_id!(ModelExecutionAttemptId);
+domain_id!(ToolDefinitionId);
+domain_id!(ToolInvocationId);
