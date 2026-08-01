@@ -2,10 +2,12 @@
 
 pub mod config;
 mod error;
-mod postgres;
+pub mod postgres;
+pub mod providers;
 
 pub use config::{
     AppConfig, ConfigOverrides, DatabaseConfig, HttpConfig, LogFormat, ObservabilityConfig,
 };
 pub use error::{InfrastructureError, InfrastructureErrorKind};
-pub use postgres::{PgScopedTransaction, PgStore, PgTransactionManager};
+pub use postgres::*;
+pub use providers::*;

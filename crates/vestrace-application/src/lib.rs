@@ -7,6 +7,7 @@ pub mod jobs;
 pub mod memory;
 pub mod outbox;
 mod ports;
+pub mod providers;
 
 pub use context::RequestContext;
 pub use error::ApplicationError;
@@ -14,6 +15,7 @@ pub use health::HealthRepository;
 pub use jobs::*;
 pub use outbox::OutboxMessage;
 pub use ports::{TransactionManager, UnitOfWork};
+pub use providers::*;
 
 #[cfg(test)]
 mod tests {
