@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use vestrace_infrastructure::{AppConfig, ConfigOverrides};
+use vestrace_infrastructure::{AppConfig, ConfigOverrides, LogFormat};
 
 const TEST_DATABASE_URL: &str = "postgres://test:test@localhost/vestrace_test";
 
@@ -69,5 +69,32 @@ fn debug_output_redacts_database_url() {
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains(TEST_DATABASE_URL));
         assert!(!output.contains("test:test"));
+    });
+}
+
+#[test]
+fn observability_format_accepts_typed_text_and_json_values() {
+    for (value, expected) in [("text", LogFormat::Text), ("json", LogFormat::Json)] {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            format!("[observability]\nformat = '{value}'\n"),
+        )
+        .unwrap();
+
+        temp_env::with_var("VESTRACE_DATABASE__URL", Some(TEST_DATABASE_URL), || {
+            let config = AppConfig::load_from(Some(file.path())).unwrap();
+            assert_eq!(config.observability.format, expected);
+        });
+    }
+}
+
+#[test]
+fn rejects_unknown_observability_file_keys() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), "[observability]\ninclude_bodies = true\n").unwrap();
+
+    temp_env::with_var("VESTRACE_DATABASE__URL", Some(TEST_DATABASE_URL), || {
+        assert!(AppConfig::load_from(Some(file.path())).is_err());
     });
 }

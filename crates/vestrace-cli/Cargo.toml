@@ -11,5 +11,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+vestrace-http = { path = "../vestrace-http" }
 vestrace-infrastructure = { path = "../vestrace-infrastructure" }
+
+[dev-dependencies]
+serde_json.workspace = true

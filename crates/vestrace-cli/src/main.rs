@@ -30,7 +30,8 @@ enum Command {
     Rebuild,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load_from_with_overrides(
         cli.config.as_deref(),
@@ -40,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     match cli.command {
-        Command::Server => commands::server::run(&config),
+        Command::Server => commands::server::run(&config).await,
         Command::Worker => commands::worker::run(&config),
         Command::Mcp => commands::mcp::run(&config),
         Command::Migrate => commands::migrate::run(&config),

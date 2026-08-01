@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use vestrace_application::{RequestContext, TransactionManager, UnitOfWork};
+use vestrace_application::{HealthRepository, RequestContext, TransactionManager, UnitOfWork};
 use vestrace_domain::{PrincipalId, WorkspaceId};
 
 use secrecy::SecretString;
@@ -191,4 +191,32 @@ async fn connect_rejects_zero_max_connections() {
     };
 
     assert_eq!(error.kind(), InfrastructureErrorKind::Configuration);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_accepts_reachable_database_with_compatible_migrations(pool: sqlx::PgPool) {
+    let store = PgStore::from_pool(pool);
+
+    assert!(HealthRepository::check(&store).await.is_ok());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn health_check_rejects_migration_checksum_mismatch(pool: sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') \
+         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let store = PgStore::from_pool(pool);
+
+    let error = HealthRepository::check(&store).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        vestrace_application::ApplicationError::Unavailable(_)
+    ));
+    assert!(!error.to_string().contains("checksum"));
+    assert!(!error.to_string().contains("_sqlx_migrations"));
 }

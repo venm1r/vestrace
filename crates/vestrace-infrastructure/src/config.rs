@@ -7,6 +7,7 @@ use serde::Deserialize;
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
 const DEFAULT_DATABASE_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_LOG_FILTER: &str = "info";
+const DEFAULT_LOG_FORMAT: &str = "text";
 
 // These fields are consumed by Serde only: the validated TOML text is then
 // passed to the normal config source so precedence remains centralized.
@@ -38,6 +39,7 @@ struct FileHttpConfig {
 #[serde(deny_unknown_fields)]
 struct FileObservabilityConfig {
     log_filter: Option<String>,
+    format: Option<LogFormat>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -71,6 +73,14 @@ pub struct HttpConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ObservabilityConfig {
     pub log_filter: String,
+    pub format: LogFormat,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    Text,
+    Json,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -94,7 +104,8 @@ impl AppConfig {
         let mut builder = config::Config::builder()
             .set_default("database.max_connections", DEFAULT_DATABASE_MAX_CONNECTIONS)?
             .set_default("http.bind", DEFAULT_HTTP_BIND)?
-            .set_default("observability.log_filter", DEFAULT_LOG_FILTER)?;
+            .set_default("observability.log_filter", DEFAULT_LOG_FILTER)?
+            .set_default("observability.format", DEFAULT_LOG_FORMAT)?;
 
         if let Some(path) = path {
             let contents = fs::read_to_string(path).map_err(|error| {
