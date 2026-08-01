@@ -1,1 +1,37 @@
 #![forbid(unsafe_code)]
+
+mod context;
+mod error;
+mod health;
+mod ports;
+
+pub use context::RequestContext;
+pub use error::ApplicationError;
+pub use health::HealthRepository;
+pub use ports::{TransactionManager, UnitOfWork};
+
+#[cfg(test)]
+mod tests {
+    use super::{ApplicationError, RequestContext};
+    use vestrace_domain::{DomainError, PrincipalId, WorkspaceId};
+
+    #[test]
+    fn request_context_is_workspace_bound() {
+        let ctx = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
+
+        assert_ne!(ctx.workspace_id.as_uuid(), uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn application_error_preserves_domain_failure() {
+        let error = ApplicationError::from(DomainError::InvalidArgument(
+            "workspace name is required".to_owned(),
+        ));
+
+        assert!(matches!(
+            error,
+            ApplicationError::Domain(DomainError::InvalidArgument(message))
+                if message == "workspace name is required"
+        ));
+    }
+}

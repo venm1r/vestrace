@@ -47,6 +47,7 @@ crates/vestrace-domain/
 crates/vestrace-application/
   Cargo.toml
   src/lib.rs
+  src/error.rs
   src/context.rs
   src/ports.rs
   src/health.rs
@@ -316,6 +317,7 @@ git commit -m "feat(domain): add shared identifiers and errors"
 ### Task 3: Define request context and application ports
 
 **Files:**
+- Create: `crates/vestrace-application/src/error.rs`
 - Create: `crates/vestrace-application/src/context.rs`
 - Create: `crates/vestrace-application/src/ports.rs`
 - Create: `crates/vestrace-application/src/health.rs`
@@ -324,6 +326,7 @@ git commit -m "feat(domain): add shared identifiers and errors"
 
 **Interfaces:**
 - Consumes IDs from `vestrace-domain`.
+- Produces framework-free `ApplicationError` variants for domain, conflict, policy, unavailable, storage and internal failures without importing SQLx.
 - Produces `RequestContext { request_id, correlation_id, workspace_id, principal_id }`.
 - Produces `TransactionManager::begin(&RequestContext)` and `UnitOfWork::commit/rollback` ports.
 - Produces `HealthRepository::check()`.
@@ -361,7 +364,11 @@ impl RequestContext {
 }
 ```
 
-- [ ] **Step 3: Define transaction and health ports**
+- [ ] **Step 3: Define the application error boundary**
+
+Create `ApplicationError` in `crates/vestrace-application/src/error.rs` according to the normative cross-plan contract in `2026-07-31-vestrace-roadmap.md`. It maps `DomainError`, conflict, policy, unavailable, storage and internal failures without importing SQLx or exposing infrastructure error types.
+
+- [ ] **Step 4: Define transaction and health ports**
 
 ```rust
 #[async_trait::async_trait]
@@ -381,7 +388,7 @@ pub trait HealthRepository: Send + Sync {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [ ] **Step 5: Run tests and commit**
 
 ```bash
 cargo test -p vestrace-application
