@@ -29,10 +29,10 @@ impl EventRepository for PgEventRepository {
         .bind(serde_json::to_value(&event.actor).unwrap_or_default())
         .bind(event.subject.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()))
         .bind(&event.payload)
-        .bind(event.created_at.as_datetime())
+        .bind(event.created_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }

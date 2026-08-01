@@ -34,10 +34,10 @@ impl ProvenanceRepository for PgProvenanceRepository {
         .bind(source.event_id.as_uuid())
         .bind(role_str)
         .bind(source.derivation_id.map(|d| d.as_uuid()))
-        .bind(source.created_at.as_datetime())
+        .bind(source.created_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }

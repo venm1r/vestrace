@@ -37,10 +37,10 @@ impl RelationRepository for PgRelationRepository {
         .bind(relation.target_memory_id.as_uuid())
         .bind(type_str)
         .bind(relation.confidence.value())
-        .bind(relation.created_at.as_datetime())
+        .bind(relation.created_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }

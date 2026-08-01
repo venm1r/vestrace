@@ -52,11 +52,11 @@ impl MemoryRepository for PgMemoryRepository {
         .bind(kind_str)
         .bind(status_str)
         .bind(memory.active_revision_id.map(|r| r.as_uuid()))
-        .bind(memory.created_at.as_datetime())
-        .bind(memory.updated_at.as_datetime())
+        .bind(memory.created_at)
+        .bind(memory.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }
@@ -76,10 +76,10 @@ impl MemoryRepository for PgMemoryRepository {
         .bind(revision.structured.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()))
         .bind(revision.confidence.value())
         .bind(revision.importance.value())
-        .bind(revision.created_at.as_datetime())
+        .bind(revision.created_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }

@@ -29,13 +29,13 @@ impl JobRepository for PgJobRepository {
         .bind("pending")
         .bind(job.attempts as i32)
         .bind(job.max_attempts as i32)
-        .bind(job.run_at.as_datetime())
-        .bind(job.leased_until.map(|t| t.as_datetime()))
-        .bind(job.created_at.as_datetime())
-        .bind(job.updated_at.as_datetime())
+        .bind(job.run_at)
+        .bind(job.leased_until)
+        .bind(job.created_at)
+        .bind(job.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }
@@ -54,7 +54,7 @@ impl JobRepository for PgJobRepository {
         .bind(id.as_uuid())
         .execute(&self.pool)
         .await
-        .map_err(|e| ApplicationError::StorageFailure(e.to_string()))?;
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
         Ok(())
     }
