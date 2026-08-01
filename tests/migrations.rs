@@ -2,7 +2,7 @@
 
 mod support;
 
-use support::assert_sqlstate;
+use support::{assert_sqlstate, count, seed_two_workspace_identities, seed_workspace_associations};
 
 #[sqlx::test(migrations = "./migrations")]
 async fn migrations_create_required_extensions(pool: sqlx::PgPool) {
@@ -222,4 +222,437 @@ async fn association_tables_reject_cross_workspace_links(pool: sqlx::PgPool) {
     .execute(&pool)
     .await;
     assert_sqlstate(role_capability, "23503");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_reject_cross_workspace_principal(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+
+    let result = sqlx::query(
+        "INSERT INTO principal_roles (id, workspace_id, principal_id, role_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000004',
+             '30000000-0000-0000-0000-000000000005'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(result, "23503");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_reject_cross_workspace_role_for_principal(
+    pool: sqlx::PgPool,
+) {
+    seed_two_workspace_identities(&pool).await;
+
+    let result = sqlx::query(
+        "INSERT INTO principal_roles (id, workspace_id, principal_id, role_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000002',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000003',
+             '30000000-0000-0000-0000-000000000006'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(result, "23503");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_reject_cross_workspace_role_for_capability(
+    pool: sqlx::PgPool,
+) {
+    seed_two_workspace_identities(&pool).await;
+
+    let result = sqlx::query(
+        "INSERT INTO role_capabilities (id, workspace_id, role_id, capability_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000003',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000006',
+             '30000000-0000-0000-0000-000000000007'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(result, "23503");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_reject_cross_workspace_capability(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+
+    let result = sqlx::query(
+        "INSERT INTO role_capabilities (id, workspace_id, role_id, capability_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000004',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000005',
+             '30000000-0000-0000-0000-000000000008'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(result, "23503");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_accept_same_workspace_principal_role(
+    pool: sqlx::PgPool,
+) {
+    seed_two_workspace_identities(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO principal_roles (id, workspace_id, principal_id, role_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000005',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000003',
+             '30000000-0000-0000-0000-000000000005'
+         )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn association_workspace_constraints_accept_same_workspace_role_capability(
+    pool: sqlx::PgPool,
+) {
+    seed_two_workspace_identities(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO role_capabilities (id, workspace_id, role_id, capability_id)
+         VALUES (
+             '31000000-0000-0000-0000-000000000006',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000005',
+             '30000000-0000-0000-0000-000000000007'
+         )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_cascade_workspace_removes_only_its_tenant_identity_rows(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    sqlx::query(
+        "DELETE FROM workspaces
+         WHERE id = '30000000-0000-0000-0000-000000000001'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM workspaces
+             WHERE id = '30000000-0000-0000-0000-000000000001'",
+        )
+        .await,
+        0
+    );
+    for query in [
+        "SELECT count(*) FROM principals WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        "SELECT count(*) FROM roles WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        "SELECT count(*) FROM capabilities WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        "SELECT count(*) FROM principal_roles WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        "SELECT count(*) FROM role_capabilities WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+    ] {
+        assert_eq!(count(&pool, query).await, 0);
+    }
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM workspaces
+             WHERE id = '30000000-0000-0000-0000-000000000002'",
+        )
+        .await,
+        1
+    );
+    for query in [
+        "SELECT count(*) FROM principals WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        "SELECT count(*) FROM roles WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        "SELECT count(*) FROM capabilities WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        "SELECT count(*) FROM principal_roles WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        "SELECT count(*) FROM role_capabilities WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+    ] {
+        assert_eq!(count(&pool, query).await, 1);
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_cascade_principal_removes_only_its_role_associations(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    sqlx::query(
+        "DELETE FROM principals
+         WHERE id = '30000000-0000-0000-0000-000000000003'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM principal_roles
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM principal_roles
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM roles
+             WHERE id = '30000000-0000-0000-0000-000000000005'",
+        )
+        .await,
+        1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_cascade_role_removes_only_its_principal_associations(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    sqlx::query(
+        "DELETE FROM roles
+         WHERE id = '30000000-0000-0000-0000-000000000005'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM principal_roles
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM principal_roles
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM principals
+             WHERE id = '30000000-0000-0000-0000-000000000003'",
+        )
+        .await,
+        1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_cascade_role_removes_only_its_capability_associations(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    sqlx::query(
+        "DELETE FROM roles
+         WHERE id = '30000000-0000-0000-0000-000000000005'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM role_capabilities
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM role_capabilities
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM capabilities
+             WHERE id = '30000000-0000-0000-0000-000000000007'",
+        )
+        .await,
+        1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_cascade_capability_removes_only_its_role_associations(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    sqlx::query(
+        "DELETE FROM capabilities
+         WHERE id = '30000000-0000-0000-0000-000000000007'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM role_capabilities
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000001'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM role_capabilities
+             WHERE workspace_id = '30000000-0000-0000-0000-000000000002'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM roles
+             WHERE id = '30000000-0000-0000-0000-000000000005'",
+        )
+        .await,
+        1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tenant_scoped_uniqueness_principal_identifiers(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+
+    let duplicate = sqlx::query(
+        "INSERT INTO principals (id, workspace_id, identifier)
+         VALUES (
+             '32000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000001',
+             'shared-principal'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(duplicate, "23505");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tenant_scoped_uniqueness_role_names(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+
+    let duplicate = sqlx::query(
+        "INSERT INTO roles (id, workspace_id, name)
+         VALUES (
+             '32000000-0000-0000-0000-000000000002',
+             '30000000-0000-0000-0000-000000000001',
+             'shared-role'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(duplicate, "23505");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tenant_scoped_uniqueness_capability_names(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+
+    let duplicate = sqlx::query(
+        "INSERT INTO capabilities (id, workspace_id, name)
+         VALUES (
+             '32000000-0000-0000-0000-000000000003',
+             '30000000-0000-0000-0000-000000000001',
+             'shared-capability'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(duplicate, "23505");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tenant_scoped_uniqueness_principal_role_tuples(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    let duplicate = sqlx::query(
+        "INSERT INTO principal_roles (id, workspace_id, principal_id, role_id)
+         VALUES (
+             '32000000-0000-0000-0000-000000000004',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000003',
+             '30000000-0000-0000-0000-000000000005'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(duplicate, "23505");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tenant_scoped_uniqueness_role_capability_tuples(pool: sqlx::PgPool) {
+    seed_two_workspace_identities(&pool).await;
+    seed_workspace_associations(&pool).await;
+
+    let duplicate = sqlx::query(
+        "INSERT INTO role_capabilities (id, workspace_id, role_id, capability_id)
+         VALUES (
+             '32000000-0000-0000-0000-000000000005',
+             '30000000-0000-0000-0000-000000000001',
+             '30000000-0000-0000-0000-000000000005',
+             '30000000-0000-0000-0000-000000000007'
+         )",
+    )
+    .execute(&pool)
+    .await;
+
+    assert_sqlstate(duplicate, "23505");
 }
