@@ -3,6 +3,7 @@ import { PrimaryNavigation } from './PrimaryNavigation';
 import { TaskWorkbench } from './TaskWorkbench';
 import { MemoryConsole } from '../memory/MemoryConsole';
 import { ApprovalChallenge } from '../components/ApprovalChallenge';
+import { CompactChat } from '../components/CompactChat';
 import { InspectorDrawer } from './InspectorDrawer';
 
 export const AppLayout: React.FC = () => {
@@ -67,6 +68,9 @@ export const AppLayout: React.FC = () => {
           content="User preference: Always enforce RLS workspace isolation on multi-tenant SQL tables."
           revisionNumber={2}
         />
+
+        {/* 2.1 Compact Chat Inside Run Workspace */}
+        <CompactChat />
       </main>
 
       {/* 21. Contextual Inspector Drawer */}
