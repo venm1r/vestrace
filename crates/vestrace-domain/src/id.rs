@@ -91,3 +91,5 @@ domain_id!(ToolDefinitionId);
 domain_id!(ToolInvocationId);
 domain_id!(ExecutionPlanId);
 domain_id!(ExecutionPlanRevisionId);
+domain_id!(ArtifactId);
+domain_id!(ArtifactRevisionId);
