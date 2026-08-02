@@ -104,3 +104,5 @@ domain_id!(ProductReleaseId);
 domain_id!(InteractionSessionId);
 domain_id!(ProductApiTransferId);
 domain_id!(AgUiEndpointId);
+domain_id!(KekId);
+domain_id!(MemoryGrantId);

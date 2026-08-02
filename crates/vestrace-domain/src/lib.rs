@@ -14,6 +14,7 @@ pub mod artifact;
 pub mod cognitive;
 pub mod connection;
 pub mod conversation;
+pub mod enterprise;
 pub mod models;
 pub mod observability;
 pub mod package;
