@@ -1,10 +1,8 @@
 import React from 'react';
 import { PrimaryNavigation } from './PrimaryNavigation';
-import { TaskWorkbench } from './TaskWorkbench';
-import { MemoryConsole } from '../memory/MemoryConsole';
-import { ApprovalChallenge } from '../components/ApprovalChallenge';
-import { CompactChat } from '../components/CompactChat';
 import { InspectorDrawer } from './InspectorDrawer';
+import { HomePage } from '../routes/HomePage';
+import { RunsPage } from '../routes/RunsPage';
 import { ArtifactsPage } from '../routes/ArtifactsPage';
 import { AgentsPage } from '../routes/AgentsPage';
 import { WorkflowsPage } from '../routes/WorkflowsPage';
@@ -22,34 +20,9 @@ export const AppLayout: React.FC = () => {
   const renderMainContent = () => {
     switch (activeNav) {
       case 'home':
+        return <HomePage />;
       case 'runs':
-        return (
-          <>
-            <TaskWorkbench
-              title="Durable Task Execution #4092"
-              status="Running"
-              stepSummary="Executing Step 2 of 5: Validating Row-Level Security Isolation Policies"
-            />
-            <ApprovalChallenge
-              operation="system.deploy_schema"
-              resource="Production Database Cluster"
-              effect="Apply migration 0090_release_orchestration_and_manifests.sql to main database"
-              risk="High"
-              expiryMinutes={15}
-              onApprove={() => alert('Approved')}
-              onReject={() => alert('Denied')}
-            />
-            <MemoryConsole
-              memoryId="mem_994a02f8"
-              kind="Fact"
-              status="Active"
-              confidence={0.96}
-              content="User preference: Always enforce RLS workspace isolation on multi-tenant SQL tables."
-              revisionNumber={2}
-            />
-            <CompactChat />
-          </>
-        );
+        return <RunsPage />;
       case 'artifacts':
         return <ArtifactsPage />;
       case 'agents':
