@@ -89,3 +89,5 @@ domain_id!(BudAccountId);
 domain_id!(ModelExecutionAttemptId);
 domain_id!(ToolDefinitionId);
 domain_id!(ToolInvocationId);
+domain_id!(ExecutionPlanId);
+domain_id!(ExecutionPlanRevisionId);
