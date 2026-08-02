@@ -93,3 +93,5 @@ domain_id!(ExecutionPlanId);
 domain_id!(ExecutionPlanRevisionId);
 domain_id!(ArtifactId);
 domain_id!(ArtifactRevisionId);
+domain_id!(ConversationThreadId);
+domain_id!(TriggerId);
