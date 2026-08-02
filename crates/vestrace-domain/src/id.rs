@@ -106,3 +106,4 @@ domain_id!(ProductApiTransferId);
 domain_id!(AgUiEndpointId);
 domain_id!(KekId);
 domain_id!(MemoryGrantId);
+domain_id!(RunExportId);
