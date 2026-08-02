@@ -99,3 +99,4 @@ domain_id!(ConnectorId);
 domain_id!(ConnectionId);
 domain_id!(AgentPackageId);
 domain_id!(RemoteAgentInvocationId);
+domain_id!(MetricRollupId);
