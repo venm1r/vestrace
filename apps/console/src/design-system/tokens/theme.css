@@ -46,9 +46,9 @@
   --bg-level-2: #0F2844;
   --bg-level-3: #143254;
   --bg-level-4: #193D66;
-  --text-primary: var(--brand-white);
-  --text-secondary: var(--brand-muted);
-  --border-color: rgba(124, 138, 160, 0.2);
+  --text-primary: #F3F6F9;
+  --text-secondary: #94A3B8;
+  --border-color: rgba(124, 138, 160, 0.3);
 }
 
 /* Light Theme */

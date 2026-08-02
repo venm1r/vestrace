@@ -143,7 +143,7 @@ export const SettingsPage: React.FC = () => {
                 backgroundColor: 'var(--bg-level-1)',
                 border: '1px solid var(--border-color)',
                 borderRadius: 'var(--radius-sm)',
-                color: 'var(--brand-white)',
+                color: 'var(--text-primary)',
               }}
             />
           </div>
@@ -183,7 +183,7 @@ export const SettingsPage: React.FC = () => {
                 backgroundColor: 'var(--bg-level-1)',
                 border: '1px solid var(--border-color)',
                 borderRadius: 'var(--radius-sm)',
-                color: 'var(--brand-white)',
+                color: 'var(--text-primary)',
               }}
             />
           </div>
@@ -208,7 +208,7 @@ export const SettingsPage: React.FC = () => {
               backgroundColor: 'var(--bg-level-1)',
               border: '1px solid var(--border-color)',
               borderRadius: 'var(--radius-sm)',
-              color: 'var(--brand-white)',
+              color: 'var(--text-primary)',
             }}
           />
         </div>
