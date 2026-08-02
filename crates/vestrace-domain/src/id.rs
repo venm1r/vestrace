@@ -95,3 +95,5 @@ domain_id!(ArtifactId);
 domain_id!(ArtifactRevisionId);
 domain_id!(ConversationThreadId);
 domain_id!(TriggerId);
+domain_id!(ConnectorId);
+domain_id!(ConnectionId);

@@ -10,6 +10,7 @@ pub mod provenance;
 pub mod budget;
 pub mod artifact;
 pub mod cognitive;
+pub mod connection;
 pub mod conversation;
 pub mod models;
 pub mod planning;
