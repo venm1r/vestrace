@@ -58,6 +58,15 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Surface>
 
+      {/* Model & AI Provider Settings */}
+      <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>AI Provider & Router Credentials</h3>
+        <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div><strong>Default Provider Endpoint:</strong> <code style={{ color: 'var(--brand-white)' }}>http://localhost:8080/v1</code></div>
+          <div><strong>Model Fallback Strategy:</strong> Quality-First Optimization (gpt-4o → claude-3-5-sonnet)</div>
+        </div>
+      </Surface>
+
       {/* Security & RLS Policy Status */}
       <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>Security & Multi-Tenant Isolation</h3>

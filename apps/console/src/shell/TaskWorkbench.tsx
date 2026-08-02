@@ -9,18 +9,16 @@ export interface TaskWorkbenchProps {
 }
 
 export const TaskWorkbench: React.FC<TaskWorkbenchProps> = ({ title, status, stepSummary }) => {
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [evidenceOpen, setEvidenceOpen] = React.useState(false);
+
   const getStatusColor = () => {
     switch (status) {
-      case 'Completed':
-        return 'var(--semantic-success)';
-      case 'Waiting':
-        return 'var(--semantic-warning)';
-      case 'Failed':
-        return 'var(--semantic-error)';
-      case 'Running':
-        return 'var(--brand-cyan)';
-      default:
-        return 'var(--brand-muted)';
+      case 'Completed': return 'var(--semantic-success)';
+      case 'Waiting': return 'var(--semantic-warning)';
+      case 'Failed': return 'var(--semantic-error)';
+      case 'Running': return 'var(--brand-cyan)';
+      default: return 'var(--brand-muted)';
     }
   };
 
@@ -42,9 +40,33 @@ export const TaskWorkbench: React.FC<TaskWorkbenchProps> = ({ title, status, ste
         </span>
       </div>
       <p style={{ margin: 0, color: 'var(--text-secondary)' }}>{stepSummary}</p>
+
+      {/* Dynamic Task Details */}
+      {detailsOpen && (
+        <div style={{ padding: 'var(--space-3)', backgroundColor: 'var(--bg-level-2)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div><strong>Run ID:</strong> <code style={{ color: 'var(--brand-cyan)' }}>run_7f81a4b9</code></div>
+          <div><strong>Execution Mode:</strong> Direct Step Pipeline</div>
+          <div><strong>Step 1:</strong> Pre-flight database check (Completed)</div>
+          <div><strong>Step 2:</strong> Validating Row-Level Security Isolation Policies (In Progress)</div>
+        </div>
+      )}
+
+      {/* Dynamic Evidence Findings */}
+      {evidenceOpen && (
+        <div style={{ padding: 'var(--space-3)', backgroundColor: 'var(--bg-level-2)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div style={{ color: 'var(--semantic-success)' }}>✓ RLS session variable vestrace.workspace_id set correctly</div>
+          <div style={{ color: 'var(--semantic-success)' }}>✓ Audit log entry aud_90f81a2c generated</div>
+          <div style={{ color: 'var(--brand-cyan)' }}>ℹ 3 SQL migrations validated with zero warnings</div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-        <Button variant="primary">View Task Details</Button>
-        <Button variant="ghost">Inspect Evidence</Button>
+        <Button variant="primary" onClick={() => setDetailsOpen(!detailsOpen)}>
+          {detailsOpen ? 'Hide Task Details' : 'View Task Details'}
+        </Button>
+        <Button variant="ghost" onClick={() => setEvidenceOpen(!evidenceOpen)}>
+          {evidenceOpen ? 'Hide Evidence' : 'Inspect Evidence'}
+        </Button>
       </div>
     </Surface>
   );
