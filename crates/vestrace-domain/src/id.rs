@@ -100,3 +100,5 @@ domain_id!(ConnectionId);
 domain_id!(AgentPackageId);
 domain_id!(RemoteAgentInvocationId);
 domain_id!(MetricRollupId);
+domain_id!(ProductReleaseId);
+domain_id!(InteractionSessionId);
