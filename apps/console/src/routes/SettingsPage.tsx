@@ -5,24 +5,28 @@ import { Button } from '../design-system/primitives/Button';
 export const SettingsPage: React.FC = () => {
   const [theme, setTheme] = React.useState<'dark' | 'light' | 'system'>('dark');
   const [density, setDensity] = React.useState<'comfortable' | 'compact'>('comfortable');
+  const [fontFamily, setFontFamily] = React.useState<'Inter' | 'Geist' | 'Manrope' | 'Space Grotesk'>('Inter');
+  const [monoFont, setMonoFont] = React.useState<'JetBrains Mono' | 'IBM Plex Mono'>('JetBrains Mono');
   const [logFormat, setLogFormat] = React.useState<'text' | 'json'>('json');
   const [writePolicy, setWritePolicy] = React.useState<'automatic' | 'assisted' | 'manual'>('automatic');
   const [maxRetries, setMaxRetries] = React.useState<number>(3);
   const [tokenBudget, setTokenBudget] = React.useState<number>(8000);
   const [auditLevel, setAuditLevel] = React.useState<'Minimal' | 'Operational' | 'Reproducible' | 'Forensic'>('Operational');
+  const [mcpEnabled, setMcpEnabled] = React.useState<boolean>(true);
+  const [a2aGatewayEnabled, setA2aGatewayEnabled] = React.useState<boolean>(true);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <div>
         <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>System Settings & Configuration</h2>
         <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-          Comprehensive platform configuration, tenant limits, security bounds, and router policies.
+          Comprehensive platform configuration, typography, tenant limits, security bounds, and router policies.
         </p>
       </div>
 
-      {/* 1. Interface Preferences */}
+      {/* 1. Interface & Typography Preferences */}
       <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>1. Interface & Theme Preferences</h3>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>1. Interface & Typography Preferences</h3>
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -38,6 +42,42 @@ export const SettingsPage: React.FC = () => {
                 style={{ textTransform: 'capitalize' }}
               >
                 {t}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'var(--space-2)' }}>
+          <div>
+            <strong style={{ display: 'block', fontSize: '14px' }}>Primary Sans-Serif Font (design.md Section 8)</strong>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Approved body and UI font family.</span>
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            {(['Inter', 'Geist', 'Manrope', 'Space Grotesk'] as const).map((f) => (
+              <Button
+                key={f}
+                variant={fontFamily === f ? 'primary' : 'secondary'}
+                onClick={() => setFontFamily(f)}
+              >
+                {f}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'var(--space-2)' }}>
+          <div>
+            <strong style={{ display: 'block', fontSize: '14px' }}>Monospace Code Font</strong>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Used for identifiers, hashes, and technical data.</span>
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            {(['JetBrains Mono', 'IBM Plex Mono'] as const).map((mf) => (
+              <Button
+                key={mf}
+                variant={monoFont === mf ? 'primary' : 'secondary'}
+                onClick={() => setMonoFont(mf)}
+              >
+                {mf}
               </Button>
             ))}
           </div>
@@ -87,9 +127,9 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Surface>
 
-      {/* 3. AI Model Router & Provider Settings */}
+      {/* 3. AI Model Router & Gateway Protocols */}
       <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>3. AI Model Router & Fallback Rules</h3>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--brand-cyan)' }}>3. AI Model Router & Gateway Protocols</h3>
         <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <div>
             <strong>Default Provider Base URL:</strong>
@@ -107,6 +147,27 @@ export const SettingsPage: React.FC = () => {
               }}
             />
           </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <strong style={{ display: 'block' }}>Model Context Protocol (MCP) Server</strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Enable stdio & HTTP transport server.</span>
+            </div>
+            <Button variant={mcpEnabled ? 'primary' : 'secondary'} onClick={() => setMcpEnabled(!mcpEnabled)}>
+              {mcpEnabled ? 'ENABLED' : 'DISABLED'}
+            </Button>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <strong style={{ display: 'block' }}>A2A Interoperability Gateway</strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Allow inter-agent RPC communication.</span>
+            </div>
+            <Button variant={a2aGatewayEnabled ? 'primary' : 'secondary'} onClick={() => setA2aGatewayEnabled(!a2aGatewayEnabled)}>
+              {a2aGatewayEnabled ? 'ENABLED' : 'DISABLED'}
+            </Button>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <strong style={{ display: 'block' }}>Context Pack Token Budget</strong>
