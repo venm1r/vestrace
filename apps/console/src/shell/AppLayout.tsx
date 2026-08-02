@@ -9,6 +9,7 @@ import { InspectorDrawer } from './InspectorDrawer';
 import { ArtifactsPage } from '../routes/ArtifactsPage';
 import { WorkflowsPage } from '../routes/WorkflowsPage';
 import { AuditPage } from '../routes/AuditPage';
+import { SettingsPage } from '../routes/SettingsPage';
 
 export const AppLayout: React.FC = () => {
   const [activeNav, setActiveNav] = React.useState('home');
@@ -62,7 +63,7 @@ export const AppLayout: React.FC = () => {
       case 'audit':
         return <AuditPage />;
       case 'settings':
-        return <SimpleListView title="Settings" description="Workspace configuration, RLS tenant policies, and security bounds." />;
+        return <SettingsPage />;
       default:
         return null;
     }
