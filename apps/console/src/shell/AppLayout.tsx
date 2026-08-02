@@ -6,6 +6,9 @@ import { MemoryConsole } from '../memory/MemoryConsole';
 import { ApprovalChallenge } from '../components/ApprovalChallenge';
 import { CompactChat } from '../components/CompactChat';
 import { InspectorDrawer } from './InspectorDrawer';
+import { ArtifactsPage } from '../routes/ArtifactsPage';
+import { WorkflowsPage } from '../routes/WorkflowsPage';
+import { AuditPage } from '../routes/AuditPage';
 
 export const AppLayout: React.FC = () => {
   const [activeNav, setActiveNav] = React.useState('home');
@@ -43,11 +46,11 @@ export const AppLayout: React.FC = () => {
           </>
         );
       case 'artifacts':
-        return <SimpleListView title="Artifacts" description="Inspect generated binary, text, and structured artifacts with SHA-256 provenance." />;
+        return <ArtifactsPage />;
       case 'agents':
         return <SimpleListView title="Agents" description="Registered agent packages, instructions, and capability boundaries." />;
       case 'workflows':
-        return <SimpleListView title="Workflows" description="Versioned multi-step workflow graphs and orchestration rules." />;
+        return <WorkflowsPage />;
       case 'triggers':
         return <SimpleListView title="Triggers" description="External webhook and scheduled trigger bindings." />;
       case 'connections':
@@ -57,7 +60,7 @@ export const AppLayout: React.FC = () => {
       case 'evaluations':
         return <SimpleListView title="Evaluations" description="Model execution evaluations, quality metrics, and performance rollups." />;
       case 'audit':
-        return <SimpleListView title="Audit Log" description="Content-free security audit events and capability checks." />;
+        return <AuditPage />;
       case 'settings':
         return <SimpleListView title="Settings" description="Workspace configuration, RLS tenant policies, and security bounds." />;
       default:
