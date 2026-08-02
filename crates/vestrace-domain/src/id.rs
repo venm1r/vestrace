@@ -97,3 +97,4 @@ domain_id!(ConversationThreadId);
 domain_id!(TriggerId);
 domain_id!(ConnectorId);
 domain_id!(ConnectionId);
+domain_id!(AgentPackageId);

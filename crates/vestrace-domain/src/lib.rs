@@ -13,6 +13,7 @@ pub mod cognitive;
 pub mod connection;
 pub mod conversation;
 pub mod models;
+pub mod package;
 pub mod planning;
 pub mod relation;
 pub mod retrieval;
