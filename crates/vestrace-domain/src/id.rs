@@ -108,3 +108,4 @@ domain_id!(KekId);
 domain_id!(MemoryGrantId);
 domain_id!(RunExportId);
 domain_id!(WebhookSubscriptionId);
+domain_id!(ReleaseManifestId);

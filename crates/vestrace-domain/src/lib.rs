@@ -19,6 +19,7 @@ pub mod models;
 pub mod observability;
 pub mod package;
 pub mod product;
+pub mod release;
 pub mod planning;
 pub mod relation;
 pub mod retrieval;
