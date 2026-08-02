@@ -12,9 +12,9 @@ pub struct ProductRelease {
     pub created_at: Timestamp,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionStatus {
+pub mod transfer;
+
+pub use transfer::*;
     Active,
     Closed,
 }
