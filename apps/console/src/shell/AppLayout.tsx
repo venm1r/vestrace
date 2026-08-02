@@ -1,0 +1,82 @@
+import React from 'react';
+import { PrimaryNavigation } from './PrimaryNavigation';
+import { TaskWorkbench } from './TaskWorkbench';
+import { MemoryConsole } from '../memory/MemoryConsole';
+import { ApprovalChallenge } from '../components/ApprovalChallenge';
+import { InspectorDrawer } from './InspectorDrawer';
+
+export const AppLayout: React.FC = () => {
+  const [activeNav, setActiveNav] = React.useState('home');
+  const [inspectorOpen, setInspectorOpen] = React.useState(false);
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-level-0)' }} data-theme="dark">
+      {/* 13. Navigation Structure */}
+      <PrimaryNavigation activeItem={activeNav} onSelect={setActiveNav} humanRequestCount={1} />
+
+      {/* 12. Desktop Layout: Task Workspace */}
+      <main style={{ flex: 1, padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '960px' }}>
+        {/* Top Operational Status Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '24px', color: 'var(--text-primary)' }}>Task Workspace</h1>
+            <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
+              Durable Runs. Scoped Authority. Safe Effects. Verifiable Outcomes.
+            </p>
+          </div>
+          <button
+            onClick={() => setInspectorOpen(!inspectorOpen)}
+            style={{
+              backgroundColor: 'var(--bg-level-2)',
+              color: 'var(--brand-white)',
+              border: '1px solid var(--border-color)',
+              padding: 'var(--space-2) var(--space-4)',
+              borderRadius: 'var(--radius-md)',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {inspectorOpen ? 'Close Inspector' : 'Open Inspector'}
+          </button>
+        </div>
+
+        {/* 2.1 Task-first, not chat-first Metaphor */}
+        <TaskWorkbench
+          title="Durable Task Execution #4092"
+          status="Running"
+          stepSummary="Executing Step 2 of 5: Validating Row-Level Security Isolation Policies"
+        />
+
+        {/* 18. Explicit Approvals & Risk System */}
+        <ApprovalChallenge
+          operation="system.deploy_schema"
+          resource="Production Database Cluster"
+          effect="Apply migration 0090_release_orchestration_and_manifests.sql to main database"
+          risk="High"
+          expiryMinutes={15}
+          onApprove={() => alert('Approved')}
+          onReject={() => alert('Denied')}
+        />
+
+        {/* Memory and Knowledge Graph Console */}
+        <MemoryConsole
+          memoryId="mem_994a02f8"
+          kind="Fact"
+          status="Active"
+          confidence={0.96}
+          content="User preference: Always enforce RLS workspace isolation on multi-tenant SQL tables."
+          revisionNumber={2}
+        />
+      </main>
+
+      {/* 21. Contextual Inspector Drawer */}
+      <InspectorDrawer
+        isOpen={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        runId="run_7f81a4b9"
+        runStatus="Running"
+        budgetUsed="$0.042 / $10.00"
+      />
+    </div>
+  );
+};
