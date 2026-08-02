@@ -1,13 +1,17 @@
 import React from 'react';
 import { PrimaryNavigation } from './PrimaryNavigation';
 import { TaskWorkbench } from './TaskWorkbench';
-import { SimpleListView } from './SimpleListView';
 import { MemoryConsole } from '../memory/MemoryConsole';
 import { ApprovalChallenge } from '../components/ApprovalChallenge';
 import { CompactChat } from '../components/CompactChat';
 import { InspectorDrawer } from './InspectorDrawer';
 import { ArtifactsPage } from '../routes/ArtifactsPage';
+import { AgentsPage } from '../routes/AgentsPage';
 import { WorkflowsPage } from '../routes/WorkflowsPage';
+import { TriggersPage } from '../routes/TriggersPage';
+import { ConnectionsPage } from '../routes/ConnectionsPage';
+import { ModelsPage } from '../routes/ModelsPage';
+import { EvaluationsPage } from '../routes/EvaluationsPage';
 import { AuditPage } from '../routes/AuditPage';
 import { SettingsPage } from '../routes/SettingsPage';
 
@@ -49,17 +53,17 @@ export const AppLayout: React.FC = () => {
       case 'artifacts':
         return <ArtifactsPage />;
       case 'agents':
-        return <SimpleListView title="Agents" description="Registered agent packages, instructions, and capability boundaries." />;
+        return <AgentsPage />;
       case 'workflows':
         return <WorkflowsPage />;
       case 'triggers':
-        return <SimpleListView title="Triggers" description="External webhook and scheduled trigger bindings." />;
+        return <TriggersPage />;
       case 'connections':
-        return <SimpleListView title="Connections" description="OAuth2 connections and secret envelope credential bindings." />;
+        return <ConnectionsPage />;
       case 'models':
-        return <SimpleListView title="Models" description="AI provider models registry, cost profiles, and fallback rules." />;
+        return <ModelsPage />;
       case 'evaluations':
-        return <SimpleListView title="Evaluations" description="Model execution evaluations, quality metrics, and performance rollups." />;
+        return <EvaluationsPage />;
       case 'audit':
         return <AuditPage />;
       case 'settings':
