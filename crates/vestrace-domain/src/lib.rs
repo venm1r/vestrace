@@ -9,6 +9,7 @@ pub mod policy;
 pub mod provenance;
 pub mod budget;
 pub mod a2a;
+pub mod ag_ui;
 pub mod artifact;
 pub mod cognitive;
 pub mod connection;
