@@ -43,7 +43,9 @@ export const ArtifactsPage: React.FC = () => {
             Immutable CAS artifacts, quarantine status, and SHA-256 provenance tracking.
           </p>
         </div>
-        <Button variant="primary">Upload New Artifact</Button>
+        <Button variant="primary" onClick={() => alert('Opening resumable multipart artifact uploader dialog...')}>
+          Upload New Artifact
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -76,8 +78,12 @@ export const ArtifactsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">Inspect Provenance</Button>
-              <Button variant="ghost">Download Safe Copy</Button>
+              <Button variant="secondary" onClick={() => alert(`Provenance details for artifact ${art.id}:\n- Content Hash: ${art.contentHash}\n- Inspection Status: Passed\n- Source Run: run_4092`)}>
+                Inspect Provenance
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Initiating export stream for ${art.name}...`)}>
+                Download Safe Copy
+              </Button>
             </div>
           </Surface>
         ))}

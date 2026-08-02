@@ -43,7 +43,9 @@ export const EvaluationsPage: React.FC = () => {
             Execution quality scores, latency metrics, OpenTelemetry span analysis, and verification checks.
           </p>
         </div>
-        <Button variant="primary">Run Evaluation Suite</Button>
+        <Button variant="primary" onClick={() => alert('Starting automated Evaluation & Quality Benchmark Suite...')}>
+          Run Evaluation Suite
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -75,8 +77,12 @@ export const EvaluationsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">View Full Report</Button>
-              <Button variant="ghost">Inspect Spans</Button>
+              <Button variant="secondary" onClick={() => alert(`Loading full evaluation report for ${ev.id}...`)}>
+                View Full Report
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Opening OpenTelemetry trace inspector for run ${ev.runId}...`)}>
+                Inspect Spans
+              </Button>
             </div>
           </Surface>
         ))}

@@ -40,7 +40,9 @@ export const TriggersPage: React.FC = () => {
             External webhook event listeners and scheduled cron trigger bindings.
           </p>
         </div>
-        <Button variant="primary">Create Trigger</Button>
+        <Button variant="primary" onClick={() => alert('Opening Trigger & Webhook Creation Wizard...')}>
+          Create Trigger
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -71,8 +73,12 @@ export const TriggersPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">Edit Binding</Button>
-              <Button variant="ghost">View Delivery Logs</Button>
+              <Button variant="secondary" onClick={() => alert(`Editing binding configuration for trigger ${trg.id}...`)}>
+                Edit Binding
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Fetching HMAC delivery logs for trigger ${trg.name}...`)}>
+                View Delivery Logs
+              </Button>
             </div>
           </Surface>
         ))}

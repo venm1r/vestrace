@@ -37,7 +37,9 @@ export const WorkflowsPage: React.FC = () => {
             Versioned multi-step workflow graphs, planning modes, and execution rules.
           </p>
         </div>
-        <Button variant="primary">Create Workflow</Button>
+        <Button variant="primary" onClick={() => alert('Opening Workflow Graph Designer...')}>
+          Create Workflow
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -64,8 +66,12 @@ export const WorkflowsPage: React.FC = () => {
               <span>Steps: {wf.stepsCount}</span>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">View Graph</Button>
-              <Button variant="ghost">Execute Plan</Button>
+              <Button variant="secondary" onClick={() => alert(`Visualizing step graph for workflow ${wf.name}...`)}>
+                View Graph
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Triggering execution for workflow ${wf.id}...`)}>
+                Execute Plan
+              </Button>
             </div>
           </Surface>
         ))}

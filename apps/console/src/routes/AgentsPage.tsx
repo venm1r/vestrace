@@ -40,7 +40,9 @@ export const AgentsPage: React.FC = () => {
             Registered agent packages, system instructions, capability scopes, and versioned runtime profiles.
           </p>
         </div>
-        <Button variant="primary">Register Agent</Button>
+        <Button variant="primary" onClick={() => alert('Opening Agent Package Registration Wizard...')}>
+          Register Agent
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -74,8 +76,12 @@ export const AgentsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
-              <Button variant="secondary">Configure Capabilities</Button>
-              <Button variant="ghost">View Execution History</Button>
+              <Button variant="secondary" onClick={() => alert(`Capabilities for agent ${ag.name}:\n- memory.read\n- memory.write\n- context.retrieve`)}>
+                Configure Capabilities
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Loading execution log history for agent ${ag.id}...`)}>
+                View Execution History
+              </Button>
             </div>
           </Surface>
         ))}

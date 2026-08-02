@@ -61,8 +61,8 @@ export const HomePage: React.FC = () => {
         effect="Apply migration 0090_release_orchestration_and_manifests.sql to main database"
         risk="High"
         expiryMinutes={15}
-        onApprove={() => alert('Approved')}
-        onReject={() => alert('Denied')}
+        onApprove={() => alert('Approved: Authorization ticket granted for operation system.deploy_schema.')}
+        onReject={() => alert('Denied: Authorization request for system.deploy_schema rejected.')}
       />
 
       {/* 4. Compact Interactive Chat */}

@@ -37,7 +37,9 @@ export const ConnectionsPage: React.FC = () => {
             OAuth2 connections and encrypted SecretEnvelope credential broker bindings.
           </p>
         </div>
-        <Button variant="primary">Add Connection</Button>
+        <Button variant="primary" onClick={() => alert('Opening OAuth2 & Connection Broker Onboarding Wizard...')}>
+          Add Connection
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -68,8 +70,12 @@ export const ConnectionsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">Rotate Credentials</Button>
-              <Button variant="danger">Revoke Access</Button>
+              <Button variant="secondary" onClick={() => alert(`Initiating credential rotation for connection ${conn.id}...`)}>
+                Rotate Credentials
+              </Button>
+              <Button variant="danger" onClick={() => alert(`Revoking secret access for connection ${conn.id}...`)}>
+                Revoke Access
+              </Button>
             </div>
           </Surface>
         ))}

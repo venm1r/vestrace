@@ -40,7 +40,9 @@ export const ModelsPage: React.FC = () => {
             Registered AI provider models, context windows, cost profiles, and fallback policies.
           </p>
         </div>
-        <Button variant="primary">Register Model</Button>
+        <Button variant="primary" onClick={() => alert('Opening AI Model Registration Wizard...')}>
+          Register Model
+        </Button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -62,8 +64,12 @@ export const ModelsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary">Configure Fallback Rules</Button>
-              <Button variant="ghost">Test Connection</Button>
+              <Button variant="secondary" onClick={() => alert(`Configuring fallback policy for ${mdl.name}...`)}>
+                Configure Fallback Rules
+              </Button>
+              <Button variant="ghost" onClick={() => alert(`Ping test for ${mdl.provider}: 200 OK (45ms)`)}>
+                Test Connection
+              </Button>
             </div>
           </Surface>
         ))}

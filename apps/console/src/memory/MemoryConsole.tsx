@@ -38,8 +38,12 @@ export const MemoryConsole: React.FC<MemoryConsoleProps> = ({
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
-        <Button variant="secondary">View Provenance</Button>
-        <Button variant="danger">Hard Purge</Button>
+        <Button variant="secondary" onClick={() => alert(`Provenance tree for memory ${memoryId}:\n- Source Event: evt_109a8f\n- Evidence Role: DirectSource\n- Derivation: LLM Extraction v1`)}>
+          View Provenance
+        </Button>
+        <Button variant="danger" onClick={() => alert(`Hard purge requested for memory ${memoryId}. Content and derivative records will be permanently removed.`)}>
+          Hard Purge
+        </Button>
       </div>
     </Surface>
   );
