@@ -8,6 +8,7 @@ pub mod memory;
 pub mod outbox;
 mod ports;
 pub mod providers;
+pub mod runs;
 
 pub use context::RequestContext;
 pub use error::ApplicationError;
@@ -17,6 +18,7 @@ pub use memory::*;
 pub use outbox::OutboxMessage;
 pub use ports::{TransactionManager, UnitOfWork};
 pub use providers::*;
+pub use runs::*;
 
 #[cfg(test)]
 mod tests {
