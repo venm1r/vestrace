@@ -39,7 +39,7 @@ impl EventRepository for PgEventRepository {
 
     async fn find_by_id(
         &self,
-        id: vestrace_domain::id::EventId,
+        _id: vestrace_domain::id::EventId,
     ) -> Result<Option<Event>, ApplicationError> {
         // Query implementation
         Ok(None)
