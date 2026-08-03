@@ -10,7 +10,10 @@ use axum::{
 use tower::ServiceExt;
 use tracing::{Subscriber, field::Visit, span::Attributes};
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
-use vestrace_application::{ApplicationError, HealthRepository};
+use vestrace_application::{
+    ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunUseCases,
+};
+use vestrace_domain::{id::AgentRunId, run::AgentRun};
 use vestrace_http::{AppState, build_router};
 
 const INVALID_REQUEST_ID: &str = "invalid-request-id-secret";
@@ -22,11 +25,41 @@ const COOKIE_SECRET: &str = "session=cookie-secret-5104";
 const HEADER_SECRET: &str = "arbitrary-header-secret-2267";
 
 struct HealthyRepository;
+struct EmptyRunUseCases;
 
 #[async_trait::async_trait]
 impl HealthRepository for HealthyRepository {
     async fn check(&self) -> Result<(), ApplicationError> {
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl RunUseCases for EmptyRunUseCases {
+    async fn create_run(
+        &self,
+        _context: &RequestContext,
+        _command: CreateRunCommand,
+    ) -> Result<AgentRun, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "run creation is unavailable in request span tests".to_owned(),
+        ))
+    }
+
+    async fn list_runs(
+        &self,
+        _context: &RequestContext,
+        _limit: u32,
+    ) -> Result<Vec<AgentRun>, ApplicationError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_run(
+        &self,
+        _context: &RequestContext,
+        _id: AgentRunId,
+    ) -> Result<Option<AgentRun>, ApplicationError> {
+        Ok(None)
     }
 }
 
@@ -80,7 +113,11 @@ fn request_span_contains_only_sanitized_bounded_metadata() {
         .unwrap();
     let response = tracing::subscriber::with_default(subscriber, || {
         runtime.block_on(
-            build_router(AppState::new(Arc::new(HealthyRepository))).oneshot(
+            build_router(AppState::new(
+                Arc::new(HealthyRepository),
+                Arc::new(EmptyRunUseCases),
+            ))
+            .oneshot(
                 Request::get(SECRET_PATH)
                     .header("x-request-id", INVALID_REQUEST_ID)
                     .header("x-correlation-id", INVALID_CORRELATION_ID)
