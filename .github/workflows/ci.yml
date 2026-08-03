@@ -33,6 +33,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-targets --all-features
 
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+      - run: npm ci
+        working-directory: apps/console
+      - run: npm run typecheck
+        working-directory: apps/console
+      - run: npm run build
+        working-directory: apps/console
+
   compose-acceptance:
     runs-on: ubuntu-latest
     env:
