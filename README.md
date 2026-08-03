@@ -60,20 +60,24 @@ Creating a run persists a run record in `created` status. It does not start an a
 
 ## Local container environment
 
-Prerequisites: Docker Engine with Docker Compose v2, plus `curl` and Bash for the smoke checks. The Compose file uses distinct fixed credentials named `bootstrap-local-development-only` and `runtime-local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
+Prerequisites: Docker Engine with Docker Compose v2, plus `curl`, Python 3, and Bash for the smoke checks. The Compose file uses distinct fixed credentials named `bootstrap-local-development-only` and `runtime-local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
 
 Build and start both services:
 
 ```bash
 docker compose -p vestrace-foundation up --build -d
 ./scripts/foundation-smoke.sh
+bash ./scripts/foundation-run-smoke.sh
 ```
+
+The run smoke script explicitly seeds two local-only workspace/principal pairs, verifies create/list/get through HTTP, and confirms that the created run is hidden from the second workspace. It prints the identity values that can be supplied to the console. Identity creation remains outside the HTTP adapter; production systems must provision identities through an authenticated control plane.
 
 The server listens inside the container on `0.0.0.0:8080`, while Compose publishes it only as `127.0.0.1:8080` by default. To use another loopback port:
 
 ```bash
 VESTRACE_HTTP_PORT=18080 docker compose -p vestrace-foundation up --build -d
 ./scripts/foundation-smoke.sh http://127.0.0.1:18080
+bash ./scripts/foundation-run-smoke.sh http://127.0.0.1:18080
 ```
 
 Compose waits for PostgreSQL to report healthy before starting the server. The server connects, applies embedded migrations, and then begins serving. `/health/live` reports process liveness. `/health/ready` checks database access and exact migration compatibility.
@@ -82,6 +86,7 @@ The PostgreSQL image bootstraps with the local-only `vestrace_bootstrap` adminis
 
 ```bash
 ./scripts/foundation-smoke.sh
+bash ./scripts/foundation-run-smoke.sh
 ./scripts/foundation-runtime-rls.sh
 ```
 
@@ -101,7 +106,7 @@ docker compose -p vestrace-foundation down -v --remove-orphans
 
 ## Console
 
-The console is located in `apps/console`. Configure the request identity explicitly:
+The console is located in `apps/console`. Configure the request identity explicitly. The local run smoke prints a usable development pair:
 
 ```text
 VITE_VESTRACE_WORKSPACE_ID=<workspace UUID>
