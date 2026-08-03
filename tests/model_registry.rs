@@ -1,4 +1,4 @@
-use vestrace_domain::{id::*, models::*, now};
+use vestrace_domain::models::ModelCostProfile;
 
 #[test]
 fn test_cost_profile_validation() {
