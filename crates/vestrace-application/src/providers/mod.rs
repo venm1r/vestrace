@@ -1,3 +1,3 @@
-pub mod ports;
+mod ports;
 
 pub use ports::*;
