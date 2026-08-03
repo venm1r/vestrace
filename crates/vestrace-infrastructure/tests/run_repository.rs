@@ -13,10 +13,10 @@ async fn run_repository_isolates_workspaces(pool: PgPool) {
 
     sqlx::query(
         r#"
-        INSERT INTO workspaces (id, name, slug)
+        INSERT INTO workspaces (id, slug)
         VALUES
-            ($1, 'Workspace A', 'workspace-a'),
-            ($2, 'Workspace B', 'workspace-b')
+            ($1, 'workspace-a'),
+            ($2, 'workspace-b')
         "#,
     )
     .bind(workspace_a.as_uuid())
@@ -27,10 +27,10 @@ async fn run_repository_isolates_workspaces(pool: PgPool) {
 
     sqlx::query(
         r#"
-        INSERT INTO principals (id, workspace_id, name, principal_type)
+        INSERT INTO principals (id, workspace_id, identifier)
         VALUES
-            ($1, $2, 'Principal A', 'user'),
-            ($3, $4, 'Principal B', 'user')
+            ($1, $2, 'principal-a'),
+            ($3, $4, 'principal-b')
         "#,
     )
     .bind(principal_a.as_uuid())
