@@ -1,8 +1,8 @@
-use vestrace_application::{
-    DeterministicExtractor, MemoryExtractor, RequestContext, commands::*, ports::*, services::*,
-};
+use vestrace_application::{ExtractedCandidate, RequestContext};
 use vestrace_domain::{
-    ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryWritePolicy, id::*, now,
+    ActorRef, Confidence, MemoryKind, MemoryWritePolicy,
+    id::{EventId, PrincipalId, WorkspaceId},
+    now,
 };
 
 #[test]
@@ -24,7 +24,7 @@ fn test_end_to_end_memory_core_flow() {
     )
     .unwrap();
 
-    assert_eq!(event.workspace_id, ws_id);
+    assert_eq!(event.workspace_id, ctx.workspace_id);
 
     // 2. Memory Extraction
     let candidate = ExtractedCandidate {
