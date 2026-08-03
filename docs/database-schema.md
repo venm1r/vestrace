@@ -1,31 +1,42 @@
 # PostgreSQL Schema & Migrations Reference
 
-Vestrace uses PostgreSQL with `pgvector` and `pg_trgm` extensions as its authoritative relational store. All migrations are forward-only and applied sequentially.
+Vestrace uses PostgreSQL with `pgvector` and `pg_trgm` extensions as its authoritative relational store. Migrations are forward-only and applied sequentially by SQLx.
 
-## Migration History
+## Migration source of truth
 
-| Migration Script | Description | Primary Tables Created |
+The ordered [`migrations/`](../migrations/) directory is the authoritative migration history. Do not maintain a maximum migration number in this document: new migrations must be discovered from that directory and validated against the `_sqlx_migrations` table at runtime.
+
+The early foundation migrations establish:
+
+| Area | Representative migrations | Primary objects |
 | :--- | :--- | :--- |
-| `0001_extensions.sql` | Enables PostgreSQL extensions | `vector`, `pg_trgm` |
-| `0002_identity_and_workspaces.sql` | Tenant identity & RBAC schema | `workspaces`, `principals`, `roles`, `capabilities` |
-| `0003_rls_baseline.sql` | Row-Level Security helper functions | RLS policies on identity tables |
-| `0004_sessions_and_events.sql` | Append-only event ingestion | `sessions`, `events` |
-| `0005_memories_and_revisions.sql` | Core memory & revision history | `memories`, `memory_revisions` |
-| `0006_provenance_scopes_relations.sql` | Knowledge graph & derivations | `derivations`, `memory_sources`, `knowledge_relations` |
-| `0007_idempotency_jobs_outbox.sql` | Worker queues & audit logs | `idempotency_keys`, `jobs`, `outbox`, `purge_audits` |
-| `0008_search_documents.sql` | Full-text & trigram search index | `search_documents` |
-| `0009_embedding_spaces.sql` | Vector search & embeddings | `embedding_spaces`, `memory_embeddings` |
-| `0010_structured_search_indexes.sql` | Entity-attribute search index | `structured_search_indexes` |
-| `0011_retrieval_journal_and_context_packs.sql` | Context pack caching & audit | `retrieval_runs`, `context_packs` |
-| `0012_tokens_policies_and_approvals.sql` | Access tokens & approvals | `access_tokens`, `approval_records` |
-| `0013_audit_and_redaction.sql` | Security audit & redaction | `audit_events`, `redaction_rules` |
-| `0014_provider_and_model_registry.sql` | AI provider & model registry | `providers`, `models` |
-| `0015_routing_executions_and_evaluations.sql` | Execution logs & routing | `routing_decisions`, `model_executions` |
-| `0016_agents_skills_workflows.sql` | Cognitive asset registry | `agents`, `skills` |
+| Extensions and identity | `0001_extensions.sql`–`0003_rls_baseline.sql` | `vector`, `pg_trgm`, workspaces, principals, roles, RLS helpers |
+| Evidence and memory | `0004_sessions_and_events.sql`–`0011_retrieval_journal_and_context_packs.sql` | sessions, events, memories, revisions, provenance, relations, retrieval records |
+| Policy and providers | `0012_tokens_policies_and_approvals.sql`–`0016_agents_skills_workflows.sql` | tokens, approvals, audit, providers, models, agents, skills |
+| Durable runs and later capabilities | Later ordered migration files | run records, events, checkpoints, policies, artifacts, product and integration registries |
 
-## Row-Level Security (RLS) Isolation
+When documentation and migration SQL differ, migration SQL is authoritative.
 
-Every multi-tenant table enables Row-Level Security:
+## P0 run records
+
+The P0 API persists run metadata in `agent_runs`:
+
+```text
+id
+workspace_id
+principal_id
+title
+status
+run_version
+created_at
+updated_at
+```
+
+P0 exposes create, list, and get operations for these records. The existence of run-event and checkpoint tables does not imply that deterministic reduction, replay, or checkpoint restoration is implemented in the application layer.
+
+## Row-Level Security isolation
+
+Multi-tenant tables enable Row-Level Security using workspace-bound policies such as:
 
 ```sql
 ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;
@@ -36,4 +47,8 @@ CREATE POLICY <table_name>_workspace_isolation ON <table_name>
     WITH CHECK (workspace_id = vestrace_current_workspace_id());
 ```
 
-Session variable `vestrace.workspace_id` is automatically populated by `PgTransactionManager` on every scoped transaction.
+`PgStore::begin_scoped` sets `vestrace.workspace_id` and `vestrace.principal_id` with transaction-local `set_config(..., true)` calls. Run persistence uses that scoped transaction boundary and also includes explicit workspace predicates for reads.
+
+## Runtime compatibility
+
+Readiness requires the applied `_sqlx_migrations` rows to match the embedded migration set by version, success state, and checksum. A database with missing, extra, failed, or modified migration records is not considered ready.
