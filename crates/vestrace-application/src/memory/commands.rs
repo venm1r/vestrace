@@ -1,7 +1,7 @@
 use vestrace_domain::{
-    ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryStatus, MemoryWritePolicy,
-    RelationType, StructuredMemory, SubjectRef,
-    id::{EventId, MemoryId, MemoryRevisionId, MemorySourceId, RelationId, SessionId, WorkspaceId},
+    ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryWritePolicy, RelationType,
+    StructuredMemory, SubjectRef,
+    id::{EventId, MemoryId, RelationId, SessionId},
 };
 
 #[derive(Clone, Debug, PartialEq)]
