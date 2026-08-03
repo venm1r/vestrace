@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use vestrace_domain::id::WorkspaceId;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenerationRequest {
