@@ -1,3 +1,5 @@
+pub mod ag_ui;
+
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -29,6 +31,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/v1/metrics/summary", get(get_metrics_summary))
         .route("/v1/system/health", get(get_system_health))
         .route("/v1/profile", get(get_profile))
+        .merge(ag_ui::ag_ui_routes())
 }
 
 #[derive(Debug, Deserialize)]
