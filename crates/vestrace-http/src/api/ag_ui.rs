@@ -17,9 +17,9 @@ use crate::AppState;
 
 pub fn ag_ui_routes() -> Router<AppState> {
     Router::new()
-        .route("/ag-ui/endpoints", get(list_endpoints).post(create_endpoint))
-        .route("/ag-ui/events/stream", get(ag_ui_event_stream))
-        .route("/ag-ui/run", post(ag_ui_run_agent))
+        .route("/endpoints", get(list_endpoints).post(create_endpoint))
+        .route("/events/stream", get(ag_ui_event_stream))
+        .route("/run", post(ag_ui_run_agent))
 }
 
 #[derive(Debug, Deserialize)]

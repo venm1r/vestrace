@@ -33,10 +33,12 @@ impl AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let api = crate::api::api_routes();
     Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
-        .nest("/api", crate::api::api_routes())
+        .nest("/api/v1", api.clone())
+        .nest("/api/ag-ui", crate::api::ag_ui::ag_ui_routes())
         .with_state(state)
         .layer(middleware::from_fn(add_request_context))
 }
@@ -56,6 +58,7 @@ async fn add_request_context(mut request: Request<Body>, next: Next) -> Response
     let route = match request.uri().path() {
         "/health/live" => "/health/live",
         "/health/ready" => "/health/ready",
+        p if p.starts_with("/api") || p.starts_with("/v1") => "api",
         _ => "unmatched",
     };
 
