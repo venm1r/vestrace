@@ -6,14 +6,16 @@ use axum::{
 use crate::AppState;
 
 pub mod ag_ui;
+mod context;
 mod error;
+mod runs;
 
 pub use error::ApiError;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
-        .route("/runs", get(unsupported_runs).post(unsupported_runs))
-        .route("/runs/{id}", get(unsupported_runs))
+        .route("/runs", get(runs::list_runs).post(runs::create_run))
+        .route("/runs/{id}", get(runs::get_run))
         .route("/runs/{id}/approve", post(unsupported_approval))
         .route("/artifacts", get(unsupported_artifacts))
         .route("/agents", get(unsupported_agents))
@@ -36,7 +38,6 @@ macro_rules! unsupported_handler {
     };
 }
 
-unsupported_handler!(unsupported_runs, "run API");
 unsupported_handler!(unsupported_approval, "run approval API");
 unsupported_handler!(unsupported_artifacts, "artifact API");
 unsupported_handler!(unsupported_agents, "agent API");
