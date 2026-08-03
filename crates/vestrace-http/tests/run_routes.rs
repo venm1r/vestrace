@@ -8,12 +8,7 @@ use tower::ServiceExt;
 use vestrace_application::{
     ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunUseCases,
 };
-use vestrace_domain::{
-    PrincipalId, WorkspaceId,
-    id::AgentRunId,
-    now,
-    run::AgentRun,
-};
+use vestrace_domain::{PrincipalId, WorkspaceId, id::AgentRunId, now, run::AgentRun};
 use vestrace_http::{AppState, build_router};
 
 struct HealthyRepository;
@@ -80,10 +75,7 @@ impl RunUseCases for FakeRunUseCases {
 }
 
 fn app(run_use_cases: Arc<FakeRunUseCases>) -> axum::Router {
-    build_router(AppState::new(
-        Arc::new(HealthyRepository),
-        run_use_cases,
-    ))
+    build_router(AppState::new(Arc::new(HealthyRepository), run_use_cases))
 }
 
 fn identity_request(method: &str, uri: &str, body: Body) -> Request<Body> {
@@ -127,9 +119,7 @@ async fn create_run_returns_201_and_the_persisted_contract() {
         .oneshot(identity_request(
             "POST",
             "/v1/runs",
-            Body::from(
-                serde_json::json!({"title": "Verify retention policy"}).to_string(),
-            ),
+            Body::from(serde_json::json!({"title": "Verify retention policy"}).to_string()),
         ))
         .await
         .unwrap();
@@ -147,16 +137,10 @@ async fn create_run_returns_201_and_the_persisted_contract() {
 #[tokio::test]
 async fn list_runs_returns_200_without_mock_fields() {
     let run_use_cases = Arc::new(FakeRunUseCases::default());
-    let workspace_id = WorkspaceId::from_uuid(
-        "00000000-0000-0000-0000-000000000001"
-            .parse()
-            .unwrap(),
-    );
-    let principal_id = PrincipalId::from_uuid(
-        "00000000-0000-0000-0000-000000000002"
-            .parse()
-            .unwrap(),
-    );
+    let workspace_id =
+        WorkspaceId::from_uuid("00000000-0000-0000-0000-000000000001".parse().unwrap());
+    let principal_id =
+        PrincipalId::from_uuid("00000000-0000-0000-0000-000000000002".parse().unwrap());
     run_use_cases.runs.lock().unwrap().push(AgentRun::new(
         AgentRunId::new(),
         workspace_id,

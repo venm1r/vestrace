@@ -1,8 +1,9 @@
 use vestrace_application::RequestContext;
 use vestrace_domain::{
+    ActorRef, Confidence, Event, Importance, Memory, MemoryKind, MemoryRevision, MemoryStatus,
+    MemoryWritePolicy, RelationType, StructuredMemory,
     id::{EventId, MemoryId, WorkspaceId},
-    now, ActorRef, Confidence, Event, Importance, Memory, MemoryKind, MemoryRevision,
-    MemoryStatus, MemoryWritePolicy, RelationType, StructuredMemory,
+    now,
 };
 
 #[test]
@@ -35,5 +36,8 @@ fn test_policy_evaluation() {
 
     let low_conf = Confidence::new(0.3).unwrap();
     let decision_low = policy.evaluate(MemoryKind::Fact, low_conf);
-    assert_eq!(decision_low, vestrace_domain::ActivationDecision::DiscardCandidate);
+    assert_eq!(
+        decision_low,
+        vestrace_domain::ActivationDecision::DiscardCandidate
+    );
 }

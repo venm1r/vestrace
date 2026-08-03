@@ -1,11 +1,7 @@
 use chrono::{TimeZone, Utc};
 use sqlx::PgPool;
 use vestrace_application::{RequestContext, RunRepository};
-use vestrace_domain::{
-    PrincipalId, WorkspaceId,
-    id::AgentRunId,
-    run::AgentRun,
-};
+use vestrace_domain::{PrincipalId, WorkspaceId, id::AgentRunId, run::AgentRun};
 use vestrace_infrastructure::{PgRunRepository, PgStore};
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -48,10 +44,7 @@ async fn run_repository_isolates_workspaces(pool: PgPool) {
     let repository = PgRunRepository::new(PgStore::from_pool(pool));
     let context_a = RequestContext::new(workspace_a, principal_a);
     let context_b = RequestContext::new(workspace_b, principal_b);
-    let at = Utc
-        .with_ymd_and_hms(2026, 8, 4, 0, 0, 0)
-        .single()
-        .unwrap();
+    let at = Utc.with_ymd_and_hms(2026, 8, 4, 0, 0, 0).single().unwrap();
     let run = AgentRun::new(
         AgentRunId::new(),
         workspace_a,

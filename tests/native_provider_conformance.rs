@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, models::runtime::*, now,
-};
+use vestrace_domain::{id::*, models::runtime::*, now};
 
 #[test]
 fn test_attempt_status_creation() {

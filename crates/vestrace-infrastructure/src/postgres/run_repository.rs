@@ -53,9 +53,7 @@ impl TryFrom<StoredRun> for AgentRun {
         let version = u64::try_from(stored.run_version)
             .ok()
             .and_then(|value| RunVersion::new(value).ok())
-            .ok_or_else(|| {
-                ApplicationError::Storage("stored run version is invalid".to_owned())
-            })?;
+            .ok_or_else(|| ApplicationError::Storage("stored run version is invalid".to_owned()))?;
 
         Ok(Self {
             id: AgentRunId::from_uuid(stored.id),

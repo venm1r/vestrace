@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    enterprise::*, id::*, now,
-};
+use vestrace_domain::{enterprise::*, id::*, now};
 
 #[test]
 fn test_envelope_encryption_and_cross_sharing() {

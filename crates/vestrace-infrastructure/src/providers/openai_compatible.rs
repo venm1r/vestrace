@@ -30,7 +30,10 @@ impl OpenAiCompatibleClient {
 
 #[async_trait]
 impl TextGenerationProvider for OpenAiCompatibleClient {
-    async fn generate(&self, request: GenerationRequest) -> Result<GenerationResponse, ProviderError> {
+    async fn generate(
+        &self,
+        request: GenerationRequest,
+    ) -> Result<GenerationResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.base_url);
         let payload = json!({
             "model": request.model,
@@ -109,7 +112,10 @@ impl EmbeddingProvider for OpenAiCompatibleClient {
         if let Some(data) = body["data"].as_array() {
             for item in data {
                 if let Some(vec) = item["embedding"].as_array() {
-                    let vec_f32: Vec<f32> = vec.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    let vec_f32: Vec<f32> = vec
+                        .iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
                     embeddings.push(vec_f32);
                 }
             }

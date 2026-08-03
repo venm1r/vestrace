@@ -1,5 +1,5 @@
-use vestrace_domain::{id::OutboxId, time::Timestamp, WorkspaceId};
 use serde::{Deserialize, Serialize};
+use vestrace_domain::{WorkspaceId, id::OutboxId, time::Timestamp};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OutboxMessage {

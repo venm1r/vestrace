@@ -1,8 +1,4 @@
-use crate::{
-    context::RequestContext,
-    error::ApplicationError,
-    jobs::ports::JobRepository,
-};
+use crate::{context::RequestContext, error::ApplicationError, jobs::ports::JobRepository};
 use vestrace_domain::id::JobId;
 
 pub struct Worker<J> {

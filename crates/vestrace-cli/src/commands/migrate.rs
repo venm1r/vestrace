@@ -1,5 +1,5 @@
-use vestrace_infrastructure::AppConfig;
 use tracing::info;
+use vestrace_infrastructure::AppConfig;
 
 pub fn run(_config: &AppConfig) -> anyhow::Result<()> {
     info!("Running database migration check...");

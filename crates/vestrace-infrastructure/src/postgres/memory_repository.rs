@@ -88,7 +88,10 @@ impl MemoryRepository for PgMemoryRepository {
         Ok(None)
     }
 
-    async fn find_revision_by_id(&self, _id: MemoryRevisionId) -> Result<Option<MemoryRevision>, ApplicationError> {
+    async fn find_revision_by_id(
+        &self,
+        _id: MemoryRevisionId,
+    ) -> Result<Option<MemoryRevision>, ApplicationError> {
         Ok(None)
     }
 }

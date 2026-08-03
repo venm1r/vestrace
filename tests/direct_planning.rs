@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, planning::*, now,
-};
+use vestrace_domain::{id::*, now, planning::*};
 
 #[test]
 fn test_execution_plan_creation() {

@@ -1,7 +1,7 @@
 use crate::{
+    Confidence, DomainError,
     id::{MemoryId, RelationId, WorkspaceId},
     time::Timestamp,
-    Confidence, DomainError,
 };
 use serde::{Deserialize, Serialize};
 

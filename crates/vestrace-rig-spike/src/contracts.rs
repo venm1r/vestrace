@@ -1,5 +1,5 @@
-use vestrace_domain::id::{AgentRunId, RunStepId};
 use serde::{Deserialize, Serialize};
+use vestrace_domain::id::{AgentRunId, RunStepId};
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpikeLoopStart {

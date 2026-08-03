@@ -1,6 +1,6 @@
-use async_trait::async_trait;
-use vestrace_domain::{id::JobId, Job, JobState};
 use crate::ApplicationError;
+use async_trait::async_trait;
+use vestrace_domain::{Job, JobState, id::JobId};
 
 #[async_trait]
 pub trait JobRepository: Send + Sync {

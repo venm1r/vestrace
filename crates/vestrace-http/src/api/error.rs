@@ -37,9 +37,11 @@ impl ApiError {
 
     pub fn from_application(error: ApplicationError) -> Self {
         match error {
-            ApplicationError::Domain(error) => {
-                Self::new(StatusCode::BAD_REQUEST, "invalid_request", error.to_string())
-            }
+            ApplicationError::Domain(error) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                error.to_string(),
+            ),
             ApplicationError::Conflict(message) => {
                 Self::new(StatusCode::CONFLICT, "conflict", message)
             }
@@ -68,11 +70,7 @@ impl ApiError {
         }
     }
 
-    fn new(
-        status: StatusCode,
-        code: &'static str,
-        message: impl Into<String>,
-    ) -> Self {
+    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
             body: ErrorBody {

@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    a2a::*, id::*, now,
-};
+use vestrace_domain::{a2a::*, id::*, now};
 
 #[test]
 fn test_remote_agent_invocation() {

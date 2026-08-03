@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, webhook::*, now,
-};
+use vestrace_domain::{id::*, now, webhook::*};
 
 #[test]
 fn test_webhook_subscription_creation() {

@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, product::*, now,
-};
+use vestrace_domain::{id::*, now, product::*};
 
 #[test]
 fn test_product_api_transfer_creation() {

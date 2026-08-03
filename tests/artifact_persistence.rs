@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    artifact::*, id::*, now,
-};
+use vestrace_domain::{artifact::*, id::*, now};
 
 #[test]
 fn test_artifact_and_revision_creation() {

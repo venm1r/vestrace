@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, tool::*, now,
-};
+use vestrace_domain::{id::*, now, tool::*};
 
 #[test]
 fn test_tool_definition_and_invocation() {

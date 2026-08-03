@@ -1,8 +1,8 @@
 use vestrace_application::{
-    commands::*, ports::*, services::*, DeterministicExtractor, MemoryExtractor, RequestContext,
+    DeterministicExtractor, MemoryExtractor, RequestContext, commands::*, ports::*, services::*,
 };
 use vestrace_domain::{
-    id::*, now, ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryWritePolicy,
+    ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryWritePolicy, id::*, now,
 };
 
 #[test]

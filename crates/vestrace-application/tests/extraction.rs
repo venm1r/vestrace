@@ -2,8 +2,9 @@ use vestrace_application::{
     DeterministicExtractor, ExtractedCandidate, MemoryExtractor, RequestContext,
 };
 use vestrace_domain::{
+    ActorRef, Event,
     id::{EventId, WorkspaceId},
-    now, ActorRef, Event,
+    now,
 };
 
 #[tokio::test]

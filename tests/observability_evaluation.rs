@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, observability::*, now,
-};
+use vestrace_domain::{id::*, now, observability::*};
 
 #[test]
 fn test_metric_rollup_creation() {

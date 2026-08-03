@@ -1,11 +1,13 @@
 use crate::{
+    DomainError,
     id::{AgentRunId, PrincipalId, WorkspaceId},
     time::Timestamp,
-    DomainError,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct RunVersion(u64);
 
@@ -14,7 +16,9 @@ impl RunVersion {
 
     pub fn new(value: u64) -> Result<Self, DomainError> {
         if value == 0 {
-            Err(DomainError::InvalidArgument("run version must be positive".into()))
+            Err(DomainError::InvalidArgument(
+                "run version must be positive".into(),
+            ))
         } else {
             Ok(Self(value))
         }

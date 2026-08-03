@@ -1,7 +1,7 @@
 use crate::{
+    Confidence, DomainError, Importance, MemoryKind, MemoryStatus, StructuredMemory,
     id::{MemoryId, MemoryRevisionId, WorkspaceId},
     time::Timestamp,
-    Confidence, DomainError, Importance, MemoryKind, MemoryStatus, StructuredMemory,
 };
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -41,7 +41,11 @@ impl Memory {
         }
     }
 
-    pub fn activate(mut self, revision_id: MemoryRevisionId, at: Timestamp) -> Result<Self, DomainError> {
+    pub fn activate(
+        mut self,
+        revision_id: MemoryRevisionId,
+        at: Timestamp,
+    ) -> Result<Self, DomainError> {
         match self.status {
             MemoryStatus::Candidate | MemoryStatus::Active => {
                 self.status = MemoryStatus::Active;
@@ -49,12 +53,13 @@ impl Memory {
                 self.updated_at = at;
                 Ok(self)
             }
-            MemoryStatus::Superseded | MemoryStatus::Rejected | MemoryStatus::Expired | MemoryStatus::Deleted => {
-                Err(DomainError::PolicyViolation(format!(
-                    "cannot activate memory in status {:?}",
-                    self.status
-                )))
-            }
+            MemoryStatus::Superseded
+            | MemoryStatus::Rejected
+            | MemoryStatus::Expired
+            | MemoryStatus::Deleted => Err(DomainError::PolicyViolation(format!(
+                "cannot activate memory in status {:?}",
+                self.status
+            ))),
         }
     }
 

@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, release::*, now,
-};
+use vestrace_domain::{id::*, now, release::*};
 
 #[test]
 fn test_release_manifest_creation() {

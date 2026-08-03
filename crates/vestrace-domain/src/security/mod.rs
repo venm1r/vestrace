@@ -38,12 +38,17 @@ impl FromStr for Capability {
             "event.read" => Ok(Self::EventRead),
             "event.write" => Ok(Self::EventWrite),
             "context.retrieve" => Ok(Self::ContextRetrieve),
-            _ => Err(DomainError::InvalidArgument(format!("unknown capability {}", s))),
+            _ => Err(DomainError::InvalidArgument(format!(
+                "unknown capability {}",
+                s
+            ))),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Sensitivity {
     Public,

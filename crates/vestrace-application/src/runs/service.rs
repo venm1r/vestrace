@@ -1,10 +1,5 @@
 use async_trait::async_trait;
-use vestrace_domain::{
-    DomainError,
-    id::AgentRunId,
-    now,
-    run::AgentRun,
-};
+use vestrace_domain::{DomainError, id::AgentRunId, now, run::AgentRun};
 
 use crate::{ApplicationError, RequestContext};
 
@@ -76,9 +71,7 @@ mod tests {
 
     use async_trait::async_trait;
     use vestrace_domain::{
-        DomainError,
-        PrincipalId,
-        WorkspaceId,
+        DomainError, PrincipalId, WorkspaceId,
         id::AgentRunId,
         now,
         run::{AgentRun, RunStatus},

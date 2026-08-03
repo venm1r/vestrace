@@ -1,7 +1,7 @@
 use crate::{
+    DomainError,
     id::{BudAccountId, WorkspaceId},
     time::Timestamp,
-    DomainError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,9 @@ impl BudgetAccount {
 
     pub fn reserve(&mut self, amount: f32) -> Result<(), DomainError> {
         if amount < 0.0 {
-            return Err(DomainError::InvalidArgument("reservation amount must be positive".into()));
+            return Err(DomainError::InvalidArgument(
+                "reservation amount must be positive".into(),
+            ));
         }
         if self.balance + amount > self.hard_limit {
             return Err(DomainError::PolicyViolation(format!(

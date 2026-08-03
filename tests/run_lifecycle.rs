@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, run::*, now,
-};
+use vestrace_domain::{id::*, now, run::*};
 
 #[test]
 fn test_agent_run_version_increments() {

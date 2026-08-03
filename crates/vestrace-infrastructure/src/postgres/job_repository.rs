@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
 use vestrace_application::{ApplicationError, JobRepository};
-use vestrace_domain::{id::JobId, Job, JobState};
+use vestrace_domain::{Job, JobState, id::JobId};
 
 pub struct PgJobRepository {
     pool: PgPool,
