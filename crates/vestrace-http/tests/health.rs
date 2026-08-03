@@ -8,7 +8,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use tower::ServiceExt;
-use vestrace_application::{ApplicationError, HealthRepository};
+use vestrace_application::{
+    ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunUseCases,
+};
+use vestrace_domain::{id::AgentRunId, run::AgentRun};
 use vestrace_http::{AppState, build_router};
 
 const VALID_REQUEST_ID: &str = "01890f3e-7b28-7c00-8000-000000000001";
@@ -18,6 +21,8 @@ struct FakeHealthRepository {
     available: bool,
     checks: AtomicUsize,
 }
+
+struct EmptyRunUseCases;
 
 impl FakeHealthRepository {
     fn new(available: bool) -> Self {
@@ -47,8 +52,37 @@ impl HealthRepository for FakeHealthRepository {
     }
 }
 
+#[async_trait::async_trait]
+impl RunUseCases for EmptyRunUseCases {
+    async fn create_run(
+        &self,
+        _context: &RequestContext,
+        _command: CreateRunCommand,
+    ) -> Result<AgentRun, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "run creation is unavailable in health tests".to_owned(),
+        ))
+    }
+
+    async fn list_runs(
+        &self,
+        _context: &RequestContext,
+        _limit: u32,
+    ) -> Result<Vec<AgentRun>, ApplicationError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_run(
+        &self,
+        _context: &RequestContext,
+        _id: AgentRunId,
+    ) -> Result<Option<AgentRun>, ApplicationError> {
+        Ok(None)
+    }
+}
+
 fn router(repository: Arc<FakeHealthRepository>) -> axum::Router {
-    build_router(AppState::new(repository))
+    build_router(AppState::new(repository, Arc::new(EmptyRunUseCases)))
 }
 
 async fn body(response: axum::response::Response) -> String {
