@@ -1,8 +1,6 @@
-use vestrace_application::RequestContext;
 use vestrace_domain::{
-    ActorRef, Confidence, Event, Importance, Memory, MemoryKind, MemoryRevision, MemoryStatus,
-    MemoryWritePolicy, RelationType, StructuredMemory,
-    id::{EventId, MemoryId, WorkspaceId},
+    Confidence, Memory, MemoryKind, MemoryStatus, MemoryWritePolicy,
+    id::{MemoryId, WorkspaceId},
     now,
 };
 
