@@ -77,6 +77,12 @@ impl RunRepository for PgRunRepository {
         context: &RequestContext,
         run: &AgentRun,
     ) -> Result<(), ApplicationError> {
+        if run.workspace_id != context.workspace_id || run.principal_id != context.principal_id {
+            return Err(ApplicationError::Storage(
+                "run identity does not match request context".to_owned(),
+            ));
+        }
+
         let mut transaction = self
             .store
             .begin_scoped(context)
@@ -130,10 +136,12 @@ impl RunRepository for PgRunRepository {
             r#"
             SELECT id, workspace_id, principal_id, title, status, run_version, created_at, updated_at
             FROM agent_runs
+            WHERE workspace_id = $1
             ORDER BY created_at DESC, id DESC
-            LIMIT $1
+            LIMIT $2
             "#,
         )
+        .bind(context.workspace_id.as_uuid())
         .bind(i64::from(limit))
         .fetch_all(transaction.connection())
         .await
@@ -162,10 +170,11 @@ impl RunRepository for PgRunRepository {
             r#"
             SELECT id, workspace_id, principal_id, title, status, run_version, created_at, updated_at
             FROM agent_runs
-            WHERE id = $1
+            WHERE id = $1 AND workspace_id = $2
             "#,
         )
         .bind(id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
         .fetch_optional(transaction.connection())
         .await
         .map_err(|_| storage_failure())?;
