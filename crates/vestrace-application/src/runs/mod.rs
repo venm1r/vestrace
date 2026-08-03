@@ -1,6 +1,6 @@
-pub mod commands;
-pub mod ports;
-pub mod service;
+mod commands;
+mod ports;
+mod service;
 
 pub use commands::*;
 pub use ports::*;
