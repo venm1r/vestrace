@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, ModelItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const ModelsPage: React.FC = () => {
-  const [models, setModels] = useState<ModelItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: models, error, loading } = useApiResource(vestraceClient.listModels);
 
-  useEffect(() => {
-    vestraceClient.listModels().then(setModels).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const ModelsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Register model profile dialog...')}
+          onClick={() => alert('Model registration is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -65,18 +69,18 @@ export const ModelsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {models.map((m) => (
-                <tr key={m.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
+              {(models ?? []).map((model) => (
+                <tr key={model.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
                   <td style={{ padding: '16px 24px' }}>
                     <div style={{ fontWeight: 600, color: '#F3F6F9', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>extension</span>
-                      {m.model_name}
+                      {model.model_name}
                     </div>
                   </td>
-                  <td style={{ padding: '16px' }}>{m.provider}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{m.context_window}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{m.cost_input}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{m.cost_output}</td>
+                  <td style={{ padding: '16px' }}>{model.provider}</td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.context_window}</td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.cost_input}</td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.cost_output}</td>
                 </tr>
               ))}
             </tbody>
