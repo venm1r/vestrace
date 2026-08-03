@@ -1,7 +1,7 @@
-pub mod commands;
-pub mod extraction;
-pub mod ports;
-pub mod services;
+mod commands;
+mod extraction;
+mod ports;
+mod services;
 
 pub use commands::*;
 pub use extraction::*;
