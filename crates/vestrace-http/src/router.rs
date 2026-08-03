@@ -36,6 +36,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
+        .nest("/api", crate::api::api_routes())
         .with_state(state)
         .layer(middleware::from_fn(add_request_context))
 }
