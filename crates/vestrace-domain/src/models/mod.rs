@@ -1,13 +1,17 @@
 use crate::{
+    DomainError,
     id::{ModelId, ProviderId, WorkspaceId},
     time::Timestamp,
-    DomainError,
 };
 use serde::{Deserialize, Serialize};
 
 pub mod runtime;
 
 pub use runtime::*;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderLocality {
     Local,
     Remote,
 }
