@@ -1,16 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, ArtifactItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const ArtifactsPage: React.FC = () => {
-  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: artifacts, error, loading } = useApiResource(vestraceClient.listArtifacts);
 
-  useEffect(() => {
-    vestraceClient
-      .listArtifacts()
-      .then(setArtifacts)
-      .finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -25,7 +26,7 @@ export const ArtifactsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Artifact exported as signed bundle')}
+          onClick={() => alert('Artifact export is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -68,26 +69,26 @@ export const ArtifactsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {artifacts.map((a) => (
-                <tr key={a.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
+              {(artifacts ?? []).map((artifact) => (
+                <tr key={artifact.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
                   <td style={{ padding: '16px 24px' }}>
                     <div style={{ fontWeight: 600, color: '#F3F6F9', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>description</span>
-                      {a.name}
+                      {artifact.name}
                     </div>
                   </td>
                   <td style={{ padding: '16px' }}>
                     <span style={{ padding: '4px 8px', background: 'var(--color-surface-container-high)', borderRadius: '4px', fontSize: '12px' }}>
-                      {a.kind}
+                      {artifact.kind}
                     </span>
                   </td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{a.size}</td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{artifact.size}</td>
                   <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>
-                    {a.checksum.slice(0, 24)}...
+                    {artifact.checksum.slice(0, 24)}...
                   </td>
                   <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                     <button
-                      onClick={() => alert(`Downloading artifact metadata for ${a.name}`)}
+                      onClick={() => alert(`Artifact download is not implemented for ${artifact.name}`)}
                       style={{
                         background: 'transparent',
                         color: 'var(--color-tertiary)',
