@@ -16,6 +16,7 @@ clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+vestrace-application = { path = "../vestrace-application" }
 vestrace-http = { path = "../vestrace-http" }
 vestrace-infrastructure = { path = "../vestrace-infrastructure" }
 
