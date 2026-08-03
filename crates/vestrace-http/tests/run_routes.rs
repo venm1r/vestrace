@@ -110,7 +110,9 @@ async fn create_run_requires_workspace_and_principal_headers() {
                 .method("POST")
                 .uri("/v1/runs")
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"title":"Missing context"}"#))
+                .body(Body::from(
+                    serde_json::json!({"title": "Missing context"}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -125,7 +127,9 @@ async fn create_run_returns_201_and_the_persisted_contract() {
         .oneshot(identity_request(
             "POST",
             "/v1/runs",
-            Body::from(r#"{"title":"Verify retention policy"}"#),
+            Body::from(
+                serde_json::json!({"title": "Verify retention policy"}).to_string(),
+            ),
         ))
         .await
         .unwrap();
