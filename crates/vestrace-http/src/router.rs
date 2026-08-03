@@ -10,7 +10,7 @@ use axum::{
 };
 use tracing::Instrument;
 use uuid::{Uuid, Version};
-use vestrace_application::HealthRepository;
+use vestrace_application::{HealthRepository, RunUseCases, SharedRunUseCases};
 
 use crate::health;
 
@@ -20,15 +20,26 @@ const CORRELATION_ID_HEADER: HeaderName = HeaderName::from_static("x-correlation
 #[derive(Clone)]
 pub struct AppState {
     health_repository: Arc<dyn HealthRepository>,
+    run_use_cases: SharedRunUseCases,
 }
 
 impl AppState {
-    pub fn new(health_repository: Arc<dyn HealthRepository>) -> Self {
-        Self { health_repository }
+    pub fn new(
+        health_repository: Arc<dyn HealthRepository>,
+        run_use_cases: SharedRunUseCases,
+    ) -> Self {
+        Self {
+            health_repository,
+            run_use_cases,
+        }
     }
 
     pub(crate) fn health_repository(&self) -> &dyn HealthRepository {
         self.health_repository.as_ref()
+    }
+
+    pub(crate) fn run_use_cases(&self) -> &dyn RunUseCases {
+        self.run_use_cases.as_ref()
     }
 }
 
