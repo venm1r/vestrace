@@ -17,20 +17,20 @@ use crate::AppState;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
-        .route("/runs", get(list_runs).post(create_run))
-        .route("/runs/:id", get(get_run))
-        .route("/runs/:id/approve", post(approve_run))
-        .route("/artifacts", get(list_artifacts))
-        .route("/agents", get(list_agents))
-        .route("/workflows", get(list_workflows))
-        .route("/triggers", get(list_triggers))
-        .route("/connections", get(list_connections))
-        .route("/models", get(list_models))
-        .route("/evaluations", get(list_evaluations))
-        .route("/audit", get(list_audit_events))
-        .route("/metrics/summary", get(get_metrics_summary))
-        .route("/system/health", get(get_system_health))
-        .route("/profile", get(get_profile))
+        .route("/v1/runs", get(list_runs).post(create_run))
+        .route("/v1/runs/:id", get(get_run))
+        .route("/v1/runs/:id/approve", post(approve_run))
+        .route("/v1/artifacts", get(list_artifacts))
+        .route("/v1/agents", get(list_agents))
+        .route("/v1/workflows", get(list_workflows))
+        .route("/v1/triggers", get(list_triggers))
+        .route("/v1/connections", get(list_connections))
+        .route("/v1/models", get(list_models))
+        .route("/v1/evaluations", get(list_evaluations))
+        .route("/v1/audit", get(list_audit_events))
+        .route("/v1/metrics/summary", get(get_metrics_summary))
+        .route("/v1/system/health", get(get_system_health))
+        .route("/v1/profile", get(get_profile))
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +56,6 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
         None => return mock_runs_fallback(),
     };
 
-    // Ensure seed workspace & principal exist for live DB queries
     let _ = sqlx::query(
         "INSERT INTO workspaces (id, name, slug) VALUES ($1, 'Default Workspace', 'default') ON CONFLICT DO NOTHING"
     )
@@ -72,7 +71,6 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
     .execute(pool)
     .await;
 
-    // Set RLS session variable
     let _ = sqlx::query("SELECT set_config('vestrace.workspace_id', $1, false)")
         .bind(default_workspace_id.to_string())
         .execute(pool)
