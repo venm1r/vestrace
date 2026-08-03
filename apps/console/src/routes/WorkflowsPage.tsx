@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, WorkflowItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const WorkflowsPage: React.FC = () => {
-  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: workflows, error, loading } = useApiResource(vestraceClient.listWorkflows);
 
-  useEffect(() => {
-    vestraceClient.listWorkflows().then(setWorkflows).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const WorkflowsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Opening workflow canvas editor...')}
+          onClick={() => alert('Workflow creation is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -45,9 +49,9 @@ export const WorkflowsPage: React.FC = () => {
         {loading ? (
           <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading workflows...</div>
         ) : (
-          workflows.map((wf) => (
+          (workflows ?? []).map((workflow) => (
             <div
-              key={wf.id}
+              key={workflow.id}
               style={{
                 background: 'var(--color-surface-container-low)',
                 border: '1px solid var(--color-outline)',
@@ -64,12 +68,12 @@ export const WorkflowsPage: React.FC = () => {
                 </span>
                 <div>
                   <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
-                    {wf.name}
+                    {workflow.name}
                   </h3>
                   <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px', display: 'flex', gap: '16px' }}>
-                    <span>ID: {wf.id}</span>
-                    <span>Steps: {wf.steps_count}</span>
-                    <span>Last Run: {wf.last_run}</span>
+                    <span>ID: {workflow.id}</span>
+                    <span>Steps: {workflow.steps_count}</span>
+                    <span>Last Run: {workflow.last_run}</span>
                   </div>
                 </div>
               </div>
@@ -86,11 +90,11 @@ export const WorkflowsPage: React.FC = () => {
                     color: '#00e676',
                   }}
                 >
-                  {wf.status}
+                  {workflow.status}
                 </span>
 
                 <button
-                  onClick={() => alert(`Triggering manual run for workflow ${wf.name}`)}
+                  onClick={() => alert(`Workflow execution is not implemented for ${workflow.name}`)}
                   style={{
                     background: 'var(--color-primary)',
                     color: '#ffffff',

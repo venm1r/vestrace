@@ -1,8 +1,12 @@
 use crate::{
-    id::{InteractionSessionId, AgentRunId, ProductReleaseId, WorkspaceId},
+    id::{AgentRunId, InteractionSessionId, ProductReleaseId, WorkspaceId},
     time::Timestamp,
 };
 use serde::{Deserialize, Serialize};
+
+pub mod transfer;
+
+pub use transfer::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProductRelease {
@@ -12,9 +16,9 @@ pub struct ProductRelease {
     pub created_at: Timestamp,
 }
 
-pub mod transfer;
-
-pub use transfer::*;
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
     Active,
     Closed,
 }

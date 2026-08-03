@@ -5,6 +5,7 @@ pub mod memory_repository;
 mod pool;
 pub mod provenance_repository;
 pub mod relation_repository;
+pub mod run_repository;
 mod transaction;
 
 pub use event_repository::PgEventRepository;
@@ -13,4 +14,5 @@ pub use memory_repository::PgMemoryRepository;
 pub use pool::PgStore;
 pub use provenance_repository::PgProvenanceRepository;
 pub use relation_repository::PgRelationRepository;
+pub use run_repository::PgRunRepository;
 pub use transaction::{PgScopedTransaction, PgTransactionManager};

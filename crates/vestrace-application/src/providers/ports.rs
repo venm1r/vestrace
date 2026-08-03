@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use vestrace_domain::id::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -43,7 +42,10 @@ pub enum ProviderError {
 
 #[async_trait]
 pub trait TextGenerationProvider: Send + Sync {
-    async fn generate(&self, request: GenerationRequest) -> Result<GenerationResponse, ProviderError>;
+    async fn generate(
+        &self,
+        request: GenerationRequest,
+    ) -> Result<GenerationResponse, ProviderError>;
 }
 
 #[async_trait]

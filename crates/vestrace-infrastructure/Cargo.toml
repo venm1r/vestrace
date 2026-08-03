@@ -7,13 +7,15 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 config.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
 thiserror.workspace = true
+uuid.workspace = true
 vestrace-application = { path = "../vestrace-application" }
 vestrace-domain = { path = "../vestrace-domain" }
 

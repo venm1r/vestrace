@@ -8,8 +8,11 @@ use tracing_subscriber::{
     fmt::MakeWriter,
     prelude::*,
 };
+use vestrace_application::RunService;
 use vestrace_http::{AppState, build_router};
-use vestrace_infrastructure::{AppConfig, LogFormat, ObservabilityConfig, PgStore};
+use vestrace_infrastructure::{
+    AppConfig, LogFormat, ObservabilityConfig, PgRunRepository, PgStore,
+};
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     init_tracing(&config.observability)?;
@@ -23,7 +26,9 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         .await
         .map_err(|_| anyhow!("database migrations are unavailable"))?;
 
-    let router = build_router(AppState::new(Arc::new(store)));
+    let run_repository = Arc::new(PgRunRepository::new(store.clone()));
+    let run_service = Arc::new(RunService::new(run_repository));
+    let router = build_router(AppState::new(Arc::new(store), run_service));
     let listener = tokio::net::TcpListener::bind(config.http.bind)
         .await
         .map_err(|_| anyhow!("HTTP listener is unavailable"))?;

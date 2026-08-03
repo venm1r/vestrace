@@ -1,5 +1,5 @@
-pub mod ports;
-pub mod worker;
+mod ports;
+mod worker;
 
 pub use ports::*;
 pub use worker::*;

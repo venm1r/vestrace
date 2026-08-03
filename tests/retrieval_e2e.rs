@@ -1,6 +1,7 @@
 use vestrace_domain::{
-    id::{ContextPackId, MemoryId, RetrievalRunId, WorkspaceId},
-    now, ContextPack, RetrievalCandidate, RetrievalIntent,
+    ContextPack,
+    id::{ContextPackId, RetrievalRunId, WorkspaceId},
+    now,
 };
 
 #[test]

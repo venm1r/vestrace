@@ -30,7 +30,9 @@ impl MemoryWritePolicy {
                 }
             }
             Self::Assisted => {
-                if matches!(kind, MemoryKind::Fact | MemoryKind::Preference) && confidence.value() >= 0.85 {
+                if matches!(kind, MemoryKind::Fact | MemoryKind::Preference)
+                    && confidence.value() >= 0.85
+                {
                     ActivationDecision::AutoActivate
                 } else {
                     ActivationDecision::RequireApproval

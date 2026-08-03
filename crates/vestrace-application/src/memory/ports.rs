@@ -1,9 +1,9 @@
+use crate::ApplicationError;
 use async_trait::async_trait;
 use vestrace_domain::{
-    id::{EventId, MemoryId, MemoryRevisionId, RelationId, WorkspaceId},
     Event, KnowledgeRelation, Memory, MemoryRevision, MemorySource,
+    id::{EventId, MemoryId, MemoryRevisionId},
 };
-use crate::ApplicationError;
 
 #[async_trait]
 pub trait EventRepository: Send + Sync {
@@ -16,7 +16,10 @@ pub trait MemoryRepository: Send + Sync {
     async fn save_memory(&mut self, memory: &Memory) -> Result<(), ApplicationError>;
     async fn save_revision(&mut self, revision: &MemoryRevision) -> Result<(), ApplicationError>;
     async fn find_memory_by_id(&self, id: MemoryId) -> Result<Option<Memory>, ApplicationError>;
-    async fn find_revision_by_id(&self, id: MemoryRevisionId) -> Result<Option<MemoryRevision>, ApplicationError>;
+    async fn find_revision_by_id(
+        &self,
+        id: MemoryRevisionId,
+    ) -> Result<Option<MemoryRevision>, ApplicationError>;
 }
 
 #[async_trait]
@@ -26,5 +29,6 @@ pub trait ProvenanceRepository: Send + Sync {
 
 #[async_trait]
 pub trait RelationRepository: Send + Sync {
-    async fn save_relation(&mut self, relation: &KnowledgeRelation) -> Result<(), ApplicationError>;
+    async fn save_relation(&mut self, relation: &KnowledgeRelation)
+    -> Result<(), ApplicationError>;
 }

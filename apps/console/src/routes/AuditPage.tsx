@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, AuditEventItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const AuditPage: React.FC = () => {
-  const [events, setEvents] = useState<AuditEventItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: events, error, loading } = useApiResource(vestraceClient.listAuditEvents);
 
-  useEffect(() => {
-    vestraceClient.listAuditEvents().then(setEvents).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const AuditPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Exporting audit log verification proof...')}
+          onClick={() => alert('Audit export is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -64,18 +68,18 @@ export const AuditPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {events.map((evt) => (
-                <tr key={evt.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
+              {(events ?? []).map((event) => (
+                <tr key={event.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
                   <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>
-                    {evt.timestamp}
+                    {event.timestamp}
                   </td>
-                  <td style={{ padding: '16px', fontWeight: 600, color: '#F3F6F9' }}>{evt.actor}</td>
+                  <td style={{ padding: '16px', fontWeight: 600, color: '#F3F6F9' }}>{event.actor}</td>
                   <td style={{ padding: '16px' }}>
                     <span style={{ padding: '4px 8px', background: 'var(--color-surface-container-high)', borderRadius: '4px', fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--color-tertiary)' }}>
-                      {evt.action}
+                      {event.action}
                     </span>
                   </td>
-                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{evt.resource}</td>
+                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{event.resource}</td>
                 </tr>
               ))}
             </tbody>

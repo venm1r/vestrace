@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, package::*, now,
-};
+use vestrace_domain::{id::*, now, package::*};
 
 #[test]
 fn test_agent_package_creation() {

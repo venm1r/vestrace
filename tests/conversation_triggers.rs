@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    conversation::*, id::*, now,
-};
+use vestrace_domain::{conversation::*, id::*, now};
 
 #[test]
 fn test_conversation_thread_and_trigger() {

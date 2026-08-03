@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    ag_ui::*, id::*, now,
-};
+use vestrace_domain::{ag_ui::*, id::*, now};
 
 #[test]
 fn test_ag_ui_endpoint_creation() {

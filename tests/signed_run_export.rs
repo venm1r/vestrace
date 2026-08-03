@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    id::*, state_engine::*, now,
-};
+use vestrace_domain::{id::*, now, state_engine::*};
 
 #[test]
 fn test_signed_run_export_and_profile() {

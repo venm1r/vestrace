@@ -1,6 +1,6 @@
+use crate::ApplicationError;
 use async_trait::async_trait;
 use vestrace_domain::{Event, MemoryKind};
-use crate::ApplicationError;
 
 pub struct ExtractedCandidate {
     pub kind: MemoryKind,

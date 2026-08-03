@@ -15,7 +15,10 @@ impl PgRelationRepository {
 
 #[async_trait]
 impl RelationRepository for PgRelationRepository {
-    async fn save_relation(&mut self, relation: &KnowledgeRelation) -> Result<(), ApplicationError> {
+    async fn save_relation(
+        &mut self,
+        relation: &KnowledgeRelation,
+    ) -> Result<(), ApplicationError> {
         let type_str = match relation.relation_type {
             vestrace_domain::RelationType::Supports => "supports",
             vestrace_domain::RelationType::Contradicts => "contradicts",

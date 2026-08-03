@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    connection::*, id::*, now,
-};
+use vestrace_domain::{connection::*, id::*, now};
 
 #[test]
 fn test_connector_and_connection_creation() {

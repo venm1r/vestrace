@@ -1,6 +1,4 @@
-use vestrace_domain::{
-    budget::BudgetAccount, id::*, now,
-};
+use vestrace_domain::{budget::BudgetAccount, id::*, now};
 
 #[test]
 fn test_budget_account_limits() {

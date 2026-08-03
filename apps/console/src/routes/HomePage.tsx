@@ -1,198 +1,133 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, MetricsSummary } from '../sdk/client';
-import { TaskWorkbench } from '../shell/TaskWorkbench';
-import { ApprovalChallenge } from '../components/ApprovalChallenge';
-import { CompactChat } from '../components/CompactChat';
+import React, { useState } from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const HomePage: React.FC = () => {
-  const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
-  const [taskInput, setTaskInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { data: metrics, error, loading } = useApiResource(vestraceClient.getMetricsSummary);
+  const [title, setTitle] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  useEffect(() => {
-    vestraceClient.getMetricsSummary().then(setMetrics);
-  }, []);
+  const handleCreate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
 
-  const handleLaunch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!taskInput.trim()) return;
-    setLoading(true);
+    setCreating(true);
+    setMutationError(null);
     try {
-      await vestraceClient.createRun({ prompt: taskInput });
-      alert(`Durable run launched for: ${taskInput}`);
-      setTaskInput('');
+      const run = await vestraceClient.createRun({ title });
+      alert(`Run record created: ${run.id}`);
+      setTitle('');
+    } catch (reason: unknown) {
+      setMutationError(reason instanceof Error ? reason.message : 'Run creation failed');
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   };
 
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
+
+  if (loading || !metrics) {
+    return <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading P0 status...</div>;
+  }
+
+  const cards = [
+    ['Live Runs', String(metrics.live_runs)],
+    ['Active Agents', String(metrics.active_agents)],
+    ['Average Latency', metrics.avg_latency],
+    ['Budget', `${metrics.budget_spent} / ${metrics.budget_limit}`],
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* System Health Strip */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '16px',
-        }}
-      >
-        <div
-          style={{
-            background: 'var(--color-surface-container-low)',
-            border: '1px solid var(--color-outline)',
-            borderRadius: '8px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>play_arrow</span>
-            Live Runs
-          </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, marginTop: '8px', color: '#F3F6F9' }}>
-            {metrics?.live_runs ?? 2}
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'var(--color-surface-container-low)',
-            border: '1px solid var(--color-outline)',
-            borderRadius: '8px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--color-success)' }}>smart_toy</span>
-            Active Agents
-          </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, marginTop: '8px', color: '#F3F6F9' }}>
-            {metrics?.active_agents ?? 3}
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'var(--color-surface-container-low)',
-            border: '1px solid var(--color-outline)',
-            borderRadius: '8px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--color-warning)' }}>speed</span>
-            Avg Latency
-          </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, marginTop: '8px', color: '#F3F6F9' }}>
-            {metrics?.avg_latency ?? '142ms'}
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'var(--color-surface-container-low)',
-            border: '1px solid var(--color-outline)',
-            borderRadius: '8px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--color-primary-bright)' }}>account_balance_wallet</span>
-            Budget Spent
-          </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, marginTop: '8px', color: '#F3F6F9' }}>
-            {metrics?.budget_spent ?? '$4.12'} <span style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', fontWeight: 400 }}>/ {metrics?.budget_limit ?? '$50.00'}</span>
-          </div>
-        </div>
+      <div>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+          Vestrace P0 Foundation
+        </h1>
+        <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+          Persisted run records are available. Agent execution, metrics, approvals, and orchestration remain outside P0.
+        </p>
       </div>
 
-      {/* Smart Task Composer */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+        {cards.map(([label, value]) => (
+          <div
+            key={label}
+            style={{
+              background: 'var(--color-surface-container-low)',
+              border: '1px solid var(--color-outline)',
+              borderRadius: '8px',
+              padding: '16px',
+            }}
+          >
+            <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>{label}</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, marginTop: '8px', color: '#F3F6F9' }}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div
         style={{
           background: 'var(--color-surface-container)',
           border: '1px solid var(--color-primary)',
           borderRadius: '12px',
           padding: '24px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-          <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)', fontSize: '24px' }}>auto_awesome</span>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 600, color: '#F3F6F9' }}>Smart Task Composer</h2>
-        </div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 600, color: '#F3F6F9' }}>
+          Create persisted run record
+        </h2>
+        <p style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '6px' }}>
+          This creates metadata only. It does not execute an agent or workflow.
+        </p>
 
-        <form onSubmit={handleLaunch} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <textarea
-            value={taskInput}
-            onChange={(e) => setTaskInput(e.target.value)}
-            placeholder="Describe the high-level objective or task for Vestrace agent execution kernel..."
-            rows={3}
+        {mutationError && (
+          <div role="alert" style={{ padding: '12px 0', color: 'var(--color-error)' }}>
+            Run creation failed: {mutationError}
+          </div>
+        )}
+
+        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap' }}>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Run title"
             style={{
-              width: '100%',
+              flex: 1,
+              minWidth: '240px',
               background: 'var(--color-surface-container-lowest)',
               border: '1px solid var(--color-outline)',
               borderRadius: '8px',
               color: '#F3F6F9',
-              padding: '14px',
-              fontSize: '15px',
-              fontFamily: 'var(--font-sans)',
-              resize: 'vertical',
-              outline: 'none',
+              padding: '10px 14px',
+              fontSize: '14px',
             }}
           />
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <span style={{ padding: '6px 12px', background: 'var(--color-surface-container-high)', borderRadius: '6px', fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>smart_toy</span> Agent: Default-Agent
-              </span>
-              <span style={{ padding: '6px 12px', background: 'var(--color-surface-container-high)', borderRadius: '6px', fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>verified_user</span> Autonomy: Supervised
-              </span>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                background: 'var(--color-primary)',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '10px 20px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}
-            >
-              <span className="material-symbols-outlined">rocket_launch</span>
-              {loading ? 'Launching...' : 'Execute Task'}
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={creating || !title.trim()}
+            style={{
+              background: 'var(--color-primary)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: creating ? 'wait' : 'pointer',
+            }}
+          >
+            {creating ? 'Creating...' : 'Create Run'}
+          </button>
         </form>
-      </div>
-
-      {/* Task Workbench */}
-      <TaskWorkbench
-        title="Durable Task Execution #4092"
-        status="Running"
-        stepSummary="Executing Step 2 of 5: Validating Row-Level Security Isolation Policies"
-      />
-
-      {/* Human Approvals & Compact Chat */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
-        <ApprovalChallenge
-          operation="system.deploy_schema"
-          resource="Production Database Cluster"
-          effect="Apply migration 0090_release_orchestration_and_manifests.sql to main database"
-          risk="High"
-          expiryMinutes={15}
-          onApprove={() => alert('Approval granted. Task execution resumed.')}
-          onReject={() => alert('Approval rejected. Task execution halted.')}
-        />
-        <CompactChat />
       </div>
     </div>
   );

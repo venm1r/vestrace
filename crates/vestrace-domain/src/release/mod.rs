@@ -1,7 +1,4 @@
-use crate::{
-    id::ReleaseManifestId,
-    time::Timestamp,
-};
+use crate::{id::ReleaseManifestId, time::Timestamp};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

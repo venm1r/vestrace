@@ -1,34 +1,34 @@
 #![forbid(unsafe_code)]
 
+pub mod a2a;
+pub mod ag_ui;
+pub mod artifact;
+pub mod budget;
+pub mod cognitive;
+pub mod connection;
+pub mod conversation;
+pub mod enterprise;
 pub mod error;
 pub mod event;
 pub mod id;
 pub mod job;
 pub mod memory;
-pub mod policy;
-pub mod provenance;
-pub mod budget;
-pub mod a2a;
-pub mod ag_ui;
-pub mod artifact;
-pub mod cognitive;
-pub mod connection;
-pub mod conversation;
-pub mod enterprise;
 pub mod models;
 pub mod observability;
 pub mod package;
-pub mod product;
-pub mod release;
 pub mod planning;
+pub mod policy;
+pub mod product;
+pub mod provenance;
 pub mod relation;
+pub mod release;
 pub mod retrieval;
 pub mod run;
 pub mod security;
 pub mod state_engine;
 pub mod time;
-pub mod webhook;
 pub mod tool;
+pub mod webhook;
 
 pub use error::DomainError;
 pub use event::{ActorRef, Event, SubjectRef};

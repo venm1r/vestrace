@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, TriggerItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const TriggersPage: React.FC = () => {
-  const [triggers, setTriggers] = useState<TriggerItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: triggers, error, loading } = useApiResource(vestraceClient.listTriggers);
 
-  useEffect(() => {
-    vestraceClient.listTriggers().then(setTriggers).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const TriggersPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('New event trigger creation dialog...')}
+          onClick={() => alert('Trigger creation is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -45,9 +49,9 @@ export const TriggersPage: React.FC = () => {
         {loading ? (
           <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading triggers...</div>
         ) : (
-          triggers.map((tr) => (
+          (triggers ?? []).map((trigger) => (
             <div
-              key={tr.id}
+              key={trigger.id}
               style={{
                 background: 'var(--color-surface-container-low)',
                 border: '1px solid var(--color-outline)',
@@ -64,11 +68,11 @@ export const TriggersPage: React.FC = () => {
                 </span>
                 <div>
                   <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
-                    {tr.name}
+                    {trigger.name}
                   </h3>
                   <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px', display: 'flex', gap: '16px' }}>
-                    <span>Type: <strong>{tr.type}</strong></span>
-                    <span>Target: <strong style={{ color: 'var(--color-tertiary)' }}>{tr.target}</strong></span>
+                    <span>Type: <strong>{trigger.type}</strong></span>
+                    <span>Target: <strong style={{ color: 'var(--color-tertiary)' }}>{trigger.target}</strong></span>
                   </div>
                 </div>
               </div>
@@ -84,7 +88,7 @@ export const TriggersPage: React.FC = () => {
                   color: '#00e676',
                 }}
               >
-                {tr.status}
+                {trigger.status}
               </span>
             </div>
           ))

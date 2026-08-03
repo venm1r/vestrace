@@ -15,8 +15,13 @@ pub enum EvidenceRole {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationMethod {
-    LlmExtraction { model: String, prompt_version: String },
-    RuleBased { rule_id: String },
+    LlmExtraction {
+        model: String,
+        prompt_version: String,
+    },
+    RuleBased {
+        rule_id: String,
+    },
     ManualConsolidation,
 }
 

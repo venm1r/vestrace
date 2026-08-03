@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, EvaluationItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const EvaluationsPage: React.FC = () => {
-  const [evaluations, setEvaluations] = useState<EvaluationItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: evaluations, error, loading } = useApiResource(vestraceClient.listEvaluations);
 
-  useEffect(() => {
-    vestraceClient.listEvaluations().then(setEvaluations).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const EvaluationsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Triggering automated evaluation suite run...')}
+          onClick={() => alert('Evaluation execution is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -45,9 +49,9 @@ export const EvaluationsPage: React.FC = () => {
         {loading ? (
           <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading evaluation suites...</div>
         ) : (
-          evaluations.map((ev) => (
+          (evaluations ?? []).map((evaluation) => (
             <div
-              key={ev.id}
+              key={evaluation.id}
               style={{
                 background: 'var(--color-surface-container-low)',
                 border: '1px solid var(--color-outline)',
@@ -64,10 +68,10 @@ export const EvaluationsPage: React.FC = () => {
                 </span>
                 <div>
                   <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
-                    {ev.suite}
+                    {evaluation.suite}
                   </h3>
                   <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px' }}>
-                    Last Evaluated: {ev.last_evaluated}
+                    Last Evaluated: {evaluation.last_evaluated}
                   </div>
                 </div>
               </div>
@@ -75,7 +79,7 @@ export const EvaluationsPage: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700, color: '#00e676' }}>
-                    {ev.score}
+                    {evaluation.score}
                   </div>
                   <span style={{ fontSize: '11px', color: 'var(--color-on-surface-variant)', textTransform: 'uppercase' }}>
                     Accuracy Score
@@ -93,7 +97,7 @@ export const EvaluationsPage: React.FC = () => {
                     color: '#00e676',
                   }}
                 >
-                  {ev.status}
+                  {evaluation.status}
                 </span>
               </div>
             </div>

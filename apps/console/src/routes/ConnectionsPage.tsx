@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, ConnectionItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const ConnectionsPage: React.FC = () => {
-  const [connections, setConnections] = useState<ConnectionItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: connections, error, loading } = useApiResource(vestraceClient.listConnections);
 
-  useEffect(() => {
-    vestraceClient.listConnections().then(setConnections).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const ConnectionsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Add external connection dialog...')}
+          onClick={() => alert('Connection creation is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -45,9 +49,9 @@ export const ConnectionsPage: React.FC = () => {
         {loading ? (
           <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading connections...</div>
         ) : (
-          connections.map((c) => (
+          (connections ?? []).map((connection) => (
             <div
-              key={c.id}
+              key={connection.id}
               style={{
                 background: 'var(--color-surface-container-low)',
                 border: '1px solid var(--color-outline)',
@@ -65,9 +69,9 @@ export const ConnectionsPage: React.FC = () => {
                   </span>
                   <div>
                     <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, color: '#F3F6F9' }}>
-                      {c.name}
+                      {connection.name}
                     </h3>
-                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>Type: {c.type}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>Type: {connection.type}</span>
                   </div>
                 </div>
 
@@ -82,16 +86,16 @@ export const ConnectionsPage: React.FC = () => {
                     color: '#00e676',
                   }}
                 >
-                  {c.status}
+                  {connection.status}
                 </span>
               </div>
 
               <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>
-                Ping Latency: <strong style={{ color: '#F3F6F9', fontFamily: 'var(--font-mono)' }}>{c.latency}</strong>
+                Ping Latency: <strong style={{ color: '#F3F6F9', fontFamily: 'var(--font-mono)' }}>{connection.latency}</strong>
               </div>
 
               <button
-                onClick={() => alert(`Testing connectivity for ${c.name}... Ping: ${c.latency}`)}
+                onClick={() => alert(`Connection tests are not implemented for ${connection.name}`)}
                 style={{
                   background: 'var(--color-surface-container-high)',
                   color: '#F3F6F9',

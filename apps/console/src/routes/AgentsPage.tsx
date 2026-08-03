@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { vestraceClient, AgentItem } from '../sdk/client';
+import React from 'react';
+import { vestraceClient } from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 
 export const AgentsPage: React.FC = () => {
-  const [agents, setAgents] = useState<AgentItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: agents, error, loading } = useApiResource(vestraceClient.listAgents);
 
-  useEffect(() => {
-    vestraceClient.listAgents().then(setAgents).finally(() => setLoading(false));
-  }, []);
+  if (error) {
+    return (
+      <div role="alert" style={{ padding: '24px' }}>
+        Backend data is unavailable: {error}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -22,7 +26,7 @@ export const AgentsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={() => alert('Registering new agent package...')}
+          onClick={() => alert('Agent registration is not implemented in the P0 foundation')}
           style={{
             background: 'var(--color-primary)',
             color: '#ffffff',
@@ -45,9 +49,9 @@ export const AgentsPage: React.FC = () => {
         {loading ? (
           <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading agent fleet...</div>
         ) : (
-          agents.map((ag) => (
+          (agents ?? []).map((agent) => (
             <div
-              key={ag.id}
+              key={agent.id}
               style={{
                 background: 'var(--color-surface-container-low)',
                 border: '1px solid var(--color-outline)',
@@ -65,9 +69,9 @@ export const AgentsPage: React.FC = () => {
                   </span>
                   <div>
                     <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, color: '#F3F6F9' }}>
-                      {ag.name}
+                      {agent.name}
                     </h3>
-                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>ID: {ag.id}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>ID: {agent.id}</span>
                   </div>
                 </div>
 
@@ -78,21 +82,21 @@ export const AgentsPage: React.FC = () => {
                     fontSize: '12px',
                     fontWeight: 600,
                     textTransform: 'uppercase',
-                    background: ag.status === 'Active' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(196, 198, 205, 0.15)',
-                    color: ag.status === 'Active' ? '#00e676' : '#c4c6cd',
+                    background: agent.status === 'Active' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(196, 198, 205, 0.15)',
+                    color: agent.status === 'Active' ? '#00e676' : '#c4c6cd',
                   }}
                 >
-                  {ag.status}
+                  {agent.status}
                 </span>
               </div>
 
               <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div>Bound Model: <strong style={{ color: '#F3F6F9' }}>{ag.model}</strong></div>
-                <div>Total Lifetime Runs: <strong style={{ color: '#F3F6F9' }}>{ag.runs_count}</strong></div>
+                <div>Bound Model: <strong style={{ color: '#F3F6F9' }}>{agent.model}</strong></div>
+                <div>Total Lifetime Runs: <strong style={{ color: '#F3F6F9' }}>{agent.runs_count}</strong></div>
               </div>
 
               <button
-                onClick={() => alert(`Configuring agent ${ag.name}`)}
+                onClick={() => alert(`Agent configuration is not implemented for ${agent.name}`)}
                 style={{
                   background: 'var(--color-surface-container-high)',
                   color: '#F3F6F9',

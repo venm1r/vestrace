@@ -13,4 +13,5 @@ thiserror.workspace = true
 vestrace-domain = { path = "../vestrace-domain" }
 
 [dev-dependencies]
+tokio.workspace = true
 uuid.workspace = true
