@@ -2,7 +2,7 @@ use crate::ApplicationError;
 use async_trait::async_trait;
 use vestrace_domain::{
     Event, KnowledgeRelation, Memory, MemoryRevision, MemorySource,
-    id::{EventId, MemoryId, MemoryRevisionId, RelationId, WorkspaceId},
+    id::{EventId, MemoryId, MemoryRevisionId},
 };
 
 #[async_trait]
@@ -29,6 +29,8 @@ pub trait ProvenanceRepository: Send + Sync {
 
 #[async_trait]
 pub trait RelationRepository: Send + Sync {
-    async fn save_relation(&mut self, relation: &KnowledgeRelation)
-    -> Result<(), ApplicationError>;
+    async fn save_relation(
+        &mut self,
+        relation: &KnowledgeRelation,
+    ) -> Result<(), ApplicationError>;
 }
