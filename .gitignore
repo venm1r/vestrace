@@ -2,3 +2,5 @@
 .env
 .env.*
 !.env.example
+apps/console/src/sdk/client.ts.tmp
+.mcp/
