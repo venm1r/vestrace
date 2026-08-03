@@ -10,7 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::AppState;
