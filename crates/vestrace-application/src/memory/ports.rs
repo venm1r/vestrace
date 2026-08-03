@@ -29,8 +29,6 @@ pub trait ProvenanceRepository: Send + Sync {
 
 #[async_trait]
 pub trait RelationRepository: Send + Sync {
-    async fn save_relation(
-        &mut self,
-        relation: &KnowledgeRelation,
-    ) -> Result<(), ApplicationError>;
+    async fn save_relation(&mut self, relation: &KnowledgeRelation)
+    -> Result<(), ApplicationError>;
 }
