@@ -1,95 +1,160 @@
 import React from 'react';
-import { PrimaryNavigation } from './PrimaryNavigation';
-import { InspectorDrawer } from './InspectorDrawer';
-import { HomePage } from '../routes/HomePage';
-import { RunsPage } from '../routes/RunsPage';
-import { ArtifactsPage } from '../routes/ArtifactsPage';
-import { AgentsPage } from '../routes/AgentsPage';
-import { WorkflowsPage } from '../routes/WorkflowsPage';
-import { TriggersPage } from '../routes/TriggersPage';
-import { ConnectionsPage } from '../routes/ConnectionsPage';
-import { ModelsPage } from '../routes/ModelsPage';
-import { EvaluationsPage } from '../routes/EvaluationsPage';
-import { AuditPage } from '../routes/AuditPage';
-import { SettingsPage } from '../routes/SettingsPage';
+import { NavLink, useNavigate } from 'react-router-dom';
 
-export const AppLayout: React.FC = () => {
-  const [activeNav, setActiveNav] = React.useState('home');
-  const [inspectorOpen, setInspectorOpen] = React.useState(false);
+interface AppLayoutProps {
+  children: React.ReactNode;
+}
 
-  const renderMainContent = () => {
-    switch (activeNav) {
-      case 'home':
-        return <HomePage />;
-      case 'runs':
-        return <RunsPage />;
-      case 'artifacts':
-        return <ArtifactsPage />;
-      case 'agents':
-        return <AgentsPage />;
-      case 'workflows':
-        return <WorkflowsPage />;
-      case 'triggers':
-        return <TriggersPage />;
-      case 'connections':
-        return <ConnectionsPage />;
-      case 'models':
-        return <ModelsPage />;
-      case 'evaluations':
-        return <EvaluationsPage />;
-      case 'audit':
-        return <AuditPage />;
-      case 'settings':
-        return <SettingsPage />;
-      default:
-        return null;
-    }
-  };
+export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
+  const navigate = useNavigate();
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-level-0)' }} data-theme="dark">
-      {/* 13. Navigation Structure */}
-      <PrimaryNavigation activeItem={activeNav} onSelect={setActiveNav} humanRequestCount={1} />
-
-      {/* 12. Desktop Layout: Task Workspace */}
-      <main style={{ flex: 1, padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '960px' }}>
-        {/* Top Operational Status Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--color-surface)' }}>
+      {/* Side Navigation Bar */}
+      <aside
+        style={{
+          width: '240px',
+          backgroundColor: 'var(--color-surface-container-lowest)',
+          borderRight: '1px solid var(--color-outline)',
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          padding: '16px 12px',
+          boxSizing: 'border-box',
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ padding: '0 8px 20px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)', fontSize: '28px' }}>
+            memory
+          </span>
           <div>
-            <h1 style={{ margin: 0, fontSize: '24px', color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-              {activeNav} Workspace
-            </h1>
-            <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-              Durable Runs. Scoped Authority. Safe Effects. Verifiable Outcomes.
-            </p>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 700, color: '#F3F6F9', letterSpacing: '0.05em' }}>
+              VESTRACE
+            </div>
+            <div style={{ fontSize: '10px', color: 'var(--color-on-surface-variant)', letterSpacing: '0.5px' }}>
+              EXECUTION KERNEL
+            </div>
           </div>
-          <button
-            onClick={() => setInspectorOpen(!inspectorOpen)}
-            style={{
-              backgroundColor: 'var(--bg-level-2)',
-              color: 'var(--brand-white)',
-              border: '1px solid var(--border-color)',
-              padding: 'var(--space-2) var(--space-4)',
-              borderRadius: 'var(--radius-md)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            {inspectorOpen ? 'Close Inspector' : 'Open Inspector'}
-          </button>
         </div>
 
-        {renderMainContent()}
-      </main>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, overflowY: 'auto' }}>
+          {[
+            {
+              title: 'Workspace',
+              items: [
+                { label: 'Home', path: '/', icon: 'home' },
+                { label: 'Runs', path: '/runs', icon: 'play_circle' },
+                { label: 'Artifacts', path: '/artifacts', icon: 'folder' },
+              ],
+            },
+            {
+              title: 'Automation',
+              items: [
+                { label: 'Agents', path: '/agents', icon: 'smart_toy' },
+                { label: 'Workflows', path: '/workflows', icon: 'account_tree' },
+                { label: 'Triggers', path: '/triggers', icon: 'bolt' },
+              ],
+            },
+            {
+              title: 'System',
+              items: [
+                { label: 'Connections', path: '/connections', icon: 'hub' },
+                { label: 'Models', path: '/models', icon: 'extension' },
+                { label: 'Evaluations', path: '/evaluations', icon: 'insights' },
+                { label: 'Audit', path: '/audit', icon: 'policy' },
+                { label: 'Settings', path: '/settings', icon: 'settings' },
+              ],
+            },
+          ].map((group) => (
+            <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-on-surface-variant)', letterSpacing: '0.1em', padding: '0 8px', fontWeight: 600 }}>
+                {group.title}
+              </div>
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  style={({ isActive }: { isActive: boolean }) => ({
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 600 : 400,
+                    textDecoration: 'none',
+                    color: isActive ? '#ffffff' : 'var(--color-on-surface-variant)',
+                    backgroundColor: isActive ? 'var(--color-surface-container-high)' : 'transparent',
+                  })}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                    {item.icon}
+                  </span>
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </div>
+      </aside>
 
-      {/* 21. Contextual Inspector Drawer */}
-      <InspectorDrawer
-        isOpen={inspectorOpen}
-        onClose={() => setInspectorOpen(false)}
-        runId="run_7f81a4b9"
-        runStatus="Running"
-        budgetUsed="$0.042 / $10.00"
-      />
+      {/* Main Content Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+        {/* Top Header Bar */}
+        <header
+          style={{
+            height: '60px',
+            backgroundColor: 'var(--color-surface-container-low)',
+            borderBottom: '1px solid var(--color-outline)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 24px',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <span style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>grid_view</span> Workspace: <strong style={{ color: '#F3F6F9' }}>Default-Production</strong>
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <span style={{ padding: '4px 10px', background: 'rgba(0, 230, 118, 0.15)', color: 'var(--color-success)', borderRadius: '12px', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-success)' }}></span> Kernel Online
+            </span>
+
+            {/* Profile Avatar Button */}
+            <button
+              onClick={() => navigate('/profile')}
+              title="View User Profile"
+              style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--color-primary)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              OA
+            </button>
+          </div>
+        </header>
+
+        {/* Viewport Scroll Container */}
+        <main style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 };

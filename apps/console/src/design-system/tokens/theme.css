@@ -1,7 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
 :root {
-  /* Core brand colors */
   --brand-navy: #0A1E33;
   --brand-blue: #2563EB;
   --brand-cyan: #22D3EE;
@@ -9,68 +9,50 @@
   --brand-ink: #0F172A;
   --brand-muted: #7C8AA0;
 
-  /* Semantic colors */
-  --semantic-success: #00E676;
-  --semantic-warning: #FFB800;
-  --semantic-error: #FF4D4F;
-  --semantic-info: #22D3EE;
-  --semantic-critical: #B026FF;
+  --color-surface: #0b1326;
+  --color-surface-container-lowest: #060e20;
+  --color-surface-container-low: #131b2e;
+  --color-surface-container: #171f33;
+  --color-surface-container-high: #222a3d;
+  --color-surface-container-highest: #2d3449;
 
-  /* Spacing scale */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
-  --space-8: 64px;
-  --space-9: 96px;
+  --color-on-surface: #dae2fd;
+  --color-on-surface-variant: #c4c6cd;
+  --color-outline: #44474d;
 
-  /* Border radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-round: 999px;
+  --color-primary: #2563eb;
+  --color-primary-bright: #3b82f6;
+  --color-secondary: #0053db;
+  --color-tertiary: #2fd9f4;
+  --color-error: #ff4d4f;
+  --color-success: #00e676;
+  --color-warning: #ffb800;
 
-  /* Typography scale per design.md Section 8 */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-sans: 'Geist', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
-/* Dark Theme (Default) */
-[data-theme="dark"] {
-  --bg-level-0: #071524;
-  --bg-level-1: #0A1E33;
-  --bg-level-2: #0F2844;
-  --bg-level-3: #143254;
-  --bg-level-4: #193D66;
-  --text-primary: #F3F6F9;
-  --text-secondary: #94A3B8;
-  --border-color: rgba(124, 138, 160, 0.3);
-}
-
-/* Light Theme */
-[data-theme="light"] {
-  --bg-level-0: #F8FAFC;
-  --bg-level-1: #FFFFFF;
-  --bg-level-2: #F1F5F9;
-  --bg-level-3: #E2E8F0;
-  --bg-level-4: #CBD5E1;
-  --text-primary: var(--brand-ink);
-  --text-secondary: var(--brand-muted);
-  --border-color: rgba(15, 23, 42, 0.15);
-}
-
-body {
-  margin: 0;
-  background-color: var(--bg-level-0);
-  color: var(--text-primary);
+[data-theme="dark"], body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
   font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-code, pre, .font-mono {
-  font-family: var(--font-mono) !important;
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
 }
