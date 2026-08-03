@@ -2,16 +2,11 @@ use crate::{
     context::RequestContext,
     error::ApplicationError,
     memory::{
-        commands::{
-            LinkKnowledgeCommand, RecordEventCommand, RememberMemoryCommand, ReviseMemoryCommand,
-        },
+        commands::{LinkKnowledgeCommand, RecordEventCommand, RememberMemoryCommand},
         ports::{EventRepository, MemoryRepository, ProvenanceRepository, RelationRepository},
     },
-    outbox::OutboxMessage,
 };
-use vestrace_domain::{
-    Derivation, Event, KnowledgeRelation, Memory, MemoryRevision, MemorySource, id::OutboxId, now,
-};
+use vestrace_domain::{Event, KnowledgeRelation, Memory, MemoryRevision, MemorySource, now};
 
 pub struct MemoryService<E, M, P, R> {
     event_repo: E,
