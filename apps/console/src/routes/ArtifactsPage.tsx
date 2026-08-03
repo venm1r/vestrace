@@ -1,92 +1,111 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-import { Button } from '../design-system/primitives/Button';
-
-export interface ArtifactItem {
-  id: string;
-  name: string;
-  mediaType: string;
-  byteSize: number;
-  contentHash: string;
-  status: 'quarantined' | 'active' | 'archived' | 'purged';
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, ArtifactItem } from '../sdk/client';
 
 export const ArtifactsPage: React.FC = () => {
-  const [artifacts] = React.useState<ArtifactItem[]>([
-    {
-      id: 'art_8a92f1b4',
-      name: 'audit-report-2026.pdf',
-      mediaType: 'application/pdf',
-      byteSize: 1048576,
-      contentHash: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      status: 'active',
-      createdAt: '2026-08-02T10:15:00Z',
-    },
-    {
-      id: 'art_3f810c92',
-      name: 'extracted_evidence.json',
-      mediaType: 'application/json',
-      byteSize: 4096,
-      contentHash: 'sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
-      status: 'quarantined',
-      createdAt: '2026-08-02T11:20:00Z',
-    },
-  ]);
+  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient
+      .listArtifacts()
+      .then(setArtifacts)
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Artifacts Registry</h2>
-          <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            Immutable CAS artifacts, quarantine status, and SHA-256 provenance tracking.
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            Artifacts Repository
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Safe metadata, version lineage, provenance verification, and run relationships.
           </p>
         </div>
-        <Button variant="primary" onClick={() => alert('Opening resumable multipart artifact uploader dialog...')}>
-          Upload New Artifact
-        </Button>
+
+        <button
+          onClick={() => alert('Artifact exported as signed bundle')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">download</span> Export Selected
+        </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {artifacts.map((art) => (
-          <Surface key={art.id} level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand-cyan)' }}>{art.name}</span>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>({art.mediaType})</span>
-              </div>
-              <span
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-round)',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  backgroundColor: art.status === 'active' ? 'var(--semantic-success)' : 'var(--semantic-warning)',
-                  color: '#000',
-                }}
-              >
-                {art.status}
-              </span>
-            </div>
-
-            <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', color: 'var(--text-secondary)' }}>
-              <div><strong>Artifact ID:</strong> <code style={{ color: 'var(--brand-white)' }}>{art.id}</code></div>
-              <div><strong>Size:</strong> {(art.byteSize / 1024).toFixed(1)} KB</div>
-              <div style={{ wordBreak: 'break-all' }}><strong>Hash:</strong> <code style={{ fontSize: '12px' }}>{art.contentHash}</code></div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary" onClick={() => alert(`Provenance details for artifact ${art.id}:\n- Content Hash: ${art.contentHash}\n- Inspection Status: Passed\n- Source Run: run_4092`)}>
-                Inspect Provenance
-              </Button>
-              <Button variant="ghost" onClick={() => alert(`Initiating export stream for ${art.name}...`)}>
-                Download Safe Copy
-              </Button>
-            </div>
-          </Surface>
-        ))}
+      <div
+        style={{
+          background: 'var(--color-surface-container-low)',
+          border: '1px solid var(--color-outline)',
+          borderRadius: '12px',
+          overflow: 'hidden',
+        }}
+      >
+        {loading ? (
+          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-on-surface-variant)' }}>
+            Loading artifacts...
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+            <thead>
+              <tr style={{ background: 'var(--color-surface-container)', borderBottom: '1px solid var(--color-outline)', color: 'var(--color-on-surface-variant)', fontSize: '12px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 24px' }}>Artifact Name</th>
+                <th style={{ padding: '12px 16px' }}>Kind</th>
+                <th style={{ padding: '12px 16px' }}>Size</th>
+                <th style={{ padding: '12px 16px' }}>Checksum (SHA-256)</th>
+                <th style={{ padding: '12px 24px', textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {artifacts.map((a) => (
+                <tr key={a.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
+                  <td style={{ padding: '16px 24px' }}>
+                    <div style={{ fontWeight: 600, color: '#F3F6F9', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>description</span>
+                      {a.name}
+                    </div>
+                  </td>
+                  <td style={{ padding: '16px' }}>
+                    <span style={{ padding: '4px 8px', background: 'var(--color-surface-container-high)', borderRadius: '4px', fontSize: '12px' }}>
+                      {a.kind}
+                    </span>
+                  </td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{a.size}</td>
+                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>
+                    {a.checksum.slice(0, 24)}...
+                  </td>
+                  <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                    <button
+                      onClick={() => alert(`Downloading artifact metadata for ${a.name}`)}
+                      style={{
+                        background: 'transparent',
+                        color: 'var(--color-tertiary)',
+                        border: '1px solid var(--color-tertiary)',
+                        borderRadius: '6px',
+                        padding: '6px 12px',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Preview & Download
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

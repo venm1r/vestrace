@@ -1,91 +1,104 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-import { Button } from '../design-system/primitives/Button';
-
-export interface EvaluationItem {
-  id: string;
-  runId: string;
-  qualityScore: number;
-  latencyMs: number;
-  evaluator: string;
-  status: 'passed' | 'failed' | 'warnings';
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, EvaluationItem } from '../sdk/client';
 
 export const EvaluationsPage: React.FC = () => {
-  const [evaluations] = React.useState<EvaluationItem[]>([
-    {
-      id: 'eval_77b01f92',
-      runId: 'run_4092',
-      qualityScore: 0.98,
-      latencyMs: 340,
-      evaluator: 'Automated Integrity Evaluator v1',
-      status: 'passed',
-      createdAt: '2026-08-02T11:45:00Z',
-    },
-    {
-      id: 'eval_99c20a11',
-      runId: 'run_4088',
-      qualityScore: 0.82,
-      latencyMs: 1250,
-      evaluator: 'Context Pack Token Efficiency Checker',
-      status: 'warnings',
-      createdAt: '2026-08-02T10:12:00Z',
-    },
-  ]);
+  const [evaluations, setEvaluations] = useState<EvaluationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient.listEvaluations().then(setEvaluations).finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Evaluations & Benchmark Metrics</h2>
-          <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            Execution quality scores, latency metrics, OpenTelemetry span analysis, and verification checks.
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            Evaluations & Safety Benchmarks
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Automated test suites, safety alignment, schema compliance, and performance metrics.
           </p>
         </div>
-        <Button variant="primary" onClick={() => alert('Starting automated Evaluation & Quality Benchmark Suite...')}>
-          Run Evaluation Suite
-        </Button>
+
+        <button
+          onClick={() => alert('Triggering automated evaluation suite run...')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">insights</span> Run Eval Suite
+        </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {evaluations.map((ev) => (
-          <Surface key={ev.id} level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand-cyan)' }}>Run #{ev.runId}</span>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>({ev.evaluator})</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {loading ? (
+          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading evaluation suites...</div>
+        ) : (
+          evaluations.map((ev) => (
+            <div
+              key={ev.id}
+              style={{
+                background: 'var(--color-surface-container-low)',
+                border: '1px solid var(--color-outline)',
+                borderRadius: '8px',
+                padding: '16px 24px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '28px', color: 'var(--color-success)' }}>
+                  verified
+                </span>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
+                    {ev.suite}
+                  </h3>
+                  <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px' }}>
+                    Last Evaluated: {ev.last_evaluated}
+                  </div>
+                </div>
               </div>
-              <span
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-round)',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  backgroundColor: ev.status === 'passed' ? 'var(--semantic-success)' : 'var(--semantic-warning)',
-                  color: '#000',
-                }}
-              >
-                {ev.status.toUpperCase()}
-              </span>
-            </div>
 
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', gap: 'var(--space-5)' }}>
-              <span>Quality Score: <strong style={{ color: 'var(--brand-white)' }}>{(ev.qualityScore * 100).toFixed(0)}%</strong></span>
-              <span>Latency: <strong>{ev.latencyMs} ms</strong></span>
-            </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700, color: '#00e676' }}>
+                    {ev.score}
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--color-on-surface-variant)', textTransform: 'uppercase' }}>
+                    Accuracy Score
+                  </span>
+                </div>
 
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary" onClick={() => alert(`Loading full evaluation report for ${ev.id}...`)}>
-                View Full Report
-              </Button>
-              <Button variant="ghost" onClick={() => alert(`Opening OpenTelemetry trace inspector for run ${ev.runId}...`)}>
-                Inspect Spans
-              </Button>
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    background: 'rgba(0, 230, 118, 0.15)',
+                    color: '#00e676',
+                  }}
+                >
+                  {ev.status}
+                </span>
+              </div>
             </div>
-          </Surface>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );

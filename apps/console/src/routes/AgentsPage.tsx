@@ -1,90 +1,114 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-import { Button } from '../design-system/primitives/Button';
-
-export interface AgentItem {
-  id: string;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  status: 'active' | 'draft' | 'deprecated';
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, AgentItem } from '../sdk/client';
 
 export const AgentsPage: React.FC = () => {
-  const [agents] = React.useState<AgentItem[]>([
-    {
-      id: 'ag_7f81a4b9',
-      name: 'code-reviewer-pro',
-      description: 'System-level agent for automated code review, security audits, and pattern enforcement.',
-      systemPrompt: 'You are a precise, calm, and evidence-led code reviewer. Analyze ASTs and enforce RLS.',
-      status: 'active',
-      createdAt: '2026-08-01T09:00:00Z',
-    },
-    {
-      id: 'ag_994a02f8',
-      name: 'memory-extractor-bot',
-      description: 'Background agent parsing event streams and extracting structured facts.',
-      systemPrompt: 'Extract facts, preferences, and constraints from canonical event streams without hallucinating.',
-      status: 'active',
-      createdAt: '2026-08-01T14:30:00Z',
-    },
-  ]);
+  const [agents, setAgents] = useState<AgentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient.listAgents().then(setAgents).finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Agents Registry</h2>
-          <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            Registered agent packages, system instructions, capability scopes, and versioned runtime profiles.
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            Agent Fleet Dashboard
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Registered autonomous agents, model bindings, and execution statistics.
           </p>
         </div>
-        <Button variant="primary" onClick={() => alert('Opening Agent Package Registration Wizard...')}>
-          Register Agent
-        </Button>
+
+        <button
+          onClick={() => alert('Registering new agent package...')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">smart_toy</span> Register Agent
+        </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {agents.map((ag) => (
-          <Surface key={ag.id} level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand-cyan)' }}>{ag.name}</span>
-                <code style={{ fontSize: '12px', color: 'var(--brand-white)' }}>({ag.id})</code>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+        {loading ? (
+          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading agent fleet...</div>
+        ) : (
+          agents.map((ag) => (
+            <div
+              key={ag.id}
+              style={{
+                background: 'var(--color-surface-container-low)',
+                border: '1px solid var(--color-outline)',
+                borderRadius: '12px',
+                padding: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'var(--color-tertiary)' }}>
+                    smart_toy
+                  </span>
+                  <div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, color: '#F3F6F9' }}>
+                      {ag.name}
+                    </h3>
+                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>ID: {ag.id}</span>
+                  </div>
+                </div>
+
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    background: ag.status === 'Active' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(196, 198, 205, 0.15)',
+                    color: ag.status === 'Active' ? '#00e676' : '#c4c6cd',
+                  }}
+                >
+                  {ag.status}
+                </span>
               </div>
-              <span
+
+              <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div>Bound Model: <strong style={{ color: '#F3F6F9' }}>{ag.model}</strong></div>
+                <div>Total Lifetime Runs: <strong style={{ color: '#F3F6F9' }}>{ag.runs_count}</strong></div>
+              </div>
+
+              <button
+                onClick={() => alert(`Configuring agent ${ag.name}`)}
                 style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-round)',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  backgroundColor: 'var(--semantic-success)',
-                  color: '#000',
+                  background: 'var(--color-surface-container-high)',
+                  color: '#F3F6F9',
+                  border: '1px solid var(--color-outline)',
+                  borderRadius: '6px',
+                  padding: '8px 14px',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
                 }}
               >
-                {ag.status}
-              </span>
+                Configure Agent
+              </button>
             </div>
-
-            <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary)' }}>{ag.description}</p>
-
-            <div style={{ padding: 'var(--space-2)', backgroundColor: 'var(--bg-level-1)', borderRadius: 'var(--radius-sm)' }}>
-              <strong style={{ fontSize: '12px', color: 'var(--brand-muted)', display: 'block', marginBottom: 'var(--space-1)' }}>System Prompt:</strong>
-              <code style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{ag.systemPrompt}</code>
-            </div>
-
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
-              <Button variant="secondary" onClick={() => alert(`Capabilities for agent ${ag.name}:\n- memory.read\n- memory.write\n- context.retrieve`)}>
-                Configure Capabilities
-              </Button>
-              <Button variant="ghost" onClick={() => alert(`Loading execution log history for agent ${ag.id}...`)}>
-                View Execution History
-              </Button>
-            </div>
-          </Surface>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );

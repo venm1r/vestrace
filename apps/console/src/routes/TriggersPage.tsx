@@ -1,87 +1,94 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-import { Button } from '../design-system/primitives/Button';
-
-export interface TriggerItem {
-  id: string;
-  name: string;
-  triggerType: string;
-  targetWorkflow: string;
-  enabled: boolean;
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, TriggerItem } from '../sdk/client';
 
 export const TriggersPage: React.FC = () => {
-  const [triggers] = React.useState<TriggerItem[]>([
-    {
-      id: 'trg_11a9f02c',
-      name: 'GitHub Webhook Push Event',
-      triggerType: 'webhook.github',
-      targetWorkflow: 'Automated Code Review & Security Audit',
-      enabled: true,
-      createdAt: '2026-08-01T11:00:00Z',
-    },
-    {
-      id: 'trg_99b01c44',
-      name: 'Daily Memory Reconciliation Cron',
-      triggerType: 'schedule.cron',
-      targetWorkflow: 'Memory Ingestion and Knowledge Consolidation',
-      enabled: true,
-      createdAt: '2026-08-02T00:00:00Z',
-    },
-  ]);
+  const [triggers, setTriggers] = useState<TriggerItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient.listTriggers().then(setTriggers).finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Triggers & Webhooks</h2>
-          <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            External webhook event listeners and scheduled cron trigger bindings.
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            Event Triggers & Schedules
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Configure webhooks, cron schedules, and external event listeners.
           </p>
         </div>
-        <Button variant="primary" onClick={() => alert('Opening Trigger & Webhook Creation Wizard...')}>
-          Create Trigger
-        </Button>
+
+        <button
+          onClick={() => alert('New event trigger creation dialog...')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">bolt</span> Add Trigger
+        </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {triggers.map((trg) => (
-          <Surface key={trg.id} level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand-cyan)' }}>{trg.name}</span>
-                <code style={{ fontSize: '12px', color: 'var(--brand-white)' }}>({trg.triggerType})</code>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {loading ? (
+          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading triggers...</div>
+        ) : (
+          triggers.map((tr) => (
+            <div
+              key={tr.id}
+              style={{
+                background: 'var(--color-surface-container-low)',
+                border: '1px solid var(--color-outline)',
+                borderRadius: '8px',
+                padding: '16px 24px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '28px', color: 'var(--color-warning)' }}>
+                  bolt
+                </span>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
+                    {tr.name}
+                  </h3>
+                  <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px', display: 'flex', gap: '16px' }}>
+                    <span>Type: <strong>{tr.type}</strong></span>
+                    <span>Target: <strong style={{ color: 'var(--color-tertiary)' }}>{tr.target}</strong></span>
+                  </div>
+                </div>
               </div>
+
               <span
                 style={{
                   padding: '2px 8px',
-                  borderRadius: 'var(--radius-round)',
-                  fontSize: '11px',
-                  fontWeight: 700,
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 600,
                   textTransform: 'uppercase',
-                  backgroundColor: trg.enabled ? 'var(--semantic-success)' : 'var(--semantic-warning)',
-                  color: '#000',
+                  background: 'rgba(0, 230, 118, 0.15)',
+                  color: '#00e676',
                 }}
               >
-                {trg.enabled ? 'ACTIVE' : 'DISABLED'}
+                {tr.status}
               </span>
             </div>
-
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Target Workflow: <strong style={{ color: 'var(--text-primary)' }}>{trg.targetWorkflow}</strong>
-            </div>
-
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary" onClick={() => alert(`Editing binding configuration for trigger ${trg.id}...`)}>
-                Edit Binding
-              </Button>
-              <Button variant="ghost" onClick={() => alert(`Fetching HMAC delivery logs for trigger ${trg.name}...`)}>
-                View Delivery Logs
-              </Button>
-            </div>
-          </Surface>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );

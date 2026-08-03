@@ -1,68 +1,87 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-
-export interface AuditEventItem {
-  id: string;
-  action: string;
-  resourceType: string;
-  resourceId: string;
-  principalId: string;
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, AuditEventItem } from '../sdk/client';
 
 export const AuditPage: React.FC = () => {
-  const [events] = React.useState<AuditEventItem[]>([
-    {
-      id: 'aud_90f81a2c',
-      action: 'capability.check',
-      resourceType: 'memory',
-      resourceId: 'mem_994a02f8',
-      principalId: 'prc_7a18f409',
-      createdAt: '2026-08-02T12:00:00Z',
-    },
-    {
-      id: 'aud_1120ab44',
-      action: 'system.deploy_schema',
-      resourceType: 'database',
-      resourceId: 'cluster_prod_01',
-      principalId: 'prc_7a18f409',
-      createdAt: '2026-08-02T12:05:00Z',
-    },
-  ]);
+  const [events, setEvents] = useState<AuditEventItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient.listAuditEvents().then(setEvents).finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Audit Log</h2>
-        <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-          Content-free security audit trail, access events, and capability verification logs.
-        </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            Audit Log & Trace Registry
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Immutable security event stream, capability authorization logs, and RLS enforcement history.
+          </p>
+        </div>
+
+        <button
+          onClick={() => alert('Exporting audit log verification proof...')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">shield</span> Export Audit Trail
+        </button>
       </div>
 
-      <Surface level={2} style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-          <thead>
-            <tr style={{ backgroundColor: 'var(--bg-level-1)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-              <th style={{ padding: 'var(--space-3)' }}>Action</th>
-              <th style={{ padding: 'var(--space-3)' }}>Resource Type</th>
-              <th style={{ padding: 'var(--space-3)' }}>Resource ID</th>
-              <th style={{ padding: 'var(--space-3)' }}>Principal ID</th>
-              <th style={{ padding: 'var(--space-3)' }}>Timestamp</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map((evt) => (
-              <tr key={evt.id} style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
-                <td style={{ padding: 'var(--space-3)', fontFamily: 'monospace', color: 'var(--brand-cyan)' }}>{evt.action}</td>
-                <td style={{ padding: 'var(--space-3)' }}>{evt.resourceType}</td>
-                <td style={{ padding: 'var(--space-3)', fontFamily: 'monospace' }}>{evt.resourceId}</td>
-                <td style={{ padding: 'var(--space-3)', fontFamily: 'monospace' }}>{evt.principalId}</td>
-                <td style={{ padding: 'var(--space-3)', color: 'var(--text-secondary)' }}>{evt.createdAt}</td>
+      <div
+        style={{
+          background: 'var(--color-surface-container-low)',
+          border: '1px solid var(--color-outline)',
+          borderRadius: '12px',
+          overflow: 'hidden',
+        }}
+      >
+        {loading ? (
+          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-on-surface-variant)' }}>
+            Loading audit stream...
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+            <thead>
+              <tr style={{ background: 'var(--color-surface-container)', borderBottom: '1px solid var(--color-outline)', color: 'var(--color-on-surface-variant)', fontSize: '12px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 24px' }}>Timestamp</th>
+                <th style={{ padding: '12px 16px' }}>Actor</th>
+                <th style={{ padding: '12px 16px' }}>Action</th>
+                <th style={{ padding: '12px 24px' }}>Target Resource</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </Surface>
+            </thead>
+            <tbody>
+              {events.map((evt) => (
+                <tr key={evt.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
+                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>
+                    {evt.timestamp}
+                  </td>
+                  <td style={{ padding: '16px', fontWeight: 600, color: '#F3F6F9' }}>{evt.actor}</td>
+                  <td style={{ padding: '16px' }}>
+                    <span style={{ padding: '4px 8px', background: 'var(--color-surface-container-high)', borderRadius: '4px', fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--color-tertiary)' }}>
+                      {evt.action}
+                    </span>
+                  </td>
+                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{evt.resource}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 };

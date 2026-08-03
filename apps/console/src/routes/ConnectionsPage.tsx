@@ -1,84 +1,113 @@
-import React from 'react';
-import { Surface } from '../design-system/primitives/Surface';
-import { Button } from '../design-system/primitives/Button';
-
-export interface ConnectionItem {
-  id: string;
-  name: string;
-  connectorType: string;
-  status: 'Active' | 'Revoked' | 'Expired';
-  createdAt: string;
-}
+import React, { useEffect, useState } from 'react';
+import { vestraceClient, ConnectionItem } from '../sdk/client';
 
 export const ConnectionsPage: React.FC = () => {
-  const [connections] = React.useState<ConnectionItem[]>([
-    {
-      id: 'conn_77a90b1c',
-      name: 'Primary GitHub Enterprise OAuth2',
-      connectorType: 'oauth2',
-      status: 'Active',
-      createdAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'conn_8812cf90',
-      name: 'OpenAI Provider Secret Binding',
-      connectorType: 'api_key_envelope',
-      status: 'Active',
-      createdAt: '2026-08-01T15:45:00Z',
-    },
-  ]);
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    vestraceClient.listConnections().then(setConnections).finally(() => setLoading(false));
+  }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>Connections & Secrets</h2>
-          <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            OAuth2 connections and encrypted SecretEnvelope credential broker bindings.
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
+            External Connections
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
+            Credential brokers, PostgreSQL pools, vector databases, and LLM provider gateways.
           </p>
         </div>
-        <Button variant="primary" onClick={() => alert('Opening OAuth2 & Connection Broker Onboarding Wizard...')}>
-          Add Connection
-        </Button>
+
+        <button
+          onClick={() => alert('Add external connection dialog...')}
+          style={{
+            background: 'var(--color-primary)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '10px 18px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span className="material-symbols-outlined">hub</span> Add Connection
+        </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {connections.map((conn) => (
-          <Surface key={conn.id} level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand-cyan)' }}>{conn.name}</span>
-                <code style={{ fontSize: '12px', color: 'var(--brand-white)' }}>({conn.connectorType})</code>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+        {loading ? (
+          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading connections...</div>
+        ) : (
+          connections.map((c) => (
+            <div
+              key={c.id}
+              style={{
+                background: 'var(--color-surface-container-low)',
+                border: '1px solid var(--color-outline)',
+                borderRadius: '12px',
+                padding: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'var(--color-tertiary)' }}>
+                    hub
+                  </span>
+                  <div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, color: '#F3F6F9' }}>
+                      {c.name}
+                    </h3>
+                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>Type: {c.type}</span>
+                  </div>
+                </div>
+
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    background: 'rgba(0, 230, 118, 0.15)',
+                    color: '#00e676',
+                  }}
+                >
+                  {c.status}
+                </span>
               </div>
-              <span
+
+              <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>
+                Ping Latency: <strong style={{ color: '#F3F6F9', fontFamily: 'var(--font-mono)' }}>{c.latency}</strong>
+              </div>
+
+              <button
+                onClick={() => alert(`Testing connectivity for ${c.name}... Ping: ${c.latency}`)}
                 style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-round)',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  backgroundColor: 'var(--semantic-success)',
-                  color: '#000',
+                  background: 'var(--color-surface-container-high)',
+                  color: '#F3F6F9',
+                  border: '1px solid var(--color-outline)',
+                  borderRadius: '6px',
+                  padding: '8px 14px',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
                 }}
               >
-                {conn.status}
-              </span>
+                Test Connection
+              </button>
             </div>
-
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Connection ID: <code style={{ color: 'var(--brand-white)' }}>{conn.id}</code>
-            </div>
-
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="secondary" onClick={() => alert(`Initiating credential rotation for connection ${conn.id}...`)}>
-                Rotate Credentials
-              </Button>
-              <Button variant="danger" onClick={() => alert(`Revoking secret access for connection ${conn.id}...`)}>
-                Revoke Access
-              </Button>
-            </div>
-          </Surface>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );
