@@ -5,14 +5,16 @@ use vestrace_domain::{
     id::RunEventId,
     now,
     run::{
-        AgentRun, RunActor, RunCommandEnvelope, RunDecisionError, RunEventEnvelope, RunState,
-        apply, decide, replay,
+        RunActor, RunCommandEnvelope, RunDecisionError, RunEventEnvelope, apply, decide, replay,
     },
 };
 
 use crate::{ApplicationError, RequestContext};
 
-use super::{RunCommandExecutor, RunCommandResult, SharedRunCommandCommitter, SharedRunEventStore};
+use super::{
+    RunCommandExecutor, RunCommandResult, SharedRunCommandCommitter, SharedRunEventStore,
+    project_run,
+};
 
 pub struct RunCommandService {
     event_store: SharedRunEventStore,
@@ -122,19 +124,6 @@ fn validate_command_context(
         }
     }
     Ok(())
-}
-
-fn project_run(state: &RunState) -> AgentRun {
-    AgentRun {
-        id: state.id,
-        workspace_id: state.workspace_id,
-        principal_id: state.principal_id,
-        title: state.title.clone(),
-        status: state.status,
-        version: state.version,
-        created_at: state.created_at,
-        updated_at: state.updated_at,
-    }
 }
 
 fn database_timestamp(timestamp: DateTime<Utc>) -> DateTime<Utc> {
