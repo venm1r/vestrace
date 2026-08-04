@@ -46,11 +46,7 @@ impl Fixture {
         }
     }
 
-    fn envelope(
-        &self,
-        sequence: RunVersion,
-        pending: PendingRunEvent,
-    ) -> RunEventEnvelope {
+    fn envelope(&self, sequence: RunVersion, pending: PendingRunEvent) -> RunEventEnvelope {
         let event_type = pending.event.event_type().to_owned();
         let event_version = pending.event.event_version();
 
