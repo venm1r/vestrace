@@ -149,9 +149,7 @@ async fn append_continues_a_stream_from_the_expected_version(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn append_rejects_a_stale_expected_version_after_reading_the_stream_head(
-    pool: sqlx::PgPool,
-) {
+async fn append_rejects_a_stale_expected_version_after_reading_the_stream_head(pool: sqlx::PgPool) {
     seed_owner(&pool).await;
     let store = PgRunEventStore::new(PgStore::from_pool(pool));
 
@@ -278,12 +276,7 @@ async fn database_failure_rolls_back_the_entire_batch(pool: sqlx::PgPool) {
     second.event_id = first.event_id;
 
     let result = store
-        .append(
-            &context(),
-            run_id(),
-            RunVersion::ZERO,
-            &[first, second],
-        )
+        .append(&context(), run_id(), RunVersion::ZERO, &[first, second])
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Storage(_))));
@@ -300,6 +293,7 @@ async fn database_failure_rolls_back_the_entire_batch(pool: sqlx::PgPool) {
 async fn concurrent_writers_cannot_claim_the_same_stream_version(pool: sqlx::PgPool) {
     seed_owner(&pool).await;
 
+    let verifier = PgRunEventStore::new(PgStore::from_pool(pool.clone()));
     let store_a = PgRunEventStore::new(PgStore::from_pool(pool.clone()));
     let store_b = PgRunEventStore::new(PgStore::from_pool(pool));
     let barrier = Arc::new(Barrier::new(3));
@@ -324,23 +318,17 @@ async fn concurrent_writers_cannot_claim_the_same_stream_version(pool: sqlx::PgP
     let result_a = writer_a.await.unwrap();
     let result_b = writer_b.await.unwrap();
 
-    let successes = [result_a.as_ref(), result_b.as_ref()]
-        .into_iter()
-        .filter(|result| result.is_ok())
-        .count();
-    let conflicts = [result_a.as_ref(), result_b.as_ref()]
-        .into_iter()
-        .filter(|result| matches!(result, Err(ApplicationError::Conflict(_))))
-        .count();
+    let successes = usize::from(result_a.is_ok()) + usize::from(result_b.is_ok());
+    let conflicts = usize::from(matches!(
+        &result_a,
+        Err(ApplicationError::Conflict(_))
+    )) + usize::from(matches!(
+        &result_b,
+        Err(ApplicationError::Conflict(_))
+    ));
 
     assert_eq!(successes, 1);
     assert_eq!(conflicts, 1);
-
-    let verifier = PgRunEventStore::new(PgStore::from_pool(
-        sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
-            .await
-            .unwrap(),
-    ));
     assert_eq!(
         verifier
             .load_stream(&context(), run_id())
