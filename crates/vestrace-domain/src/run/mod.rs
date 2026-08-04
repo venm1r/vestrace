@@ -57,17 +57,26 @@ impl RunVersion {
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     Created,
+    Ready,
     Running,
     WaitingForInput,
     WaitingForApproval,
     Completed,
     Failed,
     Cancelled,
+    Stalled,
 }
 
 impl RunStatus {
+    pub const fn is_waiting(self) -> bool {
+        matches!(self, Self::WaitingForInput | Self::WaitingForApproval)
+    }
+
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Stalled
+        )
     }
 }
 
