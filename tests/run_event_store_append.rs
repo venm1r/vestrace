@@ -319,13 +319,8 @@ async fn concurrent_writers_cannot_claim_the_same_stream_version(pool: sqlx::PgP
     let result_b = writer_b.await.unwrap();
 
     let successes = usize::from(result_a.is_ok()) + usize::from(result_b.is_ok());
-    let conflicts = usize::from(matches!(
-        &result_a,
-        Err(ApplicationError::Conflict(_))
-    )) + usize::from(matches!(
-        &result_b,
-        Err(ApplicationError::Conflict(_))
-    ));
+    let conflicts = usize::from(matches!(&result_a, Err(ApplicationError::Conflict(_))))
+        + usize::from(matches!(&result_b, Err(ApplicationError::Conflict(_))));
 
     assert_eq!(successes, 1);
     assert_eq!(conflicts, 1);
