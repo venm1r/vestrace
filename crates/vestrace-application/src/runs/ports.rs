@@ -3,12 +3,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use vestrace_domain::{
     id::AgentRunId,
-    run::{AgentRun, RunEventEnvelope, RunVersion},
+    run::{AgentRun, RunCommandEnvelope, RunEventEnvelope, RunVersion},
 };
 
 use crate::{ApplicationError, RequestContext};
 
-use super::CreateRunCommand;
+use super::{CreateRunCommand, RunCommandResult};
 
 #[async_trait]
 pub trait RunRepository: Send + Sync {
@@ -49,6 +49,27 @@ pub trait RunEventStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait RunCommandCommitter: Send + Sync {
+    async fn commit(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+        expected_version: RunVersion,
+        events: &[RunEventEnvelope],
+        projection: &AgentRun,
+    ) -> Result<RunVersion, ApplicationError>;
+}
+
+#[async_trait]
+pub trait RunCommandExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        context: &RequestContext,
+        command: RunCommandEnvelope,
+    ) -> Result<RunCommandResult, ApplicationError>;
+}
+
+#[async_trait]
 pub trait RunUseCases: Send + Sync {
     async fn create_run(
         &self,
@@ -71,4 +92,6 @@ pub trait RunUseCases: Send + Sync {
 
 pub type SharedRunRepository = Arc<dyn RunRepository>;
 pub type SharedRunEventStore = Arc<dyn RunEventStore>;
+pub type SharedRunCommandCommitter = Arc<dyn RunCommandCommitter>;
+pub type SharedRunCommandExecutor = Arc<dyn RunCommandExecutor>;
 pub type SharedRunUseCases = Arc<dyn RunUseCases>;
