@@ -7,6 +7,29 @@ pub fn decide(
     state: Option<&RunState>,
     command: &RunCommandEnvelope,
 ) -> Result<Vec<PendingRunEvent>, RunDecisionError> {
+    if let RunCommand::Create {
+        principal_id,
+        title,
+    } = &command.command
+    {
+        if state.is_some() {
+            return Err(RunDecisionError::AlreadyExists);
+        }
+        if command.expected_version != RunVersion::ZERO {
+            return Err(RunDecisionError::VersionConflict {
+                expected: command.expected_version,
+                actual: RunVersion::ZERO,
+            });
+        }
+        return Ok(one(
+            RunEvent::Created {
+                principal_id: *principal_id,
+                title: required_text(title, "run title")?,
+            },
+            command,
+        ));
+    }
+
     let actual_version = state.map_or(RunVersion::ZERO, |state| state.version);
     if command.expected_version != actual_version {
         return Err(RunDecisionError::VersionConflict {
@@ -15,23 +38,9 @@ pub fn decide(
         });
     }
 
-    match (state, &command.command) {
-        (
-            None,
-            RunCommand::Create {
-                principal_id,
-                title,
-            },
-        ) => Ok(one(
-            RunEvent::Created {
-                principal_id: *principal_id,
-                title: required_text(title, "run title")?,
-            },
-            command,
-        )),
-        (Some(_), RunCommand::Create { .. }) => Err(RunDecisionError::AlreadyExists),
-        (None, _) => Err(RunDecisionError::MissingState),
-        (Some(state), run_command) => decide_existing(state, run_command, command),
+    match state {
+        None => Err(RunDecisionError::MissingState),
+        Some(state) => decide_existing(state, &command.command, command),
     }
 }
 
@@ -130,6 +139,7 @@ fn decide_existing(
         RunCommand::MarkStalled { reason } => RunEvent::Stalled {
             reason: reason.clone(),
         },
+        RunCommand::Create { .. } => return Err(RunDecisionError::AlreadyExists),
         _ => return invalid_transition(state),
     };
 
