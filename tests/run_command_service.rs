@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
 use vestrace_application::{
     ApplicationError, RequestContext, RunCommandCommitter, RunCommandExecutor, RunCommandService,
     RunEventStore,
@@ -76,6 +77,11 @@ fn context() -> RequestContext {
     RequestContext::new(WorkspaceId::new(), PrincipalId::new())
 }
 
+fn database_timestamp(timestamp: DateTime<Utc>) -> DateTime<Utc> {
+    let submicrosecond_nanos = i64::from(timestamp.timestamp_subsec_nanos() % 1_000);
+    timestamp - Duration::nanoseconds(submicrosecond_nanos)
+}
+
 fn command(
     context: &RequestContext,
     run_id: AgentRunId,
@@ -90,13 +96,13 @@ fn command(
         actor: RunActor::Principal(context.principal_id),
         expected_version,
         correlation_id: CorrelationId::new(),
-        issued_at: now(),
+        issued_at: database_timestamp(now()),
         command,
     }
 }
 
 fn created_event(context: &RequestContext, run_id: AgentRunId) -> RunEventEnvelope {
-    let occurred_at = now();
+    let occurred_at = database_timestamp(now());
     let payload = RunEvent::Created {
         principal_id: context.principal_id,
         title: "Projection test".to_owned(),
