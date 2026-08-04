@@ -37,12 +37,14 @@ impl TryFrom<StoredRun> for AgentRun {
     fn try_from(stored: StoredRun) -> Result<Self, Self::Error> {
         let status = match stored.status.as_str() {
             "created" => RunStatus::Created,
+            "ready" => RunStatus::Ready,
             "running" => RunStatus::Running,
             "waiting_for_input" => RunStatus::WaitingForInput,
             "waiting_for_approval" => RunStatus::WaitingForApproval,
             "completed" => RunStatus::Completed,
             "failed" => RunStatus::Failed,
             "cancelled" => RunStatus::Cancelled,
+            "stalled" => RunStatus::Stalled,
             _ => {
                 return Err(ApplicationError::Storage(
                     "stored run status is unsupported".to_owned(),
@@ -186,12 +188,14 @@ impl RunRepository for PgRunRepository {
 fn status_name(status: RunStatus) -> &'static str {
     match status {
         RunStatus::Created => "created",
+        RunStatus::Ready => "ready",
         RunStatus::Running => "running",
         RunStatus::WaitingForInput => "waiting_for_input",
         RunStatus::WaitingForApproval => "waiting_for_approval",
         RunStatus::Completed => "completed",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
+        RunStatus::Stalled => "stalled",
     }
 }
 
