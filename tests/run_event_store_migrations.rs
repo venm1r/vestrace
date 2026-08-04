@@ -118,7 +118,10 @@ async fn run_event_envelope_columns_are_required(pool: sqlx::PgPool) {
     .await
     .unwrap();
 
-    assert!(nullable.is_empty(), "nullable envelope columns: {nullable:?}");
+    assert!(
+        nullable.is_empty(),
+        "nullable envelope columns: {nullable:?}"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -242,15 +245,20 @@ async fn run_event_migration_backfills_legacy_rows_deterministically(pool: sqlx:
     .await
     .unwrap();
 
-    let row: (i16, serde_json::Value, uuid::Uuid, uuid::Uuid, chrono::DateTime<chrono::Utc>) =
-        sqlx::query_as(
-            "SELECT event_version, actor, causation_id, correlation_id, occurred_at
+    let row: (
+        i16,
+        serde_json::Value,
+        uuid::Uuid,
+        uuid::Uuid,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "SELECT event_version, actor, causation_id, correlation_id, occurred_at
              FROM run_events
              WHERE id = '51000000-0000-0000-0000-000000000050'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     assert_eq!(row.0, 1);
     assert_eq!(
