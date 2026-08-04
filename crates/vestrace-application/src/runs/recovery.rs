@@ -184,7 +184,7 @@ impl RunRecoveryOperations for RunRecoveryService {
             format_version: RUN_CHECKPOINT_FORMAT_VERSION,
             state_hash: hash_run_state(&state)?,
             state,
-            created_at: now(),
+            created_at: canonical_checkpoint_timestamp(now())?,
         };
         self.store.save_checkpoint(context, &checkpoint).await?;
         Ok(checkpoint)
@@ -242,6 +242,12 @@ impl RunRecoveryOperations for RunRecoveryService {
             .await?;
         Ok(projection)
     }
+}
+
+fn canonical_checkpoint_timestamp(timestamp: Timestamp) -> Result<Timestamp, ApplicationError> {
+    Timestamp::from_timestamp_micros(timestamp.timestamp_micros()).ok_or_else(|| {
+        ApplicationError::Internal("run checkpoint timestamp normalization failed".to_owned())
+    })
 }
 
 fn verify_restored_head(state: &RunState, head: RunVersion) -> Result<(), ApplicationError> {
