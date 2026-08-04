@@ -6,8 +6,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vestrace_domain::{
-    Timestamp, now,
+    Timestamp,
     id::{AgentRunId, CorrelationId, OperationId},
+    now,
     run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunVersion},
 };
 
