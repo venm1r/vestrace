@@ -6,8 +6,8 @@ use vestrace_domain::{
     },
     run::{
         PendingRunEvent, RunActor, RunCommand, RunCommandEnvelope, RunCompletion, RunDecisionError,
-        RunEventEnvelope, RunReduceError, RunState, RunStatus, RunStepStatus, RunVersion, RunWait,
-        apply, decide, replay,
+        RunEvent, RunEventEnvelope, RunReduceError, RunState, RunStatus, RunStepStatus, RunVersion,
+        RunWait, apply, decide, replay,
     },
     time::Timestamp,
 };
@@ -122,6 +122,17 @@ fn create_event_builds_version_one_state_and_replays_deterministically() {
     assert_eq!(state.version, RunVersion::INITIAL);
     assert_eq!(replay([event.clone()]).unwrap(), Some(state.clone()));
     assert_eq!(replay([event]).unwrap(), Some(state));
+}
+
+#[test]
+fn duplicate_create_reports_already_exists() {
+    let fixture = Fixture::new();
+    let (state, _) = fixture.created();
+
+    assert_eq!(
+        decide(Some(&state), &fixture.create_command("Duplicate")).unwrap_err(),
+        RunDecisionError::AlreadyExists
+    );
 }
 
 #[test]
@@ -246,6 +257,28 @@ fn lifecycle_supports_ready_running_wait_resume_and_completion() {
             status: RunStatus::Completed
         })
     ));
+
+    let payload = RunEvent::Resumed;
+    let event_after_terminal = RunEventEnvelope {
+        event_id: RunEventId::new(),
+        workspace_id: fixture.workspace_id,
+        run_id: fixture.run_id,
+        sequence: completed.version.next().unwrap(),
+        event_type: payload.event_type().to_owned(),
+        event_version: payload.event_version(),
+        actor: RunActor::Principal(fixture.principal_id),
+        causation_id: OperationId::new(),
+        correlation_id: fixture.correlation_id,
+        payload,
+        occurred_at: fixture.at,
+        recorded_at: fixture.at,
+    };
+    assert_eq!(
+        apply(Some(completed), &event_after_terminal).unwrap_err(),
+        RunReduceError::EventAfterTerminal {
+            status: RunStatus::Completed,
+        }
+    );
 }
 
 #[test]
