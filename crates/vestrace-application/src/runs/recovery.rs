@@ -27,15 +27,13 @@ pub struct RunCheckpoint {
 }
 
 pub fn hash_run_state(state: &RunState) -> Result<String, ApplicationError> {
-    let bytes = serde_json::to_vec(state).map_err(|_| {
-        ApplicationError::Internal("run state serialization failed".to_owned())
-    })?;
+    let bytes = serde_json::to_vec(state)
+        .map_err(|_| ApplicationError::Internal("run state serialization failed".to_owned()))?;
     let digest = Sha256::digest(bytes);
     let mut hash = String::with_capacity(64);
     for byte in digest {
-        write!(&mut hash, "{byte:02x}").map_err(|_| {
-            ApplicationError::Internal("run state hashing failed".to_owned())
-        })?;
+        write!(&mut hash, "{byte:02x}")
+            .map_err(|_| ApplicationError::Internal("run state hashing failed".to_owned()))?;
     }
     Ok(hash)
 }
@@ -213,11 +211,7 @@ impl RunRecoveryOperations for RunRecoveryService {
         run_id: AgentRunId,
     ) -> Result<RunState, ApplicationError> {
         let head = self.stream_head(context, run_id).await?;
-        if let Some(checkpoint) = self
-            .store
-            .load_latest_checkpoint(context, run_id)
-            .await?
-        {
+        if let Some(checkpoint) = self.store.load_latest_checkpoint(context, run_id).await? {
             return self
                 .restore_from_checkpoint(context, run_id, head, checkpoint)
                 .await;
