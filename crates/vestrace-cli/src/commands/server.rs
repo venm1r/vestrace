@@ -25,6 +25,11 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         .migrate()
         .await
         .map_err(|_| anyhow!("database migrations are unavailable"))?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => return Err(anyhow!("database migration history is incompatible")),
+        Err(_) => return Err(anyhow!("database migration verification is unavailable")),
+    }
 
     let run_repository = Arc::new(PgRunRepository::new(store.clone()));
     let run_service = Arc::new(RunService::new(run_repository));
