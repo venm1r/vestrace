@@ -8,7 +8,7 @@ use vestrace_domain::{
 
 use crate::{ApplicationError, RequestContext};
 
-use super::{CreateRunCommand, RunCommandResult};
+use super::{CreateRunCommand, RunCheckpoint, RunCommandResult};
 
 #[async_trait]
 pub trait RunRepository: Send + Sync {
@@ -70,6 +70,55 @@ pub trait RunCommandExecutor: Send + Sync {
 }
 
 #[async_trait]
+pub trait RunRecoveryStore: Send + Sync {
+    async fn load_stream_head(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+    ) -> Result<Option<RunVersion>, ApplicationError>;
+
+    async fn load_events_through(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+        through: RunVersion,
+    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+
+    async fn load_events_after(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+        after: RunVersion,
+    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+
+    async fn load_checkpoint(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+        sequence: RunVersion,
+    ) -> Result<Option<RunCheckpoint>, ApplicationError>;
+
+    async fn load_latest_checkpoint(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+    ) -> Result<Option<RunCheckpoint>, ApplicationError>;
+
+    async fn save_checkpoint(
+        &self,
+        context: &RequestContext,
+        checkpoint: &RunCheckpoint,
+    ) -> Result<(), ApplicationError>;
+
+    async fn replace_projection(
+        &self,
+        context: &RequestContext,
+        expected_stream_version: RunVersion,
+        projection: &AgentRun,
+    ) -> Result<(), ApplicationError>;
+}
+
+#[async_trait]
 pub trait RunUseCases: Send + Sync {
     async fn create_run(
         &self,
@@ -94,4 +143,5 @@ pub type SharedRunRepository = Arc<dyn RunRepository>;
 pub type SharedRunEventStore = Arc<dyn RunEventStore>;
 pub type SharedRunCommandCommitter = Arc<dyn RunCommandCommitter>;
 pub type SharedRunCommandExecutor = Arc<dyn RunCommandExecutor>;
+pub type SharedRunRecoveryStore = Arc<dyn RunRecoveryStore>;
 pub type SharedRunUseCases = Arc<dyn RunUseCases>;
