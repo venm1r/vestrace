@@ -1,9 +1,25 @@
+mod command;
+mod decision;
+mod error;
+mod event;
+mod reducer;
+mod state;
+
 use crate::{
     DomainError,
     id::{AgentRunId, PrincipalId, WorkspaceId},
     time::Timestamp,
 };
 use serde::{Deserialize, Serialize};
+
+pub use command::{RunCommand, RunCommandEnvelope};
+pub use decision::decide;
+pub use error::{RunDecisionError, RunReduceError, RunReplayError};
+pub use event::{PendingRunEvent, RunEvent, RunEventEnvelope};
+pub use reducer::{apply, replay};
+pub use state::{
+    RunActor, RunCompletion, RunState, RunStepState, RunStepStatus, RunWait, StallReason,
+};
 
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
@@ -12,6 +28,7 @@ use serde::{Deserialize, Serialize};
 pub struct RunVersion(u64);
 
 impl RunVersion {
+    pub const ZERO: Self = Self(0);
     pub const INITIAL: Self = Self(1);
 
     pub fn new(value: u64) -> Result<Self, DomainError> {
@@ -46,6 +63,12 @@ pub enum RunStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+impl RunStatus {
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
