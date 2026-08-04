@@ -78,11 +78,7 @@ async fn seed_identities(pool: &sqlx::PgPool) {
     .unwrap();
 }
 
-fn event(
-    sequence: u64,
-    payload: RunEvent,
-    occurred_at: DateTime<Utc>,
-) -> RunEventEnvelope {
+fn event(sequence: u64, payload: RunEvent, occurred_at: DateTime<Utc>) -> RunEventEnvelope {
     RunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: workspace_a(),
@@ -176,7 +172,10 @@ async fn checkpoint_round_trips_typed_state(pool: sqlx::PgPool) {
     let expected = checkpoint(&events);
     let store = PgRunRecoveryStore::new(PgStore::from_pool(pool));
 
-    store.save_checkpoint(&context_a(), &expected).await.unwrap();
+    store
+        .save_checkpoint(&context_a(), &expected)
+        .await
+        .unwrap();
 
     assert_eq!(
         store
@@ -204,8 +203,14 @@ async fn identical_checkpoint_write_is_idempotent_but_conflicting_content_is_rej
     let expected = checkpoint(&events);
     let store = PgRunRecoveryStore::new(PgStore::from_pool(pool));
 
-    store.save_checkpoint(&context_a(), &expected).await.unwrap();
-    store.save_checkpoint(&context_a(), &expected).await.unwrap();
+    store
+        .save_checkpoint(&context_a(), &expected)
+        .await
+        .unwrap();
+    store
+        .save_checkpoint(&context_a(), &expected)
+        .await
+        .unwrap();
 
     let mut conflicting = expected;
     conflicting.state.title = "conflicting snapshot".to_owned();
