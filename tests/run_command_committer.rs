@@ -3,6 +3,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use chrono::{DateTime, Duration, Utc};
 use vestrace_application::{
     ApplicationError, RequestContext, RunCommandCommitter, RunCommandExecutor, RunCommandService,
     RunEventStore, RunRepository,
@@ -77,6 +78,11 @@ fn context_b() -> RequestContext {
     RequestContext::new(workspace_b(), principal_b())
 }
 
+fn database_timestamp(timestamp: DateTime<Utc>) -> DateTime<Utc> {
+    let submicrosecond_nanos = i64::from(timestamp.timestamp_subsec_nanos() % 1_000);
+    timestamp - Duration::nanoseconds(submicrosecond_nanos)
+}
+
 fn command(expected_version: RunVersion, command: RunCommand) -> RunCommandEnvelope {
     RunCommandEnvelope {
         command_id: OperationId::new(),
@@ -86,7 +92,7 @@ fn command(expected_version: RunVersion, command: RunCommand) -> RunCommandEnvel
         actor: RunActor::Principal(principal_a()),
         expected_version,
         correlation_id: CorrelationId::new(),
-        issued_at: now(),
+        issued_at: database_timestamp(now()),
         command,
     }
 }
@@ -104,7 +110,7 @@ fn mark_ready_event(
     workspace_id: WorkspaceId,
     actor: RunActor,
 ) -> RunEventEnvelope {
-    let occurred_at = now();
+    let occurred_at = database_timestamp(now());
     let payload = RunEvent::MarkedReady;
     RunEventEnvelope {
         event_id,
@@ -250,7 +256,7 @@ async fn duplicate_event_id_rolls_back_projection_update(pool: sqlx::PgPool) {
         )
         .await;
 
-    assert!(matches!(result, Err(ApplicationError::Storage(_))));
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
     let store = PgStore::from_pool(pool);
     let repository = PgRunRepository::new(store.clone());
     let event_store = PgRunEventStore::new(store);
@@ -271,7 +277,7 @@ async fn duplicate_event_id_rolls_back_projection_update(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn projection_identity_mismatch_is_rejected_without_writes(pool: sqlx::PgPool) {
     seed_identities(&pool).await;
-    let occurred_at = now();
+    let occurred_at = database_timestamp(now());
     let payload = RunEvent::Created {
         principal_id: principal_a(),
         title: "Mismatch".to_owned(),
