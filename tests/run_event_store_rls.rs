@@ -25,11 +25,12 @@ impl RuntimeRole {
 }
 
 async fn create_runtime_role(pool: &sqlx::PgPool) -> RuntimeRole {
-    let name: String =
-        sqlx::query_scalar("SELECT 'vestrace_run_events_' || replace(gen_random_uuid()::text, '-', '')")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let name: String = sqlx::query_scalar(
+        "SELECT 'vestrace_run_events_' || replace(gen_random_uuid()::text, '-', '')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let role = RuntimeRole { name };
     let quoted = role.quoted();
 
@@ -43,12 +44,10 @@ async fn create_runtime_role(pool: &sqlx::PgPool) -> RuntimeRole {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query(&format!(
-        "GRANT SELECT ON TABLE agent_runs TO {quoted}"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query(&format!("GRANT SELECT ON TABLE agent_runs TO {quoted}"))
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(&format!(
         "GRANT SELECT, INSERT ON TABLE run_events TO {quoted}"
     ))
@@ -62,9 +61,7 @@ async fn create_runtime_role(pool: &sqlx::PgPool) -> RuntimeRole {
 async fn cleanup_runtime_role(pool: &sqlx::PgPool, role: &RuntimeRole) -> Vec<sqlx::Error> {
     let quoted = role.quoted();
     let statements = [
-        format!(
-            "REVOKE ALL PRIVILEGES ON TABLE agent_runs, run_events FROM {quoted}"
-        ),
+        format!("REVOKE ALL PRIVILEGES ON TABLE agent_runs, run_events FROM {quoted}"),
         format!("REVOKE USAGE ON SCHEMA public FROM {quoted}"),
         format!("DROP ROLE {quoted}"),
     ];
@@ -311,13 +308,8 @@ async fn restricted_runtime_role_enforces_run_event_boundaries(pool: sqlx::PgPoo
         .await;
         assert_sqlstate(update, "42501");
 
-        let delete = execute_and_rollback(
-            &pool,
-            &role,
-            WORKSPACE_A,
-            "DELETE FROM run_events",
-        )
-        .await;
+        let delete =
+            execute_and_rollback(&pool, &role, WORKSPACE_A, "DELETE FROM run_events").await;
         assert_sqlstate(delete, "42501");
     })
     .await;
