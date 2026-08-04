@@ -24,6 +24,8 @@ pub enum RunReduceError {
     MissingCreatedEvent,
     #[error("run.created cannot be applied to an existing run")]
     DuplicateCreatedEvent,
+    #[error("run version overflow")]
+    VersionOverflow,
     #[error("run event sequence mismatch: expected {expected:?}, actual {actual:?}")]
     SequenceMismatch {
         expected: RunVersion,
