@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
 use vestrace_domain::{
     DomainError,
     id::RunEventId,
@@ -48,7 +49,7 @@ impl RunCommandExecutor for RunCommandService {
             ));
         }
 
-        let recorded_at = now();
+        let recorded_at = database_timestamp(now());
         let mut sequence = command.expected_version;
         let mut envelopes = Vec::with_capacity(pending_events.len());
         for pending in pending_events {
@@ -65,7 +66,7 @@ impl RunCommandExecutor for RunCommandService {
                 causation_id: command.command_id,
                 correlation_id: command.correlation_id,
                 payload,
-                occurred_at: pending.occurred_at,
+                occurred_at: database_timestamp(pending.occurred_at),
                 recorded_at,
             });
         }
@@ -134,6 +135,11 @@ fn project_run(state: &RunState) -> AgentRun {
         created_at: state.created_at,
         updated_at: state.updated_at,
     }
+}
+
+fn database_timestamp(timestamp: DateTime<Utc>) -> DateTime<Utc> {
+    let submicrosecond_nanos = i64::from(timestamp.timestamp_subsec_nanos() % 1_000);
+    timestamp - Duration::nanoseconds(submicrosecond_nanos)
 }
 
 fn decision_error(error: RunDecisionError) -> ApplicationError {
