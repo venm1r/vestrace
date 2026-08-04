@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{FromRow, Postgres, Transaction};
+use sqlx::{FromRow, PgConnection};
 use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
@@ -228,7 +228,7 @@ fn validate_batch(
 }
 
 async fn load_run_for_update(
-    transaction: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
 ) -> Result<Option<AgentRun>, ApplicationError> {
@@ -243,7 +243,7 @@ async fn load_run_for_update(
     )
     .bind(context.workspace_id.as_uuid())
     .bind(run_id.as_uuid())
-    .fetch_optional(&mut **transaction)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(storage_error)?;
 
@@ -251,7 +251,7 @@ async fn load_run_for_update(
 }
 
 async fn load_events(
-    transaction: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
 ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
@@ -267,7 +267,7 @@ async fn load_events(
     )
     .bind(context.workspace_id.as_uuid())
     .bind(run_id.as_uuid())
-    .fetch_all(&mut **transaction)
+    .fetch_all(&mut *connection)
     .await
     .map_err(storage_error)?;
 
@@ -322,7 +322,7 @@ fn validate_existing_projection(
 }
 
 async fn insert_projection(
-    transaction: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     projection: &AgentRun,
 ) -> Result<(), ApplicationError> {
     sqlx::query(
@@ -339,14 +339,14 @@ async fn insert_projection(
     .bind(version_to_database(projection.version)?)
     .bind(projection.created_at)
     .bind(projection.updated_at)
-    .execute(&mut **transaction)
+    .execute(&mut *connection)
     .await
     .map_err(database_write_error)?;
     Ok(())
 }
 
 async fn update_projection(
-    transaction: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
     expected_version: RunVersion,
@@ -367,7 +367,7 @@ async fn update_projection(
     .bind(context.workspace_id.as_uuid())
     .bind(run_id.as_uuid())
     .bind(version_to_database(expected_version)?)
-    .execute(&mut **transaction)
+    .execute(&mut *connection)
     .await
     .map_err(database_write_error)?;
 
@@ -380,7 +380,7 @@ async fn update_projection(
 }
 
 async fn insert_events(
-    transaction: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     events: &[RunEventEnvelope],
 ) -> Result<(), ApplicationError> {
     for event in events {
@@ -402,7 +402,7 @@ async fn insert_events(
         .bind(serde_json::to_value(&event.payload).map_err(storage_error)?)
         .bind(event.occurred_at)
         .bind(event.recorded_at)
-        .execute(&mut **transaction)
+        .execute(&mut *connection)
         .await
         .map_err(database_write_error)?;
     }
