@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
-use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter};
+use vestrace_application::{
+    ApplicationError, RequestContext, RunCommandCommitter, project_run,
+};
 use vestrace_domain::{
-    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
+    DomainError,
+    id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
     run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunStatus, RunVersion, replay},
 };
 
@@ -18,36 +21,6 @@ pub struct PgRunCommandCommitter {
 impl PgRunCommandCommitter {
     pub fn new(store: PgStore) -> Self {
         Self { store }
-    }
-}
-
-#[derive(Debug, FromRow)]
-struct StoredRunRow {
-    id: uuid::Uuid,
-    workspace_id: uuid::Uuid,
-    principal_id: uuid::Uuid,
-    title: String,
-    status: String,
-    run_version: i64,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-impl TryFrom<StoredRunRow> for AgentRun {
-    type Error = ApplicationError;
-
-    fn try_from(row: StoredRunRow) -> Result<Self, Self::Error> {
-        let version = version_from_database(row.run_version)?;
-        Ok(Self {
-            id: AgentRunId::from_uuid(row.id),
-            workspace_id: WorkspaceId::from_uuid(row.workspace_id),
-            principal_id: PrincipalId::from_uuid(row.principal_id),
-            title: row.title,
-            status: status_from_database(&row.status)?,
-            version,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
     }
 }
 
@@ -71,19 +44,30 @@ impl TryFrom<StoredEventRow> for RunEventEnvelope {
     type Error = ApplicationError;
 
     fn try_from(row: StoredEventRow) -> Result<Self, Self::Error> {
-        let sequence = u64::try_from(row.sequence).map_err(storage_error)?;
+        let sequence = version_from_database(row.sequence)?;
+        if sequence == RunVersion::ZERO {
+            return Err(storage_corruption(
+                "stored run event sequence must be positive",
+            ));
+        }
         let event_version = u16::try_from(row.event_version).map_err(storage_error)?;
+        let payload = serde_json::from_value::<RunEvent>(row.payload).map_err(storage_error)?;
+        if row.event_type != payload.event_type() || event_version != payload.event_version() {
+            return Err(storage_corruption(
+                "stored run event metadata does not match its payload",
+            ));
+        }
         Ok(Self {
             event_id: RunEventId::from_uuid(row.id),
             workspace_id: WorkspaceId::from_uuid(row.workspace_id),
             run_id: AgentRunId::from_uuid(row.run_id),
-            sequence: RunVersion::new(sequence)?,
+            sequence,
             event_type: row.event_type,
             event_version,
             actor: serde_json::from_value::<RunActor>(row.actor).map_err(storage_error)?,
             causation_id: OperationId::from_uuid(row.causation_id),
             correlation_id: CorrelationId::from_uuid(row.correlation_id),
-            payload: serde_json::from_value::<RunEvent>(row.payload).map_err(storage_error)?,
+            payload,
             occurred_at: row.occurred_at,
             recorded_at: row.recorded_at,
         })
@@ -108,63 +92,59 @@ impl RunCommandCommitter for PgRunCommandCommitter {
             .await
             .map_err(storage_error)?;
 
-        let stored_run = load_run_for_update(transaction.connection(), context, run_id).await?;
-        let existing_events = load_events(transaction.connection(), context, run_id).await?;
+        let actual_version = lock_or_create_stream(
+            transaction.connection(),
+            context,
+            run_id,
+            expected_version,
+            projection.created_at,
+        )
+        .await?;
+        if actual_version != expected_version {
+            return Err(version_conflict(expected_version, actual_version));
+        }
 
-        if expected_version == RunVersion::ZERO {
-            if stored_run.is_some() || !existing_events.is_empty() {
-                return Err(ApplicationError::Conflict("run already exists".to_owned()));
-            }
-        } else {
-            let stored_run = stored_run.ok_or_else(|| {
-                ApplicationError::Storage(
-                    "owning run does not exist in the current workspace".to_owned(),
-                )
-            })?;
-            validate_existing_projection(stored_run, &existing_events, expected_version)?;
+        let existing_events = load_events(transaction.connection(), context, run_id).await?;
+        validate_stream_head(&existing_events, actual_version)?;
+        if actual_version != RunVersion::ZERO {
+            replay(existing_events.clone())
+                .map_err(|error| {
+                    storage_corruption(&format!("stored run event replay failed: {error}"))
+                })?
+                .ok_or_else(|| {
+                    storage_corruption("run stream head has no authoritative events")
+                })?;
         }
 
         let mut complete_stream = existing_events;
         complete_stream.extend_from_slice(events);
         let resulting_state = replay(complete_stream)
             .map_err(|error| {
-                ApplicationError::Storage(format!("run event replay failed before commit: {error}"))
+                storage_corruption(&format!("run event replay failed before commit: {error}"))
             })?
             .ok_or_else(|| {
                 ApplicationError::Conflict(
                     "run command batch did not produce a projection".to_owned(),
                 )
             })?;
-        let derived_projection = AgentRun {
-            id: resulting_state.id,
-            workspace_id: resulting_state.workspace_id,
-            principal_id: resulting_state.principal_id,
-            title: resulting_state.title,
-            status: resulting_state.status,
-            version: resulting_state.version,
-            created_at: resulting_state.created_at,
-            updated_at: resulting_state.updated_at,
-        };
+        let derived_projection = project_run(&resulting_state);
         if &derived_projection != projection {
             return Err(ApplicationError::Conflict(
                 "run projection does not match the resulting event state".to_owned(),
             ));
         }
 
-        if expected_version == RunVersion::ZERO {
-            insert_projection(transaction.connection(), projection).await?;
-            insert_events(transaction.connection(), events).await?;
-        } else {
-            insert_events(transaction.connection(), events).await?;
-            update_projection(
-                transaction.connection(),
-                context,
-                run_id,
-                expected_version,
-                projection,
-            )
-            .await?;
-        }
+        insert_events(transaction.connection(), events).await?;
+        advance_stream(
+            transaction.connection(),
+            context,
+            run_id,
+            expected_version,
+            projection.version,
+            projection.updated_at,
+        )
+        .await?;
+        upsert_projection(transaction.connection(), projection).await?;
 
         transaction.commit().await.map_err(storage_error)?;
         Ok(projection.version)
@@ -227,27 +207,46 @@ fn validate_batch(
     Ok(())
 }
 
-async fn load_run_for_update(
+async fn lock_or_create_stream(
     connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
-) -> Result<Option<AgentRun>, ApplicationError> {
-    let row = sqlx::query_as::<_, StoredRunRow>(
-        "SELECT
-             id, workspace_id, principal_id, title, status, run_version,
-             created_at, updated_at
-         FROM agent_runs
+    expected_version: RunVersion,
+    created_at: DateTime<Utc>,
+) -> Result<RunVersion, ApplicationError> {
+    if expected_version == RunVersion::ZERO {
+        let inserted = sqlx::query(
+            "INSERT INTO run_streams (
+                 workspace_id, run_id, current_version, created_at, updated_at
+             ) VALUES ($1, $2, 0, $3, $3)
+             ON CONFLICT (workspace_id, run_id) DO NOTHING",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(run_id.as_uuid())
+        .bind(created_at)
+        .execute(&mut *connection)
+        .await
+        .map_err(database_write_error)?;
+        if inserted.rows_affected() == 0 {
+            return Err(ApplicationError::Conflict("run already exists".to_owned()));
+        }
+        return Ok(RunVersion::ZERO);
+    }
+
+    let version = sqlx::query_scalar::<_, i64>(
+        "SELECT current_version
+         FROM run_streams
          WHERE workspace_id = $1
-           AND id = $2
+           AND run_id = $2
          FOR UPDATE",
     )
     .bind(context.workspace_id.as_uuid())
     .bind(run_id.as_uuid())
     .fetch_optional(&mut *connection)
     .await
-    .map_err(storage_error)?;
-
-    row.map(AgentRun::try_from).transpose()
+    .map_err(storage_error)?
+    .ok_or_else(|| DomainError::NotFound("run stream does not exist".to_owned()))?;
+    version_from_database(version)
 }
 
 async fn load_events(
@@ -274,107 +273,20 @@ async fn load_events(
     rows.into_iter().map(RunEventEnvelope::try_from).collect()
 }
 
-fn validate_existing_projection(
-    stored_run: AgentRun,
+fn validate_stream_head(
     existing_events: &[RunEventEnvelope],
-    expected_version: RunVersion,
+    stream_version: RunVersion,
 ) -> Result<(), ApplicationError> {
-    if stored_run.version != expected_version {
-        return Err(version_conflict(expected_version, stored_run.version));
-    }
-    let stream_version = existing_events
+    let event_version = existing_events
         .last()
         .map(|event| event.sequence)
         .unwrap_or(RunVersion::ZERO);
-    if stream_version != expected_version {
-        return Err(ApplicationError::Storage(format!(
-            "run projection and event stream diverged at versions {} and {}",
-            stored_run.version.value(),
-            stream_version.value()
+    if event_version != stream_version {
+        return Err(storage_corruption(&format!(
+            "run stream metadata and events diverged at versions {} and {}",
+            stream_version.value(),
+            event_version.value()
         )));
-    }
-
-    let state = replay(existing_events.to_vec())
-        .map_err(|error| {
-            ApplicationError::Storage(format!("stored run event replay failed: {error}"))
-        })?
-        .ok_or_else(|| {
-            ApplicationError::Storage(
-                "stored run projection has no authoritative events".to_owned(),
-            )
-        })?;
-    let event_projection = AgentRun {
-        id: state.id,
-        workspace_id: state.workspace_id,
-        principal_id: state.principal_id,
-        title: state.title,
-        status: state.status,
-        version: state.version,
-        created_at: state.created_at,
-        updated_at: state.updated_at,
-    };
-    if event_projection != stored_run {
-        return Err(ApplicationError::Storage(
-            "stored run projection does not match its event stream".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-async fn insert_projection(
-    connection: &mut PgConnection,
-    projection: &AgentRun,
-) -> Result<(), ApplicationError> {
-    sqlx::query(
-        "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version,
-             created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-    )
-    .bind(projection.id.as_uuid())
-    .bind(projection.workspace_id.as_uuid())
-    .bind(projection.principal_id.as_uuid())
-    .bind(&projection.title)
-    .bind(status_name(projection.status))
-    .bind(version_to_database(projection.version)?)
-    .bind(projection.created_at)
-    .bind(projection.updated_at)
-    .execute(&mut *connection)
-    .await
-    .map_err(database_write_error)?;
-    Ok(())
-}
-
-async fn update_projection(
-    connection: &mut PgConnection,
-    context: &RequestContext,
-    run_id: AgentRunId,
-    expected_version: RunVersion,
-    projection: &AgentRun,
-) -> Result<(), ApplicationError> {
-    let result = sqlx::query(
-        "UPDATE agent_runs
-         SET status = $1,
-             run_version = $2,
-             updated_at = $3
-         WHERE workspace_id = $4
-           AND id = $5
-           AND run_version = $6",
-    )
-    .bind(status_name(projection.status))
-    .bind(version_to_database(projection.version)?)
-    .bind(projection.updated_at)
-    .bind(context.workspace_id.as_uuid())
-    .bind(run_id.as_uuid())
-    .bind(version_to_database(expected_version)?)
-    .execute(&mut *connection)
-    .await
-    .map_err(database_write_error)?;
-
-    if result.rows_affected() != 1 {
-        return Err(ApplicationError::Conflict(
-            "run projection changed before command commit".to_owned(),
-        ));
     }
     Ok(())
 }
@@ -409,6 +321,69 @@ async fn insert_events(
     Ok(())
 }
 
+async fn advance_stream(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    run_id: AgentRunId,
+    expected_version: RunVersion,
+    new_version: RunVersion,
+    updated_at: DateTime<Utc>,
+) -> Result<(), ApplicationError> {
+    let result = sqlx::query(
+        "UPDATE run_streams
+         SET current_version = $1,
+             updated_at = $2
+         WHERE workspace_id = $3
+           AND run_id = $4
+           AND current_version = $5",
+    )
+    .bind(version_to_database(new_version)?)
+    .bind(updated_at)
+    .bind(context.workspace_id.as_uuid())
+    .bind(run_id.as_uuid())
+    .bind(version_to_database(expected_version)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(database_write_error)?;
+    if result.rows_affected() != 1 {
+        return Err(ApplicationError::Conflict(
+            "run stream changed before command commit".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn upsert_projection(
+    connection: &mut PgConnection,
+    projection: &AgentRun,
+) -> Result<(), ApplicationError> {
+    sqlx::query(
+        "INSERT INTO agent_runs (
+             id, workspace_id, principal_id, title, status, run_version,
+             created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (workspace_id, id) DO UPDATE
+         SET principal_id = EXCLUDED.principal_id,
+             title = EXCLUDED.title,
+             status = EXCLUDED.status,
+             run_version = EXCLUDED.run_version,
+             created_at = EXCLUDED.created_at,
+             updated_at = EXCLUDED.updated_at",
+    )
+    .bind(projection.id.as_uuid())
+    .bind(projection.workspace_id.as_uuid())
+    .bind(projection.principal_id.as_uuid())
+    .bind(&projection.title)
+    .bind(status_name(projection.status))
+    .bind(version_to_database(projection.version)?)
+    .bind(projection.created_at)
+    .bind(projection.updated_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(database_write_error)?;
+    Ok(())
+}
+
 fn status_name(status: RunStatus) -> &'static str {
     match status {
         RunStatus::Created => "created",
@@ -423,28 +398,14 @@ fn status_name(status: RunStatus) -> &'static str {
     }
 }
 
-fn status_from_database(status: &str) -> Result<RunStatus, ApplicationError> {
-    match status {
-        "created" => Ok(RunStatus::Created),
-        "ready" => Ok(RunStatus::Ready),
-        "running" => Ok(RunStatus::Running),
-        "waiting_for_input" => Ok(RunStatus::WaitingForInput),
-        "waiting_for_approval" => Ok(RunStatus::WaitingForApproval),
-        "completed" => Ok(RunStatus::Completed),
-        "failed" => Ok(RunStatus::Failed),
-        "cancelled" => Ok(RunStatus::Cancelled),
-        "stalled" => Ok(RunStatus::Stalled),
-        _ => Err(ApplicationError::Storage(
-            "stored run status is unsupported".to_owned(),
-        )),
-    }
-}
-
 fn version_to_database(version: RunVersion) -> Result<i64, ApplicationError> {
     i64::try_from(version.value()).map_err(storage_error)
 }
 
 fn version_from_database(version: i64) -> Result<RunVersion, ApplicationError> {
+    if version == 0 {
+        return Ok(RunVersion::ZERO);
+    }
     let value = u64::try_from(version).map_err(storage_error)?;
     RunVersion::new(value).map_err(ApplicationError::from)
 }
@@ -469,6 +430,10 @@ fn database_write_error(error: sqlx::Error) -> ApplicationError {
         );
     }
     storage_error(error)
+}
+
+fn storage_corruption(message: &str) -> ApplicationError {
+    ApplicationError::Storage(message.to_owned())
 }
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
