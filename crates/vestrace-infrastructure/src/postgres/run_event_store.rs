@@ -282,7 +282,7 @@ async fn insert_events(
         .bind(event.recorded_at)
         .execute(&mut *connection)
         .await
-        .map_err(database_write_error)?;
+        .map_err(storage_error)?;
     }
     Ok(())
 }
