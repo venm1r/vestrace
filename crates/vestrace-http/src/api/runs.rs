@@ -122,3 +122,142 @@ fn required_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Uuid,
     Uuid::parse_str(value)
         .map_err(|_| ApiError::bad_request(format!("{name} header must be a UUID")))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    use uuid::Uuid;
+    use vestrace_application::{
+        ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunCommandExecutor,
+        RunCommandResult, RunUseCases,
+    };
+    use vestrace_domain::{
+        id::AgentRunId,
+        run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunVersion},
+    };
+
+    use crate::{AppState, build_router};
+
+    struct Healthy;
+
+    #[async_trait]
+    impl HealthRepository for Healthy {
+        async fn check(&self) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+    }
+
+    struct ReadOnlyRuns;
+
+    #[async_trait]
+    impl RunUseCases for ReadOnlyRuns {
+        async fn create_run(
+            &self,
+            _context: &RequestContext,
+            _command: CreateRunCommand,
+        ) -> Result<AgentRun, ApplicationError> {
+            panic!("POST /v1/runs must not call the legacy write path")
+        }
+
+        async fn list_runs(
+            &self,
+            _context: &RequestContext,
+            _limit: u32,
+        ) -> Result<Vec<AgentRun>, ApplicationError> {
+            Ok(Vec::new())
+        }
+
+        async fn get_run(
+            &self,
+            _context: &RequestContext,
+            _id: AgentRunId,
+        ) -> Result<Option<AgentRun>, ApplicationError> {
+            Ok(None)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingCommands {
+        recorded: Arc<Mutex<Option<RunCommandEnvelope>>>,
+    }
+
+    #[async_trait]
+    impl RunCommandExecutor for RecordingCommands {
+        async fn execute(
+            &self,
+            _context: &RequestContext,
+            command: RunCommandEnvelope,
+        ) -> Result<RunCommandResult, ApplicationError> {
+            let (principal_id, title) = match &command.command {
+                RunCommand::Create {
+                    principal_id,
+                    title,
+                } => (*principal_id, title.clone()),
+                other => panic!("unexpected command: {other:?}"),
+            };
+            let run = AgentRun::new(
+                command.run_id,
+                command.workspace_id,
+                principal_id,
+                title,
+                command.issued_at,
+            );
+            *self.recorded.lock().unwrap() = Some(command);
+            Ok(RunCommandResult {
+                run,
+                events: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn create_run_uses_the_canonical_command_executor() {
+        let workspace_id = Uuid::new_v4();
+        let principal_id = Uuid::new_v4();
+        let request_id = Uuid::now_v7();
+        let correlation_id = Uuid::now_v7();
+        let commands = RecordingCommands::default();
+        let state = AppState::new(
+            Arc::new(Healthy),
+            Arc::new(ReadOnlyRuns),
+            Arc::new(commands.clone()),
+        );
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/runs")
+                    .header("content-type", "application/json")
+                    .header("x-workspace-id", workspace_id.to_string())
+                    .header("x-principal-id", principal_id.to_string())
+                    .header("x-request-id", request_id.to_string())
+                    .header("x-correlation-id", correlation_id.to_string())
+                    .body(Body::from(r#"{"title":"Canonical create"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let command = commands.recorded.lock().unwrap().clone().unwrap();
+        assert_eq!(command.command_id.as_uuid(), request_id);
+        assert_eq!(command.correlation_id.as_uuid(), correlation_id);
+        assert_eq!(command.workspace_id.as_uuid(), workspace_id);
+        assert_eq!(command.expected_version, RunVersion::ZERO);
+        assert_eq!(command.idempotency_key, None);
+        assert_eq!(command.actor, RunActor::Principal(principal_id.into()));
+        assert!(matches!(
+            command.command,
+            RunCommand::Create { title, .. } if title == "Canonical create"
+        ));
+    }
+}
