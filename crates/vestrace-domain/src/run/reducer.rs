@@ -1,6 +1,5 @@
 use super::{
-    RunCompletion, RunEvent, RunEventEnvelope, RunReduceError, RunReplayError, RunState,
-    RunStatus, RunVersion,
+    RunEvent, RunEventEnvelope, RunReduceError, RunReplayError, RunState, RunStatus, RunVersion,
 };
 
 pub fn apply(
@@ -110,9 +109,4 @@ fn validate_envelope(
     }
 
     Ok(())
-}
-
-#[allow(dead_code)]
-fn _completion_is_part_of_the_state_model(completion: Option<RunCompletion>) -> bool {
-    completion.is_some()
 }
