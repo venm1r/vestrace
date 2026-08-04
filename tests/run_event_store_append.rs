@@ -1,7 +1,8 @@
 //! Optimistic PostgreSQL run event append behavior for R1.2.
 
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
+use tokio::sync::Barrier;
 use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
@@ -14,6 +15,7 @@ const WORKSPACE_ID: &str = "53000000-0000-0000-0000-000000000001";
 const OTHER_WORKSPACE_ID: &str = "53000000-0000-0000-0000-000000000002";
 const PRINCIPAL_ID: &str = "53000000-0000-0000-0000-000000000003";
 const RUN_ID: &str = "53000000-0000-0000-0000-000000000004";
+const OTHER_RUN_ID: &str = "53000000-0000-0000-0000-000000000005";
 
 async fn seed_owner(pool: &sqlx::PgPool) {
     sqlx::query(
@@ -147,7 +149,9 @@ async fn append_continues_a_stream_from_the_expected_version(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn append_rejects_a_stale_expected_version(pool: sqlx::PgPool) {
+async fn append_rejects_a_stale_expected_version_after_reading_the_stream_head(
+    pool: sqlx::PgPool,
+) {
     seed_owner(&pool).await;
     let store = PgRunEventStore::new(PgStore::from_pool(pool));
 
@@ -156,7 +160,7 @@ async fn append_rejects_a_stale_expected_version(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let result = store
-        .append(&context(), run_id(), RunVersion::ZERO, &[second_event()])
+        .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Conflict(_))));
@@ -211,6 +215,31 @@ async fn append_rejects_mixed_workspace_identity(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn append_rejects_mixed_run_identity(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+    let invalid = event(
+        WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
+        AgentRunId::from_str(OTHER_RUN_ID).unwrap(),
+        1,
+        RunEvent::MarkedReady,
+    );
+
+    let result = store
+        .append(&context(), run_id(), RunVersion::ZERO, &[invalid])
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+    assert!(
+        store
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn append_rejects_sequence_gaps_without_partial_writes(pool: sqlx::PgPool) {
     seed_owner(&pool).await;
     let store = PgRunEventStore::new(PgStore::from_pool(pool));
@@ -237,5 +266,87 @@ async fn append_rejects_sequence_gaps_without_partial_writes(pool: sqlx::PgPool)
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn database_failure_rolls_back_the_entire_batch(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+    let first = first_event();
+    let mut second = second_event();
+    second.event_id = first.event_id;
+
+    let result = store
+        .append(
+            &context(),
+            run_id(),
+            RunVersion::ZERO,
+            &[first, second],
+        )
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Storage(_))));
+    assert!(
+        store
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn concurrent_writers_cannot_claim_the_same_stream_version(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+
+    let store_a = PgRunEventStore::new(PgStore::from_pool(pool.clone()));
+    let store_b = PgRunEventStore::new(PgStore::from_pool(pool));
+    let barrier = Arc::new(Barrier::new(3));
+
+    let barrier_a = Arc::clone(&barrier);
+    let writer_a = tokio::spawn(async move {
+        barrier_a.wait().await;
+        store_a
+            .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
+            .await
+    });
+
+    let barrier_b = Arc::clone(&barrier);
+    let writer_b = tokio::spawn(async move {
+        barrier_b.wait().await;
+        store_b
+            .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
+            .await
+    });
+
+    barrier.wait().await;
+    let result_a = writer_a.await.unwrap();
+    let result_b = writer_b.await.unwrap();
+
+    let successes = [result_a.as_ref(), result_b.as_ref()]
+        .into_iter()
+        .filter(|result| result.is_ok())
+        .count();
+    let conflicts = [result_a.as_ref(), result_b.as_ref()]
+        .into_iter()
+        .filter(|result| matches!(result, Err(ApplicationError::Conflict(_))))
+        .count();
+
+    assert_eq!(successes, 1);
+    assert_eq!(conflicts, 1);
+
+    let verifier = PgRunEventStore::new(PgStore::from_pool(
+        sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
+            .await
+            .unwrap(),
+    ));
+    assert_eq!(
+        verifier
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }
