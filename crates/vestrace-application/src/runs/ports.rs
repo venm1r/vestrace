@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use vestrace_domain::{id::AgentRunId, run::AgentRun};
+use vestrace_domain::{
+    id::AgentRunId,
+    run::{AgentRun, RunEventEnvelope, RunVersion},
+};
 
 use crate::{ApplicationError, RequestContext};
 
@@ -29,6 +32,23 @@ pub trait RunRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait RunEventStore: Send + Sync {
+    async fn load_stream(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+
+    async fn append(
+        &self,
+        context: &RequestContext,
+        run_id: AgentRunId,
+        expected_version: RunVersion,
+        events: &[RunEventEnvelope],
+    ) -> Result<RunVersion, ApplicationError>;
+}
+
+#[async_trait]
 pub trait RunUseCases: Send + Sync {
     async fn create_run(
         &self,
@@ -50,4 +70,5 @@ pub trait RunUseCases: Send + Sync {
 }
 
 pub type SharedRunRepository = Arc<dyn RunRepository>;
+pub type SharedRunEventStore = Arc<dyn RunEventStore>;
 pub type SharedRunUseCases = Arc<dyn RunUseCases>;
