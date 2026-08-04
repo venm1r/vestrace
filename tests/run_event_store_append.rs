@@ -1,0 +1,224 @@
+//! Optimistic PostgreSQL run event append behavior for R1.2.
+
+use std::str::FromStr;
+
+use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
+use vestrace_domain::{
+    now,
+    id::{
+        AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId,
+    },
+    run::{RunActor, RunEvent, RunEventEnvelope, RunVersion},
+};
+use vestrace_infrastructure::{PgRunEventStore, PgStore};
+
+const WORKSPACE_ID: &str = "53000000-0000-0000-0000-000000000001";
+const OTHER_WORKSPACE_ID: &str = "53000000-0000-0000-0000-000000000002";
+const PRINCIPAL_ID: &str = "53000000-0000-0000-0000-000000000003";
+const RUN_ID: &str = "53000000-0000-0000-0000-000000000004";
+
+async fn seed_owner(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO workspaces (id, slug) VALUES
+         ($1::uuid, 'run-event-append'),
+         ($2::uuid, 'run-event-append-other')",
+    )
+    .bind(WORKSPACE_ID)
+    .bind(OTHER_WORKSPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO principals (id, workspace_id, identifier)
+         VALUES ($1::uuid, $2::uuid, 'run-event-append-principal')",
+    )
+    .bind(PRINCIPAL_ID)
+    .bind(WORKSPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO agent_runs (
+             id, workspace_id, principal_id, title, status, run_version
+         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'append', 'created', 1)",
+    )
+    .bind(RUN_ID)
+    .bind(WORKSPACE_ID)
+    .bind(PRINCIPAL_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn context() -> RequestContext {
+    RequestContext::new(
+        WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
+        PrincipalId::from_str(PRINCIPAL_ID).unwrap(),
+    )
+}
+
+fn run_id() -> AgentRunId {
+    AgentRunId::from_str(RUN_ID).unwrap()
+}
+
+fn event(
+    workspace_id: WorkspaceId,
+    run_id: AgentRunId,
+    sequence: u64,
+    payload: RunEvent,
+) -> RunEventEnvelope {
+    let at = now();
+    RunEventEnvelope {
+        event_id: RunEventId::new(),
+        workspace_id,
+        run_id,
+        sequence: RunVersion::new(sequence).unwrap(),
+        event_type: payload.event_type().to_owned(),
+        event_version: payload.event_version(),
+        actor: RunActor::Principal(PrincipalId::from_str(PRINCIPAL_ID).unwrap()),
+        causation_id: OperationId::new(),
+        correlation_id: CorrelationId::new(),
+        payload,
+        occurred_at: at,
+        recorded_at: at,
+    }
+}
+
+fn first_event() -> RunEventEnvelope {
+    event(
+        WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
+        run_id(),
+        1,
+        RunEvent::Created {
+            principal_id: PrincipalId::from_str(PRINCIPAL_ID).unwrap(),
+            title: "append".to_owned(),
+        },
+    )
+}
+
+fn second_event() -> RunEventEnvelope {
+    event(
+        WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
+        run_id(),
+        2,
+        RunEvent::MarkedReady,
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_stores_the_first_event_at_version_zero(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+
+    let version = store
+        .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
+        .await
+        .unwrap();
+
+    assert_eq!(version, RunVersion::INITIAL);
+    let stored = store.load_stream(&context(), run_id()).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].sequence, RunVersion::INITIAL);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_continues_a_stream_from_the_expected_version(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+
+    store
+        .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
+        .await
+        .unwrap();
+    let version = store
+        .append(
+            &context(),
+            run_id(),
+            RunVersion::INITIAL,
+            &[second_event()],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(version.value(), 2);
+    let stored = store.load_stream(&context(), run_id()).await.unwrap();
+    assert_eq!(
+        stored.iter().map(|event| event.sequence.value()).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_rejects_a_stale_expected_version(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+
+    store
+        .append(&context(), run_id(), RunVersion::ZERO, &[first_event()])
+        .await
+        .unwrap();
+    let result = store
+        .append(&context(), run_id(), RunVersion::ZERO, &[second_event()])
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+    assert_eq!(store.load_stream(&context(), run_id()).await.unwrap().len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_rejects_an_empty_batch(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+
+    let result = store
+        .append(&context(), run_id(), RunVersion::ZERO, &[])
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_rejects_mixed_workspace_identity(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+    let invalid = event(
+        WorkspaceId::from_str(OTHER_WORKSPACE_ID).unwrap(),
+        run_id(),
+        1,
+        RunEvent::MarkedReady,
+    );
+
+    let result = store
+        .append(&context(), run_id(), RunVersion::ZERO, &[invalid])
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn append_rejects_sequence_gaps_without_partial_writes(pool: sqlx::PgPool) {
+    seed_owner(&pool).await;
+    let store = PgRunEventStore::new(PgStore::from_pool(pool));
+    let third = event(
+        WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
+        run_id(),
+        3,
+        RunEvent::Started,
+    );
+
+    let result = store
+        .append(
+            &context(),
+            run_id(),
+            RunVersion::ZERO,
+            &[first_event(), third],
+        )
+        .await;
+
+    assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+}
