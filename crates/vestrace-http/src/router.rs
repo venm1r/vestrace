@@ -11,8 +11,7 @@ use axum::{
 use tracing::Instrument;
 use uuid::{Uuid, Version};
 use vestrace_application::{
-    HealthRepository, RunCommandExecutor, RunUseCases, SharedRunCommandExecutor,
-    SharedRunUseCases,
+    HealthRepository, RunCommandExecutor, RunUseCases, SharedRunCommandExecutor, SharedRunUseCases,
 };
 
 use crate::health;
