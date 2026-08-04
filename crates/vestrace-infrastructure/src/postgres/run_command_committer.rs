@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
-use vestrace_application::{
-    ApplicationError, RequestContext, RunCommandCommitter, project_run,
-};
+use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter, project_run};
 use vestrace_domain::{
     DomainError,
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
@@ -111,9 +109,7 @@ impl RunCommandCommitter for PgRunCommandCommitter {
                 .map_err(|error| {
                     storage_corruption(&format!("stored run event replay failed: {error}"))
                 })?
-                .ok_or_else(|| {
-                    storage_corruption("run stream head has no authoritative events")
-                })?;
+                .ok_or_else(|| storage_corruption("run stream head has no authoritative events"))?;
         }
 
         let mut complete_stream = existing_events;
