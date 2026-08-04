@@ -51,7 +51,7 @@ impl Fixture {
         let event_version = pending.event.event_version();
 
         RunEventEnvelope {
-            event_id: pending.event_id,
+            event_id: RunEventId::new(),
             workspace_id: self.workspace_id,
             run_id: self.run_id,
             sequence,
