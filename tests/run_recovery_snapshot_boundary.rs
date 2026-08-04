@@ -131,13 +131,10 @@ fn event(
     }
 }
 
-#[tokio::test]
-async fn restore_ignores_events_committed_after_the_observed_head() {
-    let context = context();
-    let run_id = AgentRunId::new();
-    let events = vec![
+fn events(context: &RequestContext, run_id: AgentRunId) -> Vec<RunEventEnvelope> {
+    vec![
         event(
-            &context,
+            context,
             run_id,
             1,
             RunEvent::Created {
@@ -145,27 +142,56 @@ async fn restore_ignores_events_committed_after_the_observed_head() {
                 title: "Snapshot boundary".to_owned(),
             },
         ),
-        event(&context, run_id, 2, RunEvent::MarkedReady),
-        event(&context, run_id, 3, RunEvent::Started),
+        event(context, run_id, 2, RunEvent::MarkedReady),
+        event(context, run_id, 3, RunEvent::Started),
         event(
-            &context,
+            context,
             run_id,
             4,
             RunEvent::Completed {
                 summary: Some("committed after observed head".to_owned()),
             },
         ),
-    ];
-    let checkpoint_state = replay(events[..2].to_vec()).unwrap().unwrap();
-    let checkpoint = RunCheckpoint {
-        workspace_id: context.workspace_id,
-        run_id,
-        sequence: checkpoint_state.version,
+    ]
+}
+
+fn checkpoint_at(events: &[RunEventEnvelope], sequence: usize) -> RunCheckpoint {
+    let state = replay(events[..sequence].to_vec()).unwrap().unwrap();
+    RunCheckpoint {
+        workspace_id: state.workspace_id,
+        run_id: state.id,
+        sequence: state.version,
         format_version: 1,
-        state_hash: hash_run_state(&checkpoint_state).unwrap(),
-        state: checkpoint_state,
+        state_hash: hash_run_state(&state).unwrap(),
+        state,
         created_at: now(),
-    };
+    }
+}
+
+#[tokio::test]
+async fn restore_ignores_events_committed_after_the_observed_head() {
+    let context = context();
+    let run_id = AgentRunId::new();
+    let events = events(&context, run_id);
+    let checkpoint = checkpoint_at(&events, 2);
+    let store = Arc::new(AdvancedTailStore {
+        observed_head: RunVersion::new(3).unwrap(),
+        events: events.clone(),
+        checkpoint,
+    });
+    let service = RunRecoveryService::new(store);
+
+    let restored = service.restore(&context, run_id).await.unwrap();
+
+    assert_eq!(restored, replay(events[..3].to_vec()).unwrap().unwrap());
+}
+
+#[tokio::test]
+async fn restore_ignores_a_checkpoint_created_after_the_observed_head() {
+    let context = context();
+    let run_id = AgentRunId::new();
+    let events = events(&context, run_id);
+    let checkpoint = checkpoint_at(&events, 4);
     let store = Arc::new(AdvancedTailStore {
         observed_head: RunVersion::new(3).unwrap(),
         events: events.clone(),
