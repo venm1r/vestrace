@@ -8,9 +8,7 @@ use vestrace_application::{
     RunRecoveryService, RunRepository,
 };
 use vestrace_domain::{
-    id::{
-        AgentRunId, CorrelationId, OperationId, PrincipalId, RunStepId, WorkspaceId,
-    },
+    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunStepId, WorkspaceId},
     now,
     run::{RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunVersion},
 };
@@ -90,11 +88,7 @@ fn services(pool: &sqlx::PgPool) -> (RunCommandService, RunRecoveryService, PgRu
     (command_service, recovery_service, repository)
 }
 
-async fn execute(
-    service: &RunCommandService,
-    expected_version: u64,
-    command_value: RunCommand,
-) {
+async fn execute(service: &RunCommandService, expected_version: u64, command_value: RunCommand) {
     service
         .execute(
             &context(),
@@ -215,10 +209,7 @@ async fn checkpoint_plus_tail_rebuilds_a_deleted_projection_exactly(pool: sqlx::
         .unwrap();
     assert_eq!(rebuilt, expected_projection);
     assert_eq!(
-        repository
-            .find_by_id(&context(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context(), run_id()).await.unwrap(),
         Some(expected_projection)
     );
 }
