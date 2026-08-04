@@ -4,7 +4,6 @@ use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
 use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter, project_run};
 use vestrace_domain::{
-    DomainError,
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
     run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunStatus, RunVersion, replay},
 };
@@ -241,7 +240,7 @@ async fn lock_or_create_stream(
     .fetch_optional(&mut *connection)
     .await
     .map_err(storage_error)?
-    .ok_or_else(|| DomainError::NotFound("run stream does not exist".to_owned()))?;
+    .ok_or_else(|| ApplicationError::Conflict("run stream is not visible".to_owned()))?;
     version_from_database(version)
 }
 
