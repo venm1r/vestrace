@@ -135,7 +135,7 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
     assert!(matches!(
         &events[0].payload,
         RunEvent::Created { principal_id: stored, title }
-            if stored == principal_id && title == "loaded"
+            if *stored == principal_id && title == "loaded"
     ));
     assert_eq!(
         events[0].occurred_at.to_rfc3339(),
