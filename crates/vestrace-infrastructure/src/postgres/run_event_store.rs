@@ -68,7 +68,11 @@ impl RunEventStore for PgRunEventStore {
         context: &RequestContext,
         run_id: AgentRunId,
     ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
-        let mut transaction = self.store.begin_scoped(context).await.map_err(storage_error)?;
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let rows = sqlx::query_as::<_, RunEventRow>(
             "SELECT
                  id,
