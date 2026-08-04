@@ -10,9 +10,7 @@ use vestrace_application::{
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    run::{
-        AgentRun, RunActor, RunEvent, RunEventEnvelope, RunState, RunVersion, replay,
-    },
+    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunState, RunVersion, replay},
 };
 
 struct InMemoryRecoveryStore {
@@ -208,10 +206,7 @@ async fn checkpoint_creation_replays_and_hashes_the_authoritative_stream() {
     ));
     let service = RunRecoveryService::new(store.clone());
 
-    let checkpoint = service
-        .create_checkpoint(&context, run_id)
-        .await
-        .unwrap();
+    let checkpoint = service.create_checkpoint(&context, run_id).await.unwrap();
 
     let expected = replay(events).unwrap().unwrap();
     assert_eq!(checkpoint.state, expected);
@@ -301,18 +296,16 @@ async fn rebuild_uses_the_shared_projection_mapper_and_guarded_stream_head() {
     let context = context();
     let run_id = AgentRunId::new();
     let events = lifecycle_events(&context, run_id);
+    let checkpoint = checkpoint_at(&events, 2);
     let expected_state: RunState = replay(events.clone()).unwrap().unwrap();
     let store = Arc::new(InMemoryRecoveryStore::new(
         RunVersion::new(4).unwrap(),
         events,
-        Some(checkpoint_at(&lifecycle_events(&context, run_id), 2)),
+        Some(checkpoint),
     ));
     let service = RunRecoveryService::new(store.clone());
 
-    let rebuilt = service
-        .rebuild_projection(&context, run_id)
-        .await
-        .unwrap();
+    let rebuilt = service.rebuild_projection(&context, run_id).await.unwrap();
 
     assert_eq!(rebuilt, project_run(&expected_state));
     assert_eq!(
