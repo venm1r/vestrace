@@ -5,9 +5,9 @@ use vestrace_domain::{
         RunEventId, RunStepId, WorkspaceId,
     },
     run::{
-        PendingRunEvent, RunActor, RunCommand, RunCommandEnvelope, RunCompletion,
-        RunDecisionError, RunEventEnvelope, RunReduceError, RunState, RunStatus, RunStepStatus,
-        RunVersion, RunWait, apply, decide, replay,
+        PendingRunEvent, RunActor, RunCommand, RunCommandEnvelope, RunCompletion, RunDecisionError,
+        RunEventEnvelope, RunReduceError, RunState, RunStatus, RunStepStatus, RunVersion, RunWait,
+        apply, decide, replay,
     },
     time::Timestamp,
 };
@@ -253,10 +253,7 @@ fn approval_wait_and_terminal_fail_cancel_stalled_states_are_typed() {
     let fixture = Fixture::new();
     let (running, _) = fixture.running();
     let approval_id = ApprovalRecordId::new();
-    let wait = fixture.command(
-        running.version,
-        RunCommand::WaitForApproval { approval_id },
-    );
+    let wait = fixture.command(running.version, RunCommand::WaitForApproval { approval_id });
     let (waiting, _) = fixture.execute(Some(running), wait);
     assert_eq!(waiting.status, RunStatus::WaitingForApproval);
     assert_eq!(waiting.wait, Some(RunWait::Approval { approval_id }));
@@ -318,10 +315,7 @@ fn active_step_must_match_and_finish_before_run_completion() {
         })
     ));
 
-    let complete_run = fixture.command(
-        with_step.version,
-        RunCommand::Complete { summary: None },
-    );
+    let complete_run = fixture.command(with_step.version, RunCommand::Complete { summary: None });
     assert!(matches!(
         decide(Some(&with_step), &complete_run),
         Err(RunDecisionError::InvalidTransition {
@@ -351,10 +345,8 @@ fn active_step_must_match_and_finish_before_run_completion() {
     let (without_step, _) = fixture.execute(Some(with_step), complete_step);
     assert_eq!(without_step.active_step, None);
 
-    let complete_run = fixture.command(
-        without_step.version,
-        RunCommand::Complete { summary: None },
-    );
+    let complete_run =
+        fixture.command(without_step.version, RunCommand::Complete { summary: None });
     let (completed, _) = fixture.execute(Some(without_step), complete_run);
     assert_eq!(completed.status, RunStatus::Completed);
 }
