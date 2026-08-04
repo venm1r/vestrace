@@ -139,7 +139,7 @@ mod tests {
         RunCommandResult, RunUseCases,
     };
     use vestrace_domain::{
-        id::AgentRunId,
+        id::{AgentRunId, PrincipalId},
         run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunVersion},
     };
 
@@ -254,7 +254,10 @@ mod tests {
         assert_eq!(command.workspace_id.as_uuid(), workspace_id);
         assert_eq!(command.expected_version, RunVersion::ZERO);
         assert_eq!(command.idempotency_key, None);
-        assert_eq!(command.actor, RunActor::Principal(principal_id.into()));
+        assert_eq!(
+            command.actor,
+            RunActor::Principal(PrincipalId::from_uuid(principal_id))
+        );
         assert!(matches!(
             command.command,
             RunCommand::Create { title, .. } if title == "Canonical create"
