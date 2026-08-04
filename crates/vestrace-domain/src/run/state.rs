@@ -1,7 +1,5 @@
 use crate::{
-    id::{
-        AgentRunId, ApprovalRecordId, JobId, PrincipalId, RequestId, RunStepId, WorkspaceId,
-    },
+    id::{AgentRunId, ApprovalRecordId, JobId, PrincipalId, RequestId, RunStepId, WorkspaceId},
     time::Timestamp,
 };
 use serde::{Deserialize, Serialize};
