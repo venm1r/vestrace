@@ -214,12 +214,12 @@ impl RunRecoveryOperations for RunRecoveryService {
         run_id: AgentRunId,
     ) -> Result<RunState, ApplicationError> {
         let head = self.stream_head(context, run_id).await?;
-        if let Some(checkpoint) = self.store.load_latest_checkpoint(context, run_id).await?
-            && checkpoint.sequence.value() <= head.value()
-        {
-            return self
-                .restore_from_checkpoint(context, run_id, head, checkpoint)
-                .await;
+        if let Some(checkpoint) = self.store.load_latest_checkpoint(context, run_id).await? {
+            if checkpoint.sequence.value() <= head.value() {
+                return self
+                    .restore_from_checkpoint(context, run_id, head, checkpoint)
+                    .await;
+            }
         }
 
         let events = self
