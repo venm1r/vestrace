@@ -164,9 +164,11 @@ async fn concurrent_writers_are_serialized_by_the_stream_without_a_projection(po
     let second = service(&pool);
     let first_command = command(RunVersion::INITIAL, RunCommand::MarkReady);
     let second_command = command(RunVersion::INITIAL, RunCommand::MarkReady);
+    let first_context = context();
+    let second_context = context();
     let (first_result, second_result) = tokio::join!(
-        first.execute(&context(), first_command),
-        second.execute(&context(), second_command)
+        first.execute(&first_context, first_command),
+        second.execute(&second_context, second_command)
     );
 
     let results = [first_result, second_result];
