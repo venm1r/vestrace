@@ -6,9 +6,15 @@ use axum::{
 };
 use tower::ServiceExt;
 use vestrace_application::{
-    ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunUseCases,
+    ApplicationError, CreateRunCommand, HealthRepository, RequestContext, RunCommandExecutor,
+    RunCommandResult, RunUseCases,
 };
-use vestrace_domain::{PrincipalId, WorkspaceId, id::AgentRunId, now, run::AgentRun};
+use vestrace_domain::{
+    PrincipalId, WorkspaceId,
+    id::AgentRunId,
+    now,
+    run::{AgentRun, RunCommand, RunCommandEnvelope},
+};
 use vestrace_http::{AppState, build_router};
 
 struct HealthyRepository;
@@ -16,6 +22,10 @@ struct HealthyRepository;
 #[derive(Default)]
 struct FakeRunUseCases {
     runs: Mutex<Vec<AgentRun>>,
+}
+
+struct FakeRunCommands {
+    runs: Arc<FakeRunUseCases>,
 }
 
 #[async_trait::async_trait]
@@ -29,18 +39,10 @@ impl HealthRepository for HealthyRepository {
 impl RunUseCases for FakeRunUseCases {
     async fn create_run(
         &self,
-        context: &RequestContext,
-        command: CreateRunCommand,
+        _context: &RequestContext,
+        _command: CreateRunCommand,
     ) -> Result<AgentRun, ApplicationError> {
-        let run = AgentRun::new(
-            AgentRunId::new(),
-            context.workspace_id,
-            context.principal_id,
-            command.title,
-            now(),
-        );
-        self.runs.lock().unwrap().push(run.clone());
-        Ok(run)
+        panic!("HTTP run creation must use RunCommandExecutor")
     }
 
     async fn list_runs(
@@ -74,8 +76,44 @@ impl RunUseCases for FakeRunUseCases {
     }
 }
 
+#[async_trait::async_trait]
+impl RunCommandExecutor for FakeRunCommands {
+    async fn execute(
+        &self,
+        _context: &RequestContext,
+        command: RunCommandEnvelope,
+    ) -> Result<RunCommandResult, ApplicationError> {
+        let (principal_id, title) = match command.command {
+            RunCommand::Create {
+                principal_id,
+                title,
+            } => (principal_id, title),
+            other => panic!("unexpected run command: {other:?}"),
+        };
+        let run = AgentRun::new(
+            command.run_id,
+            command.workspace_id,
+            principal_id,
+            title,
+            command.issued_at,
+        );
+        self.runs.runs.lock().unwrap().push(run.clone());
+        Ok(RunCommandResult {
+            run,
+            events: Vec::new(),
+        })
+    }
+}
+
 fn app(run_use_cases: Arc<FakeRunUseCases>) -> axum::Router {
-    build_router(AppState::new(Arc::new(HealthyRepository), run_use_cases))
+    let run_commands = Arc::new(FakeRunCommands {
+        runs: run_use_cases.clone(),
+    });
+    build_router(AppState::new(
+        Arc::new(HealthyRepository),
+        run_use_cases,
+        run_commands,
+    ))
 }
 
 fn identity_request(method: &str, uri: &str, body: Body) -> Request<Body> {
