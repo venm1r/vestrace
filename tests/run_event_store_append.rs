@@ -4,10 +4,8 @@ use std::str::FromStr;
 
 use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
 use vestrace_domain::{
+    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    id::{
-        AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId,
-    },
     run::{RunActor, RunEvent, RunEventEnvelope, RunVersion},
 };
 use vestrace_infrastructure::{PgRunEventStore, PgStore};
@@ -133,19 +131,17 @@ async fn append_continues_a_stream_from_the_expected_version(pool: sqlx::PgPool)
         .await
         .unwrap();
     let version = store
-        .append(
-            &context(),
-            run_id(),
-            RunVersion::INITIAL,
-            &[second_event()],
-        )
+        .append(&context(), run_id(), RunVersion::INITIAL, &[second_event()])
         .await
         .unwrap();
 
     assert_eq!(version.value(), 2);
     let stored = store.load_stream(&context(), run_id()).await.unwrap();
     assert_eq!(
-        stored.iter().map(|event| event.sequence.value()).collect::<Vec<_>>(),
+        stored
+            .iter()
+            .map(|event| event.sequence.value())
+            .collect::<Vec<_>>(),
         vec![1, 2]
     );
 }
@@ -164,7 +160,10 @@ async fn append_rejects_a_stale_expected_version(pool: sqlx::PgPool) {
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Conflict(_))));
-    assert_eq!(store.load_stream(&context(), run_id()).await.unwrap().len(), 1);
+    assert_eq!(
+        store.load_stream(&context(), run_id()).await.unwrap().len(),
+        1
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -177,7 +176,13 @@ async fn append_rejects_an_empty_batch(pool: sqlx::PgPool) {
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Conflict(_))));
-    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+    assert!(
+        store
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -196,7 +201,13 @@ async fn append_rejects_mixed_workspace_identity(pool: sqlx::PgPool) {
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Conflict(_))));
-    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+    assert!(
+        store
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -220,5 +231,11 @@ async fn append_rejects_sequence_gaps_without_partial_writes(pool: sqlx::PgPool)
         .await;
 
     assert!(matches!(result, Err(ApplicationError::Conflict(_))));
-    assert!(store.load_stream(&context(), run_id()).await.unwrap().is_empty());
+    assert!(
+        store
+            .load_stream(&context(), run_id())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
