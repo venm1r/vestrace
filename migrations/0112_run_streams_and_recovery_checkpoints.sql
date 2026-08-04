@@ -41,6 +41,7 @@ GROUP BY
     agent_runs.updated_at;
 
 ALTER TABLE run_events
+    DROP CONSTRAINT IF EXISTS run_events_run_id_fkey,
     DROP CONSTRAINT IF EXISTS run_events_workspace_run_fkey;
 
 ALTER TABLE run_events
