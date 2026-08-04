@@ -358,21 +358,21 @@ async fn concurrent_writers_at_one_version_yield_one_success(pool: sqlx::PgPool)
     let committer_a = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
     let committer_b = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
     let context = context_a();
-    let run_id = run_id();
+    let target_run_id = run_id();
     let events_a = [event_a];
     let events_b = [event_b];
 
     let (result_a, result_b) = tokio::join!(
         committer_a.commit(
             &context,
-            run_id,
+            target_run_id,
             RunVersion::INITIAL,
             &events_a,
             &projection_a,
         ),
         committer_b.commit(
             &context,
-            run_id,
+            target_run_id,
             RunVersion::INITIAL,
             &events_b,
             &projection_b,
