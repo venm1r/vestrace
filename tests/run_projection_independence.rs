@@ -137,10 +137,7 @@ async fn command_commit_recreates_a_deleted_projection_from_the_stream(pool: sql
 
     let repository = PgRunRepository::new(PgStore::from_pool(pool.clone()));
     assert_eq!(
-        repository
-            .find_by_id(&context(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context(), run_id()).await.unwrap(),
         Some(result.run)
     );
     let stream_head: i64 = sqlx::query_scalar(
