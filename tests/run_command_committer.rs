@@ -15,9 +15,7 @@ use vestrace_domain::{
         RunVersion,
     },
 };
-use vestrace_infrastructure::{
-    PgRunCommandCommitter, PgRunEventStore, PgRunRepository, PgStore,
-};
+use vestrace_infrastructure::{PgRunCommandCommitter, PgRunEventStore, PgRunRepository, PgStore};
 
 const WORKSPACE_A: &str = "55000000-0000-0000-0000-000000000001";
 const WORKSPACE_B: &str = "55000000-0000-0000-0000-000000000002";
@@ -156,10 +154,7 @@ async fn create_command_commits_event_and_projection_atomically(pool: sqlx::PgPo
     let repository = PgRunRepository::new(store.clone());
     let event_store = PgRunEventStore::new(store);
     assert_eq!(
-        repository
-            .find_by_id(&context_a(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context_a(), run_id()).await.unwrap(),
         Some(result.run.clone())
     );
     assert_eq!(
@@ -206,10 +201,7 @@ async fn existing_command_advances_projection_and_preserves_created_at(pool: sql
     let repository = PgRunRepository::new(store.clone());
     let event_store = PgRunEventStore::new(store);
     assert_eq!(
-        repository
-            .find_by_id(&context_a(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context_a(), run_id()).await.unwrap(),
         Some(ready.run)
     );
     assert_eq!(
@@ -263,10 +255,7 @@ async fn duplicate_event_id_rolls_back_projection_update(pool: sqlx::PgPool) {
     let repository = PgRunRepository::new(store.clone());
     let event_store = PgRunEventStore::new(store);
     assert_eq!(
-        repository
-            .find_by_id(&context_a(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context_a(), run_id()).await.unwrap(),
         Some(created.run)
     );
     assert_eq!(
@@ -466,10 +455,7 @@ async fn foreign_workspace_cannot_commit_to_an_existing_run(pool: sqlx::PgPool) 
     let repository = PgRunRepository::new(store.clone());
     let event_store = PgRunEventStore::new(store);
     assert_eq!(
-        repository
-            .find_by_id(&context_a(), run_id())
-            .await
-            .unwrap(),
+        repository.find_by_id(&context_a(), run_id()).await.unwrap(),
         Some(created.run)
     );
     assert_eq!(
