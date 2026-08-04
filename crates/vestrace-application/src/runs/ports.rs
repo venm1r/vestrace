@@ -8,9 +8,7 @@ use vestrace_domain::{
 
 use crate::{ApplicationError, RequestContext};
 
-use super::{
-    CreateRunCommand, RunCommandCommitOutcome, RunCommandReceipt, RunCommandResult,
-};
+use super::{CreateRunCommand, RunCommandResult};
 
 #[async_trait]
 pub trait RunRepository: Send + Sync {
@@ -59,8 +57,7 @@ pub trait RunCommandCommitter: Send + Sync {
         expected_version: RunVersion,
         events: &[RunEventEnvelope],
         projection: &AgentRun,
-        receipt: &RunCommandReceipt,
-    ) -> Result<RunCommandCommitOutcome, ApplicationError>;
+    ) -> Result<RunVersion, ApplicationError>;
 }
 
 #[async_trait]
