@@ -11,9 +11,7 @@ use vestrace_domain::{
 
 use crate::{ApplicationError, RequestContext};
 
-use super::{
-    RunCommandExecutor, RunCommandResult, SharedRunCommandCommitter, SharedRunEventStore,
-};
+use super::{RunCommandExecutor, RunCommandResult, SharedRunCommandCommitter, SharedRunEventStore};
 
 pub struct RunCommandService {
     event_store: SharedRunEventStore,
@@ -21,10 +19,7 @@ pub struct RunCommandService {
 }
 
 impl RunCommandService {
-    pub fn new(
-        event_store: SharedRunEventStore,
-        committer: SharedRunCommandCommitter,
-    ) -> Self {
+    pub fn new(event_store: SharedRunEventStore, committer: SharedRunCommandCommitter) -> Self {
         Self {
             event_store,
             committer,
@@ -149,20 +144,18 @@ fn decision_error(error: RunDecisionError) -> ApplicationError {
         RunDecisionError::MissingState => {
             DomainError::NotFound("run does not exist".to_owned()).into()
         }
-        RunDecisionError::VersionConflict { expected, actual } => ApplicationError::Conflict(
-            format!(
+        RunDecisionError::VersionConflict { expected, actual } => {
+            ApplicationError::Conflict(format!(
                 "run version conflict: expected {}, actual {}",
                 expected.value(),
                 actual.value()
-            ),
-        ),
-        RunDecisionError::InvalidCommand(message) => {
-            DomainError::InvalidArgument(message).into()
+            ))
         }
-        RunDecisionError::InvalidTransition { status } => DomainError::InvalidArgument(format!(
-            "command is not valid while run is {status:?}"
-        ))
-        .into(),
+        RunDecisionError::InvalidCommand(message) => DomainError::InvalidArgument(message).into(),
+        RunDecisionError::InvalidTransition { status } => {
+            DomainError::InvalidArgument(format!("command is not valid while run is {status:?}"))
+                .into()
+        }
     }
 }
 
