@@ -142,7 +142,10 @@ impl RunEventStore for PgRunEventStore {
             run_id,
             expected_version,
             final_version,
-            events.last().expect("validated non-empty batch").recorded_at,
+            events
+                .last()
+                .expect("validated non-empty batch")
+                .recorded_at,
         )
         .await?;
         transaction.commit().await.map_err(storage_error)?;
