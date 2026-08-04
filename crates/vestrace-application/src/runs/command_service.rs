@@ -5,14 +5,17 @@ use vestrace_domain::{
     id::RunEventId,
     now,
     run::{
-        AgentRun, RunActor, RunCommandEnvelope, RunDecisionError, RunEventEnvelope, RunState,
-        apply, decide, replay,
+        AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunDecisionError, RunEventEnvelope,
+        RunState, apply, decide, replay,
     },
 };
 
 use crate::{ApplicationError, RequestContext};
 
-use super::{RunCommandExecutor, RunCommandResult, SharedRunCommandCommitter, SharedRunEventStore};
+use super::{
+    RunCommandCommitOutcome, RunCommandExecutor, RunCommandReceipt, RunCommandResult,
+    SharedRunCommandCommitter, SharedRunEventStore,
+};
 
 pub struct RunCommandService {
     event_store: SharedRunEventStore,
@@ -36,6 +39,15 @@ impl RunCommandExecutor for RunCommandService {
         command: RunCommandEnvelope,
     ) -> Result<RunCommandResult, ApplicationError> {
         validate_command_context(context, &command)?;
+        let receipt = RunCommandReceipt {
+            command_id: command.command_id,
+            workspace_id: command.workspace_id,
+            principal_id: context.principal_id,
+            command_type: command_type(&command.command).to_owned(),
+            idempotency_key: command.idempotency_key.clone(),
+            request_payload: serde_json::to_value(&command.command).map_err(storage_error)?,
+            run_id: command.run_id,
+        };
 
         let stored_events = self
             .event_store
@@ -80,7 +92,7 @@ impl RunCommandExecutor for RunCommandService {
         })?;
         let projection = project_run(&resulting_state);
 
-        let committed_version = self
+        match self
             .committer
             .commit(
                 context,
@@ -88,20 +100,30 @@ impl RunCommandExecutor for RunCommandService {
                 command.expected_version,
                 &envelopes,
                 &projection,
+                &receipt,
             )
-            .await?;
-        if committed_version != projection.version {
-            return Err(ApplicationError::Internal(format!(
-                "committer returned run version {}, expected {}",
-                committed_version.value(),
-                projection.version.value()
-            )));
+            .await?
+        {
+            RunCommandCommitOutcome::Committed(committed_version) => {
+                if committed_version != projection.version {
+                    return Err(ApplicationError::Internal(format!(
+                        "committer returned run version {}, expected {}",
+                        committed_version.value(),
+                        projection.version.value()
+                    )));
+                }
+                Ok(RunCommandResult {
+                    run: projection,
+                    events: envelopes,
+                    replayed: false,
+                })
+            }
+            RunCommandCommitOutcome::Replayed(run) => Ok(RunCommandResult {
+                run,
+                events: Vec::new(),
+                replayed: true,
+            }),
         }
-
-        Ok(RunCommandResult {
-            run: projection,
-            events: envelopes,
-        })
     }
 }
 
@@ -122,6 +144,24 @@ fn validate_command_context(
         }
     }
     Ok(())
+}
+
+fn command_type(command: &RunCommand) -> &'static str {
+    match command {
+        RunCommand::Create { .. } => "run.create",
+        RunCommand::MarkReady => "run.mark_ready",
+        RunCommand::Start => "run.start",
+        RunCommand::StartStep { .. } => "run.start_step",
+        RunCommand::CompleteStep { .. } => "run.complete_step",
+        RunCommand::FailStep { .. } => "run.fail_step",
+        RunCommand::WaitForInput { .. } => "run.wait_for_input",
+        RunCommand::WaitForApproval { .. } => "run.wait_for_approval",
+        RunCommand::Resume => "run.resume",
+        RunCommand::Complete { .. } => "run.complete",
+        RunCommand::Fail { .. } => "run.fail",
+        RunCommand::Cancel { .. } => "run.cancel",
+        RunCommand::MarkStalled { .. } => "run.mark_stalled",
+    }
 }
 
 fn project_run(state: &RunState) -> AgentRun {
@@ -171,4 +211,8 @@ fn replay_error(error: impl std::fmt::Display) -> ApplicationError {
 
 fn reduce_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(format!("run event reduction failed: {error}"))
+}
+
+fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
+    ApplicationError::Storage(error.to_string())
 }
