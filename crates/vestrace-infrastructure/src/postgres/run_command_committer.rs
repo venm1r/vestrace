@@ -2,16 +2,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, Postgres, Transaction};
-use vestrace_application::{
-    ApplicationError, RequestContext, RunCommandCommitter,
-};
+use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter};
 use vestrace_domain::{
-    id::{
-        AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId,
-    },
-    run::{
-        AgentRun, RunActor, RunEvent, RunEventEnvelope, RunStatus, RunVersion, replay,
-    },
+    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
+    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunStatus, RunVersion, replay},
 };
 
 use super::PgStore;
@@ -119,9 +113,7 @@ impl RunCommandCommitter for PgRunCommandCommitter {
 
         if expected_version == RunVersion::ZERO {
             if stored_run.is_some() || !existing_events.is_empty() {
-                return Err(ApplicationError::Conflict(
-                    "run already exists".to_owned(),
-                ));
+                return Err(ApplicationError::Conflict("run already exists".to_owned()));
             }
         } else {
             let stored_run = stored_run.ok_or_else(|| {
@@ -135,9 +127,9 @@ impl RunCommandCommitter for PgRunCommandCommitter {
         let mut complete_stream = existing_events;
         complete_stream.extend_from_slice(events);
         let resulting_state = replay(complete_stream)
-            .map_err(|error| ApplicationError::Storage(format!(
-                "run event replay failed before commit: {error}"
-            )))?
+            .map_err(|error| {
+                ApplicationError::Storage(format!("run event replay failed before commit: {error}"))
+            })?
             .ok_or_else(|| {
                 ApplicationError::Conflict(
                     "run command batch did not produce a projection".to_owned(),
@@ -279,9 +271,7 @@ async fn load_events(
     .await
     .map_err(storage_error)?;
 
-    rows.into_iter()
-        .map(RunEventEnvelope::try_from)
-        .collect()
+    rows.into_iter().map(RunEventEnvelope::try_from).collect()
 }
 
 fn validate_existing_projection(
@@ -305,9 +295,9 @@ fn validate_existing_projection(
     }
 
     let state = replay(existing_events.to_vec())
-        .map_err(|error| ApplicationError::Storage(format!(
-            "stored run event replay failed: {error}"
-        )))?
+        .map_err(|error| {
+            ApplicationError::Storage(format!("stored run event replay failed: {error}"))
+        })?
         .ok_or_else(|| {
             ApplicationError::Storage(
                 "stored run projection has no authoritative events".to_owned(),
