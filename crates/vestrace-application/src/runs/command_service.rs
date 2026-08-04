@@ -118,8 +118,8 @@ fn validate_command_context(
             "run command workspace does not match request context".to_owned(),
         ));
     }
-    if let RunActor::Principal(principal_id) = command.actor
-        && principal_id != context.principal_id
+    if let RunActor::Principal(principal_id) = &command.actor
+        && *principal_id != context.principal_id
     {
         return Err(ApplicationError::Policy(
             "run command principal does not match request context".to_owned(),
