@@ -45,6 +45,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 
 [dev-dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 tokio.workspace = true
