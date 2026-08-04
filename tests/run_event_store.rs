@@ -137,8 +137,14 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
         RunEvent::Created { principal_id: stored, title }
             if *stored == principal_id && title == "loaded"
     ));
-    assert_eq!(events[0].occurred_at.to_rfc3339(), "2026-08-04T10:01:00+00:00");
-    assert_eq!(events[0].recorded_at.to_rfc3339(), "2026-08-04T10:01:01+00:00");
+    assert_eq!(
+        events[0].occurred_at.to_rfc3339(),
+        "2026-08-04T10:01:00+00:00"
+    );
+    assert_eq!(
+        events[0].recorded_at.to_rfc3339(),
+        "2026-08-04T10:01:01+00:00"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
