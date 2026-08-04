@@ -1,6 +1,6 @@
 use super::{
-    RunCompletion, RunEvent, RunEventEnvelope, RunReduceError, RunReplayError, RunState,
-    RunStatus, RunStepState, RunStepStatus, RunVersion, RunWait,
+    RunCompletion, RunEvent, RunEventEnvelope, RunReduceError, RunReplayError, RunState, RunStatus,
+    RunStepState, RunStepStatus, RunVersion, RunWait,
 };
 
 pub fn apply(
@@ -79,14 +79,12 @@ fn apply_existing(
             });
         }
         RunEvent::StepCompleted { step_id, .. }
-            if state.status == RunStatus::Running
-                && active_step_matches(&state, *step_id) =>
+            if state.status == RunStatus::Running && active_step_matches(&state, *step_id) =>
         {
             state.active_step = None;
         }
         RunEvent::StepFailed { step_id, .. }
-            if state.status == RunStatus::Running
-                && active_step_matches(&state, *step_id) =>
+            if state.status == RunStatus::Running && active_step_matches(&state, *step_id) =>
         {
             state.active_step = None;
         }
