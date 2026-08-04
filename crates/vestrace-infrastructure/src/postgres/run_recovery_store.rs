@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
 use vestrace_application::{
-    ApplicationError, RequestContext, RUN_CHECKPOINT_FORMAT_VERSION, RunCheckpoint,
+    ApplicationError, RUN_CHECKPOINT_FORMAT_VERSION, RequestContext, RunCheckpoint,
     RunRecoveryStore, hash_run_state,
 };
 use vestrace_domain::{
