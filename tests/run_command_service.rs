@@ -64,11 +64,10 @@ impl RunCommandCommitter for RecordingCommitter {
         events: &[RunEventEnvelope],
         projection: &AgentRun,
     ) -> Result<RunVersion, ApplicationError> {
-        self.commits.lock().unwrap().push((
-            expected_version,
-            events.to_vec(),
-            projection.clone(),
-        ));
+        self.commits
+            .lock()
+            .unwrap()
+            .push((expected_version, events.to_vec(), projection.clone()));
         Ok(projection.version)
     }
 }
@@ -166,12 +165,7 @@ async fn existing_command_replays_the_stream_and_advances_the_projection() {
     });
     let committer = Arc::new(RecordingCommitter::default());
     let service = RunCommandService::new(event_store, committer.clone());
-    let envelope = command(
-        &context,
-        run_id,
-        RunVersion::INITIAL,
-        RunCommand::MarkReady,
-    );
+    let envelope = command(&context, run_id, RunVersion::INITIAL, RunCommand::MarkReady);
 
     let result = service.execute(&context, envelope).await.unwrap();
 
@@ -195,12 +189,7 @@ async fn invalid_transition_does_not_reach_the_committer() {
     let result = service
         .execute(
             &context,
-            command(
-                &context,
-                run_id,
-                RunVersion::INITIAL,
-                RunCommand::Start,
-            ),
+            command(&context, run_id, RunVersion::INITIAL, RunCommand::Start),
         )
         .await;
 
@@ -221,12 +210,7 @@ async fn stale_expected_version_is_reported_as_a_conflict() {
     let result = service
         .execute(
             &context,
-            command(
-                &context,
-                run_id,
-                RunVersion::ZERO,
-                RunCommand::MarkReady,
-            ),
+            command(&context, run_id, RunVersion::ZERO, RunCommand::MarkReady),
         )
         .await;
 
