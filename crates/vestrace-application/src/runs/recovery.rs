@@ -153,7 +153,10 @@ impl RunRecoveryService {
             .load_events_after(context, run_id, checkpoint.sequence)
             .await?;
         let mut state = checkpoint.state;
-        for event in tail {
+        for event in tail
+            .into_iter()
+            .filter(|event| event.sequence.value() <= head.value())
+        {
             state = apply(Some(state), &event).map_err(reduce_error)?;
         }
         verify_restored_head(&state, head)?;
