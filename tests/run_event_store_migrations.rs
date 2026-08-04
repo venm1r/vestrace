@@ -2,6 +2,10 @@
 
 mod support;
 
+use sqlx::types::{
+    Uuid,
+    chrono::{DateTime, Utc},
+};
 use support::assert_sqlstate;
 
 const WORKSPACE_A: &str = "51000000-0000-0000-0000-000000000001";
@@ -245,13 +249,7 @@ async fn run_event_migration_backfills_legacy_rows_deterministically(pool: sqlx:
     .await
     .unwrap();
 
-    let row: (
-        i16,
-        serde_json::Value,
-        uuid::Uuid,
-        uuid::Uuid,
-        chrono::DateTime<chrono::Utc>,
-    ) = sqlx::query_as(
+    let row: (i16, serde_json::Value, Uuid, Uuid, DateTime<Utc>) = sqlx::query_as(
         "SELECT event_version, actor, causation_id, correlation_id, occurred_at
              FROM run_events
              WHERE id = '51000000-0000-0000-0000-000000000050'",
@@ -267,8 +265,8 @@ async fn run_event_migration_backfills_legacy_rows_deterministically(pool: sqlx:
     );
     assert_eq!(
         row.2,
-        uuid::Uuid::parse_str("51000000-0000-0000-0000-000000000050").unwrap()
+        Uuid::parse_str("51000000-0000-0000-0000-000000000050").unwrap()
     );
-    assert_eq!(row.3, uuid::Uuid::parse_str(RUN_A).unwrap());
+    assert_eq!(row.3, Uuid::parse_str(RUN_A).unwrap());
     assert_eq!(row.4.to_rfc3339(), "2026-08-04T10:00:00+00:00");
 }
