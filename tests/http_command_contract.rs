@@ -60,17 +60,15 @@ impl RunCommandExecutor for Commands {
         _context: &RequestContext,
         _command: RunCommandEnvelope,
     ) -> Result<RunCommandResult, ApplicationError> {
-        Err(ApplicationError::Internal("not exercised by this constructor contract".to_owned()))
+        Err(ApplicationError::Internal(
+            "not exercised by this constructor contract".to_owned(),
+        ))
     }
 }
 
 #[test]
 fn app_state_requires_a_canonical_run_command_executor() {
-    let state = AppState::new(
-        Arc::new(Healthy),
-        Arc::new(Reads),
-        Arc::new(Commands),
-    );
+    let state = AppState::new(Arc::new(Healthy), Arc::new(Reads), Arc::new(Commands));
 
     let _: &dyn RunCommandExecutor = state.run_command_executor();
 }
