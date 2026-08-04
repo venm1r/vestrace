@@ -4,16 +4,19 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use serde::{Deserialize, Serialize};
-use vestrace_application::CreateRunCommand;
+use uuid::Uuid;
 use vestrace_domain::{
-    Timestamp,
-    id::AgentRunId,
-    run::{AgentRun, RunStatus},
+    Timestamp, now,
+    id::{AgentRunId, CorrelationId, OperationId},
+    run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunVersion},
 };
 
 use crate::AppState;
 
 use super::{ApiError, context::request_context};
+
+const REQUEST_ID_HEADER: &str = "x-request-id";
+const CORRELATION_ID_HEADER: &str = "x-correlation-id";
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRunRequest {
@@ -49,18 +52,31 @@ pub async fn create_run(
     Json(request): Json<CreateRunRequest>,
 ) -> Result<(StatusCode, Json<RunResponse>), ApiError> {
     let context = request_context(&headers)?;
-    let run = state
-        .run_use_cases()
-        .create_run(
-            &context,
-            CreateRunCommand {
-                title: request.title,
-            },
-        )
+    let run_id = AgentRunId::new();
+    let command = RunCommandEnvelope {
+        command_id: OperationId::from_uuid(required_uuid_header(&headers, REQUEST_ID_HEADER)?),
+        idempotency_key: None,
+        workspace_id: context.workspace_id,
+        run_id,
+        actor: RunActor::Principal(context.principal_id),
+        expected_version: RunVersion::ZERO,
+        correlation_id: CorrelationId::from_uuid(required_uuid_header(
+            &headers,
+            CORRELATION_ID_HEADER,
+        )?),
+        issued_at: now(),
+        command: RunCommand::Create {
+            principal_id: context.principal_id,
+            title: request.title,
+        },
+    };
+    let result = state
+        .run_command_executor()
+        .execute(&context, command)
         .await
         .map_err(ApiError::from_application)?;
 
-    Ok((StatusCode::CREATED, Json(run.into())))
+    Ok((StatusCode::CREATED, Json(result.run.into())))
 }
 
 pub async fn list_runs(
@@ -94,4 +110,15 @@ pub async fn get_run(
         .ok_or_else(|| ApiError::not_found("run"))?;
 
     Ok(Json(run.into()))
+}
+
+fn required_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Uuid, ApiError> {
+    let value = headers
+        .get(name)
+        .ok_or_else(|| ApiError::bad_request(format!("missing {name} header")))?;
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::bad_request(format!("{name} header must be valid UTF-8")))?;
+    Uuid::parse_str(value)
+        .map_err(|_| ApiError::bad_request(format!("{name} header must be a UUID")))
 }
