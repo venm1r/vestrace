@@ -1,24 +1,27 @@
 # Vestrace System Architecture
 
-Vestrace is an evidence-first knowledge and execution platform. The core system is designed with Rust Edition 2024, adhering to clean architecture and domain-driven design principles.
+Vestrace is an evidence-first knowledge and execution platform implemented as a Rust Edition 2024 workspace. The supported P0 runtime is intentionally narrow: PostgreSQL-backed run records, health checks, workspace isolation, and truthful failure for unavailable product surfaces.
 
-## Workspace Structure
+## Workspace structure
 
-The project is structured as a Cargo workspace with five distinct member crates and a root-level integration test harness:
+The repository contains six workspace crates plus a root integration-test package:
 
 ```text
 Cargo.toml
 crates/
-  vestrace-domain/          # Pure domain types, invariants, and policies
-  vestrace-application/     # Use cases, ports, commands, and outbox services
-  vestrace-infrastructure/  # PostgreSQL persistence, SQLx drivers, and AI provider clients
-  vestrace-http/            # Axum HTTP server and API routing
-  vestrace-cli/             # Clap-based executable CLI binary
-migrations/                 # Forward-only SQL schema migrations (0001 - 0016)
-tests/                      # Root-level integration test suite
+  vestrace-domain/          # Pure domain types and invariants
+  vestrace-application/     # Use cases and ports
+  vestrace-infrastructure/  # PostgreSQL and provider adapters
+  vestrace-http/            # Axum transport adapter
+  vestrace-cli/             # Service and operational CLI
+  vestrace-rig-spike/       # Experimental provider integration spike
+tests/                      # Root integration test suite
+migrations/                 # Ordered forward-only SQLx migrations
 ```
 
-## Layer Responsibilities
+`vestrace-rig-spike` participates in workspace compilation and tests, but it is experimental and is not part of the supported P0 runtime contract.
+
+## Layer dependencies
 
 ```mermaid
 graph TD
@@ -29,25 +32,79 @@ graph TD
     APP --> DOMAIN[vestrace-domain]
 ```
 
-### 1. Domain Layer (`vestrace-domain`)
-- Contains zero external framework dependencies (no Axum, SQLx, or HTTP types).
-- Strongly-typed UUID v7 identifiers (`WorkspaceId`, `MemoryId`, `EventId`, `JobId`, `ModelId`, etc.).
-- Constrained domain scores (`Confidence`, `Importance`) with invariant validation.
-- Aggregates and value objects: `Memory`, `MemoryRevision`, `Event`, `KnowledgeRelation`, `ContextPack`, `Capability`, `Sensitivity`, `ModelProfile`, `Agent`, `Skill`.
+The intended dependency direction is inward:
 
-### 2. Application Layer (`vestrace-application`)
-- Defines command DTOs (`RecordEventCommand`, `RememberMemoryCommand`, `LinkKnowledgeCommand`).
-- Defines async repository and provider ports (`EventRepository`, `MemoryRepository`, `JobRepository`, `TextGenerationProvider`).
-- Application services (`MemoryService`, `Worker`) handling transaction boundaries and outbox events.
+- domain code does not depend on Axum, SQLx, HTTP, or infrastructure;
+- application code defines use cases and ports without SQLx types;
+- infrastructure implements application ports;
+- HTTP translates transport requests into application calls;
+- CLI performs composition and process startup.
 
-### 3. Infrastructure Layer (`vestrace-infrastructure`)
-- PostgreSQL adapters with `PgStore` connection pooling and `PgTransactionManager` scoped session variables (`vestrace.workspace_id`).
-- Implementation of repository ports (`PgEventRepository`, `PgMemoryRepository`, `PgJobRepository`).
-- OpenAI-compatible HTTP provider client (`OpenAiCompatibleClient`).
+## Current layer responsibilities
 
-### 4. HTTP Layer (`vestrace-http`)
-- Axum web server exposing health endpoints (`/health/live`, `/health/ready`).
-- Tracing middleware injecting `x-request-id` and `x-correlation-id` headers into tracing spans.
+### Domain
 
-### 5. CLI Layer (`vestrace-cli`)
-- Command line interface subcommands: `server`, `worker`, `mcp`, `migrate`, `doctor`, `rebuild`.
+`vestrace-domain` contains identifiers, value objects, entities, and invariants. The repository includes domain types for capabilities, memory, providers, agents, workflows, and other future areas. Their presence does not imply that those features are available through the supported runtime.
+
+### Application
+
+`vestrace-application` exposes ports and services used by the implemented run-record vertical slice and by internal foundation code. A type or service in this crate is not considered production-ready without a wired runtime path and acceptance coverage.
+
+### Infrastructure
+
+`vestrace-infrastructure` provides PostgreSQL pooling, transaction-scoped workspace/principal context, repository adapters, migration execution, migration-history verification, and provider clients.
+
+The ordered `migrations/` directory embedded by SQLx is the migration source of truth. Documentation must not maintain a maximum migration number.
+
+### HTTP
+
+`vestrace-http` exposes:
+
+```text
+GET  /health/live
+GET  /health/ready
+POST /v1/runs
+GET  /v1/runs
+GET  /v1/runs/{id}
+```
+
+The HTTP crate depends on application ports and must not import SQLx or infrastructure adapters. Unsupported REST and AG-UI surfaces return explicit `501 Not Implemented` responses.
+
+### CLI
+
+Implemented commands:
+
+- `server` — connect to PostgreSQL, apply and verify embedded migrations, then serve HTTP;
+- `migrate` — connect to PostgreSQL, apply embedded migrations, and verify exact migration compatibility.
+
+Explicitly unavailable commands return a non-zero exit status:
+
+- `worker`;
+- `mcp`;
+- `doctor`;
+- `rebuild`.
+
+No unavailable command may report successful initialization or successful work.
+
+## Database readiness
+
+Process liveness and database readiness are distinct:
+
+- `/health/live` reports that the HTTP process is running;
+- `/health/ready` verifies database access and exact migration compatibility.
+
+Compatibility compares every applied `_sqlx_migrations` entry with the embedded migration set by version, success state, and checksum. Missing, extra, failed, or modified migrations make the service not ready.
+
+## P0 boundary
+
+P0 does not provide:
+
+- agent or workflow execution;
+- deterministic run-event replay or checkpoint restoration;
+- background workers;
+- approval execution;
+- capability-policy enforcement;
+- artifact content-addressed storage;
+- real AG-UI execution or streaming.
+
+These capabilities must remain explicitly unavailable until their phase-specific acceptance gates pass.

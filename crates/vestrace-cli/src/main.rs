@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Server => commands::server::run(&config).await,
         Command::Worker => commands::worker::run(&config),
         Command::Mcp => commands::mcp::run(&config),
-        Command::Migrate => commands::migrate::run(&config),
+        Command::Migrate => commands::migrate::run(&config).await,
         Command::Doctor => commands::doctor::run(&config),
         Command::Rebuild => commands::rebuild::run(&config),
     }
