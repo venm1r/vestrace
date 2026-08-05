@@ -220,8 +220,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_run_uses_the_canonical_command_executor() {
-        let workspace_id = Uuid::new_v4();
-        let principal_id = Uuid::new_v4();
+        let workspace_id = Uuid::now_v7();
+        let principal_id = Uuid::now_v7();
         let request_id = Uuid::now_v7();
         let correlation_id = Uuid::now_v7();
         let commands = RecordingCommands::default();
