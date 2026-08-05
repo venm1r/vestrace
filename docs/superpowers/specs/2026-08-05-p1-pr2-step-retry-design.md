@@ -80,8 +80,7 @@ Selected because it preserves deterministic replay, exposes an idempotency ident
 ### Excluded
 
 - retry of an entire run;
-- automatic backoff calculation;
-- jitter;
+- automatic backoff calculation and jitter;
 - scheduler polling and due-work queries;
 - production workers;
 - automatic execution of side effects;
@@ -117,7 +116,7 @@ Future executors should derive their side-effect idempotency key from this ident
 
 ### 6.1 Failure disposition
 
-Replace the ambiguous command-level `retryable: bool` decision with a typed disposition:
+Replace the ambiguous command-level `retryable: bool` decision with:
 
 ```rust
 pub enum StepFailureDisposition {
@@ -126,9 +125,9 @@ pub enum StepFailureDisposition {
 }
 ```
 
-`Final` means no retry is scheduled for this failed attempt. It is final for the step attempt, not automatically terminal for the run. The orchestrator may subsequently fail, cancel, stall, compensate, or start another step according to later policies.
+`Final` means no retry is scheduled for this failed attempt. It is final for the step, not automatically terminal for the run. The orchestrator may subsequently fail, cancel, stall, compensate, or start another step according to later policies.
 
-`Retry` requests a retry. The State Engine either schedules the next attempt or stalls the run when the configured attempt limit is exhausted.
+`Retry` requests another attempt. The State Engine either schedules it or stalls the run when the configured attempt limit is exhausted.
 
 ### 6.2 Failure record
 
@@ -228,18 +227,22 @@ RunCommand::StartStep {
 }
 ```
 
-It is valid only when:
+It is valid only when the run is `Running`, no active step or wait exists, and `max_attempts >= 1`.
 
-- the run is `Running`;
-- no active step exists;
-- no wait exists;
-- `max_attempts >= 1`.
-
-It emits a new attempt-aware start event with `attempt = 1`.
+It emits `StepAttemptStarted` with `attempt = 1`.
 
 ### 7.2 Complete an attempt
 
-The existing `CompleteStep { step_id, output_references }` command remains. When the active step is attempt-aware, it emits a new attempt-aware completion event containing the active attempt number.
+The existing command remains:
+
+```rust
+RunCommand::CompleteStep {
+    step_id: RunStepId,
+    output_references: Vec<String>,
+}
+```
+
+It always emits `StepAttemptCompleted` using the attempt stored in `RunStepState`. This also applies when the active state originated from a legacy `StepStarted` event, because legacy replay normalizes that state to `attempt = 1` and `max_attempts = 1`.
 
 ### 7.3 Fail an attempt
 
@@ -254,17 +257,16 @@ RunCommand::FailStep {
 }
 ```
 
-The command is valid only for the matching active step.
+It always emits `StepAttemptFailed` using the active attempt identity, including for an active state reconstructed from a legacy `StepStarted` event.
 
-For `Final`, it emits one attempt-failed event. The active step is cleared and the run remains `Running` with no retry wait.
+For `Final`, the active step is cleared and the run remains `Running` with no retry wait.
 
 For `Retry { resume_at }`:
 
-- `resume_at` must be greater than or equal to `command.issued_at`;
-- the attempt-failed event is always emitted;
-- when `attempt < max_attempts`, a retry-scheduled event is emitted in the same command transaction;
-- when `attempt == max_attempts`, a stalled event with `RetryLimitExceeded` is emitted in the same command transaction;
-- no retry schedule is created after the limit is exhausted.
+- `resume_at >= command.issued_at` is required;
+- when `attempt < max_attempts`, `StepRetryScheduled` is emitted in the same command transaction;
+- when `attempt == max_attempts`, `Stalled(RetryLimitExceeded)` is emitted in the same transaction;
+- no schedule is created after the limit is exhausted.
 
 ### 7.4 Resume a due retry
 
@@ -283,7 +285,7 @@ It is valid only when:
 - `step_id` matches the scheduled step;
 - `command.issued_at >= resume_at`.
 
-The command emits two events atomically:
+It emits two events atomically:
 
 ```text
 StepRetryResumed
@@ -292,19 +294,17 @@ StepAttemptStarted
 
 The second event starts `next_attempt` with the stored step kind, label, and retry limit.
 
-The generic `Resume` command remains valid only for input and approval waits. It must not bypass retry timing.
+The generic `Resume` command remains valid only for input and approval waits. It cannot bypass retry timing.
 
 ## 8. Events and compatibility
 
-Existing persisted event variants remain unchanged:
+Existing persisted variants remain unchanged:
 
 - `StepStarted`;
 - `StepCompleted`;
 - `StepFailed`.
 
-Changing their payload shape would make existing JSON events unreadable. PR2 therefore adds new event variants instead of modifying old ones.
-
-### New events
+Changing their payload shape would make existing JSON events unreadable. PR2 therefore adds new variants:
 
 ```rust
 RunEvent::StepAttemptStarted {
@@ -348,7 +348,7 @@ RunEvent::StepRetryResumed {
 }
 ```
 
-Event type strings:
+Event type strings are:
 
 ```text
 step.attempt_started
@@ -360,7 +360,7 @@ step.retry_resumed
 
 Each starts at event version `1`.
 
-Legacy `StepStarted` replay creates an active step with `attempt = 1` and `max_attempts = 1`. Legacy `StepCompleted` and `StepFailed` continue to apply to that legacy active step. This preserves old streams without fabricating retry capability.
+Legacy `StepStarted` replay creates an active step with `attempt = 1` and `max_attempts = 1`. Legacy `StepCompleted` and `StepFailed` continue to replay unchanged. New commands operating on a legacy active state emit the new attempt-aware completion or failure event.
 
 ## 9. Decision semantics
 
@@ -433,13 +433,7 @@ Both events share the same causation and correlation IDs and are committed atomi
 
 ## 10. Reducer semantics
 
-`StepAttemptStarted` requires:
-
-- status `Running`;
-- no active step;
-- no wait;
-- valid positive attempt values;
-- `attempt <= max_attempts`.
+`StepAttemptStarted` requires status `Running`, no active step, no wait, positive attempt values, and `attempt <= max_attempts`.
 
 `StepAttemptCompleted` and `StepAttemptFailed` require matching `step_id` and `attempt`.
 
@@ -454,9 +448,9 @@ Both events share the same causation and correlation IDs and are committed atomi
 
 It sets `WaitingForRetry` and stores the complete retry context.
 
-`StepRetryResumed` requires a matching retry wait. It clears the wait and returns the run to `Running`. The following `StepAttemptStarted` event recreates the active step in the same atomic event batch.
+`StepRetryResumed` requires a matching retry wait. It clears the wait and returns the run to `Running`. The following `StepAttemptStarted` recreates the active step in the same atomic event batch.
 
-Replay of any committed prefix remains valid. The command committer must not expose a partially appended multi-event batch.
+Every event prefix remains reducible, while the command committer guarantees that readers never observe a partially committed multi-event batch.
 
 ## 11. Time authority
 
@@ -468,31 +462,27 @@ The decision function compares:
 command.issued_at >= retry.resume_at
 ```
 
-The command boundary is responsible for supplying a trusted server timestamp. Future HTTP or worker adapters must not accept an arbitrary client time as the authoritative `issued_at` value.
+The command boundary supplies a trusted server timestamp. Future HTTP or worker adapters must not accept arbitrary client time as authoritative `issued_at`.
 
-An immediate retry is allowed by setting:
-
-```text
-resume_at == issued_at
-```
+An immediate retry is allowed when `resume_at == issued_at`.
 
 ## 12. Failure and concurrency semantics
 
-- resume before `resume_at`: typed `RetryNotReady` decision error;
+- resume before `resume_at`: typed `RetryNotReady` error;
 - wrong retry `step_id`: typed invalid-command error;
 - zero `max_attempts`: typed invalid-command error;
 - attempt overflow: typed decision/reduction error;
-- retry after limit exhaustion: the run stalls atomically;
-- duplicate concurrent resume commands: one commits, the other receives optimistic version conflict;
-- crash after scheduling: replay restores `WaitingForRetry` with the same due time;
-- crash after resume commit: replay restores the next active attempt;
+- retry after limit exhaustion: atomic terminal stall;
+- duplicate concurrent resume commands: one commit and one optimistic conflict;
+- crash after scheduling: replay restores the exact retry wait;
+- crash after resume commit: replay restores the exact next active attempt;
 - SQL failure during a multi-event transition: stream, events, and projection roll back together;
 - cancellation, explicit run failure, and manual stall remain allowed while waiting for retry;
 - `Complete`, `StartStep`, generic `Resume`, and a second retry schedule are invalid while waiting for retry.
 
 ## 13. Checkpoint compatibility
 
-Adding attempt fields and a retry wait variant changes canonical `RunState` serialization and therefore its SHA-256 checkpoint hash.
+Adding attempt fields and a retry wait variant changes canonical `RunState` serialization and its SHA-256 checkpoint hash.
 
 PR2 introduces checkpoint format version `2`.
 
@@ -531,30 +521,31 @@ The full retry context remains recoverable from canonical events and checkpoints
 - zero retry limit is rejected;
 - final failure emits no retry schedule;
 - retryable failure emits failure plus schedule atomically;
-- resume time before command time is rejected;
+- retry time before command time is rejected;
 - exhausted limit emits failure plus stall;
 - resume before due time is rejected;
 - due resume emits resume plus next attempt start;
 - wrong step ID is rejected;
 - generic `Resume` cannot resume a retry wait;
 - terminal runs reject retry commands;
-- optimistic expected-version checks remain unchanged.
+- expected-version checks remain unchanged.
 
 ### Reducer and replay tests
 
 - legacy step events replay as attempt `1/1`;
-- attempt-aware start, complete, and fail transitions validate identity;
+- new completion and failure commands work on legacy active state;
+- attempt-aware start, complete, and fail validate identity;
 - retry schedule stores full context;
 - retry resume recreates the same step with incremented attempt;
-- event sequence gaps and reordered multi-event batches fail;
+- sequence gaps and reordered multi-event batches fail;
 - replay across several retries is deterministic;
 - retry-limit stall is terminal;
 - checkpoint hash is stable for the same retry state.
 
 ### Application and PostgreSQL tests
 
-- command service commits two-event failure/schedule batches atomically;
-- command service commits two-event resume/start batches atomically;
+- command service commits failure/schedule batches atomically;
+- command service commits resume/start batches atomically;
 - stream version advances by two for each multi-event transition;
 - projection status becomes `waiting_for_retry`;
 - rollback leaves no partial retry state;
@@ -609,9 +600,10 @@ P1 / PR2 is complete only when:
 7. A crash after resume restores the exact active attempt.
 8. Retry-limit exhaustion stalls the run without creating another schedule.
 9. Legacy step events remain replayable.
-10. Checkpoint format v2 is introduced without changing event history.
-11. Projection rebuild remains exact after retry transitions.
-12. Concurrency is still enforced by `run_streams`.
-13. Workspace isolation and transaction rollback remain intact.
-14. No scheduler, worker, HTTP, idempotency, subagent, compensation, capability, CAS, memory, or UI scope is introduced.
-15. Formatting, Clippy, full Rust/PostgreSQL tests, CLI truthfulness, console, and clean Compose acceptance are green.
+10. New completion and failure commands can operate on legacy active state.
+11. Checkpoint format v2 is introduced without changing event history.
+12. Projection rebuild remains exact after retry transitions.
+13. Concurrency remains enforced by `run_streams`.
+14. Workspace isolation and transaction rollback remain intact.
+15. No scheduler, worker, HTTP, idempotency, subagent, compensation, capability, CAS, memory, or UI scope is introduced.
+16. Formatting, Clippy, full Rust/PostgreSQL tests, CLI truthfulness, console, and clean Compose acceptance are green.
