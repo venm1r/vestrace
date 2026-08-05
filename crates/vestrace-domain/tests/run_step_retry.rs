@@ -13,10 +13,7 @@ fn retry_commands_events_and_state_round_trip_through_json() {
     let principal_id = PrincipalId::new();
     let run_id = AgentRunId::new();
     let step_id = RunStepId::new();
-    let issued_at = Utc
-        .with_ymd_and_hms(2026, 8, 5, 6, 0, 0)
-        .single()
-        .unwrap();
+    let issued_at = Utc.with_ymd_and_hms(2026, 8, 5, 6, 0, 0).single().unwrap();
     let resume_at = issued_at + Duration::seconds(30);
 
     let commands = [
