@@ -1,3 +1,5 @@
+//! Public contract for deterministic step-level retries.
+
 use chrono::{Duration, TimeZone, Utc};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunStepId, WorkspaceId},
