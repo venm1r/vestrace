@@ -59,6 +59,14 @@ print(body['id'])
 PY
 )"
 
+event_count="$(docker compose exec -T postgres \
+  psql --username vestrace_bootstrap --dbname vestrace --tuples-only --no-align \
+  --command "SELECT count(*) FROM run_events WHERE workspace_id = '$workspace_id' AND run_id = '$run_id' AND sequence = 1 AND event_type = 'run.created';")"
+[[ "$event_count" == "1" ]] || {
+  printf 'HTTP run create did not append one canonical run.created event (count=%s)\n' "$event_count" >&2
+  exit 1
+}
+
 status="$(curl --silent --show-error --output "$list_body" --write-out '%{http_code}' \
   "${common_headers[@]}" \
   "${base_url}/v1/runs")"
