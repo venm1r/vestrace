@@ -1,3 +1,21 @@
+pub mod agent;
+pub mod skill;
+pub mod workflow;
+
+pub use agent::{
+    AgentDefinition, AgentRevision, AgentRole, BudgetPolicy, CapabilitySet, MemoryScope,
+    ModelRequirements as AgentModelRequirements, SkillRef,
+};
+pub use skill::{
+    ApplicabilityCondition, CompositeImplementation, HttpImplementation, HumanImplementation,
+    McpToolImplementation, PromptImplementation, SkillDefinition, SkillDependency, SkillExample,
+    SkillImplementation, SkillKind, SkillRevision,
+};
+pub use workflow::{
+    LoopPolicy, WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowRevision,
+    WorkflowTransition, WorkflowValidationError, WorkflowValidationReport,
+};
+
 use crate::{
     id::{AgentId, SkillId, WorkspaceId},
     time::Timestamp,

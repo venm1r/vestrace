@@ -1,7 +1,10 @@
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use vestrace_application::{ApplicationError, EventRepository};
-use vestrace_domain::Event;
+use vestrace_domain::{
+    Event,
+    id::{EventId, SessionId, WorkspaceId},
+};
 
 pub struct PgEventRepository {
     pool: PgPool,
@@ -13,9 +16,13 @@ impl PgEventRepository {
     }
 }
 
+fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
+    ApplicationError::Storage(error.to_string())
+}
+
 #[async_trait]
 impl EventRepository for PgEventRepository {
-    async fn save(&mut self, event: &Event) -> Result<(), ApplicationError> {
+    async fn save(&self, event: &Event) -> Result<(), ApplicationError> {
         sqlx::query(
             r#"
             INSERT INTO events (id, workspace_id, session_id, event_type, actor, subject, payload, created_at)
@@ -37,11 +44,49 @@ impl EventRepository for PgEventRepository {
         Ok(())
     }
 
-    async fn find_by_id(
-        &self,
-        _id: vestrace_domain::id::EventId,
-    ) -> Result<Option<Event>, ApplicationError> {
-        // Query implementation
-        Ok(None)
+    async fn find_by_id(&self, id: EventId) -> Result<Option<Event>, ApplicationError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, workspace_id, session_id, event_type, actor, subject, payload, created_at
+            FROM events
+            WHERE id = $1
+            "#,
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage_error)?;
+
+        row.map(parse_event_row).transpose()
     }
+}
+
+fn parse_event_row(row: sqlx::postgres::PgRow) -> Result<Event, ApplicationError> {
+    let id: uuid::Uuid = row.try_get("id").map_err(storage_error)?;
+    let workspace_id: uuid::Uuid = row.try_get("workspace_id").map_err(storage_error)?;
+    let session_id: Option<uuid::Uuid> = row.try_get("session_id").map_err(storage_error)?;
+    let event_type: String = row.try_get("event_type").map_err(storage_error)?;
+    let actor_value: serde_json::Value = row.try_get("actor").map_err(storage_error)?;
+    let subject_value: Option<serde_json::Value> = row.try_get("subject").map_err(storage_error)?;
+    let payload: serde_json::Value = row.try_get("payload").map_err(storage_error)?;
+    let created_at = row
+        .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+        .map_err(storage_error)?;
+
+    let actor = serde_json::from_value(actor_value).map_err(storage_error)?;
+    let subject = subject_value
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(storage_error)?;
+
+    Ok(Event {
+        id: EventId::from_uuid(id),
+        workspace_id: WorkspaceId::from_uuid(workspace_id),
+        session_id: session_id.map(SessionId::from_uuid),
+        event_type,
+        actor,
+        subject,
+        payload,
+        created_at,
+    })
 }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use tokio::signal;
 use tracing::Subscriber;
 use tracing_subscriber::{
     EnvFilter,
@@ -8,11 +9,15 @@ use tracing_subscriber::{
     fmt::MakeWriter,
     prelude::*,
 };
-use vestrace_application::{RunCommandService, RunService};
-use vestrace_http::{AppState, build_router};
+use vestrace_application::{MemoryService, RetrievalService, RunCommandService, RunService};
+use vestrace_http::{AppState, MetricsRegistry, build_router};
 use vestrace_infrastructure::{
-    AppConfig, LogFormat, ObservabilityConfig, PgRunCommandCommitter, PgRunEventStore,
-    PgRunRepository, PgStore,
+    AppConfig, LogFormat, ObservabilityConfig, PgAgentRepository, PgEvaluationRepository,
+    PgEventRepository, PgExecutionHistoryRepository, PgIdempotencyRepository, PgMemoryRepository,
+    PgModelExecutionRepository, PgModelRepository, PgOutboxRepository, PgProvenanceRepository,
+    PgProviderRepository, PgRelationRepository, PgRetrievalJournal, PgRoutingDecisionRepository,
+    PgRunCommandCommitter, PgRunEventStore, PgRunRepository, PgSkillRepository, PgStore,
+    PgTextRetriever, PgWorkflowRepository,
 };
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
@@ -38,17 +43,101 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         Arc::new(PgRunEventStore::new(store.clone())),
         Arc::new(PgRunCommandCommitter::new(store.clone())),
     ));
+
+    let pool = store.pool().clone();
+    let memory_service = MemoryService::new(
+        PgEventRepository::new(pool.clone()),
+        PgMemoryRepository::new(pool.clone()),
+        PgProvenanceRepository::new(pool.clone()),
+        PgRelationRepository::new(pool.clone()),
+        PgOutboxRepository::new(pool.clone()),
+        PgIdempotencyRepository::new(pool.clone()),
+    );
+    let memory_use_cases: vestrace_application::SharedMemoryUseCases = Arc::new(memory_service);
+
+    let text_retriever: vestrace_application::SharedTextRetriever =
+        Arc::new(PgTextRetriever::new(pool.clone()));
+    let retrieval_journal: vestrace_application::SharedRetrievalJournal =
+        Arc::new(PgRetrievalJournal::new(pool.clone()));
+    let retrieval_service = Arc::new(RetrievalService::new(text_retriever, retrieval_journal));
+
+    let provider_repository: vestrace_application::SharedProviderRepository =
+        Arc::new(PgProviderRepository::new(pool.clone()));
+    let model_repository: vestrace_application::SharedModelRepository =
+        Arc::new(PgModelRepository::new(pool.clone()));
+    let agent_repository: vestrace_application::SharedAgentRepository =
+        Arc::new(PgAgentRepository::new(pool.clone()));
+    let skill_repository: vestrace_application::SharedSkillRepository =
+        Arc::new(PgSkillRepository::new(pool.clone()));
+    let routing_decision_repository: vestrace_application::SharedRoutingDecisionRepository =
+        Arc::new(PgRoutingDecisionRepository::new(pool.clone()));
+    let model_execution_repository: vestrace_application::SharedModelExecutionRepository =
+        Arc::new(PgModelExecutionRepository::new(pool.clone()));
+    let execution_history_repository: vestrace_application::SharedExecutionHistoryRepository =
+        Arc::new(PgExecutionHistoryRepository::new(pool.clone()));
+    let workflow_repository: vestrace_application::SharedWorkflowRepository =
+        Arc::new(PgWorkflowRepository::new(pool.clone()));
+    let evaluation_repository: vestrace_application::SharedEvaluationRepository =
+        Arc::new(PgEvaluationRepository::new(pool));
+    let metrics_registry = Arc::new(MetricsRegistry::new());
+
     let router = build_router(AppState::new(
         Arc::new(store),
         run_service,
         run_command_service,
+        memory_use_cases,
+        retrieval_service,
+        provider_repository,
+        model_repository,
+        agent_repository,
+        skill_repository,
+        routing_decision_repository,
+        model_execution_repository,
+        execution_history_repository,
+        workflow_repository,
+        evaluation_repository,
+        metrics_registry,
     ));
     let listener = tokio::net::TcpListener::bind(config.http.bind)
         .await
         .map_err(|_| anyhow!("HTTP listener is unavailable"))?;
-    axum::serve(listener, router)
-        .await
-        .map_err(|_| anyhow!("HTTP server stopped unexpectedly"))
+    tracing::info!("HTTP server listening on {}", config.http.bind);
+
+    let server = axum::serve(listener, router);
+
+    tokio::select! {
+        result = server => {
+            result.map_err(|_| anyhow!("HTTP server stopped unexpectedly"))
+        }
+        _ = shutdown_signal() => {
+            tracing::info!("shutdown signal received, stopping server");
+            Ok(())
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 fn init_tracing(config: &ObservabilityConfig) -> anyhow::Result<()> {

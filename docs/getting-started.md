@@ -55,11 +55,9 @@ The command performs real database work. It exits successfully only after embedd
 
 ## 3. Explicitly unavailable CLI commands
 
-The following commands are reserved but not implemented in P0:
+The following commands are reserved but not implemented:
 
 ```text
-worker
-mcp
 doctor
 rebuild
 ```
@@ -81,4 +79,4 @@ npm --prefix apps/console run build
 
 ## 5. Current product boundary
 
-P0 provides health endpoints and PostgreSQL-backed create/list/get run records. Creating a run does not start an agent or workflow. Unsupported REST and AG-UI surfaces return `501 Not Implemented`.
+The current runtime provides health endpoints, PostgreSQL-backed event-sourced run records with deterministic replay and checkpoint recovery, memory lifecycle services with HTTP endpoints (event recording with idempotency, memory creation with provenance, memory read, memory revision with optimistic concurrency, knowledge-relation linking), append-only event enforcement, active-source invariant, authorized hard purge with audit trail, idempotency key verification, job leasing via `FOR UPDATE SKIP LOCKED`, outbox message persistence and claiming, worker process with graceful shutdown, retrieval service with HTTP endpoint (text channel FTS, RRF fusion, deterministic reranking, context pack building, retrieval journaling), security domain types (capabilities, approvals, sensitivity, audit), policy engine, redaction service, audit repository, HTTP auth middleware, and MCP server with search_memories and get_memory tools. Creating a run does not start an agent or workflow. Unsupported REST and AG-UI surfaces return `501 Not Implemented`. Vector/structured/exact retrieval channels, capability-policy enforcement in HTTP routes, typed job handlers, approval execution, and artifact storage are not yet wired to runtime paths.

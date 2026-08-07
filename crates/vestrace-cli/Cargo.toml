@@ -13,12 +13,18 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
 vestrace-application = { path = "../vestrace-application" }
+vestrace-domain = { path = "../vestrace-domain" }
 vestrace-http = { path = "../vestrace-http" }
 vestrace-infrastructure = { path = "../vestrace-infrastructure" }
+vestrace-mcp = { path = "../vestrace-mcp" }
 
 [dev-dependencies]
 serde_json.workspace = true

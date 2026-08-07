@@ -16,33 +16,44 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn worker_fails_explicitly_instead_of_reporting_false_success() {
+fn worker_fails_explicitly_when_database_is_unavailable() {
     let output = run("worker");
 
     assert!(!output.status.success(), "worker unexpectedly succeeded");
     assert!(
-        stderr(&output).contains("worker command is not implemented"),
+        stderr(&output).contains("database is unavailable"),
         "{}",
         stderr(&output)
     );
 }
 
 #[test]
-fn placeholder_commands_fail_explicitly() {
-    for (command, expected) in [
-        ("mcp", "mcp command is not implemented"),
-        ("doctor", "doctor command is not implemented"),
-        ("rebuild", "rebuild command is not implemented"),
-    ] {
-        let output = run(command);
+fn mcp_fails_explicitly_when_database_is_unavailable() {
+    let output = run("mcp");
 
-        assert!(!output.status.success(), "{command} unexpectedly succeeded");
-        assert!(
-            stderr(&output).contains(expected),
-            "unexpected stderr for {command}: {}",
-            stderr(&output)
-        );
-    }
+    assert!(!output.status.success(), "mcp unexpectedly succeeded");
+    assert!(
+        stderr(&output).contains("database is unavailable"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn rebuild_fails_explicitly_when_database_is_unavailable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .arg("rebuild")
+        .arg("search-documents")
+        .env("VESTRACE_DATABASE__URL", UNAVAILABLE_DATABASE_URL)
+        .output()
+        .expect("vestrace command should start");
+
+    assert!(!output.status.success(), "rebuild unexpectedly succeeded");
+    assert!(
+        stderr(&output).contains("database is unavailable"),
+        "unexpected stderr for rebuild: {}",
+        stderr(&output)
+    );
 }
 
 #[test]

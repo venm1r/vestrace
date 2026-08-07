@@ -68,6 +68,14 @@ jobs:
       - name: Verify CLI truthfulness
         run: bash ./scripts/foundation-cli-truth.sh
 
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Run v0.1 acceptance suite
+        run: cargo test -p vestrace-integration-tests --test v01_acceptance -- --nocapture
+
   console:
     runs-on: ubuntu-latest
     steps:
@@ -95,5 +103,7 @@ jobs:
       - run: ./scripts/foundation-smoke.sh
       - run: bash ./scripts/foundation-run-smoke.sh
       - run: timeout 90s ./scripts/foundation-runtime-rls.sh
+      - name: Run compose smoke tests
+        run: cargo test -p vestrace-integration-tests --test compose_smoke -- --ignored --nocapture
       - if: always()
         run: docker compose down --volumes --remove-orphans

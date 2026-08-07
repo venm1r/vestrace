@@ -12,7 +12,7 @@ where
         Self { job_repo }
     }
 
-    pub async fn process_one(&mut self) -> Result<bool, ApplicationError> {
+    pub async fn process_one(&self) -> Result<bool, ApplicationError> {
         if let Some(job) = self.job_repo.lease_next().await? {
             // Process job execution
             self.job_repo.complete(job.id).await?;

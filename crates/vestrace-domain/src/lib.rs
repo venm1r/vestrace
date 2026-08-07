@@ -7,9 +7,11 @@ pub mod budget;
 pub mod cognitive;
 pub mod connection;
 pub mod conversation;
+pub mod diagnostics;
 pub mod enterprise;
 pub mod error;
 pub mod event;
+pub mod execution;
 pub mod id;
 pub mod job;
 pub mod memory;
@@ -30,15 +32,38 @@ pub mod time;
 pub mod tool;
 pub mod webhook;
 
+pub use cognitive::{
+    AgentDefinition, AgentRevision, AgentRole, BudgetPolicy, CapabilitySet,
+    CompositeImplementation, HttpImplementation, HumanImplementation, LoopPolicy,
+    McpToolImplementation, MemoryScope, PromptImplementation, SkillDefinition, SkillDependency,
+    SkillExample, SkillImplementation, SkillKind, SkillRevision, WorkflowDefinition, WorkflowNode,
+    WorkflowNodeKind, WorkflowRevision, WorkflowTransition, WorkflowValidationError,
+    WorkflowValidationReport,
+};
 pub use error::DomainError;
 pub use event::{ActorRef, Event, SubjectRef};
+pub use execution::{
+    ArtifactKind, ExecutionArtifact, ExecutionOutcome, ExecutionStatus, OutcomeKind, StepExecution,
+    StepKind, WorkflowExecution,
+};
 pub use id::*;
 pub use job::{Job, JobState};
 pub use memory::*;
+pub use models::{
+    ModelCostProfile, ModelProfile, ModelRouter, ProviderLocality, RejectedCandidate,
+    RoutingCandidate, RoutingDecision, RoutingStrategy, TaskRequirements,
+};
 pub use policy::{ActivationDecision, MemoryWritePolicy};
 pub use provenance::{Derivation, DerivationMethod, EvidenceRole, MemorySource};
 pub use relation::{KnowledgeRelation, RelationType};
-pub use retrieval::{ContextPack, RetrievalCandidate, RetrievalIntent};
+pub use retrieval::{
+    ContextItem, ContextPack, ContextSection, RepresentationLevel, RetrievalCandidate,
+    RetrievalIntent, ScoreComponents, TimePerspective,
+};
+pub use security::{
+    ApprovalKind, ApprovalRecord, ApprovalStatus, AuditEvent, Capability, DataDestination,
+    Sensitivity,
+};
 pub use time::{Timestamp, now};
 
 pub fn crate_name() -> &'static str {

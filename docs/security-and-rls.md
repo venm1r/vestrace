@@ -11,9 +11,10 @@ All multi-tenant database tables enforce PostgreSQL Row-Level Security (RLS).
 2. Every database operation executes within a scoped transaction via `PgTransactionManager`.
 3. The transaction manager executes:
    ```sql
-   SET LOCAL vestrace.workspace_id = '<workspace-uuid>';
-   SET LOCAL vestrace.principal_id = '<principal-uuid>';
+   SELECT set_config('vestrace.workspace_id', '<workspace-uuid>', true);
+   SELECT set_config('vestrace.principal_id', '<principal-uuid>', true);
    ```
+   These are semantically equivalent to `SET LOCAL` but use the `set_config` function for parameterized binding.
 4. PostgreSQL RLS policies evaluate `vestrace_current_workspace_id()` and reject any read/write attempt crossing workspace boundaries.
 
 ## 2. Authorization & Capability Model (RBAC)

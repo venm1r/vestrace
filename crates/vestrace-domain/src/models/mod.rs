@@ -5,8 +5,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod routing;
 pub mod runtime;
 
+pub use routing::{
+    ModelRouter, RejectedCandidate, RoutingCandidate, RoutingDecision, RoutingStrategy,
+    TaskRequirements,
+};
 pub use runtime::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -15,7 +15,7 @@ impl PgProvenanceRepository {
 
 #[async_trait]
 impl ProvenanceRepository for PgProvenanceRepository {
-    async fn save_source(&mut self, source: &MemorySource) -> Result<(), ApplicationError> {
+    async fn save_source(&self, source: &MemorySource) -> Result<(), ApplicationError> {
         let role_str = match source.role {
             vestrace_domain::EvidenceRole::DirectSource => "direct_source",
             vestrace_domain::EvidenceRole::SupportingContext => "supporting_context",

@@ -10,10 +10,14 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug)]
 pub struct PgStore {
-    pub(super) pool: sqlx::PgPool,
+    pub(crate) pool: sqlx::PgPool,
 }
 
 impl PgStore {
+    pub fn pool(&self) -> &sqlx::PgPool {
+        &self.pool
+    }
+
     pub async fn connect(config: &DatabaseConfig) -> Result<Self, InfrastructureError> {
         if config.max_connections == 0 {
             return Err(InfrastructureError::configuration(

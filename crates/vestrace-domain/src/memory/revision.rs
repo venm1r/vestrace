@@ -88,4 +88,31 @@ impl Memory {
             )))
         }
     }
+
+    pub fn expire(mut self, at: Timestamp) -> Result<Self, DomainError> {
+        if self.status == MemoryStatus::Active {
+            self.status = MemoryStatus::Expired;
+            self.active_revision_id = None;
+            self.updated_at = at;
+            Ok(self)
+        } else {
+            Err(DomainError::PolicyViolation(format!(
+                "cannot expire memory in status {:?}",
+                self.status
+            )))
+        }
+    }
+
+    pub fn soft_delete(mut self, at: Timestamp) -> Result<Self, DomainError> {
+        if self.status == MemoryStatus::Deleted {
+            Err(DomainError::PolicyViolation(
+                "memory is already deleted".into(),
+            ))
+        } else {
+            self.status = MemoryStatus::Deleted;
+            self.active_revision_id = None;
+            self.updated_at = at;
+            Ok(self)
+        }
+    }
 }

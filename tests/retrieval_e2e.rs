@@ -11,9 +11,31 @@ fn test_context_pack_token_budget_boundary() {
     let run_id = RetrievalRunId::new();
     let ws_id = WorkspaceId::new();
 
-    let valid_pack = ContextPack::new(pack_id, run_id, ws_id, 1000, 800, vec![], at);
+    let valid_pack = ContextPack::new(
+        pack_id,
+        run_id,
+        ws_id,
+        1000,
+        800,
+        vec![],
+        vec![],
+        false,
+        vec![],
+        at,
+    );
     assert!(valid_pack.is_ok());
 
-    let invalid_pack = ContextPack::new(pack_id, run_id, ws_id, 1000, 1050, vec![], at);
+    let invalid_pack = ContextPack::new(
+        pack_id,
+        run_id,
+        ws_id,
+        1000,
+        1050,
+        vec![],
+        vec![],
+        false,
+        vec![],
+        at,
+    );
     assert!(invalid_pack.is_err());
 }

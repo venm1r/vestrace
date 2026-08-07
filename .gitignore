@@ -4,3 +4,4 @@
 !.env.example
 apps/console/src/sdk/client.ts.tmp
 .mcp/
+graphify-out/
