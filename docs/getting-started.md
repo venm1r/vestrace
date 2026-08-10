@@ -89,7 +89,7 @@ These tests verify current implementation behavior. They are not equivalent to t
 
 ## 5. Current product/runtime boundary
 
-The current snapshot provides a foundation including:
+The inspected implementation snapshot provides a foundation including:
 
 - liveness/readiness;
 - PostgreSQL-backed event-sourced Run command state;
@@ -116,8 +116,10 @@ The v0.2 target specs must not be interpreted as current runtime support for:
 - full crypto/data governance;
 - qualification profiles.
 
-Those capabilities require a later implementation phase after documentation completion.
+Those capabilities remain future implementation work until executable implementation and conformance evidence exists.
 
-## 7. Documentation-only branch rule
+## 7. Branching rule for future implementation
 
-`docs/architecture-v0.2` is intentionally documentation-only. Do not use this branch as an implementation work branch during the architecture documentation phase.
+The v0.2 documentation baseline is already integrated into `main`. Future implementation work should use dedicated implementation branches derived from a reviewed current `main` baseline.
+
+If implementation code has moved materially since the inspected snapshot, re-run the documented gap delta before treating the 36-PR plan as current without modification.
