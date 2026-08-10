@@ -4,7 +4,7 @@
 
 > **Memory Engine is the substrate. Persistent Cognition is the capability.**
 
-This branch (`docs/architecture-v0.2`) is a **documentation-only architecture branch**. It defines the target architecture while keeping the current implementation status separate. No Rust code or migrations are changed as part of this documentation phase.
+The v0.2 architecture baseline is now integrated into `main`. Target architecture, current implementation status, and future transition planning are intentionally documented as separate layers.
 
 ## Documentation layers
 
@@ -29,8 +29,9 @@ Start here:
 - [36-PR Planning Index](docs/plans/v0.2-to-v1.0-pr-specification-index.md)
 - [Planning Directory Status](docs/plans/README.md)
 - [Documentation Status](docs/documentation-status-v0.2.md)
+- [Post-merge Documentation Audit](docs/documentation-post-merge-audit-v0.2.md)
 
-The target docs describe what Vestrace **must become**. The implementation snapshot describes what is actually wired in `main@729d456f70f4de93c97d05cce795c09025c62f24`.
+The target docs describe what Vestrace **must become**. The current implementation snapshot remains pinned to the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`; the documentation merge itself did not change runtime code or migrations.
 
 ## Target architecture
 
@@ -67,7 +68,7 @@ Core architectural laws include:
 
 ## Current implementation snapshot
 
-The current source foundation includes:
+The inspected source foundation includes:
 
 - Rust Edition 2024 workspace;
 - PostgreSQL + SQLx migrations and workspace-scoped RLS context;
@@ -128,15 +129,15 @@ bash ./scripts/foundation-run-smoke.sh
 docker compose -p vestrace down --remove-orphans
 ```
 
-## Documentation branch state
+## Documentation baseline state
 
-The architecture baseline, implementation gap analysis, 36-PR transition package, migration/conformance matrices and consistency audit are complete for the inspected baseline.
+The architecture baseline, source-based gap analysis, 36-PR transition package, migration/conformance matrices, and consistency audit are complete and integrated into `main`.
 
-Branch rules remain:
+Rules going forward:
 
-- no implementation work belongs in this branch;
-- no migrations are added or edited;
-- no runtime/API behavior is changed;
-- no target feature is claimed implemented merely because it is specified;
-- if `main` moves materially, re-run a gap delta before using the plans unchanged;
+- target documentation does not by itself authorize or implement runtime changes;
+- applied migrations remain immutable;
+- implementation work should use dedicated implementation branches;
+- no target feature may be claimed implemented merely because it is specified;
+- if implementation code changes materially from the inspected baseline, re-run a gap delta before using the plans unchanged;
 - architecture changes after freeze require deliberate spec/ADR amendment.
