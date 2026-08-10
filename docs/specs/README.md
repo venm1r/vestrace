@@ -1,6 +1,6 @@
 # Vestrace v0.2 Normative Documentation Index
 
-This directory contains the target architecture documentation for the `docs/architecture-v0.2` branch.
+This directory contains the target architecture documentation for the frozen v0.2 baseline integrated into `main`.
 
 > These specifications describe the target architecture. They do not by themselves assert current implementation availability.
 
@@ -35,13 +35,14 @@ Older specs are retained as historical design artifacts unless explicitly update
 
 ## Documentation state
 
-The normative architecture consistency pass is complete. A source-based gap analysis against `main@729d456f70f4de93c97d05cce795c09025c62f24` and a complete 36-PR transition package are also present on this branch.
+The normative architecture consistency pass is complete. A source-based gap analysis against implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` and a complete 36-PR transition package are integrated into `main` alongside the normative set.
 
 See:
 
 - [`../documentation-status-v0.2.md`](../documentation-status-v0.2.md)
+- [`../documentation-post-merge-audit-v0.2.md`](../documentation-post-merge-audit-v0.2.md)
 - [`../gap-analysis-v0.2.md`](../gap-analysis-v0.2.md)
 - [`../plans/README.md`](../plans/README.md)
 - [`../plans/v0.2-to-v1.0-pr-specification-index.md`](../plans/v0.2-to-v1.0-pr-specification-index.md)
 
-No implementation code or migrations are changed by this documentation branch.
+The normative documents define target requirements only. Runtime code, migrations, and qualification claims require separate implementation and executable evidence.

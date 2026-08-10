@@ -2,13 +2,13 @@
 
 ## Documentation status
 
-This file is the architecture entry point for the `docs/architecture-v0.2` branch.
+This file is the architecture entry point for the v0.2 documentation baseline integrated into `main`.
 
 Vestrace has deliberately separate documentation layers:
 
 1. **Target architecture (normative)** — what Vestrace is designed to become and the invariants future implementation must satisfy.
-2. **Current implementation snapshot** — what is actually wired in `main@729d456f70f4de93c97d05cce795c09025c62f24`.
-3. **Transition planning** — the evidence/migration/PR contracts for moving from the inspected baseline toward the target.
+2. **Current implementation snapshot** — what was actually wired in the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
+3. **Transition planning** — the evidence/migration/PR contracts for moving from that inspected baseline toward the target.
 
 Do not infer current runtime availability from target architecture or planning documents.
 
@@ -59,9 +59,9 @@ ADR-0010 clarifies the boundary between roadmap milestone labels and formal qual
 
 ## Current implementation
 
-See [`current-implementation.md`](current-implementation.md) for the current wired snapshot.
+See [`current-implementation.md`](current-implementation.md) for the inspected wired snapshot.
 
-The source snapshot remains a Rust Edition 2024 modular workspace with domain/application/infrastructure/HTTP/CLI/MCP layers and a PostgreSQL-backed run/memory/retrieval foundation. The presence of future-facing domain types or placeholder endpoints does not imply target feature completion.
+The inspected source foundation is a Rust Edition 2024 modular workspace with domain/application/infrastructure/HTTP/CLI/MCP layers and a PostgreSQL-backed run/memory/retrieval foundation. The presence of future-facing domain types or placeholder endpoints does not imply target feature completion.
 
 ## Transition planning
 
@@ -85,14 +85,13 @@ The highest-level invariants are:
 10. v1.0 is defined by the `TRUSTED` qualification contract, not feature count;
 11. milestone labels do not imply named profile qualification without evidence closure.
 
-## Documentation branch state
+## Baseline state
 
-The documentation consistency pass, source-based gap analysis and 36-PR transition planning package are complete for the inspected `main` baseline.
+The documentation consistency pass, source-based gap analysis and 36-PR transition planning package are complete and integrated into `main`.
 
-This branch remains documentation-only:
+Going forward:
 
-- no Rust implementation changes;
-- no migrations added or edited;
-- no runtime/API behavior changes;
+- target documentation does not itself change runtime behavior;
+- implementation work belongs on dedicated implementation branches;
 - architecture changes after freeze require deliberate spec/ADR amendment;
-- material movement of `main` requires a gap delta before plans are treated as current.
+- material changes to implementation code require a gap delta before the transition plans are treated as current without review.

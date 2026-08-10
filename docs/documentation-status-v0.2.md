@@ -1,11 +1,15 @@
 # Vestrace v0.2 Documentation Status
 
-**Branch:** `docs/architecture-v0.2`  
-**Baseline:** `main@729d456f70f4de93c97d05cce795c09025c62f24`  
+**Location:** `main`  
+**Inspected implementation baseline:** `729d456f70f4de93c97d05cce795c09025c62f24`  
+**Architecture integration:** PR #31, merge commit `a4d15d762b5da7b8b870bdb36c77c51c40b14f98`  
 **Date:** 2026-08-10  
-**Documentation state:** **READY FOR DOCUMENTATION REVIEW / MERGE**
+**Documentation state:** **FROZEN IN MAIN — POST-MERGE AUDIT PASSED**
 
-See the final audit: [`documentation-readiness-v0.2.md`](documentation-readiness-v0.2.md).
+See:
+
+- pre-merge readiness record: [`documentation-readiness-v0.2.md`](documentation-readiness-v0.2.md);
+- post-merge audit: [`documentation-post-merge-audit-v0.2.md`](documentation-post-merge-audit-v0.2.md).
 
 ## 1. Normative architecture
 
@@ -27,12 +31,14 @@ ADR-0009 clarifies finding disposition vs integrity state. ADR-0010 clarifies mi
 
 ## 2. Current implementation / gap analysis
 
-Completed for `main@729d456f70f4de93c97d05cce795c09025c62f24`:
+The implementation snapshot and gap analysis remain pinned to implementation commit `729d456f70f4de93c97d05cce795c09025c62f24`:
 
 - `docs/current-implementation.md`;
 - `docs/gap-analysis-v0.2.md`;
 - `docs/requirement-coverage-v0.2.md`;
 - `docs/implementation-plan-v0.2.md`.
+
+The documentation merge changed documentation only; it did not advance runtime implementation. Therefore the inspected implementation baseline remains valid until runtime code or migrations move materially.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
 
@@ -69,18 +75,18 @@ Global planning artifacts include:
 
 Per-phase artifacts include detailed contracts plus migration/backfill and conformance matrices for Correct, Learn, Govern, Understand, Connect and Trust.
 
-## 4. Final consistency corrections
+## 4. Consistency corrections completed
 
-Completed:
+The two documentation audits together resolved:
 
-- stable conformance case-ID collision removed;
-- applicability separated from applicable-case execution status;
-- `MEM-011` explicit delivery/evidence ownership added;
-- `RET-014` moved to evidence-backed applicability handoff until mounted retrieval exists;
-- v0.2 foundational Memory security closure made explicit;
-- AUTONOMY/FEDERATION/TRUSTED claim boundaries clarified through ADR-0010;
-- current vs historical date-prefixed planning documents classified;
-- stale navigation text removed.
+- stable conformance case-ID collision;
+- applicability vs applicable-case execution status;
+- `MEM-011` delivery/evidence ownership;
+- `RET-014` mounted-retrieval applicability handoff;
+- v0.2 foundational Memory security closure;
+- AUTONOMY/FEDERATION/TRUSTED claim boundaries through ADR-0010;
+- current vs historical planning-document classification;
+- stale pre-merge branch/phase wording after integration into `main`.
 
 ## 5. Conflict precedence
 
@@ -108,7 +114,7 @@ source/migrations/tests
 - [x] 12 architecture blocks consolidated.
 - [x] stable requirement IDs defined.
 - [x] implementation reality separated from target architecture.
-- [x] gap analysis completed.
+- [x] source-based gap analysis completed.
 - [x] all 36 future PRs documented.
 - [x] detailed contracts created for all phases.
 - [x] migration/backfill matrices created.
@@ -119,11 +125,12 @@ source/migrations/tests
 - [x] applicability semantics reconciled.
 - [x] milestone/profile claims reconciled.
 - [x] current/historical plans classified.
-- [x] final readiness audit completed with no remaining documentation blocker identified.
-- [x] documentation branch contains no authorized implementation changes.
+- [x] architecture baseline merged into `main`.
+- [x] post-merge stale branch/phase wording corrected.
+- [x] post-merge audit found no remaining blocker in the current v0.2 documentation set.
 
-## 7. After merge
+## 7. Maintenance rule
 
-The v0.2 architecture baseline should remain frozen unless changed deliberately through spec/ADR amendment.
+The v0.2 architecture baseline remains frozen unless changed deliberately through spec/ADR amendment.
 
-If `main` moves materially, re-run a gap delta before executing the 36-PR package unchanged.
+If runtime code, migrations, provider boundaries, policy semantics, or other implementation assumptions move materially from the inspected implementation baseline, re-run a gap delta before executing the 36-PR package unchanged.
