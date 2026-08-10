@@ -3,7 +3,7 @@
 **Branch:** `docs/architecture-v0.2`  
 **Baseline:** `main@729d456f70f4de93c97d05cce795c09025c62f24`  
 **Date:** 2026-08-10  
-**Documentation state:** **FROZEN ARCHITECTURE + COMPLETED GAP ANALYSIS + COMPLETED 36-PR TRANSITION PACKAGE**
+**Documentation state:** **FROZEN ARCHITECTURE + COMPLETED GAP ANALYSIS + COMPLETED 36-PR TRANSITION PACKAGE + COMPLETED TRACEABILITY/ROLLOUT/RISK GATES**
 
 ## 1. Normative architecture
 
@@ -34,7 +34,7 @@ Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/di
 
 ## 3. Future 36-PR implementation package
 
-Documentation complete for all planned PRs:
+Documentation complete for:
 
 ```text
 0.1–0.2
@@ -52,33 +52,19 @@ Primary index:
 
 Global planning artifacts:
 
-- `docs/plans/v0.2-to-v1.0-36-pr-execution-matrix.md`;
-- `docs/plans/v0.2-to-v1.0-parallelization-map.md`;
-- `docs/plans/v0.2-to-v1.0-schema-impact-summary.md`;
-- `docs/plans/v0.2-to-v1.0-conformance-case-index.md`;
-- `docs/plans/future-pr-review-checklist.md`.
+- `v0.2-to-v1.0-36-pr-execution-matrix.md`;
+- `v0.2-to-v1.0-parallelization-map.md`;
+- `v0.2-to-v1.0-requirement-pr-traceability.md`;
+- `v0.2-to-v1.0-schema-impact-summary.md`;
+- `v0.2-to-v1.0-migration-rollout-compatibility-contract.md`;
+- `v0.2-to-v1.0-conformance-case-index.md`;
+- `v0.2-to-v1.0-release-evidence-gates.md`;
+- `v0.2-to-v1.0-risk-register.md`;
+- `future-pr-review-checklist.md`.
 
 Per-phase artifacts include detailed contracts plus migration/backfill and conformance matrices for Correct, Learn, Govern, Understand, Connect and Trust.
 
-## 4. Documentation classes
-
-### Normative target
-
-`docs/specs/vestrace-*.md` and accepted `docs/adr/*`.
-
-### Current implementation
-
-`docs/current-implementation.md`, schema/security/getting-started/acceptance documentation and source/tests for actual runtime reality.
-
-### Transition planning
-
-Current `docs/plans/v0.*`, `v1.0-*`, gap analysis and implementation plan.
-
-### Historical
-
-Legacy `r1-*`, older `docs/superpowers/specs/**` and old `docs/superpowers/plans/**` where they conflict with the v0.2 baseline.
-
-## 5. Conflict precedence
+## 4. Conflict precedence
 
 ```text
 Architecture Contract v0.2
@@ -93,11 +79,10 @@ Architecture Contract v0.2
 
 ADR-0009 remains the clarification that suppression/accepted risk are disposition overlays, not HealthFinding integrity resolution states.
 
-## 6. Documentation completion checklist
+## 5. Completion checklist
 
 - [x] 12 architecture blocks consolidated.
 - [x] stable requirement IDs defined.
-- [x] authority/temporal/execution/repair/external-effect/recovery/governance contracts defined.
 - [x] implementation reality separated from target architecture.
 - [x] gap analysis completed.
 - [x] requirement coverage classified without false PASS claims.
@@ -107,17 +92,22 @@ ADR-0009 remains the clarification that suppression/accepted risk are dispositio
 - [x] conformance-case matrices/index created.
 - [x] global schema impact summary created.
 - [x] dependency/parallelization map created.
+- [x] requirement → PR traceability map created.
+- [x] migration rollout/compatibility policy created.
+- [x] release evidence gates created.
+- [x] architecture transition risk register created.
 - [x] universal future PR review checklist created.
 - [x] legacy/historical documents classified.
 - [x] documentation branch contains no authorized implementation changes.
 
-## 7. Next documentation-only work
+## 6. Maintenance-only state
 
-Only maintenance remains:
+No additional architecture discovery or transition-planning layer is required for the frozen baseline.
+
+Only these documentation actions remain valid until implementation is separately authorized:
 
 1. re-run gap delta if `main` changes materially;
 2. amend architecture only through deliberate spec/ADR changes;
-3. update planning contracts when implementation reality invalidates an assumption;
-4. keep requirement/evidence mappings synchronized.
-
-No additional architecture discovery phase is required before future implementation planning begins.
+3. update planning contracts if implementation reality invalidates an assumption;
+4. keep requirement/evidence/PR mappings synchronized;
+5. keep known risks and compatibility rules current.
