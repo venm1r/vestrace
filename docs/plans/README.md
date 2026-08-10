@@ -38,13 +38,24 @@ They are retained for implementation history/rationale and MUST NOT override or 
 
 Likewise, `docs/superpowers/plans/**` is historical unless a current document explicitly cites a specific artifact as implementation evidence or rationale.
 
-## Precedence
+## Precedence by question
+
+For **target architecture**:
 
 ```text
-normative specs / accepted ADRs
-→ current v0.2 → v1.0 planning package
-→ current implementation source/migrations/tests for implementation reality
-→ historical date-prefixed plans
+Architecture Contract
+→ newer Accepted ADR
+→ specialized normative specs / invariant catalog
+→ current transition planning
+→ historical plans
 ```
 
-Planning documents never authorize code changes by themselves.
+For **what the repository actually does now**:
+
+```text
+source / migrations / tests
+→ current implementation documentation
+→ planning assumptions
+```
+
+A planning document never overrides source reality and never authorizes code changes by itself.
