@@ -1,57 +1,68 @@
 # PostgreSQL Schema & Migrations Reference
 
-Vestrace uses PostgreSQL with `pgvector` and `pg_trgm` extensions as its authoritative relational store. Migrations are forward-only and applied sequentially by SQLx.
+## Documentation status
+
+This document describes the **current implementation schema foundation** for the source snapshot behind `docs/architecture-v0.2`.
+
+It is not the target v0.2 domain schema specification. The normative target model is defined in:
+
+- [`specs/vestrace-domain-model-v0.2.md`](specs/vestrace-domain-model-v0.2.md)
+- [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md)
+- [`specs/vestrace-crypto-data-governance-contract-v0.2.md`](specs/vestrace-crypto-data-governance-contract-v0.2.md)
+
+No migrations are added or changed during this documentation phase.
 
 ## Migration source of truth
 
-The ordered [`migrations/`](../migrations/) directory is the authoritative migration history. Do not maintain a maximum migration number in this document: new migrations must be discovered from that directory and validated against the `_sqlx_migrations` table at runtime.
+The ordered [`migrations/`](../migrations/) directory is the authoritative implementation migration history. Documentation must not maintain a claimed maximum migration number.
 
-The early foundation migrations establish:
+Runtime compatibility checks applied `_sqlx_migrations` entries against the embedded migration set by version, success state and checksum. Missing, extra, failed or modified migration records make the database not ready.
 
-| Area | Representative migrations | Primary objects |
-| :--- | :--- | :--- |
-| Extensions and identity | `0001_extensions.sql`–`0003_rls_baseline.sql` | `vector`, `pg_trgm`, workspaces, principals, roles, RLS helpers |
-| Evidence and memory | `0004_sessions_and_events.sql`–`0011_retrieval_journal_and_context_packs.sql` | sessions, events, memories, revisions, provenance, relations, retrieval records |
-| Policy and providers | `0012_tokens_policies_and_approvals.sql`–`0016_agents_skills_workflows.sql` | tokens, approvals, audit, providers, models, agents, skills |
-| Durable runs | `0019_agent_runs_and_steps.sql`–`0021_run_leases_and_work_items.sql` | run records, steps, events, checkpoints, leases, work items |
-| Policy, budget, and tools | `0023_policy_bundles_and_snapshots.sql`–`0032_tool_definitions_and_invocations.sql` | policy bundles, decisions, tickets, budget accounts, tool definitions |
-| Execution and artifacts | `0037_execution_plans_revisions_steps_validation.sql`–`0042_artifacts_revisions_blobs_and_provenance.sql` | execution plans, revisions, steps, artifacts, blobs |
-| Conversations and connectors | `0048_conversations_channels_and_triggers.sql`–`0062_a2a_interoperability_gateway.sql` | conversations, channels, triggers, connectors, agent packages, A2A gateway |
-| Observability and product | `0063_observability_and_metric_rollups.sql`–`0090_release_orchestration_and_manifests.sql` | metrics, product surface, AG-UI gateway, transfers, releases, webhooks |
-| Enterprise and extensions | `0087_workspace_envelope_encryption_and_cross_sharing.sql`–`0088_event_schemas_exports_and_capture_profiles.sql` | envelope encryption, cross-workspace sharing, event schemas, capture profiles |
-| Run event store foundation | `0111_run_event_store_foundation.sql` | run events table, stream registry |
-| Run streams and recovery | `0112_run_streams_and_recovery_checkpoints.sql` | run streams, recovery checkpoints |
+## Current storage role
 
-When documentation and migration SQL differ, migration SQL is authoritative.
+PostgreSQL is the primary authoritative transactional store for the current implementation: workspaces/principals, Run state/history, Memory state/revisions/provenance, jobs/outbox/idempotency, retrieval journals, audit and related product metadata.
 
-## Run records
+The target architecture preserves PostgreSQL as the authoritative transactional/domain-state store, while target artifact bytes may live in governed local content-addressed storage. A CAS hash identifies/integrity-checks bytes; it does not replace domain metadata or authorization.
 
-The API persists run metadata in `agent_runs`:
+## Current major schema areas
 
-```text
-id
-workspace_id
-principal_id
-title
-status
-run_version
-created_at
-updated_at
-```
+The migration history contains foundations for:
 
-The canonical write path appends events to the run event store and upserts the `agent_runs` projection atomically via `PgRunCommandCommitter`. Run-event and checkpoint tables support deterministic reduction, replay, and checkpoint restoration in the application layer.
+- extensions, identity and RLS;
+- sessions/events/memory/revisions/provenance/relations;
+- retrieval journals/context packs;
+- policy/approval/audit/provider/model foundations;
+- agents/skills/workflows and execution-related structures;
+- Run event store/streams/checkpoints;
+- jobs/outbox/idempotency;
+- security/product/enterprise-oriented schema additions.
+
+The source migration SQL, not this summary, is authoritative for exact table/column definitions.
 
 ## Run event store
 
-Migrations `0111` and `0112` establish the event-sourcing infrastructure:
+Current Run persistence uses append-oriented event history plus projections and recovery checkpoints.
 
-- `run_events` — append-only event envelopes with `sequence`, `event_type`, `event_version`, `payload`, `occurred_at`, `recorded_at`.
-- `run_streams` — stream registry with `workspace_id`, `run_id`, `current_version` for optimistic concurrency.
-- `run_checkpoints` — serialized state snapshots with `state_hash` (SHA-256) and `format_version`.
+The current foundation includes:
 
-## Row-Level Security isolation
+- `run_events` — sequenced event envelopes;
+- `run_streams` — current stream version / optimistic concurrency;
+- `run_checkpoints` — serialized recovery state with integrity metadata;
+- `agent_runs` — current/read projection metadata.
 
-Multi-tenant tables enable Row-Level Security using workspace-bound policies such as:
+The application layer replays canonical Run history and can rebuild projections.
+
+## Memory foundation
+
+Current schema supports Memory identity/revisions, provenance/relations and retrieval-related projections/journals.
+
+Database-level integrity includes append-only event enforcement and an invariant requiring active memories to have a source in the current implementation snapshot.
+
+The v0.2 target Domain Model introduces additional semantics such as Claim, richer Evidence/Derivation, conflicts, sharing, health/repair, external effects and governance. Their appearance in target docs does **not** imply corresponding migration tables currently exist.
+
+## Row-Level Security
+
+Multi-tenant tables use workspace-bound RLS policies. Conceptually:
 
 ```sql
 ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;
@@ -62,8 +73,15 @@ CREATE POLICY <table_name>_workspace_isolation ON <table_name>
     WITH CHECK (workspace_id = vestrace_current_workspace_id());
 ```
 
-`PgStore::begin_scoped` sets `vestrace.workspace_id` and `vestrace.principal_id` with transaction-local `set_config(..., true)` calls. Run persistence uses that scoped transaction boundary and also includes explicit workspace predicates for reads.
+Scoped transactions establish workspace/principal context. Application-level authorization remains required in addition to RLS.
 
-## Runtime compatibility
+## Derived-state rule
 
-Readiness requires the applied `_sqlx_migrations` rows to match the embedded migration set by version, success state, and checksum. A database with missing, extra, failed, or modified migration records is not considered ready.
+Target v0.2 requires derived indexes/caches/projections to be rebuildable from more authoritative state. Database presence does not automatically make a table authoritative; authority is defined by the Domain/Architecture Contract.
+
+## Schema evolution rule
+
+- migrations remain forward-only implementation artifacts;
+- applied migrations are not silently rewritten;
+- new target requirements require explicit migration planning only after documentation completion;
+- migration qualification must later verify data/history/invariant preservation.
