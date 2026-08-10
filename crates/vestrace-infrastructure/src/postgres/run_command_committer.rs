@@ -5,7 +5,9 @@ use sqlx::{FromRow, PgConnection};
 use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter, project_run};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
-    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunStatus, RunVersion, replay},
+    run::{
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunStatus, RunVersion, replay,
+    },
 };
 
 use super::PgStore;
@@ -37,7 +39,7 @@ struct StoredEventRow {
     recorded_at: DateTime<Utc>,
 }
 
-impl TryFrom<StoredEventRow> for RunEventEnvelope {
+impl TryFrom<StoredEventRow> for LegacyRunEventEnvelope {
     type Error = ApplicationError;
 
     fn try_from(row: StoredEventRow) -> Result<Self, Self::Error> {
@@ -48,7 +50,8 @@ impl TryFrom<StoredEventRow> for RunEventEnvelope {
             ));
         }
         let event_version = u16::try_from(row.event_version).map_err(storage_error)?;
-        let payload = serde_json::from_value::<RunEvent>(row.payload).map_err(storage_error)?;
+        let payload =
+            serde_json::from_value::<LegacyRunEvent>(row.payload).map_err(storage_error)?;
         if row.event_type != payload.event_type() || event_version != payload.event_version() {
             return Err(storage_corruption(
                 "stored run event metadata does not match its payload",
@@ -78,7 +81,7 @@ impl RunCommandCommitter for PgRunCommandCommitter {
         context: &RequestContext,
         run_id: AgentRunId,
         expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
         projection: &AgentRun,
     ) -> Result<RunVersion, ApplicationError> {
         validate_batch(context, run_id, expected_version, events, projection)?;
@@ -150,7 +153,7 @@ fn validate_batch(
     context: &RequestContext,
     run_id: AgentRunId,
     expected_version: RunVersion,
-    events: &[RunEventEnvelope],
+    events: &[LegacyRunEventEnvelope],
     projection: &AgentRun,
 ) -> Result<(), ApplicationError> {
     if events.is_empty() {
@@ -160,7 +163,7 @@ fn validate_batch(
     }
     if projection.id != run_id
         || projection.workspace_id != context.workspace_id
-        || projection.principal_id != context.principal_id
+        || projection.coordinator_snapshot_id.as_uuid() != context.principal_id.as_uuid()
     {
         return Err(ApplicationError::Conflict(
             "run projection identity does not match the command context".to_owned(),
@@ -248,7 +251,7 @@ async fn load_events(
     connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
-) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
     let rows = sqlx::query_as::<_, StoredEventRow>(
         "SELECT
              id, workspace_id, run_id, sequence, event_type, event_version,
@@ -265,11 +268,13 @@ async fn load_events(
     .await
     .map_err(storage_error)?;
 
-    rows.into_iter().map(RunEventEnvelope::try_from).collect()
+    rows.into_iter()
+        .map(LegacyRunEventEnvelope::try_from)
+        .collect()
 }
 
 fn validate_stream_head(
-    existing_events: &[RunEventEnvelope],
+    existing_events: &[LegacyRunEventEnvelope],
     stream_version: RunVersion,
 ) -> Result<(), ApplicationError> {
     let event_version = existing_events
@@ -288,7 +293,7 @@ fn validate_stream_head(
 
 async fn insert_events(
     connection: &mut PgConnection,
-    events: &[RunEventEnvelope],
+    events: &[LegacyRunEventEnvelope],
 ) -> Result<(), ApplicationError> {
     for event in events {
         sqlx::query(
@@ -367,8 +372,8 @@ async fn upsert_projection(
     )
     .bind(projection.id.as_uuid())
     .bind(projection.workspace_id.as_uuid())
-    .bind(projection.principal_id.as_uuid())
-    .bind(&projection.title)
+    .bind(projection.coordinator_snapshot_id.as_uuid())
+    .bind(&projection.objective)
     .bind(status_name(projection.status))
     .bind(version_to_database(projection.version)?)
     .bind(projection.created_at)
@@ -382,14 +387,19 @@ async fn upsert_projection(
 fn status_name(status: RunStatus) -> &'static str {
     match status {
         RunStatus::Created => "created",
-        RunStatus::Ready => "ready",
+        RunStatus::Preparing => "preparing",
         RunStatus::Running => "running",
         RunStatus::WaitingForInput => "waiting_for_input",
         RunStatus::WaitingForApproval => "waiting_for_approval",
-        RunStatus::Completed => "completed",
+        RunStatus::WaitingForDependency => "waiting_for_dependency",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::SucceededWithWarnings => "succeeded_with_warnings",
+        RunStatus::Partial => "partial",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
-        RunStatus::Stalled => "stalled",
+        RunStatus::Paused => "paused",
+        RunStatus::PausedPolicyChanged => "paused_policy_changed",
+        RunStatus::Expired => "expired",
     }
 }
 

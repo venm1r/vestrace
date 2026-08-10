@@ -16,6 +16,7 @@ pub mod outbox;
 mod ports;
 pub mod providers;
 pub mod retrieval;
+pub mod run;
 pub mod runs;
 pub mod security;
 

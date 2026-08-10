@@ -10,12 +10,12 @@ use vestrace_application::{
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunVersion, replay},
+    run::{AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunVersion, replay},
 };
 
 struct AdvancedTailStore {
     observed_head: RunVersion,
-    events: Vec<RunEventEnvelope>,
+    events: Vec<LegacyRunEventEnvelope>,
     checkpoint: RunCheckpoint,
 }
 
@@ -34,7 +34,7 @@ impl RunRecoveryStore for AdvancedTailStore {
         context: &RequestContext,
         run_id: AgentRunId,
         through: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(self
             .events
             .iter()
@@ -52,7 +52,7 @@ impl RunRecoveryStore for AdvancedTailStore {
         context: &RequestContext,
         run_id: AgentRunId,
         after: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(self
             .events
             .iter()
@@ -112,10 +112,10 @@ fn event(
     context: &RequestContext,
     run_id: AgentRunId,
     sequence: u64,
-    payload: RunEvent,
-) -> RunEventEnvelope {
+    payload: LegacyRunEvent,
+) -> LegacyRunEventEnvelope {
     let occurred_at = now();
-    RunEventEnvelope {
+    LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: context.workspace_id,
         run_id,
@@ -131,31 +131,31 @@ fn event(
     }
 }
 
-fn events(context: &RequestContext, run_id: AgentRunId) -> Vec<RunEventEnvelope> {
+fn events(context: &RequestContext, run_id: AgentRunId) -> Vec<LegacyRunEventEnvelope> {
     vec![
         event(
             context,
             run_id,
             1,
-            RunEvent::Created {
+            LegacyRunEvent::Created {
                 principal_id: context.principal_id,
                 title: "Snapshot boundary".to_owned(),
             },
         ),
-        event(context, run_id, 2, RunEvent::MarkedReady),
-        event(context, run_id, 3, RunEvent::Started),
+        event(context, run_id, 2, LegacyRunEvent::Prepared),
+        event(context, run_id, 3, LegacyRunEvent::Started),
         event(
             context,
             run_id,
             4,
-            RunEvent::Completed {
+            LegacyRunEvent::Succeeded {
                 summary: Some("committed after observed head".to_owned()),
             },
         ),
     ]
 }
 
-fn checkpoint_at(events: &[RunEventEnvelope], sequence: usize) -> RunCheckpoint {
+fn checkpoint_at(events: &[LegacyRunEventEnvelope], sequence: usize) -> RunCheckpoint {
     let state = replay(events[..sequence].to_vec()).unwrap().unwrap();
     RunCheckpoint {
         workspace_id: state.workspace_id,

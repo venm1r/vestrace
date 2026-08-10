@@ -6,7 +6,7 @@ use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
 use vestrace_domain::{
     DomainError,
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
-    run::{RunActor, RunEvent, RunEventEnvelope, RunVersion},
+    run::{LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunVersion},
 };
 
 use super::PgStore;
@@ -38,7 +38,7 @@ struct RunEventRow {
     recorded_at: DateTime<Utc>,
 }
 
-impl TryFrom<RunEventRow> for RunEventEnvelope {
+impl TryFrom<RunEventRow> for LegacyRunEventEnvelope {
     type Error = ApplicationError;
 
     fn try_from(row: RunEventRow) -> Result<Self, Self::Error> {
@@ -49,7 +49,8 @@ impl TryFrom<RunEventRow> for RunEventEnvelope {
             ));
         }
         let event_version = u16::try_from(row.event_version).map_err(storage_error)?;
-        let payload = serde_json::from_value::<RunEvent>(row.payload).map_err(storage_error)?;
+        let payload =
+            serde_json::from_value::<LegacyRunEvent>(row.payload).map_err(storage_error)?;
         if row.event_type != payload.event_type() || event_version != payload.event_version() {
             return Err(storage_corruption(
                 "stored run event metadata does not match its payload",
@@ -78,7 +79,7 @@ impl RunEventStore for PgRunEventStore {
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         let mut transaction = self
             .store
             .begin_scoped(context)
@@ -94,7 +95,7 @@ impl RunEventStore for PgRunEventStore {
         context: &RequestContext,
         run_id: AgentRunId,
         expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
     ) -> Result<RunVersion, ApplicationError> {
         let final_version = validate_event_batch(context, run_id, expected_version, events)?;
         let mut transaction = self
@@ -198,7 +199,7 @@ async fn load_events(
     connection: &mut PgConnection,
     context: &RequestContext,
     run_id: AgentRunId,
-) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
     let rows = sqlx::query_as::<_, RunEventRow>(
         "SELECT
              id, workspace_id, run_id, sequence, event_type, event_version,
@@ -214,14 +215,16 @@ async fn load_events(
     .fetch_all(&mut *connection)
     .await
     .map_err(storage_error)?;
-    rows.into_iter().map(RunEventEnvelope::try_from).collect()
+    rows.into_iter()
+        .map(LegacyRunEventEnvelope::try_from)
+        .collect()
 }
 
 fn validate_event_batch(
     context: &RequestContext,
     run_id: AgentRunId,
     expected_version: RunVersion,
-    events: &[RunEventEnvelope],
+    events: &[LegacyRunEventEnvelope],
 ) -> Result<RunVersion, ApplicationError> {
     if events.is_empty() {
         return Err(ApplicationError::Conflict(
@@ -259,7 +262,7 @@ fn validate_event_batch(
 
 async fn insert_events(
     connection: &mut PgConnection,
-    events: &[RunEventEnvelope],
+    events: &[LegacyRunEventEnvelope],
 ) -> Result<(), ApplicationError> {
     for event in events {
         sqlx::query(

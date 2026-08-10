@@ -1,7 +1,11 @@
 use chrono::{TimeZone, Utc};
 use sqlx::PgPool;
 use vestrace_application::{RequestContext, RunRepository};
-use vestrace_domain::{PrincipalId, WorkspaceId, id::AgentRunId, run::AgentRun};
+use vestrace_domain::{
+    PrincipalId, WorkspaceId,
+    id::{AgentRunId, AgentRuntimeSnapshotId},
+    run::{AgentRun, NewAgentRun, RunExecutionMode},
+};
 use vestrace_infrastructure::{PgRunRepository, PgStore};
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -45,13 +49,20 @@ async fn run_repository_isolates_workspaces(pool: PgPool) {
     let context_a = RequestContext::new(workspace_a, principal_a);
     let context_b = RequestContext::new(workspace_b, principal_b);
     let at = Utc.with_ymd_and_hms(2026, 8, 4, 0, 0, 0).single().unwrap();
-    let run = AgentRun::new(
-        AgentRunId::new(),
-        workspace_a,
-        principal_a,
-        "Workspace A run",
+    let run = AgentRun::create(
+        NewAgentRun {
+            id: AgentRunId::new(),
+            workspace_id: workspace_a,
+            objective: "Workspace A run".to_string(),
+            coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_a.as_uuid()),
+            execution_mode: RunExecutionMode::Autopilot,
+            parent: None,
+            budget_snapshot_id: None,
+            resource_usage_snapshot_id: None,
+        },
         at,
-    );
+    )
+    .unwrap();
 
     repository.create(&context_a, &run).await.unwrap();
     assert_eq!(

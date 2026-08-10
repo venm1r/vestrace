@@ -9,7 +9,9 @@ use vestrace_application::{
 use vestrace_domain::{
     DomainError,
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
-    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunState, RunStatus, RunVersion},
+    run::{
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunState, RunStatus, RunVersion,
+    },
 };
 
 use super::PgStore;
@@ -83,7 +85,7 @@ struct EventRow {
     recorded_at: DateTime<Utc>,
 }
 
-impl TryFrom<EventRow> for RunEventEnvelope {
+impl TryFrom<EventRow> for LegacyRunEventEnvelope {
     type Error = ApplicationError;
 
     fn try_from(row: EventRow) -> Result<Self, Self::Error> {
@@ -94,7 +96,8 @@ impl TryFrom<EventRow> for RunEventEnvelope {
             ));
         }
         let event_version = u16::try_from(row.event_version).map_err(storage_error)?;
-        let payload = serde_json::from_value::<RunEvent>(row.payload).map_err(storage_error)?;
+        let payload =
+            serde_json::from_value::<LegacyRunEvent>(row.payload).map_err(storage_error)?;
         if row.event_type != payload.event_type() || event_version != payload.event_version() {
             return Err(storage_corruption(
                 "stored run event metadata does not match its payload",
@@ -151,7 +154,7 @@ impl RunRecoveryStore for PgRunRecoveryStore {
         context: &RequestContext,
         run_id: AgentRunId,
         through: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         let mut transaction = self
             .store
             .begin_scoped(context)
@@ -184,7 +187,7 @@ impl RunRecoveryStore for PgRunRecoveryStore {
         context: &RequestContext,
         run_id: AgentRunId,
         after: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         let mut transaction = self
             .store
             .begin_scoped(context)
@@ -374,8 +377,8 @@ impl RunRecoveryStore for PgRunRecoveryStore {
         )
         .bind(projection.id.as_uuid())
         .bind(projection.workspace_id.as_uuid())
-        .bind(projection.principal_id.as_uuid())
-        .bind(&projection.title)
+        .bind(projection.coordinator_snapshot_id.as_uuid())
+        .bind(&projection.objective)
         .bind(status_name(projection.status))
         .bind(version_to_database(projection.version)?)
         .bind(projection.created_at)
@@ -414,8 +417,10 @@ async fn load_checkpoint_for_update(
     row.map(RunCheckpoint::try_from).transpose()
 }
 
-fn decode_events(rows: Vec<EventRow>) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
-    rows.into_iter().map(RunEventEnvelope::try_from).collect()
+fn decode_events(rows: Vec<EventRow>) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
+    rows.into_iter()
+        .map(LegacyRunEventEnvelope::try_from)
+        .collect()
 }
 
 fn validate_checkpoint_for_write(
@@ -464,14 +469,19 @@ fn version_from_database(version: i64) -> Result<RunVersion, ApplicationError> {
 fn status_name(status: RunStatus) -> &'static str {
     match status {
         RunStatus::Created => "created",
-        RunStatus::Ready => "ready",
+        RunStatus::Preparing => "preparing",
         RunStatus::Running => "running",
         RunStatus::WaitingForInput => "waiting_for_input",
         RunStatus::WaitingForApproval => "waiting_for_approval",
-        RunStatus::Completed => "completed",
+        RunStatus::WaitingForDependency => "waiting_for_dependency",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::SucceededWithWarnings => "succeeded_with_warnings",
+        RunStatus::Partial => "partial",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
-        RunStatus::Stalled => "stalled",
+        RunStatus::Paused => "paused",
+        RunStatus::PausedPolicyChanged => "paused_policy_changed",
+        RunStatus::Expired => "expired",
     }
 }
 

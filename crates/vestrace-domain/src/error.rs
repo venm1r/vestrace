@@ -5,7 +5,7 @@ pub enum DomainError {
     #[error("not found: {0}")]
     NotFound(String),
     #[error("revision conflict: expected {expected}, current {current}")]
-    RevisionConflict { expected: u32, current: u32 },
+    RevisionConflict { expected: u64, current: u64 },
     #[error("policy violation: {0}")]
     PolicyViolation(String),
 }

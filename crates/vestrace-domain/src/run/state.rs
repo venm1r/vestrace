@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::status::RunStepStatus;
 use super::{RunStatus, RunVersion};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -25,10 +26,14 @@ pub enum StallReason {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunCompletion {
-    Completed {
+    Succeeded {
         summary: Option<String>,
     },
-    PartiallyCompleted {
+    SucceededWithWarnings {
+        summary: String,
+        warnings: Vec<String>,
+    },
+    Partial {
         summary: String,
         remaining_work: Vec<String>,
     },
@@ -40,9 +45,7 @@ pub enum RunCompletion {
     Cancelled {
         reason: Option<String>,
     },
-    Stalled {
-        reason: StallReason,
-    },
+    Expired,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -65,14 +68,6 @@ pub enum RunWait {
     Timer {
         resume_at: Timestamp,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStepStatus {
-    Running,
-    Completed,
-    Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

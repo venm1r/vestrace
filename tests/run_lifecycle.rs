@@ -13,10 +13,22 @@ fn test_agent_run_version_increments() {
 fn test_agent_run_initialization() {
     let run_id = AgentRunId::new();
     let ws_id = WorkspaceId::new();
-    let principal_id = PrincipalId::new();
     let at = now();
 
-    let run = AgentRun::new(run_id, ws_id, principal_id, "Test Agent Run", at);
+    let run = AgentRun::create(
+        NewAgentRun {
+            id: run_id,
+            workspace_id: ws_id,
+            objective: "Test Agent Run".into(),
+            coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+            execution_mode: RunExecutionMode::Autopilot,
+            parent: None,
+            budget_snapshot_id: None,
+            resource_usage_snapshot_id: None,
+        },
+        at,
+    )
+    .unwrap();
     assert_eq!(run.status, RunStatus::Created);
     assert_eq!(run.version, RunVersion::INITIAL);
 }

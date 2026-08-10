@@ -1,4 +1,4 @@
-use vestrace_domain::run::{AgentRun, RunEventEnvelope};
+use vestrace_domain::run::{AgentRun, LegacyRunEventEnvelope};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateRunCommand {
@@ -8,5 +8,5 @@ pub struct CreateRunCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunCommandResult {
     pub run: AgentRun,
-    pub events: Vec<RunEventEnvelope>,
+    pub events: Vec<LegacyRunEventEnvelope>,
 }

@@ -14,4 +14,6 @@ pub enum ApplicationError {
     Storage(String),
     #[error("internal failure: {0}")]
     Internal(String),
+    #[error("invalid configuration: {0}")]
+    InvalidConfiguration(String),
 }

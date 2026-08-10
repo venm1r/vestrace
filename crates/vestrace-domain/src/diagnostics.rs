@@ -136,7 +136,7 @@ mod tests {
             "process outbox",
         )]);
         assert!(!report.has_errors());
-        assert!(report.is_clean() == false);
+        assert!(!report.is_clean());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use vestrace_application::{
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    run::{RunActor, RunEvent, RunEventEnvelope, RunVersion, replay},
+    run::{LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunVersion, replay},
 };
 use vestrace_infrastructure::{PgRunRecoveryStore, PgStore};
 
@@ -78,8 +78,12 @@ async fn seed_identities(pool: &sqlx::PgPool) {
     .unwrap();
 }
 
-fn event(sequence: u64, payload: RunEvent, occurred_at: DateTime<Utc>) -> RunEventEnvelope {
-    RunEventEnvelope {
+fn event(
+    sequence: u64,
+    payload: LegacyRunEvent,
+    occurred_at: DateTime<Utc>,
+) -> LegacyRunEventEnvelope {
+    LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: workspace_a(),
         run_id: run_id(),
@@ -95,23 +99,23 @@ fn event(sequence: u64, payload: RunEvent, occurred_at: DateTime<Utc>) -> RunEve
     }
 }
 
-fn canonical_events() -> Vec<RunEventEnvelope> {
+fn canonical_events() -> Vec<LegacyRunEventEnvelope> {
     let first = database_timestamp(now());
     let second = database_timestamp(first + Duration::seconds(1));
     vec![
         event(
             1,
-            RunEvent::Created {
+            LegacyRunEvent::Created {
                 principal_id: principal_a(),
                 title: "Recoverable PostgreSQL run".to_owned(),
             },
             first,
         ),
-        event(2, RunEvent::MarkedReady, second),
+        event(2, LegacyRunEvent::Prepared, second),
     ]
 }
 
-async fn seed_stream_and_events(pool: &sqlx::PgPool, events: &[RunEventEnvelope]) {
+async fn seed_stream_and_events(pool: &sqlx::PgPool, events: &[LegacyRunEventEnvelope]) {
     sqlx::query(
         "INSERT INTO run_streams (
              workspace_id, run_id, current_version, created_at, updated_at
@@ -151,7 +155,7 @@ async fn seed_stream_and_events(pool: &sqlx::PgPool, events: &[RunEventEnvelope]
     }
 }
 
-fn checkpoint(events: &[RunEventEnvelope]) -> RunCheckpoint {
+fn checkpoint(events: &[LegacyRunEventEnvelope]) -> RunCheckpoint {
     let state = replay(events.to_vec()).unwrap().unwrap();
     RunCheckpoint {
         workspace_id: workspace_a(),
@@ -273,7 +277,7 @@ async fn guarded_projection_replacement_recreates_missing_projection(pool: sqlx:
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row, ("ready".to_owned(), 2));
+    assert_eq!(row, ("preparing".to_owned(), 2));
 }
 
 #[sqlx::test(migrations = "./migrations")]

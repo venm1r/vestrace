@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use vestrace_domain::{
     id::AgentRunId,
-    run::{AgentRun, RunCommandEnvelope, RunEventEnvelope, RunVersion},
+    run::{AgentRun, LegacyRunEventEnvelope, RunCommandEnvelope, RunVersion},
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -37,14 +37,14 @@ pub trait RunEventStore: Send + Sync {
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError>;
 
     async fn append(
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
         expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
     ) -> Result<RunVersion, ApplicationError>;
 }
 
@@ -55,7 +55,7 @@ pub trait RunCommandCommitter: Send + Sync {
         context: &RequestContext,
         run_id: AgentRunId,
         expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
         projection: &AgentRun,
     ) -> Result<RunVersion, ApplicationError>;
 }
@@ -82,14 +82,14 @@ pub trait RunRecoveryStore: Send + Sync {
         context: &RequestContext,
         run_id: AgentRunId,
         through: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError>;
 
     async fn load_events_after(
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
         after: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError>;
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError>;
 
     async fn load_checkpoint(
         &self,

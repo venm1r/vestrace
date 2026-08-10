@@ -7,9 +7,13 @@ use vestrace_application::{
     ApplicationError, RequestContext, RunCommandExecutor, RunCommandService, RunRepository,
 };
 use vestrace_domain::{
-    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, WorkspaceId},
+    id::{
+        AgentRunId, AgentRuntimeSnapshotId, CorrelationId, OperationId, PrincipalId, WorkspaceId,
+    },
     now,
-    run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunVersion},
+    run::{
+        AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunExecutionMode, RunStatus, RunVersion,
+    },
 };
 use vestrace_infrastructure::{PgRunCommandCommitter, PgRunEventStore, PgRunRepository, PgStore};
 
@@ -118,7 +122,7 @@ async fn command_commit_recreates_a_deleted_projection_from_the_stream(pool: sql
     service
         .execute(
             &context(),
-            command(RunVersion::INITIAL, RunCommand::MarkReady),
+            command(RunVersion::INITIAL, RunCommand::Prepare),
         )
         .await
         .unwrap();
@@ -162,8 +166,8 @@ async fn concurrent_writers_are_serialized_by_the_stream_without_a_projection(po
 
     let first = service(&pool);
     let second = service(&pool);
-    let first_command = command(RunVersion::INITIAL, RunCommand::MarkReady);
-    let second_command = command(RunVersion::INITIAL, RunCommand::MarkReady);
+    let first_command = command(RunVersion::INITIAL, RunCommand::Prepare);
+    let second_command = command(RunVersion::INITIAL, RunCommand::Prepare);
     let first_context = context();
     let second_context = context();
     let (first_result, second_result) = tokio::join!(
@@ -209,7 +213,7 @@ async fn concurrent_writers_are_serialized_by_the_stream_without_a_projection(po
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(projection.status, RunStatus::Ready);
+    assert_eq!(projection.status, RunStatus::Preparing);
     assert_eq!(projection.version, RunVersion::new(2).unwrap());
 }
 
@@ -220,12 +224,22 @@ async fn legacy_repository_create_explicitly_seeds_a_version_zero_stream(pool: s
     let projection = AgentRun {
         id: run_id(),
         workspace_id: workspace_id(),
-        principal_id: principal_id(),
-        title: "Legacy projection".to_owned(),
+        objective: "Legacy projection".to_owned(),
+        coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_id().as_uuid()),
+        active_plan_revision_id: None,
+        execution_mode: RunExecutionMode::Autopilot,
         status: RunStatus::Created,
+        current_step_id: None,
+        checkpoint_id: None,
+        parent: None,
+        root_run_id: run_id(),
+        budget_snapshot_id: None,
+        resource_usage_snapshot_id: None,
         version: RunVersion::INITIAL,
+        result: None,
         created_at: timestamp,
         updated_at: timestamp,
+        finished_at: None,
     };
     let repository = PgRunRepository::new(PgStore::from_pool(pool.clone()));
 

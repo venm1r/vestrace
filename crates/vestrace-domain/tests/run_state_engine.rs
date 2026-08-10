@@ -5,9 +5,9 @@ use vestrace_domain::{
         RunEventId, RunStepId, WorkspaceId,
     },
     run::{
-        PendingRunEvent, RunActor, RunCommand, RunCommandEnvelope, RunCompletion, RunDecisionError,
-        RunEvent, RunEventEnvelope, RunReduceError, RunState, RunStatus, RunStepStatus, RunVersion,
-        RunWait, apply, decide, replay,
+        LegacyRunEvent, LegacyRunEventEnvelope, PendingRunEvent, RunActor, RunCommand,
+        RunCommandEnvelope, RunCompletion, RunDecisionError, RunReduceError, RunState, RunStatus,
+        RunStepStatus, RunVersion, RunWait, apply, decide, replay,
     },
     time::Timestamp,
 };
@@ -60,11 +60,11 @@ impl Fixture {
         command: &RunCommandEnvelope,
         sequence: RunVersion,
         pending: PendingRunEvent,
-    ) -> RunEventEnvelope {
+    ) -> LegacyRunEventEnvelope {
         let event_type = pending.event.event_type().to_owned();
         let event_version = pending.event.event_version();
 
-        RunEventEnvelope {
+        LegacyRunEventEnvelope {
             event_id: RunEventId::new(),
             workspace_id: self.workspace_id,
             run_id: self.run_id,
@@ -84,7 +84,7 @@ impl Fixture {
         &self,
         state: Option<RunState>,
         command: RunCommandEnvelope,
-    ) -> (RunState, RunEventEnvelope) {
+    ) -> (RunState, LegacyRunEventEnvelope) {
         let pending = decide(state.as_ref(), &command).unwrap();
         assert_eq!(pending.len(), 1);
         let sequence = command.expected_version.next().unwrap();
@@ -93,13 +93,13 @@ impl Fixture {
         (state, event)
     }
 
-    fn created(&self) -> (RunState, RunEventEnvelope) {
+    fn created(&self) -> (RunState, LegacyRunEventEnvelope) {
         self.execute(None, self.create_command("First run"))
     }
 
-    fn running(&self) -> (RunState, Vec<RunEventEnvelope>) {
+    fn running(&self) -> (RunState, Vec<LegacyRunEventEnvelope>) {
         let (created, created_event) = self.created();
-        let mark_ready = self.command(created.version, RunCommand::MarkReady);
+        let mark_ready = self.command(created.version, RunCommand::Prepare);
         let (ready, ready_event) = self.execute(Some(created), mark_ready);
         let start = self.command(ready.version, RunCommand::Start);
         let (running, started_event) = self.execute(Some(ready), start);
@@ -145,7 +145,7 @@ fn create_rejects_blank_title_and_stale_expected_version() {
     );
 
     let (state, _) = fixture.created();
-    let stale = fixture.command(RunVersion::ZERO, RunCommand::MarkReady);
+    let stale = fixture.command(RunVersion::ZERO, RunCommand::Prepare);
     assert_eq!(
         decide(Some(&state), &stale).unwrap_err(),
         RunDecisionError::VersionConflict {
@@ -234,16 +234,16 @@ fn lifecycle_supports_ready_running_wait_resume_and_completion() {
 
     let complete = fixture.command(
         resumed.version,
-        RunCommand::Complete {
+        RunCommand::Succeed {
             summary: Some("Done".to_owned()),
         },
     );
     let (completed, completed_event) = fixture.execute(Some(resumed), complete);
     events.push(completed_event);
-    assert_eq!(completed.status, RunStatus::Completed);
+    assert_eq!(completed.status, RunStatus::Succeeded);
     assert_eq!(
         completed.completion,
-        Some(RunCompletion::Completed {
+        Some(RunCompletion::Succeeded {
             summary: Some("Done".to_owned()),
         })
     );
@@ -254,12 +254,12 @@ fn lifecycle_supports_ready_running_wait_resume_and_completion() {
     assert!(matches!(
         decide(Some(&completed), &after_terminal),
         Err(RunDecisionError::InvalidTransition {
-            status: RunStatus::Completed
+            status: RunStatus::Succeeded
         })
     ));
 
-    let payload = RunEvent::Resumed;
-    let event_after_terminal = RunEventEnvelope {
+    let payload = LegacyRunEvent::Resumed;
+    let event_after_terminal = LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: fixture.workspace_id,
         run_id: fixture.run_id,
@@ -276,13 +276,13 @@ fn lifecycle_supports_ready_running_wait_resume_and_completion() {
     assert_eq!(
         apply(Some(completed), &event_after_terminal).unwrap_err(),
         RunReduceError::EventAfterTerminal {
-            status: RunStatus::Completed,
+            status: RunStatus::Succeeded,
         }
     );
 }
 
 #[test]
-fn approval_wait_and_terminal_fail_cancel_stalled_states_are_typed() {
+fn approval_wait_and_terminal_fail_cancel_states_are_typed() {
     let fixture = Fixture::new();
     let (running, _) = fixture.running();
     let approval_id = ApprovalRecordId::new();
@@ -299,9 +299,6 @@ fn approval_wait_and_terminal_fail_cancel_stalled_states_are_typed() {
         },
         RunCommand::Cancel {
             reason: Some("Operator cancelled".to_owned()),
-        },
-        RunCommand::MarkStalled {
-            reason: vestrace_domain::run::StallReason::NoProgress,
         },
     ] {
         let fixture = Fixture::new();
@@ -348,7 +345,7 @@ fn active_step_must_match_and_finish_before_run_completion() {
         })
     ));
 
-    let complete_run = fixture.command(with_step.version, RunCommand::Complete { summary: None });
+    let complete_run = fixture.command(with_step.version, RunCommand::Succeed { summary: None });
     assert!(matches!(
         decide(Some(&with_step), &complete_run),
         Err(RunDecisionError::InvalidTransition {
@@ -378,10 +375,9 @@ fn active_step_must_match_and_finish_before_run_completion() {
     let (without_step, _) = fixture.execute(Some(with_step), complete_step);
     assert_eq!(without_step.active_step, None);
 
-    let complete_run =
-        fixture.command(without_step.version, RunCommand::Complete { summary: None });
+    let complete_run = fixture.command(without_step.version, RunCommand::Succeed { summary: None });
     let (completed, _) = fixture.execute(Some(without_step), complete_run);
-    assert_eq!(completed.status, RunStatus::Completed);
+    assert_eq!(completed.status, RunStatus::Succeeded);
 }
 
 #[test]
@@ -398,7 +394,7 @@ fn public_envelopes_and_state_round_trip_through_json() {
     let event = fixture.envelope(&command, RunVersion::INITIAL, pending);
     let event_json = serde_json::to_value(&event).unwrap();
     assert_eq!(
-        serde_json::from_value::<RunEventEnvelope>(event_json).unwrap(),
+        serde_json::from_value::<LegacyRunEventEnvelope>(event_json).unwrap(),
         event
     );
 
@@ -408,5 +404,5 @@ fn public_envelopes_and_state_round_trip_through_json() {
         serde_json::from_value::<RunState>(state_json).unwrap(),
         state
     );
-    assert_eq!(replay(Vec::<RunEventEnvelope>::new()).unwrap(), None);
+    assert_eq!(replay(Vec::<LegacyRunEventEnvelope>::new()).unwrap(), None);
 }

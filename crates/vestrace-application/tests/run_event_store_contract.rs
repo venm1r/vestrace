@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
 use vestrace_domain::{
     id::AgentRunId,
-    run::{RunEventEnvelope, RunVersion},
+    run::{LegacyRunEventEnvelope, RunVersion},
 };
 
 struct MemoryStore;
@@ -13,7 +13,7 @@ impl RunEventStore for MemoryStore {
         &self,
         _context: &RequestContext,
         _run_id: AgentRunId,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(Vec::new())
     }
 
@@ -22,7 +22,7 @@ impl RunEventStore for MemoryStore {
         _context: &RequestContext,
         _run_id: AgentRunId,
         _expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
     ) -> Result<RunVersion, ApplicationError> {
         events
             .last()

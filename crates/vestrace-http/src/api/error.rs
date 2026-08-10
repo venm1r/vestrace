@@ -67,6 +67,14 @@ impl ApiError {
                     "the request could not be completed",
                 )
             }
+            ApplicationError::InvalidConfiguration(message) => {
+                tracing::error!(error = %message, "invalid configuration");
+                Self::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "invalid_configuration",
+                    "the server is misconfigured",
+                )
+            }
         }
     }
 

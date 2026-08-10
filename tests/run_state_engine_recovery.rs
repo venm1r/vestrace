@@ -117,7 +117,7 @@ async fn checkpoint_plus_tail_rebuilds_a_deleted_projection_exactly(pool: sqlx::
         )
         .await
         .unwrap();
-    execute(&commands, 1, RunCommand::MarkReady).await;
+    execute(&commands, 1, RunCommand::Prepare).await;
     execute(&commands, 2, RunCommand::Start).await;
 
     let checkpoint = recovery
@@ -148,7 +148,7 @@ async fn checkpoint_plus_tail_rebuilds_a_deleted_projection_exactly(pool: sqlx::
     execute(
         &commands,
         5,
-        RunCommand::Complete {
+        RunCommand::Succeed {
             summary: Some("recovered".to_owned()),
         },
     )
@@ -161,7 +161,7 @@ async fn checkpoint_plus_tail_rebuilds_a_deleted_projection_exactly(pool: sqlx::
         .unwrap()
         .unwrap();
     assert_eq!(expected_state.version, RunVersion::new(6).unwrap());
-    assert_eq!(expected_projection.status, RunStatus::Completed);
+    assert_eq!(expected_projection.status, RunStatus::Succeeded);
 
     sqlx::query(
         "DELETE FROM agent_runs
@@ -234,7 +234,7 @@ async fn corrupted_checkpoint_is_rejected_instead_of_falling_back_to_projection(
         )
         .await
         .unwrap();
-    execute(&commands, 1, RunCommand::MarkReady).await;
+    execute(&commands, 1, RunCommand::Prepare).await;
     let checkpoint = recovery
         .create_checkpoint(&context(), run_id())
         .await

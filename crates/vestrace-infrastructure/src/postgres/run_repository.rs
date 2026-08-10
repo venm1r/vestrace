@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use sqlx::FromRow;
 use vestrace_application::{ApplicationError, RequestContext, RunRepository};
 use vestrace_domain::{
-    id::{AgentRunId, PrincipalId, WorkspaceId},
-    run::{AgentRun, RunStatus, RunVersion},
+    id::{AgentRunId, AgentRuntimeSnapshotId, WorkspaceId},
+    run::{AgentRun, RunExecutionMode, RunStatus, RunVersion},
     time::Timestamp,
 };
 
@@ -43,12 +43,22 @@ impl TryFrom<AgentRunRow> for AgentRun {
         Ok(Self {
             id: AgentRunId::from_uuid(row.id),
             workspace_id: WorkspaceId::from_uuid(row.workspace_id),
-            principal_id: PrincipalId::from_uuid(row.principal_id),
-            title: row.title,
+            objective: row.title,
+            coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(row.principal_id),
+            active_plan_revision_id: None,
+            execution_mode: RunExecutionMode::Autopilot,
             status,
+            current_step_id: None,
+            checkpoint_id: None,
+            parent: None,
+            root_run_id: AgentRunId::from_uuid(row.id),
+            budget_snapshot_id: None,
+            resource_usage_snapshot_id: None,
             version: RunVersion::new(run_version)?,
+            result: None,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            finished_at: None,
         })
     }
 }
@@ -94,8 +104,8 @@ impl RunRepository for PgRunRepository {
         )
         .bind(run.id.as_uuid())
         .bind(run.workspace_id.as_uuid())
-        .bind(run.principal_id.as_uuid())
-        .bind(&run.title)
+        .bind(run.coordinator_snapshot_id.as_uuid())
+        .bind(&run.objective)
         .bind(status_as_str(run.status))
         .bind(
             i64::try_from(run.version.value())
@@ -184,28 +194,38 @@ impl RunRepository for PgRunRepository {
 fn status_as_str(status: RunStatus) -> &'static str {
     match status {
         RunStatus::Created => "created",
-        RunStatus::Ready => "ready",
+        RunStatus::Preparing => "preparing",
         RunStatus::Running => "running",
         RunStatus::WaitingForInput => "waiting_for_input",
         RunStatus::WaitingForApproval => "waiting_for_approval",
-        RunStatus::Completed => "completed",
+        RunStatus::WaitingForDependency => "waiting_for_dependency",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::SucceededWithWarnings => "succeeded_with_warnings",
+        RunStatus::Partial => "partial",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
-        RunStatus::Stalled => "stalled",
+        RunStatus::Paused => "paused",
+        RunStatus::PausedPolicyChanged => "paused_policy_changed",
+        RunStatus::Expired => "expired",
     }
 }
 
 fn parse_status(value: &str) -> Result<RunStatus, ApplicationError> {
     match value {
         "created" => Ok(RunStatus::Created),
-        "ready" => Ok(RunStatus::Ready),
+        "preparing" => Ok(RunStatus::Preparing),
         "running" => Ok(RunStatus::Running),
         "waiting_for_input" => Ok(RunStatus::WaitingForInput),
         "waiting_for_approval" => Ok(RunStatus::WaitingForApproval),
-        "completed" => Ok(RunStatus::Completed),
+        "waiting_for_dependency" => Ok(RunStatus::WaitingForDependency),
+        "succeeded" => Ok(RunStatus::Succeeded),
+        "succeeded_with_warnings" => Ok(RunStatus::SucceededWithWarnings),
+        "partial" => Ok(RunStatus::Partial),
         "failed" => Ok(RunStatus::Failed),
         "cancelled" => Ok(RunStatus::Cancelled),
-        "stalled" => Ok(RunStatus::Stalled),
+        "paused" => Ok(RunStatus::Paused),
+        "paused_policy_changed" => Ok(RunStatus::PausedPolicyChanged),
+        "expired" => Ok(RunStatus::Expired),
         _ => Err(ApplicationError::Storage(
             "stored run status is not supported".to_owned(),
         )),

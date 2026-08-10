@@ -7,7 +7,7 @@ use vestrace_application::{ApplicationError, RequestContext, RunEventStore};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    run::{RunActor, RunEvent, RunEventEnvelope, RunVersion},
+    run::{LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunVersion},
 };
 use vestrace_infrastructure::{PgRunEventStore, PgStore};
 
@@ -67,10 +67,10 @@ fn event(
     workspace_id: WorkspaceId,
     run_id: AgentRunId,
     sequence: u64,
-    payload: RunEvent,
-) -> RunEventEnvelope {
+    payload: LegacyRunEvent,
+) -> LegacyRunEventEnvelope {
     let at = now();
-    RunEventEnvelope {
+    LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id,
         run_id,
@@ -86,24 +86,24 @@ fn event(
     }
 }
 
-fn first_event() -> RunEventEnvelope {
+fn first_event() -> LegacyRunEventEnvelope {
     event(
         WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
         run_id(),
         1,
-        RunEvent::Created {
+        LegacyRunEvent::Created {
             principal_id: PrincipalId::from_str(PRINCIPAL_ID).unwrap(),
             title: "append".to_owned(),
         },
     )
 }
 
-fn second_event() -> RunEventEnvelope {
+fn second_event() -> LegacyRunEventEnvelope {
     event(
         WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
         run_id(),
         2,
-        RunEvent::MarkedReady,
+        LegacyRunEvent::Prepared,
     )
 }
 
@@ -195,7 +195,7 @@ async fn append_rejects_mixed_workspace_identity(pool: sqlx::PgPool) {
         WorkspaceId::from_str(OTHER_WORKSPACE_ID).unwrap(),
         run_id(),
         1,
-        RunEvent::MarkedReady,
+        LegacyRunEvent::Prepared,
     );
 
     let result = store
@@ -220,7 +220,7 @@ async fn append_rejects_mixed_run_identity(pool: sqlx::PgPool) {
         WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
         AgentRunId::from_str(OTHER_RUN_ID).unwrap(),
         1,
-        RunEvent::MarkedReady,
+        LegacyRunEvent::Prepared,
     );
 
     let result = store
@@ -245,7 +245,7 @@ async fn append_rejects_sequence_gaps_without_partial_writes(pool: sqlx::PgPool)
         WorkspaceId::from_str(WORKSPACE_ID).unwrap(),
         run_id(),
         3,
-        RunEvent::Started,
+        LegacyRunEvent::Started,
     );
 
     let result = store

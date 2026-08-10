@@ -1,25 +1,33 @@
+pub mod checkpoint;
 mod command;
 mod decision;
 mod error;
 mod event;
+mod legacy_event;
 mod reducer;
 mod state;
+pub mod status;
+pub mod step;
+pub mod work;
 
-use crate::{
-    DomainError,
-    id::{AgentRunId, PrincipalId, WorkspaceId},
-    time::Timestamp,
-};
+use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
+pub use checkpoint::{RunCheckpoint, RunCheckpointPayload, RunCheckpointPayloadV1};
 pub use command::{RunCommand, RunCommandEnvelope};
 pub use decision::decide;
 pub use error::{RunDecisionError, RunReduceError, RunReplayError};
-pub use event::{PendingRunEvent, RunEvent, RunEventEnvelope};
+pub use event::{RunEvent, RunEventPayload};
+pub use legacy_event::{LegacyRunEvent, LegacyRunEventEnvelope, PendingRunEvent};
 pub use reducer::{apply, replay};
-pub use state::{
-    RunActor, RunCompletion, RunState, RunStepState, RunStepStatus, RunWait, StallReason,
+pub use state::{RunActor, RunCompletion, RunState, RunStepState, RunWait, StallReason};
+pub use status::{RunExecutionMode, RunStatus, RunStepStatus};
+pub use step::{
+    AgentRun, NewAgentRun, NewRunStep, ParentRunLink, RunActorRef, RunCurrentStepChange,
+    RunFailure, RunPlanChange, RunReference, RunReferenceKind, RunStatusChange, RunStep,
+    RunTerminalResult,
 };
+pub use work::{RunWorkPayload, WorkItem, WorkItemKind, WorkItemStatus};
 
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
@@ -51,64 +59,32 @@ impl RunVersion {
             .map(Self)
             .ok_or_else(|| DomainError::InvalidArgument("run version overflow".into()))
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Created,
-    Ready,
-    Running,
-    WaitingForInput,
-    WaitingForApproval,
-    Completed,
-    Failed,
-    Cancelled,
-    Stalled,
-}
-
-impl RunStatus {
-    pub const fn is_waiting(self) -> bool {
-        matches!(self, Self::WaitingForInput | Self::WaitingForApproval)
-    }
-
-    pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Failed | Self::Cancelled | Self::Stalled
-        )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AgentRun {
-    pub id: AgentRunId,
-    pub workspace_id: WorkspaceId,
-    pub principal_id: PrincipalId,
-    pub title: String,
-    pub status: RunStatus,
-    pub version: RunVersion,
-    pub created_at: Timestamp,
-    pub updated_at: Timestamp,
-}
-
-impl AgentRun {
-    pub fn new(
-        id: AgentRunId,
-        workspace_id: WorkspaceId,
-        principal_id: PrincipalId,
-        title: impl Into<String>,
-        at: Timestamp,
-    ) -> Self {
-        Self {
-            id,
-            workspace_id,
-            principal_id,
-            title: title.into(),
-            status: RunStatus::Created,
-            version: RunVersion::INITIAL,
-            created_at: at,
-            updated_at: at,
+    pub fn previous(self) -> Result<Self, DomainError> {
+        if self.0 <= 1 {
+            Err(DomainError::InvalidArgument(
+                "run version has no previous".into(),
+            ))
+        } else {
+            Ok(Self(self.0 - 1))
         }
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct ResumeCursor(u64);
+
+impl ResumeCursor {
+    pub const BEFORE_FIRST: Self = Self(0);
+
+    pub const fn from_version(version: RunVersion) -> Self {
+        Self(version.value())
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
     }
 }

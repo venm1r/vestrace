@@ -1,5 +1,10 @@
 use async_trait::async_trait;
-use vestrace_domain::{DomainError, id::AgentRunId, now, run::AgentRun};
+use vestrace_domain::{
+    DomainError,
+    id::{AgentRunId, AgentRuntimeSnapshotId},
+    now,
+    run::{AgentRun, NewAgentRun, RunExecutionMode},
+};
 
 use crate::{ApplicationError, RequestContext};
 
@@ -25,18 +30,26 @@ impl RunUseCases for RunService {
         context: &RequestContext,
         command: CreateRunCommand,
     ) -> Result<AgentRun, ApplicationError> {
-        let title = command.title.trim();
-        if title.is_empty() {
+        let objective = command.title.trim();
+        if objective.is_empty() {
             return Err(DomainError::InvalidArgument("run title is required".to_owned()).into());
         }
 
-        let run = AgentRun::new(
-            AgentRunId::new(),
-            context.workspace_id,
-            context.principal_id,
-            title,
+        let run = AgentRun::create(
+            NewAgentRun {
+                id: AgentRunId::new(),
+                workspace_id: context.workspace_id,
+                objective: objective.to_owned(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(
+                    context.principal_id.as_uuid(),
+                ),
+                execution_mode: RunExecutionMode::Autopilot,
+                parent: None,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+            },
             now(),
-        );
+        )?;
         self.repository.create(context, &run).await?;
         Ok(run)
     }
@@ -72,9 +85,9 @@ mod tests {
     use async_trait::async_trait;
     use vestrace_domain::{
         DomainError, PrincipalId, WorkspaceId,
-        id::AgentRunId,
+        id::{AgentRunId, AgentRuntimeSnapshotId},
         now,
-        run::{AgentRun, RunStatus},
+        run::{AgentRun, NewAgentRun, RunExecutionMode, RunStatus},
     };
 
     use crate::{ApplicationError, RequestContext};
@@ -145,9 +158,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(run.title, "Verify retention policy");
+        assert_eq!(run.objective, "Verify retention policy");
         assert_eq!(run.workspace_id, context.workspace_id);
-        assert_eq!(run.principal_id, context.principal_id);
+        assert_eq!(
+            run.coordinator_snapshot_id.as_uuid(),
+            context.principal_id.as_uuid()
+        );
         assert_eq!(run.status, RunStatus::Created);
         assert_eq!(
             repository.saved.lock().unwrap().as_slice(),
@@ -197,13 +213,22 @@ mod tests {
         let repository = Arc::new(InMemoryRunRepository::default());
         let service = RunService::new(repository.clone());
         let context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
-        let run = AgentRun::new(
-            AgentRunId::new(),
-            context.workspace_id,
-            context.principal_id,
-            "Lookup run",
+        let run = AgentRun::create(
+            NewAgentRun {
+                id: AgentRunId::new(),
+                workspace_id: context.workspace_id,
+                objective: "Lookup run".into(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(
+                    context.principal_id.as_uuid(),
+                ),
+                execution_mode: RunExecutionMode::Autopilot,
+                parent: None,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+            },
             now(),
-        );
+        )
+        .unwrap();
         repository.saved.lock().unwrap().push(run.clone());
 
         assert_eq!(service.get_run(&context, run.id).await.unwrap(), Some(run));

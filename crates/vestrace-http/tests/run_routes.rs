@@ -11,9 +11,9 @@ use vestrace_application::{
 };
 use vestrace_domain::{
     PrincipalId, WorkspaceId,
-    id::AgentRunId,
+    id::{AgentRunId, AgentRuntimeSnapshotId},
     now,
-    run::{AgentRun, RunCommand, RunCommandEnvelope},
+    run::{AgentRun, NewAgentRun, RunCommand, RunCommandEnvelope, RunExecutionMode},
 };
 use vestrace_http::{AppState, build_router};
 
@@ -90,13 +90,20 @@ impl RunCommandExecutor for FakeRunCommands {
             } => (principal_id, title),
             other => panic!("unexpected run command: {other:?}"),
         };
-        let run = AgentRun::new(
-            command.run_id,
-            command.workspace_id,
-            principal_id,
-            title,
+        let run = AgentRun::create(
+            NewAgentRun {
+                id: command.run_id,
+                workspace_id: command.workspace_id,
+                objective: title,
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_id.as_uuid()),
+                execution_mode: RunExecutionMode::Autopilot,
+                parent: None,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+            },
             command.issued_at,
-        );
+        )
+        .unwrap();
         self.runs.runs.lock().unwrap().push(run.clone());
         Ok(RunCommandResult {
             run,
@@ -424,13 +431,22 @@ async fn list_runs_returns_200_without_mock_fields() {
         WorkspaceId::from_uuid("00000000-0000-0000-0000-000000000001".parse().unwrap());
     let principal_id =
         PrincipalId::from_uuid("00000000-0000-0000-0000-000000000002".parse().unwrap());
-    run_use_cases.runs.lock().unwrap().push(AgentRun::new(
-        AgentRunId::new(),
-        workspace_id,
-        principal_id,
-        "Persisted run",
-        now(),
-    ));
+    run_use_cases.runs.lock().unwrap().push(
+        AgentRun::create(
+            NewAgentRun {
+                id: AgentRunId::new(),
+                workspace_id,
+                objective: "Persisted run".to_string(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_id.as_uuid()),
+                execution_mode: RunExecutionMode::Autopilot,
+                parent: None,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+            },
+            now(),
+        )
+        .unwrap(),
+    );
 
     let response = app(run_use_cases)
         .oneshot(identity_request("GET", "/v1/runs", Body::empty()))

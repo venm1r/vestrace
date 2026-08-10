@@ -292,8 +292,8 @@ where
 
         if current_revision.revision_number != cmd.expected_revision {
             return Err(ApplicationError::from(DomainError::RevisionConflict {
-                expected: cmd.expected_revision,
-                current: current_revision.revision_number,
+                expected: cmd.expected_revision as u64,
+                current: current_revision.revision_number as u64,
             }));
         }
 

@@ -5,7 +5,7 @@ use std::str::FromStr;
 use vestrace_application::{RequestContext, RunEventStore};
 use vestrace_domain::{
     id::{AgentRunId, PrincipalId, WorkspaceId},
-    run::{RunActor, RunEvent},
+    run::{LegacyRunEvent, RunActor},
 };
 use vestrace_infrastructure::{PgRunEventStore, PgStore};
 
@@ -56,12 +56,12 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
 
     let principal_id = PrincipalId::from_str(PRINCIPAL_ID).unwrap();
     let actor = serde_json::to_value(RunActor::Principal(principal_id)).unwrap();
-    let created = serde_json::to_value(RunEvent::Created {
+    let created = serde_json::to_value(LegacyRunEvent::Created {
         principal_id,
         title: "loaded".to_owned(),
     })
     .unwrap();
-    let ready = serde_json::to_value(RunEvent::MarkedReady).unwrap();
+    let ready = serde_json::to_value(LegacyRunEvent::Prepared).unwrap();
 
     for (
         event_id,
@@ -76,7 +76,7 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
         (
             "52000000-0000-0000-0000-000000000012",
             2_i64,
-            "run.marked_ready",
+            "run.prepared",
             "52000000-0000-0000-0000-000000000022",
             "52000000-0000-0000-0000-000000000032",
             ready,
@@ -130,11 +130,11 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
     assert_eq!(events[0].sequence.value(), 1);
     assert_eq!(events[1].sequence.value(), 2);
     assert_eq!(events[0].event_type, "run.created");
-    assert_eq!(events[1].event_type, "run.marked_ready");
+    assert_eq!(events[1].event_type, "run.prepared");
     assert_eq!(events[0].actor, RunActor::Principal(principal_id));
     assert!(matches!(
         &events[0].payload,
-        RunEvent::Created { principal_id: stored, title }
+        LegacyRunEvent::Created { principal_id: stored, title }
             if *stored == principal_id && title == "loaded"
     ));
     assert_eq!(

@@ -1,5 +1,5 @@
 use super::{
-    PendingRunEvent, RunCommand, RunCommandEnvelope, RunDecisionError, RunEvent, RunState,
+    LegacyRunEvent, PendingRunEvent, RunCommand, RunCommandEnvelope, RunDecisionError, RunState,
     RunStatus, RunVersion,
 };
 
@@ -22,7 +22,7 @@ pub fn decide(
             });
         }
         return Ok(one(
-            RunEvent::Created {
+            LegacyRunEvent::Created {
                 principal_id: *principal_id,
                 title: required_text(title, "run title")?,
             },
@@ -64,14 +64,14 @@ fn decide_existing(
     }
 
     let event = match run_command {
-        RunCommand::MarkReady if state.status == RunStatus::Created => RunEvent::MarkedReady,
-        RunCommand::Start if state.status == RunStatus::Ready => RunEvent::Started,
+        RunCommand::Prepare if state.status == RunStatus::Created => LegacyRunEvent::Prepared,
+        RunCommand::Start if state.status == RunStatus::Preparing => LegacyRunEvent::Started,
         RunCommand::StartStep {
             step_id,
             kind,
             label,
         } if state.status == RunStatus::Running && state.active_step.is_none() => {
-            RunEvent::StepStarted {
+            LegacyRunEvent::StepStarted {
                 step_id: *step_id,
                 kind: required_text(kind, "step kind")?,
                 label: optional_text(label),
@@ -82,7 +82,7 @@ fn decide_existing(
             output_references,
         } if state.status == RunStatus::Running => {
             require_active_step(state, *step_id)?;
-            RunEvent::StepCompleted {
+            LegacyRunEvent::StepSucceeded {
                 step_id: *step_id,
                 output_references: output_references.clone(),
             }
@@ -94,7 +94,7 @@ fn decide_existing(
             retryable,
         } if state.status == RunStatus::Running => {
             require_active_step(state, *step_id)?;
-            RunEvent::StepFailed {
+            LegacyRunEvent::StepFailed {
                 step_id: *step_id,
                 code: required_text(code, "step failure code")?,
                 message: required_text(message, "step failure message")?,
@@ -104,7 +104,7 @@ fn decide_existing(
         RunCommand::WaitForInput { request_id, prompt }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
-            RunEvent::WaitingForInput {
+            LegacyRunEvent::WaitingForInput {
                 request_id: *request_id,
                 prompt: required_text(prompt, "input prompt")?,
             }
@@ -112,33 +112,58 @@ fn decide_existing(
         RunCommand::WaitForApproval { approval_id }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
-            RunEvent::WaitingForApproval {
+            LegacyRunEvent::WaitingForApproval {
                 approval_id: *approval_id,
             }
         }
-        RunCommand::Resume if state.status.is_waiting() => RunEvent::Resumed,
-        RunCommand::Complete { summary }
+        RunCommand::WaitForDependency { dependency_run_id }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
-            RunEvent::Completed {
+            LegacyRunEvent::WaitingForDependency {
+                dependency_run_id: *dependency_run_id,
+            }
+        }
+        RunCommand::Resume if state.status.is_waiting() || state.status.can_resume() => {
+            LegacyRunEvent::Resumed
+        }
+        RunCommand::Succeed { summary }
+            if state.status == RunStatus::Running && state.active_step.is_none() =>
+        {
+            LegacyRunEvent::Succeeded {
                 summary: optional_text(summary),
+            }
+        }
+        RunCommand::SucceedWithWarnings { summary, warnings }
+            if state.status == RunStatus::Running && state.active_step.is_none() =>
+        {
+            LegacyRunEvent::SucceededWithWarnings {
+                summary: required_text(summary, "summary")?,
+                warnings: warnings.clone(),
+            }
+        }
+        RunCommand::PartialComplete {
+            summary,
+            remaining_work,
+        } if state.status == RunStatus::Running && state.active_step.is_none() => {
+            LegacyRunEvent::PartialCompleted {
+                summary: required_text(summary, "summary")?,
+                remaining_work: remaining_work.clone(),
             }
         }
         RunCommand::Fail {
             code,
             message,
             retryable,
-        } => RunEvent::Failed {
+        } => LegacyRunEvent::Failed {
             code: required_text(code, "run failure code")?,
             message: required_text(message, "run failure message")?,
             retryable: *retryable,
         },
-        RunCommand::Cancel { reason } => RunEvent::Cancelled {
+        RunCommand::Cancel { reason } => LegacyRunEvent::Cancelled {
             reason: optional_text(reason),
         },
-        RunCommand::MarkStalled { reason } => RunEvent::Stalled {
-            reason: reason.clone(),
-        },
+        RunCommand::Pause if state.status.can_pause() => LegacyRunEvent::Paused,
+        RunCommand::Expire if state.status.is_waiting() => LegacyRunEvent::Expired,
         RunCommand::Create { .. } => return Err(RunDecisionError::AlreadyExists),
         _ => return invalid_transition(state),
     };
@@ -146,7 +171,7 @@ fn decide_existing(
     Ok(one(event, envelope))
 }
 
-fn one(event: RunEvent, command: &RunCommandEnvelope) -> Vec<PendingRunEvent> {
+fn one(event: LegacyRunEvent, command: &RunCommandEnvelope) -> Vec<PendingRunEvent> {
     vec![PendingRunEvent {
         event,
         occurred_at: command.issued_at,

@@ -7,7 +7,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{RunActor, RunVersion, StallReason};
+use super::{RunActor, RunVersion};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunCommandEnvelope {
@@ -29,7 +29,7 @@ pub enum RunCommand {
         principal_id: PrincipalId,
         title: String,
     },
-    MarkReady,
+    Prepare,
     Start,
     StartStep {
         step_id: RunStepId,
@@ -53,9 +53,20 @@ pub enum RunCommand {
     WaitForApproval {
         approval_id: ApprovalRecordId,
     },
+    WaitForDependency {
+        dependency_run_id: AgentRunId,
+    },
     Resume,
-    Complete {
+    Succeed {
         summary: Option<String>,
+    },
+    SucceedWithWarnings {
+        summary: String,
+        warnings: Vec<String>,
+    },
+    PartialComplete {
+        summary: String,
+        remaining_work: Vec<String>,
     },
     Fail {
         code: String,
@@ -65,7 +76,6 @@ pub enum RunCommand {
     Cancel {
         reason: Option<String>,
     },
-    MarkStalled {
-        reason: StallReason,
-    },
+    Pause,
+    Expire,
 }

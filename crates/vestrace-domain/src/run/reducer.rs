@@ -1,11 +1,11 @@
 use super::{
-    RunCompletion, RunEvent, RunEventEnvelope, RunReduceError, RunReplayError, RunState, RunStatus,
-    RunStepState, RunStepStatus, RunVersion, RunWait,
+    LegacyRunEvent, LegacyRunEventEnvelope, RunCompletion, RunReduceError, RunReplayError,
+    RunState, RunStatus, RunStepState, RunStepStatus, RunVersion, RunWait,
 };
 
 pub fn apply(
     state: Option<RunState>,
-    event: &RunEventEnvelope,
+    event: &LegacyRunEventEnvelope,
 ) -> Result<RunState, RunReduceError> {
     validate_envelope(&state, event)?;
 
@@ -16,7 +16,7 @@ pub fn apply(
 }
 
 pub fn replay(
-    events: impl IntoIterator<Item = RunEventEnvelope>,
+    events: impl IntoIterator<Item = LegacyRunEventEnvelope>,
 ) -> Result<Option<RunState>, RunReplayError> {
     let mut state = None;
     for event in events {
@@ -25,8 +25,8 @@ pub fn replay(
     Ok(state)
 }
 
-fn apply_first(event: &RunEventEnvelope) -> Result<RunState, RunReduceError> {
-    let RunEvent::Created {
+fn apply_first(event: &LegacyRunEventEnvelope) -> Result<RunState, RunReduceError> {
+    let LegacyRunEvent::Created {
         principal_id,
         title,
     } = &event.payload
@@ -53,18 +53,18 @@ fn apply_first(event: &RunEventEnvelope) -> Result<RunState, RunReduceError> {
 
 fn apply_existing(
     mut state: RunState,
-    event: &RunEventEnvelope,
+    event: &LegacyRunEventEnvelope,
 ) -> Result<RunState, RunReduceError> {
     match &event.payload {
-        RunEvent::Created { .. } => return Err(RunReduceError::DuplicateCreatedEvent),
-        RunEvent::MarkedReady if state.status == RunStatus::Created => {
-            state.status = RunStatus::Ready;
+        LegacyRunEvent::Created { .. } => return Err(RunReduceError::DuplicateCreatedEvent),
+        LegacyRunEvent::Prepared if state.status == RunStatus::Created => {
+            state.status = RunStatus::Preparing;
         }
-        RunEvent::Started if state.status == RunStatus::Ready => {
+        LegacyRunEvent::Started if state.status == RunStatus::Preparing => {
             state.status = RunStatus::Running;
             state.started_at = Some(event.occurred_at);
         }
-        RunEvent::StepStarted {
+        LegacyRunEvent::StepStarted {
             step_id,
             kind,
             label,
@@ -78,17 +78,17 @@ fn apply_existing(
                 finished_at: None,
             });
         }
-        RunEvent::StepCompleted { step_id, .. }
+        LegacyRunEvent::StepSucceeded { step_id, .. }
             if state.status == RunStatus::Running && active_step_matches(&state, *step_id) =>
         {
             state.active_step = None;
         }
-        RunEvent::StepFailed { step_id, .. }
+        LegacyRunEvent::StepFailed { step_id, .. }
             if state.status == RunStatus::Running && active_step_matches(&state, *step_id) =>
         {
             state.active_step = None;
         }
-        RunEvent::WaitingForInput { request_id, prompt }
+        LegacyRunEvent::WaitingForInput { request_id, prompt }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
             state.status = RunStatus::WaitingForInput;
@@ -97,7 +97,7 @@ fn apply_existing(
                 prompt: prompt.clone(),
             });
         }
-        RunEvent::WaitingForApproval { approval_id }
+        LegacyRunEvent::WaitingForApproval { approval_id }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
             state.status = RunStatus::WaitingForApproval;
@@ -105,23 +105,59 @@ fn apply_existing(
                 approval_id: *approval_id,
             });
         }
-        RunEvent::Resumed if state.status.is_waiting() => {
+        LegacyRunEvent::WaitingForDependency { dependency_run_id }
+            if state.status == RunStatus::Running && state.active_step.is_none() =>
+        {
+            state.status = RunStatus::WaitingForDependency;
+            state.wait = Some(RunWait::Event {
+                event_type: "run.succeeded".to_owned(),
+                correlation_id: crate::id::CorrelationId::from_uuid(dependency_run_id.as_uuid()),
+            });
+        }
+        LegacyRunEvent::Resumed if state.status.is_waiting() || state.status.can_resume() => {
             state.status = RunStatus::Running;
             state.wait = None;
         }
-        RunEvent::Completed { summary }
+        LegacyRunEvent::Succeeded { summary }
             if state.status == RunStatus::Running && state.active_step.is_none() =>
         {
             finish(
                 &mut state,
-                RunStatus::Completed,
-                RunCompletion::Completed {
+                RunStatus::Succeeded,
+                RunCompletion::Succeeded {
                     summary: summary.clone(),
                 },
                 event.occurred_at,
             );
         }
-        RunEvent::Failed {
+        LegacyRunEvent::SucceededWithWarnings { summary, warnings }
+            if state.status == RunStatus::Running && state.active_step.is_none() =>
+        {
+            finish(
+                &mut state,
+                RunStatus::SucceededWithWarnings,
+                RunCompletion::SucceededWithWarnings {
+                    summary: summary.clone(),
+                    warnings: warnings.clone(),
+                },
+                event.occurred_at,
+            );
+        }
+        LegacyRunEvent::PartialCompleted {
+            summary,
+            remaining_work,
+        } if state.status == RunStatus::Running && state.active_step.is_none() => {
+            finish(
+                &mut state,
+                RunStatus::Partial,
+                RunCompletion::Partial {
+                    summary: summary.clone(),
+                    remaining_work: remaining_work.clone(),
+                },
+                event.occurred_at,
+            );
+        }
+        LegacyRunEvent::Failed {
             code,
             message,
             retryable,
@@ -137,7 +173,7 @@ fn apply_existing(
                 event.occurred_at,
             );
         }
-        RunEvent::Cancelled { reason } => {
+        LegacyRunEvent::Cancelled { reason } => {
             finish(
                 &mut state,
                 RunStatus::Cancelled,
@@ -147,13 +183,14 @@ fn apply_existing(
                 event.occurred_at,
             );
         }
-        RunEvent::Stalled { reason } => {
+        LegacyRunEvent::Paused if state.status.can_pause() => {
+            state.status = RunStatus::Paused;
+        }
+        LegacyRunEvent::Expired if state.status.is_waiting() => {
             finish(
                 &mut state,
-                RunStatus::Stalled,
-                RunCompletion::Stalled {
-                    reason: reason.clone(),
-                },
+                RunStatus::Expired,
+                RunCompletion::Expired,
                 event.occurred_at,
             );
         }
@@ -191,7 +228,7 @@ fn finish(
 
 fn validate_envelope(
     state: &Option<RunState>,
-    event: &RunEventEnvelope,
+    event: &LegacyRunEventEnvelope,
 ) -> Result<(), RunReduceError> {
     let expected_type = event.payload.event_type();
     if event.event_type != expected_type {

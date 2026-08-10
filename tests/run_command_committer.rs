@@ -9,11 +9,14 @@ use vestrace_application::{
     RunEventStore, RunRepository,
 };
 use vestrace_domain::{
-    id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
+    id::{
+        AgentRunId, AgentRuntimeSnapshotId, CorrelationId, OperationId, PrincipalId, RunEventId,
+        WorkspaceId,
+    },
     now,
     run::{
-        AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunEvent, RunEventEnvelope, RunStatus,
-        RunVersion,
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunCommand, RunCommandEnvelope,
+        RunExecutionMode, RunStatus, RunVersion,
     },
 };
 use vestrace_infrastructure::{PgRunCommandCommitter, PgRunEventStore, PgRunRepository, PgStore};
@@ -105,14 +108,14 @@ fn service(pool: &sqlx::PgPool) -> RunCommandService {
     )
 }
 
-fn mark_ready_event(
+fn prepared_event(
     event_id: RunEventId,
     workspace_id: WorkspaceId,
     actor: RunActor,
-) -> RunEventEnvelope {
+) -> LegacyRunEventEnvelope {
     let occurred_at = database_timestamp(now());
-    let payload = RunEvent::MarkedReady;
-    RunEventEnvelope {
+    let payload = LegacyRunEvent::Prepared;
+    LegacyRunEventEnvelope {
         event_id,
         workspace_id,
         run_id: run_id(),
@@ -128,9 +131,9 @@ fn mark_ready_event(
     }
 }
 
-fn ready_projection(created: &AgentRun, updated_at: chrono::DateTime<chrono::Utc>) -> AgentRun {
+fn prepared_projection(created: &AgentRun, updated_at: chrono::DateTime<chrono::Utc>) -> AgentRun {
     AgentRun {
-        status: RunStatus::Ready,
+        status: RunStatus::Preparing,
         version: RunVersion::new(2).unwrap(),
         updated_at,
         ..created.clone()
@@ -193,12 +196,12 @@ async fn existing_command_advances_projection_and_preserves_created_at(pool: sql
     let ready = service
         .execute(
             &context_a(),
-            command(RunVersion::INITIAL, RunCommand::MarkReady),
+            command(RunVersion::INITIAL, RunCommand::Prepare),
         )
         .await
         .unwrap();
 
-    assert_eq!(ready.run.status, RunStatus::Ready);
+    assert_eq!(ready.run.status, RunStatus::Preparing);
     assert_eq!(ready.run.version.value(), 2);
     assert_eq!(ready.run.created_at, created.run.created_at);
     assert_eq!(ready.run.updated_at, ready.events[0].occurred_at);
@@ -238,12 +241,12 @@ async fn duplicate_event_id_rolls_back_projection_update(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    let duplicate = mark_ready_event(
+    let duplicate = prepared_event(
         created.events[0].event_id,
         workspace_a(),
         RunActor::Principal(principal_a()),
     );
-    let projection = ready_projection(&created.run, duplicate.occurred_at);
+    let projection = prepared_projection(&created.run, duplicate.occurred_at);
     let committer = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
 
     let result = committer
@@ -278,11 +281,11 @@ async fn duplicate_event_id_rolls_back_projection_update(pool: sqlx::PgPool) {
 async fn projection_identity_mismatch_is_rejected_without_writes(pool: sqlx::PgPool) {
     seed_identities(&pool).await;
     let occurred_at = database_timestamp(now());
-    let payload = RunEvent::Created {
+    let payload = LegacyRunEvent::Created {
         principal_id: principal_a(),
         title: "Mismatch".to_owned(),
     };
-    let event = RunEventEnvelope {
+    let event = LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: workspace_a(),
         run_id: run_id(),
@@ -299,12 +302,22 @@ async fn projection_identity_mismatch_is_rejected_without_writes(pool: sqlx::PgP
     let projection = AgentRun {
         id: run_id(),
         workspace_id: workspace_b(),
-        principal_id: principal_a(),
-        title: "Mismatch".to_owned(),
+        objective: "Mismatch".to_owned(),
+        coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_a().as_uuid()),
+        active_plan_revision_id: None,
+        execution_mode: RunExecutionMode::Autopilot,
         status: RunStatus::Created,
+        current_step_id: None,
+        checkpoint_id: None,
+        parent: None,
+        root_run_id: run_id(),
+        budget_snapshot_id: None,
+        resource_usage_snapshot_id: None,
         version: RunVersion::INITIAL,
+        result: None,
         created_at: occurred_at,
         updated_at: occurred_at,
+        finished_at: None,
     };
     let committer = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
 
@@ -349,18 +362,18 @@ async fn concurrent_writers_at_one_version_yield_one_success(pool: sqlx::PgPool)
         .await
         .unwrap();
 
-    let event_a = mark_ready_event(
+    let event_a = prepared_event(
         RunEventId::new(),
         workspace_a(),
         RunActor::Principal(principal_a()),
     );
-    let event_b = mark_ready_event(
+    let event_b = prepared_event(
         RunEventId::new(),
         workspace_a(),
         RunActor::Principal(principal_a()),
     );
-    let projection_a = ready_projection(&created.run, event_a.occurred_at);
-    let projection_b = ready_projection(&created.run, event_b.occurred_at);
+    let projection_a = prepared_projection(&created.run, event_a.occurred_at);
+    let projection_b = prepared_projection(&created.run, event_b.occurred_at);
     let committer_a = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
     let committer_b = PgRunCommandCommitter::new(PgStore::from_pool(pool.clone()));
     let context = context_a();
@@ -432,15 +445,15 @@ async fn foreign_workspace_cannot_commit_to_an_existing_run(pool: sqlx::PgPool) 
         .await
         .unwrap();
 
-    let event = mark_ready_event(
+    let event = prepared_event(
         RunEventId::new(),
         workspace_b(),
         RunActor::Principal(principal_b()),
     );
     let projection = AgentRun {
         workspace_id: workspace_b(),
-        principal_id: principal_b(),
-        status: RunStatus::Ready,
+        coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_b().as_uuid()),
+        status: RunStatus::Preparing,
         version: RunVersion::new(2).unwrap(),
         updated_at: event.occurred_at,
         ..created.run.clone()

@@ -10,12 +10,14 @@ use vestrace_application::{
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
-    run::{AgentRun, RunActor, RunEvent, RunEventEnvelope, RunState, RunVersion, replay},
+    run::{
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunState, RunVersion, replay,
+    },
 };
 
 struct InMemoryRecoveryStore {
     head: RunVersion,
-    events: Vec<RunEventEnvelope>,
+    events: Vec<LegacyRunEventEnvelope>,
     checkpoint: Mutex<Option<RunCheckpoint>>,
     saved: Mutex<Vec<RunCheckpoint>>,
     replacements: Mutex<Vec<(RunVersion, AgentRun)>>,
@@ -24,7 +26,7 @@ struct InMemoryRecoveryStore {
 impl InMemoryRecoveryStore {
     fn new(
         head: RunVersion,
-        events: Vec<RunEventEnvelope>,
+        events: Vec<LegacyRunEventEnvelope>,
         checkpoint: Option<RunCheckpoint>,
     ) -> Self {
         Self {
@@ -52,7 +54,7 @@ impl RunRecoveryStore for InMemoryRecoveryStore {
         context: &RequestContext,
         run_id: AgentRunId,
         through: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(self
             .events
             .iter()
@@ -70,7 +72,7 @@ impl RunRecoveryStore for InMemoryRecoveryStore {
         context: &RequestContext,
         run_id: AgentRunId,
         after: RunVersion,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(self
             .events
             .iter()
@@ -138,10 +140,10 @@ fn envelope(
     context: &RequestContext,
     run_id: AgentRunId,
     sequence: u64,
-    payload: RunEvent,
-) -> RunEventEnvelope {
+    payload: LegacyRunEvent,
+) -> LegacyRunEventEnvelope {
     let occurred_at = now();
-    RunEventEnvelope {
+    LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: context.workspace_id,
         run_id,
@@ -157,31 +159,31 @@ fn envelope(
     }
 }
 
-fn lifecycle_events(context: &RequestContext, run_id: AgentRunId) -> Vec<RunEventEnvelope> {
+fn lifecycle_events(context: &RequestContext, run_id: AgentRunId) -> Vec<LegacyRunEventEnvelope> {
     vec![
         envelope(
             context,
             run_id,
             1,
-            RunEvent::Created {
+            LegacyRunEvent::Created {
                 principal_id: context.principal_id,
                 title: "Recoverable run".to_owned(),
             },
         ),
-        envelope(context, run_id, 2, RunEvent::MarkedReady),
-        envelope(context, run_id, 3, RunEvent::Started),
+        envelope(context, run_id, 2, LegacyRunEvent::Prepared),
+        envelope(context, run_id, 3, LegacyRunEvent::Started),
         envelope(
             context,
             run_id,
             4,
-            RunEvent::Completed {
+            LegacyRunEvent::Succeeded {
                 summary: Some("done".to_owned()),
             },
         ),
     ]
 }
 
-fn checkpoint_at(events: &[RunEventEnvelope], sequence: usize) -> RunCheckpoint {
+fn checkpoint_at(events: &[LegacyRunEventEnvelope], sequence: usize) -> RunCheckpoint {
     let state = replay(events[..sequence].to_vec()).unwrap().unwrap();
     RunCheckpoint {
         workspace_id: state.workspace_id,

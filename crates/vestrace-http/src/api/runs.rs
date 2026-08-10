@@ -9,7 +9,10 @@ use vestrace_domain::{
     Timestamp,
     id::{AgentRunId, CorrelationId, OperationId},
     now,
-    run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunVersion},
+    run::{
+        AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunStatus, RunStep, RunStepStatus,
+        RunVersion,
+    },
 };
 
 use crate::AppState;
@@ -18,10 +21,16 @@ use super::{ApiError, context::request_context};
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const CORRELATION_ID_HEADER: &str = "x-correlation-id";
+const IF_MATCH_HEADER: &str = "if-match";
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRunRequest {
     pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelRunRequest {
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,13 +47,41 @@ impl From<AgentRun> for RunResponse {
     fn from(run: AgentRun) -> Self {
         Self {
             id: run.id.as_uuid(),
-            title: run.title,
+            title: run.objective,
             status: run.status,
             version: run.version.value(),
             created_at: run.created_at,
             updated_at: run.updated_at,
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunStepResponse {
+    pub id: uuid::Uuid,
+    pub status: RunStepStatus,
+    pub attempt: u32,
+    pub started_at: Option<Timestamp>,
+    pub finished_at: Option<Timestamp>,
+}
+
+impl From<RunStep> for RunStepResponse {
+    fn from(step: RunStep) -> Self {
+        Self {
+            id: step.id.as_uuid(),
+            status: step.status,
+            attempt: step.attempt,
+            started_at: step.started_at,
+            finished_at: step.finished_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunDetailResponse {
+    #[serde(flatten)]
+    pub run: RunResponse,
+    pub steps: Vec<RunStepResponse>,
 }
 
 pub async fn create_run(
@@ -113,6 +150,123 @@ pub async fn get_run(
     Ok(Json(run.into()))
 }
 
+pub async fn pause_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<RunResponse>, ApiError> {
+    let context = request_context(&headers)?;
+    let run_id = parse_run_id(&id)?;
+    let expected_version = if_match_version(&headers)?;
+
+    let command = RunCommandEnvelope {
+        command_id: OperationId::from_uuid(required_uuid_header(&headers, REQUEST_ID_HEADER)?),
+        idempotency_key: None,
+        workspace_id: context.workspace_id,
+        run_id,
+        actor: RunActor::Principal(context.principal_id),
+        expected_version,
+        correlation_id: CorrelationId::from_uuid(required_uuid_header(
+            &headers,
+            CORRELATION_ID_HEADER,
+        )?),
+        issued_at: now(),
+        command: RunCommand::Pause,
+    };
+    let result = state
+        .run_command_executor()
+        .execute(&context, command)
+        .await
+        .map_err(ApiError::from_application)?;
+
+    Ok(Json(result.run.into()))
+}
+
+pub async fn resume_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<RunResponse>, ApiError> {
+    let context = request_context(&headers)?;
+    let run_id = parse_run_id(&id)?;
+    let expected_version = if_match_version(&headers)?;
+
+    let command = RunCommandEnvelope {
+        command_id: OperationId::from_uuid(required_uuid_header(&headers, REQUEST_ID_HEADER)?),
+        idempotency_key: None,
+        workspace_id: context.workspace_id,
+        run_id,
+        actor: RunActor::Principal(context.principal_id),
+        expected_version,
+        correlation_id: CorrelationId::from_uuid(required_uuid_header(
+            &headers,
+            CORRELATION_ID_HEADER,
+        )?),
+        issued_at: now(),
+        command: RunCommand::Resume,
+    };
+    let result = state
+        .run_command_executor()
+        .execute(&context, command)
+        .await
+        .map_err(ApiError::from_application)?;
+
+    Ok(Json(result.run.into()))
+}
+
+pub async fn cancel_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<CancelRunRequest>,
+) -> Result<Json<RunResponse>, ApiError> {
+    let context = request_context(&headers)?;
+    let run_id = parse_run_id(&id)?;
+    let expected_version = if_match_version(&headers)?;
+
+    let command = RunCommandEnvelope {
+        command_id: OperationId::from_uuid(required_uuid_header(&headers, REQUEST_ID_HEADER)?),
+        idempotency_key: None,
+        workspace_id: context.workspace_id,
+        run_id,
+        actor: RunActor::Principal(context.principal_id),
+        expected_version,
+        correlation_id: CorrelationId::from_uuid(required_uuid_header(
+            &headers,
+            CORRELATION_ID_HEADER,
+        )?),
+        issued_at: now(),
+        command: RunCommand::Cancel {
+            reason: request.reason,
+        },
+    };
+    let result = state
+        .run_command_executor()
+        .execute(&context, command)
+        .await
+        .map_err(ApiError::from_application)?;
+
+    Ok(Json(result.run.into()))
+}
+
+fn parse_run_id(id: &str) -> Result<AgentRunId, ApiError> {
+    id.parse::<AgentRunId>()
+        .map_err(|_| ApiError::bad_request("run id must be a UUID"))
+}
+
+fn if_match_version(headers: &HeaderMap) -> Result<RunVersion, ApiError> {
+    let value = headers
+        .get(IF_MATCH_HEADER)
+        .ok_or_else(|| ApiError::bad_request("missing If-Match header"))?;
+    let s = value
+        .to_str()
+        .map_err(|_| ApiError::bad_request("If-Match header must be valid UTF-8"))?;
+    let version: u64 = s
+        .parse()
+        .map_err(|_| ApiError::bad_request("If-Match header must be a version number"))?;
+    RunVersion::new(version).map_err(|_| ApiError::bad_request("invalid run version"))
+}
+
 fn required_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Uuid, ApiError> {
     let value = headers
         .get(name)
@@ -140,8 +294,11 @@ mod tests {
         RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
     };
     use vestrace_domain::{
-        id::{AgentRunId, PrincipalId},
-        run::{AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunVersion},
+        id::{AgentRunId, AgentRuntimeSnapshotId, PrincipalId},
+        run::{
+            AgentRun, NewAgentRun, RunActor, RunCommand, RunCommandEnvelope, RunExecutionMode,
+            RunVersion,
+        },
     };
 
     use crate::{AppState, build_router};
@@ -203,13 +360,22 @@ mod tests {
                 } => (*principal_id, title.clone()),
                 other => panic!("unexpected command: {other:?}"),
             };
-            let run = AgentRun::new(
-                command.run_id,
-                command.workspace_id,
-                principal_id,
-                title,
+            let run = AgentRun::create(
+                NewAgentRun {
+                    id: command.run_id,
+                    workspace_id: command.workspace_id,
+                    objective: title,
+                    coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(
+                        principal_id.as_uuid(),
+                    ),
+                    execution_mode: RunExecutionMode::Autopilot,
+                    parent: None,
+                    budget_snapshot_id: None,
+                    resource_usage_snapshot_id: None,
+                },
                 command.issued_at,
-            );
+            )
+            .unwrap();
             *self.recorded.lock().unwrap() = Some(command);
             Ok(RunCommandResult {
                 run,

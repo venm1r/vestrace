@@ -5,7 +5,8 @@ use vestrace_domain::{
     id::RunEventId,
     now,
     run::{
-        RunActor, RunCommandEnvelope, RunDecisionError, RunEventEnvelope, apply, decide, replay,
+        LegacyRunEventEnvelope, RunActor, RunCommandEnvelope, RunDecisionError, apply, decide,
+        replay,
     },
 };
 
@@ -57,7 +58,7 @@ impl RunCommandExecutor for RunCommandService {
         for pending in pending_events {
             sequence = sequence.next()?;
             let payload = pending.event;
-            envelopes.push(RunEventEnvelope {
+            envelopes.push(LegacyRunEventEnvelope {
                 event_id: RunEventId::new(),
                 workspace_id: command.workspace_id,
                 run_id: command.run_id,

@@ -12,14 +12,14 @@ use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, PrincipalId, RunEventId, WorkspaceId},
     now,
     run::{
-        AgentRun, RunActor, RunCommand, RunCommandEnvelope, RunEvent, RunEventEnvelope, RunStatus,
-        RunVersion,
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunCommand, RunCommandEnvelope,
+        RunStatus, RunVersion,
     },
 };
 
 #[derive(Default)]
 struct InMemoryEventStore {
-    events: Mutex<Vec<RunEventEnvelope>>,
+    events: Mutex<Vec<LegacyRunEventEnvelope>>,
 }
 
 #[async_trait]
@@ -28,7 +28,7 @@ impl RunEventStore for InMemoryEventStore {
         &self,
         context: &RequestContext,
         run_id: AgentRunId,
-    ) -> Result<Vec<RunEventEnvelope>, ApplicationError> {
+    ) -> Result<Vec<LegacyRunEventEnvelope>, ApplicationError> {
         Ok(self
             .events
             .lock()
@@ -44,7 +44,7 @@ impl RunEventStore for InMemoryEventStore {
         _context: &RequestContext,
         _run_id: AgentRunId,
         _expected_version: RunVersion,
-        _events: &[RunEventEnvelope],
+        _events: &[LegacyRunEventEnvelope],
     ) -> Result<RunVersion, ApplicationError> {
         panic!("RunCommandService must use the atomic committer, not RunEventStore::append")
     }
@@ -52,7 +52,7 @@ impl RunEventStore for InMemoryEventStore {
 
 #[derive(Default)]
 struct RecordingCommitter {
-    commits: Mutex<Vec<(RunVersion, Vec<RunEventEnvelope>, AgentRun)>>,
+    commits: Mutex<Vec<(RunVersion, Vec<LegacyRunEventEnvelope>, AgentRun)>>,
 }
 
 #[async_trait]
@@ -62,7 +62,7 @@ impl RunCommandCommitter for RecordingCommitter {
         _context: &RequestContext,
         _run_id: AgentRunId,
         expected_version: RunVersion,
-        events: &[RunEventEnvelope],
+        events: &[LegacyRunEventEnvelope],
         projection: &AgentRun,
     ) -> Result<RunVersion, ApplicationError> {
         self.commits
@@ -101,13 +101,13 @@ fn command(
     }
 }
 
-fn created_event(context: &RequestContext, run_id: AgentRunId) -> RunEventEnvelope {
+fn created_event(context: &RequestContext, run_id: AgentRunId) -> LegacyRunEventEnvelope {
     let occurred_at = database_timestamp(now());
-    let payload = RunEvent::Created {
+    let payload = LegacyRunEvent::Created {
         principal_id: context.principal_id,
         title: "Projection test".to_owned(),
     };
-    RunEventEnvelope {
+    LegacyRunEventEnvelope {
         event_id: RunEventId::new(),
         workspace_id: context.workspace_id,
         run_id,
@@ -143,7 +143,7 @@ async fn create_command_builds_an_event_derived_projection() {
     let result = service.execute(&context, envelope.clone()).await.unwrap();
 
     assert_eq!(result.run.id, run_id);
-    assert_eq!(result.run.title, "Projection test");
+    assert_eq!(result.run.objective, "Projection test");
     assert_eq!(result.run.status, RunStatus::Created);
     assert_eq!(result.run.version, RunVersion::INITIAL);
     assert_eq!(result.events.len(), 1);
@@ -171,11 +171,11 @@ async fn existing_command_replays_the_stream_and_advances_the_projection() {
     });
     let committer = Arc::new(RecordingCommitter::default());
     let service = RunCommandService::new(event_store, committer.clone());
-    let envelope = command(&context, run_id, RunVersion::INITIAL, RunCommand::MarkReady);
+    let envelope = command(&context, run_id, RunVersion::INITIAL, RunCommand::Prepare);
 
     let result = service.execute(&context, envelope).await.unwrap();
 
-    assert_eq!(result.run.status, RunStatus::Ready);
+    assert_eq!(result.run.status, RunStatus::Preparing);
     assert_eq!(result.run.version.value(), 2);
     assert_eq!(result.events.len(), 1);
     assert_eq!(result.events[0].sequence.value(), 2);
@@ -216,7 +216,7 @@ async fn stale_expected_version_is_reported_as_a_conflict() {
     let result = service
         .execute(
             &context,
-            command(&context, run_id, RunVersion::ZERO, RunCommand::MarkReady),
+            command(&context, run_id, RunVersion::ZERO, RunCommand::Prepare),
         )
         .await;
 
