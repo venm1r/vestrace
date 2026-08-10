@@ -2,9 +2,9 @@
 
 ## Documentation status
 
-This file is the domain-model entry point for the `docs/architecture-v0.2` documentation branch.
+This file is the domain-model entry point for the v0.2 documentation baseline integrated into `main`.
 
-The previous `docs/domain-model.md` on `main` is an implementation-oriented reference describing currently present Rust domain modules and whether they are wired/type-only. It remains valid as a snapshot of `main@729d456f70f4de93c97d05cce795c09025c62f24`, but it is **not** the normative target domain model.
+The pre-v0.2 `docs/domain-model.md` at implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` was an implementation-oriented inventory of Rust domain modules and wired/type-only state. It remains useful as a historical implementation snapshot, but it is **not** the normative target domain model.
 
 ## Normative target model
 
@@ -58,13 +58,13 @@ Tier D must be rebuildable and must not silently overwrite a higher-authority ti
 
 ## Current implementation reference
 
-See [`current-implementation.md`](current-implementation.md) for a concise snapshot of what is actually wired today.
+See [`current-implementation.md`](current-implementation.md) for the concise inspected implementation snapshot.
 
-For the detailed pre-v0.2 implementation-level inventory of Rust types and wired/type-only modules, consult `docs/domain-model.md` on the `main` branch at commit `729d456f70f4de93c97d05cce795c09025c62f24`.
+For the detailed pre-v0.2 implementation-level inventory of Rust types and wired/type-only modules, consult repository history at commit `729d456f70f4de93c97d05cce795c09025c62f24`.
 
 ## Planning reference
 
-The source-based gap analysis and future domain transition contracts are already documented in:
+The source-based gap analysis and future domain transition contracts are documented in:
 
 - [`gap-analysis-v0.2.md`](gap-analysis-v0.2.md)
 - [`plans/README.md`](plans/README.md)
