@@ -1,14 +1,16 @@
 # Vestrace v0.2 Documentation Readiness Report
 
+> **Historical pre-merge record.** This report was produced on `docs/architecture-v0.2` before PR #31. The architecture package has since been merged into `main` at `a4d15d762b5da7b8b870bdb36c77c51c40b14f98`. For the current state, see [`documentation-status-v0.2.md`](documentation-status-v0.2.md) and [`documentation-post-merge-audit-v0.2.md`](documentation-post-merge-audit-v0.2.md).
+
 **Date:** 2026-08-10  
-**Branch:** `docs/architecture-v0.2`  
+**Origin branch:** `docs/architecture-v0.2`  
 **Inspected implementation baseline:** `main@729d456f70f4de93c97d05cce795c09025c62f24`  
-**Result:** **READY FOR DOCUMENTATION REVIEW / MERGE**  
+**Historical result:** **READY FOR DOCUMENTATION REVIEW / MERGE**  
 **Implementation authorization:** none
 
 ## Audit scope
 
-Final consistency audit covered:
+The pre-merge consistency audit covered:
 
 - normative requirement catalog ↔ phase/PR mappings;
 - roadmap milestone labels ↔ named qualification profiles;
@@ -54,11 +56,11 @@ PASS | FAIL | SKIPPED | BLOCKED | INCONCLUSIVE
 
 ### IMPORTANT — MEM-011 had no explicit Correct delivery owner
 
-Memory scope must not widen workspace authority. C1 now owns the domain/scope obligation and C8 verifies it.
+Memory scope must not widen workspace authority. C1 owns the domain/scope obligation and C8 verifies it.
 
 ### IMPORTANT — RET-014 was assigned before MemoryMount exists
 
-Mounted cross-workspace retrieval source+target policy checks are now an explicit applicability handoff:
+Mounted cross-workspace retrieval source+target policy checks were made an explicit applicability handoff:
 
 - C5 provides the governed retrieval hook;
 - C8 may mark RET-014 `NOT_APPLICABLE` only with evidence that no mounted-equivalent feature is enabled;
@@ -66,7 +68,7 @@ Mounted cross-workspace retrieval source+target policy checks are now an explici
 
 ### IMPORTANT — CORE+MEMORY security closure was too implicit
 
-C5/C8 now explicitly cover the minimum profile-scoped Memory/retrieval obligations:
+C5/C8 explicitly cover the minimum profile-scoped Memory/retrieval obligations:
 
 ```text
 CAP-001
@@ -79,9 +81,7 @@ This does not claim full Capability Governance; G1-G6 remains the full governanc
 
 ### IMPORTANT — AUTONOMY vs TRUSTED recovery scope ambiguity
 
-Added ADR-0010.
-
-It clarifies:
+ADR-0010 was added to clarify:
 
 - roadmap milestone label != named qualification profile;
 - AUTONOMY crash/fault safety covers governed execution/repair/effect ambiguity across process failure;
@@ -91,15 +91,13 @@ It clarifies:
 
 ### IMPORTANT — historical/current plan ambiguity
 
-Added `docs/plans/README.md`.
-
-Current v0.2 → v1.0 transition plans are distinguished from date-prefixed historical plans and `docs/superpowers/plans/**`.
+`docs/plans/README.md` distinguishes current v0.2 → v1.0 transition plans from date-prefixed historical plans and `docs/superpowers/plans/**`.
 
 ### MINOR — stale phase-status/navigation text
 
-Updated root README, architecture/domain entry points and normative index so they no longer say gap analysis/planning is still future work.
+Root README, architecture/domain entry points and normative index were updated so they no longer said gap analysis/planning was still future work.
 
-## Current readiness gates
+## Pre-merge readiness gates
 
 ```text
 [PASS] canonical product definition stable
@@ -119,28 +117,17 @@ Updated root README, architecture/domain entry points and normative index so the
 [PASS] applicability semantics reconciled
 [PASS] milestone/profile claim semantics reconciled
 [PASS] current vs historical plans classified
-[PASS] implementation remains unauthorized on this branch
+[PASS] implementation remained unauthorized on the documentation branch
 ```
 
-## Remaining blockers
+## Historical remaining blockers
 
-**None identified in the final documentation consistency audit.**
+**None were identified in the final pre-merge documentation consistency audit.**
 
-This means the documentation package is ready for review/merge. It does **not** mean the target runtime is implemented or any future profile has passed qualification.
+That result meant the documentation package was ready for review/merge. It did **not** mean the target runtime was implemented or any future profile had passed qualification.
 
-## Merge conditions
+## Merge outcome
 
-Before merging this documentation branch:
+The documented merge conditions were satisfied and PR #31 was merged into `main` on 2026-08-10.
 
-1. confirm branch remains based on the inspected `main` merge base or review any new main delta;
-2. confirm changed files remain documentation-only (`README.md` / `docs/**`);
-3. review the documentation PR as one architecture-baseline change;
-4. after merge, treat v0.2 specs/ADRs as frozen unless changed deliberately through spec/ADR amendment.
-
-## Post-merge rule
-
-If `main` changes materially after this baseline, re-run a **gap delta** before executing the 36-PR implementation package unchanged.
-
-The next implementation planning source of truth is:
-
-`docs/plans/v0.2-to-v1.0-pr-specification-index.md`
+The current maintenance rule is defined in [`documentation-status-v0.2.md`](documentation-status-v0.2.md). If implementation code moves materially after the inspected baseline, a **gap delta** is required before executing the 36-PR implementation package unchanged.
