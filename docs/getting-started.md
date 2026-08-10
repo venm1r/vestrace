@@ -1,5 +1,11 @@
 # Quickstart & Local Development Guide
 
+## Documentation status
+
+This guide describes how to run/test the **current implementation snapshot**. It does not imply that every target v0.2 architecture capability is implemented.
+
+Target architecture starts at [`specs/vestrace-architecture-contract-v0.2.md`](specs/vestrace-architecture-contract-v0.2.md). Current implementation boundaries are summarized in [`current-implementation.md`](current-implementation.md).
+
 ## Prerequisites
 
 - Rust 1.85.0+
@@ -15,7 +21,7 @@ Start PostgreSQL and the Vestrace HTTP server:
 docker compose -p vestrace up --build -d
 ```
 
-Verify health, the run-record API, workspace isolation, and runtime RLS:
+Verify health, the Run API, workspace isolation, and runtime RLS using the repository's smoke scripts:
 
 ```bash
 ./scripts/foundation-smoke.sh
@@ -31,42 +37,44 @@ docker compose -p vestrace down --remove-orphans
 
 Add `--volumes` to remove the development database as well.
 
-## 2. Supported CLI commands
+## 2. Current CLI process modes
 
 The database URL must be supplied through `VESTRACE_DATABASE__URL` or an equivalent secret environment.
 
-### Start the HTTP server
+### HTTP server
 
 ```bash
 VESTRACE_DATABASE__URL='postgres://...' \
   cargo run --bin vestrace -- server
 ```
 
-The server connects to PostgreSQL, applies the embedded SQLx migrations, verifies the complete migration history, and then begins serving.
-
-### Apply and verify migrations
+### Apply/verify migrations
 
 ```bash
 VESTRACE_DATABASE__URL='postgres://...' \
   cargo run --bin vestrace -- migrate
 ```
 
-The command performs real database work. It exits successfully only after embedded migrations have been applied and the applied migration records exactly match the embedded set.
+The authoritative list of current commands is the source at the snapshot being run. Documentation must not infer availability from future target command examples.
 
-## 3. Explicitly unavailable CLI commands
+## 3. `doctor`, `repair`, `rebuild`, `qualify`
 
-The following commands are reserved but not implemented:
+The v0.2 target documentation defines **semantic contracts** for diagnostics, repair/rebuild and qualification, for example conceptually:
 
 ```text
-doctor
-rebuild
+vestrace doctor
+vestrace doctor --plan
+vestrace repair <plan>
+vestrace qualify <profile>
 ```
 
-They exit non-zero with an explicit `command is not implemented` error. They must not be used as operational health checks or background processes.
+These examples are target architecture, not a promise that those exact CLI commands are wired in the current snapshot.
 
-## 4. Run the test suite
+Before using any of them operationally, check the actual CLI/source/acceptance status of the build being run.
 
-With PostgreSQL available through `DATABASE_URL`:
+## 4. Run the current test suite
+
+With required dependencies available:
 
 ```bash
 cargo fmt --all --check
@@ -77,6 +85,39 @@ npm --prefix apps/console run typecheck
 npm --prefix apps/console run build
 ```
 
-## 5. Current product boundary
+These tests verify current implementation behavior. They are not equivalent to the future v0.2+ conformance/qualification profiles defined in [`specs/vestrace-qualification-conformance-spec-v0.2.md`](specs/vestrace-qualification-conformance-spec-v0.2.md).
 
-The current runtime provides health endpoints, PostgreSQL-backed event-sourced run records with deterministic replay and checkpoint recovery, memory lifecycle services with HTTP endpoints (event recording with idempotency, memory creation with provenance, memory read, memory revision with optimistic concurrency, knowledge-relation linking), append-only event enforcement, active-source invariant, authorized hard purge with audit trail, idempotency key verification, job leasing via `FOR UPDATE SKIP LOCKED`, outbox message persistence and claiming, worker process with graceful shutdown, retrieval service with HTTP endpoint (text channel FTS, RRF fusion, deterministic reranking, context pack building, retrieval journaling), security domain types (capabilities, approvals, sensitivity, audit), policy engine, redaction service, audit repository, HTTP auth middleware, and MCP server with search_memories and get_memory tools. Creating a run does not start an agent or workflow. Unsupported REST and AG-UI surfaces return `501 Not Implemented`. Vector/structured/exact retrieval channels, capability-policy enforcement in HTTP routes, typed job handlers, approval execution, and artifact storage are not yet wired to runtime paths.
+## 5. Current product/runtime boundary
+
+The current snapshot provides a foundation including:
+
+- liveness/readiness;
+- PostgreSQL-backed event-sourced Run command state;
+- deterministic replay/checkpoint recovery/projection rebuild;
+- Memory creation/revision/provenance/relations;
+- idempotency/outbox foundations;
+- retrieval with PostgreSQL FTS, RRF, deterministic reranking and token-bounded ContextPack;
+- policy/redaction/audit/security domain foundations;
+- worker/job leasing infrastructure;
+- memory-oriented MCP tools.
+
+See [`current-implementation.md`](current-implementation.md) for the fuller boundary and known gaps.
+
+## 6. What target docs do not make available today
+
+The v0.2 target specs must not be interpreted as current runtime support for:
+
+- full Claim/Evidence persistent cognition;
+- complete temporal/reconciliation semantics;
+- full capability attenuation and federation;
+- findings-first repair engine;
+- governed external side effects/reconciliation;
+- incident/revalidation trust restoration;
+- full crypto/data governance;
+- qualification profiles.
+
+Those capabilities require a later implementation phase after documentation completion.
+
+## 7. Documentation-only branch rule
+
+`docs/architecture-v0.2` is intentionally documentation-only. Do not use this branch as an implementation work branch during the architecture documentation phase.
