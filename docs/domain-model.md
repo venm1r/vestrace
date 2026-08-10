@@ -35,6 +35,7 @@ Encryption != Governance
 Mount != Local Memory
 Compensation != Rollback
 Projection != Source of Truth
+Milestone Label != Qualified Profile
 ```
 
 ## Target authority tiers
@@ -61,6 +62,14 @@ See [`current-implementation.md`](current-implementation.md) for a concise snaps
 
 For the detailed pre-v0.2 implementation-level inventory of Rust types and wired/type-only modules, consult `docs/domain-model.md` on the `main` branch at commit `729d456f70f4de93c97d05cce795c09025c62f24`.
 
+## Planning reference
+
+The source-based gap analysis and future domain transition contracts are already documented in:
+
+- [`gap-analysis-v0.2.md`](gap-analysis-v0.2.md)
+- [`plans/README.md`](plans/README.md)
+- [`plans/v0.2-to-v1.0-pr-specification-index.md`](plans/v0.2-to-v1.0-pr-specification-index.md)
+
 ## Documentation rule
 
-A target entity in the v0.2 Domain Model does not count as implemented until a later implementation/gap-analysis phase identifies its runtime path, persistence contract, migrations where needed, and conformance evidence.
+A target entity in the v0.2 Domain Model does not count as implemented until current implementation evidence identifies its runtime path, persistence contract, migration state where needed, and conformance evidence. A planning document alone is not implementation evidence.
