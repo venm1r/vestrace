@@ -13,6 +13,7 @@ Use this checklist for every future implementation PR derived from the v0.2 docu
 - [ ] no second runtime/event store/policy engine is introduced.
 - [ ] derived state remains rebuildable.
 - [ ] historical facts are not silently rewritten.
+- [ ] milestone label and named qualification-profile claims are stated separately.
 
 ## Data / Migration
 
@@ -22,6 +23,7 @@ Use this checklist for every future implementation PR derived from the v0.2 docu
 - [ ] unknown historical values remain unknown rather than invented.
 - [ ] workspace/RLS behavior is preserved for new tables.
 - [ ] downgrade/rollback claims do not exceed actual guarantees.
+- [ ] legacy data is not promoted to broader authority during backfill.
 
 ## Temporal / Concurrency
 
@@ -36,8 +38,10 @@ Use this checklist for every future implementation PR derived from the v0.2 docu
 - [ ] policy/data-governance gates are identified.
 - [ ] negative authorization cases exist.
 - [ ] child/delegated authority cannot widen parent authority.
+- [ ] Memory/object scope cannot widen workspace authority.
 - [ ] secrets are referenced, not persisted in plaintext.
 - [ ] model/export/federation destination restrictions are preserved.
+- [ ] mounted cross-workspace access evaluates source + target policy when applicable.
 
 ## External / Repair / Recovery
 
@@ -48,14 +52,18 @@ When applicable:
 - [ ] compensation is not called rollback.
 - [ ] RepairPlan is immutable and stale-safe.
 - [ ] finding resolution requires verification.
+- [ ] AUTONOMY crash safety is not mislabeled as TRUSTED incident/revalidation.
 - [ ] recovery does not restore TRUSTED without revalidation.
 
 ## Evidence / Conformance
 
-- [ ] every targeted MUST has executable evidence.
+- [ ] every targeted applicable MUST has executable evidence.
 - [ ] test PASS is not presented as profile qualification by itself.
-- [ ] required MUST cases cannot be silently skipped.
+- [ ] required applicable MUST cases cannot be silently skipped.
+- [ ] `NOT_APPLICABLE` is a separate target-scoped decision with reason/evidence, not an alias for missing implementation or SKIPPED.
+- [ ] stable conformance case IDs are not reused for a different observable obligation.
 - [ ] hard security/governance gates cannot be averaged away.
+- [ ] formal FEDERATION/AUTONOMY/TRUSTED profile claims have complete applicable dependency closure.
 - [ ] known limitations are updated.
 
 ## Documentation
@@ -64,6 +72,7 @@ When applicable:
 - [ ] schema/security/getting-started docs are updated when affected.
 - [ ] target architecture docs are changed only when architecture itself changes.
 - [ ] any architecture reversal gets an ADR rather than a silent rewrite.
+- [ ] historical date-prefixed plans are not treated as current transition contracts.
 
 ## Merge block conditions
 
@@ -72,9 +81,12 @@ A PR must not merge when any of these is true:
 ```text
 unresolved authority ownership ambiguity
 missing required migration/backfill rule
-required MUST case skipped/inconclusive
+required applicable MUST case skipped/inconclusive
+NOT_APPLICABLE without applicability evidence
+stable conformance case ID reused for different semantics
 security hard-gate failure
 unknown destructive retry semantics
 history rewrite without explicit architecture decision
+profile/milestone claim stronger than evidence
 implementation claims stronger than evidence
 ```
