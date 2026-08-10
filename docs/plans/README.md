@@ -2,6 +2,8 @@
 
 This directory contains both the current v0.2 → v1.0 transition package and older implementation plans retained for history.
 
+The v0.2 documentation baseline is integrated into `main`. Planning files do not themselves authorize implementation; future code work should use dedicated implementation branches from a reviewed current `main`.
+
 ## Current planning baseline
 
 Start here:
@@ -37,6 +39,8 @@ Date-prefixed plans in this directory, including older `2026-*.md` files, predat
 They are retained for implementation history/rationale and MUST NOT override or be executed in preference to the current v0.2 → v1.0 package.
 
 Likewise, `docs/superpowers/plans/**` is historical unless a current document explicitly cites a specific artifact as implementation evidence or rationale.
+
+The high-level `docs/implementation-plan-v0.2.md` was authored before the architecture documentation was merged. Any wording there about first merging `docs/architecture-v0.2` is historical and already satisfied; the current rule is to branch future implementation from reviewed `main` and re-run the gap delta if implementation reality has materially changed.
 
 ## Precedence by question
 
