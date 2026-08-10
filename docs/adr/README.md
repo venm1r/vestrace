@@ -13,6 +13,7 @@ This directory contains accepted architecture decisions for the v0.2 documentati
 | [ADR-0007](0007-trust-restoration-requires-revalidation.md) | Trust Restoration Requires Revalidation | Accepted |
 | [ADR-0008](0008-v1-trust-is-a-qualification-contract.md) | v1.0 Trust Is a Qualification Contract | Accepted |
 | [ADR-0009](0009-finding-disposition-is-not-integrity-state.md) | Finding Disposition Is Not Integrity State | Accepted |
+| [ADR-0010](0010-qualification-profile-scope-follows-evidence-closure.md) | Qualification Profile Scope Follows Evidence Closure | Accepted |
 
 ## Status semantics
 
