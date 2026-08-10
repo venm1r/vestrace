@@ -165,13 +165,11 @@ Compatibility compares every applied `_sqlx_migrations` entry with the embedded 
 
 The current runtime does not provide:
 
-- agent or workflow execution;
 - approval execution with production authorization (deterministic test adapter only);
 - capability-policy enforcement in HTTP middleware (PolicyEngine port exists, not wired to routes);
 - artifact content-addressed storage;
 - real AG-UI execution or streaming;
 - vector/structured/exact retrieval channels (ports defined, not wired);
-- typed job handlers (worker loop runs but has no registered handlers);
 - memory extractor backed by an LLM (only a deterministic test double exists).
 
 The following are implemented and wired:
@@ -179,6 +177,8 @@ The following are implemented and wired:
 - event-sourced run command execution with deterministic replay and optimistic concurrency;
 - run checkpoint creation, validation, and state restoration;
 - run projection rebuild from event stream;
+- **run worker lifecycle — `AdvanceRun` (Created→Preparing→Running, step dispatch, finalization), `ResumeRun` (Paused→Running), `ExecuteStep` (Pending→Succeeded) handlers with work-queue leasing, lease heartbeats, and dead-letter routing;**
+- **HTTP run lifecycle endpoints — `POST /v1/runs` (create), `GET /v1/runs` (list), `GET /v1/runs/{id}` (detail), `POST /v1/runs/{id}/pause`, `POST /v1/runs/{id}/resume`, `POST /v1/runs/{id}/cancel` with `If-Match` optimistic concurrency;**
 - memory event recording with idempotency and outbox, memory creation with provenance, idempotency and outbox, memory revision with optimistic concurrency, idempotency and outbox, and knowledge-relation linking with idempotency and outbox;
 - memory read paths (find event by id, find memory by id, find revision by id);
 - append-only event enforcement (database trigger prevents UPDATE/DELETE);

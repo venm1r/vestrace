@@ -179,6 +179,15 @@ Enforces:
 
 **Wired**: `PgJobRepository` implements `enqueue`, `lease_next` (`FOR UPDATE SKIP LOCKED`), and `complete`. The CLI `worker` command runs a job-processing loop with graceful shutdown.
 
+### Run Worker (`crates/vestrace-application/src/run/`) — wired
+
+- **`RunWorker`**: leases work items from a `WorkQueuePort`, dispatches to registered `RunWorkHandler`s by `WorkItemKindDiscriminant`, heartbeats the run lease, and handles complete/retry/dead-letter outcomes.
+- **`AdvanceRunHandler`**: transitions `Created→Preparing→Running`, dispatches ready steps as `ExecuteStep` work items, enqueues next `AdvanceRun`, and finalizes the run when all steps are terminal (Succeeded/Failed/Partial).
+- **`ResumeRunHandler`**: transitions `Paused→Running` and enqueues `AdvanceRun`.
+- **`ExecuteStepHandler`**: transitions a step `Pending→Succeeded`, enqueues `AdvanceRun` to check for finalization.
+- **Ports**: `RunStorePort` (load/commit snapshots), `WorkQueuePort` (lease/complete/retry/dead-letter/cancel), `RunLeasePort` (acquire/heartbeat/release), `RunClockPort` (deterministic time).
+- **HTTP**: `POST /v1/runs/{id}/pause`, `/resume`, `/cancel` with `If-Match` optimistic concurrency; `GET /v1/runs/{id}` returns status and version.
+
 ### Type-Only Domain Modules
 
 The following modules define domain types but have no wired application service, infrastructure adapter, or HTTP endpoint:

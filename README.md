@@ -1,6 +1,6 @@
 # Vestrace
 
-Vestrace is an evidence-first knowledge and execution platform. The current P0 foundation provides a Rust service, PostgreSQL persistence with transaction-scoped workspace isolation, health checks, one truthful run-record vertical slice, and a React console that surfaces backend failures.
+Vestrace is an evidence-first knowledge and execution platform. The current foundation provides a Rust service, PostgreSQL persistence with transaction-scoped workspace isolation, health checks, event-sourced run records with deterministic replay and checkpoint recovery, run worker lifecycle (AdvanceRun/ResumeRun/ExecuteStep handlers), HTTP run lifecycle endpoints (create/list/detail/pause/resume/cancel), memory lifecycle services, retrieval, security domain types, and an MCP server.
 
 ## Current maturity
 
@@ -9,22 +9,27 @@ Implemented:
 - Rust workspace and PostgreSQL forward-only migrations.
 - Transaction-scoped workspace and principal RLS context.
 - HTTP liveness and readiness endpoints.
-- PostgreSQL-backed create, list, and get run-record API.
-- Explicit `501 Not Implemented` responses for unsupported REST and AG-UI surfaces.
-- React console that displays API failures instead of substituting mock success data.
-- Rust format, Clippy, test, console typecheck, and console production-build CI gates.
+- PostgreSQL-backed event-sourced run records with deterministic replay, checkpoint recovery, and projection rebuild.
+- Run worker lifecycle — `AdvanceRun` (Created→Preparing→Running, step dispatch, finalization), `ResumeRun` (Paused→Running), `ExecuteStep` (Pending→Succeeded) with work-queue leasing, lease heartbeats, and dead-letter routing.
+- HTTP run lifecycle endpoints — `POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}/pause`, `/resume`, `/cancel` with `If-Match` optimistic concurrency.
+- Memory lifecycle services with HTTP endpoints (event recording, memory creation, revision, knowledge-relation linking, all with idempotency and outbox).
+- Retrieval service with HTTP endpoint (text channel FTS, RRF fusion, deterministic reranking, context pack building).
+- Security domain types (capabilities, approvals, sensitivity, audit), policy engine, redaction service, audit repository, HTTP auth middleware.
+- MCP server with `search_memories` and `get_memory` tools.
+- Job enqueue, leasing via `FOR UPDATE SKIP LOCKED`, and completion.
+- Worker process with graceful shutdown.
+- Rust format, Clippy, test, and CI gates.
 
 Not implemented:
 
-- Run or agent execution.
-- Run-event reduction, deterministic replay, and checkpoint restoration as application behavior.
-- Approval execution.
-- Agents, workflows, triggers, model routing, evaluations, metrics, audit, profile, and artifact APIs.
-- Capability attenuation and risk-policy enforcement.
+- Approval execution with production authorization (deterministic test adapter only).
+- Capability-policy enforcement in HTTP middleware (PolicyEngine port exists, not wired to routes).
 - Artifact content-addressed storage.
 - Real AG-UI execution or event streaming.
+- Vector/structured/exact retrieval channels (ports defined, not wired).
+- Memory extractor backed by an LLM (only a deterministic test double exists).
 
-## P0 HTTP contract
+## HTTP contract
 
 Health routes do not require identity headers:
 
@@ -33,12 +38,15 @@ GET /health/live
 GET /health/ready
 ```
 
-The real run routes are:
+Run routes:
 
 ```text
 POST /v1/runs
 GET  /v1/runs
 GET  /v1/runs/{id}
+POST /v1/runs/{id}/pause
+POST /v1/runs/{id}/resume
+POST /v1/runs/{id}/cancel
 ```
 
 Every run request requires explicit UUID headers:
@@ -48,6 +56,8 @@ x-workspace-id: UUID
 x-principal-id: UUID
 ```
 
+Pause, resume, and cancel require `If-Match: <version>` for optimistic concurrency.
+
 Create payload:
 
 ```json
@@ -56,7 +66,7 @@ Create payload:
 }
 ```
 
-Creating a run persists a run record in `created` status. It does not start an agent, workflow, or State Engine execution.
+Creating a run persists a run record in `created` status. The worker activates it through `Created→Preparing→Running` and dispatches step execution via the work queue.
 
 ## Local container environment
 
