@@ -1,155 +1,132 @@
 # Vestrace
 
-Vestrace is an evidence-first knowledge and execution platform. The current P0 foundation provides a Rust service, PostgreSQL persistence with transaction-scoped workspace isolation, health checks, one truthful run-record vertical slice, and a React console that surfaces backend failures.
+> **Vestrace is a memory-first platform for persistent cognition shared across agents and executions.**
 
-## Current maturity
+> **Memory Engine is the substrate. Persistent Cognition is the capability.**
 
-Implemented:
+This branch (`docs/architecture-v0.2`) is a **documentation-only architecture branch**. It defines the target architecture while keeping the current implementation status separate. No Rust code or migrations are changed as part of this documentation phase.
 
-- Rust workspace and PostgreSQL forward-only migrations.
-- Transaction-scoped workspace and principal RLS context.
-- HTTP liveness and readiness endpoints.
-- PostgreSQL-backed create, list, and get run-record API.
-- Explicit `501 Not Implemented` responses for unsupported REST and AG-UI surfaces.
-- React console that displays API failures instead of substituting mock success data.
-- Rust format, Clippy, test, console typecheck, and console production-build CI gates.
+## Documentation layers
 
-Not implemented:
+### Target architecture — normative
 
-- Run or agent execution.
-- Run-event reduction, deterministic replay, and checkpoint restoration as application behavior.
-- Approval execution.
-- Agents, workflows, triggers, model routing, evaluations, metrics, audit, profile, and artifact APIs.
-- Capability attenuation and risk-policy enforcement.
-- Artifact content-addressed storage.
-- Real AG-UI execution or event streaming.
+Start here:
 
-## P0 HTTP contract
+- [Architecture Contract v0.2](docs/specs/vestrace-architecture-contract-v0.2.md)
+- [Normative Documentation Index](docs/specs/README.md)
+- [Accepted ADRs](docs/adr/README.md)
+- [Version Roadmap v0.2 → v1.0](docs/specs/vestrace-version-roadmap-v0.2-to-v1.0.md)
 
-Health routes do not require identity headers:
+### Current implementation
 
-```text
-GET /health/live
-GET /health/ready
-```
+- [Current Implementation Snapshot](docs/current-implementation.md)
+- [Database Schema & Migrations](docs/database-schema.md)
+- [Security & RLS](docs/security-and-rls.md)
+- [Getting Started](docs/getting-started.md)
 
-The real run routes are:
+The target docs describe what Vestrace **must become**. The implementation snapshot describes what is actually wired in `main@729d456f70f4de93c97d05cce795c09025c62f24`.
+
+## Target architecture
+
+The v0.2 baseline completes twelve architecture blocks:
 
 ```text
-POST /v1/runs
-GET  /v1/runs
-GET  /v1/runs/{id}
+[✓] 1. Persistent Cognition Core
+[✓] 2. Temporal & Concurrency
+[✓] 3. Mutation & Reconciliation
+[✓] 4. Retrieval / ContextPack 2.0
+[✓] 5. Execution Feedback & Learning
+[✓] 6. Capability Governance
+[✓] 7. Identity / Workspace / Federation
+[✓] 8. Health / Integrity / Repair
+[✓] 9. External Effects
+[✓] 10. Incident / Recovery / Revalidation
+[✓] 11. Crypto / Data Governance
+[✓] 12. Qualification / Conformance
 ```
 
-Every run request requires explicit UUID headers:
+Core architectural laws include:
+
+- canonical state is distinct from derived projections;
+- history is corrected, not silently rewritten;
+- Vestrace has one durable execution/state boundary;
+- runtime authority comes from capabilities + policy, not role names;
+- subagent authority can only be attenuated;
+- `UNKNOWN` is a first-class state for ambiguous outcomes;
+- deterministic repair only reconstructs downward from a more authoritative layer;
+- recovery does not restore trust without revalidation;
+- secrets are not ordinary memory;
+- v1.0 is defined by the `TRUSTED` qualification profile, not feature count.
+
+## Current implementation snapshot
+
+The current source foundation includes:
+
+- Rust Edition 2024 workspace;
+- PostgreSQL + SQLx migrations and workspace-scoped RLS context;
+- event-sourced Run command execution with optimistic concurrency;
+- deterministic Run replay, checkpoints and projection rebuild;
+- memory creation/revision/provenance/relations with idempotency and outbox;
+- append-only event enforcement and active-source invariant;
+- PostgreSQL FTS retrieval, RRF fusion, deterministic reranking and token-bounded ContextPack building;
+- retrieval journaling and degraded channel behavior;
+- capability/sensitivity/approval domain types, policy abstractions, redaction and audit infrastructure;
+- worker/job leasing foundation;
+- MCP memory search/read tools;
+- OpenAI-compatible provider adapters.
+
+A type, placeholder endpoint or adapter existing in the repository does **not** mean the corresponding target architecture capability is fully implemented.
+
+See [Current Implementation Snapshot](docs/current-implementation.md) for the boundary and known gaps.
+
+## Repository shape
 
 ```text
-x-workspace-id: UUID
-x-principal-id: UUID
+crates/
+  vestrace-domain/
+  vestrace-application/
+  vestrace-infrastructure/
+  vestrace-http/
+  vestrace-cli/
+  vestrace-mcp/
+  vestrace-rig-spike/       # experimental
+
+migrations/
+tests/
+docs/
+apps/
 ```
 
-Create payload:
+The intended dependency direction is inward:
 
-```json
-{
-  "title": "Verify retention policy"
-}
+```text
+interfaces / infrastructure
+          ↓
+      application
+          ↓
+        domain
 ```
 
-Creating a run persists a run record in `created` status. It does not start an agent, workflow, or State Engine execution.
+## Local development
 
-## Local container environment
+Prerequisites and current commands are documented in [Getting Started](docs/getting-started.md).
 
-Prerequisites: Docker Engine with Docker Compose v2, plus `curl`, Python 3, and Bash for the smoke checks. The Compose file uses distinct fixed credentials named `bootstrap-local-development-only` and `runtime-local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
-
-Build and start both services:
+Typical Docker flow:
 
 ```bash
-docker compose -p vestrace-foundation up --build -d
-./scripts/foundation-smoke.sh
-bash ./scripts/foundation-run-smoke.sh
-```
-
-The run smoke script explicitly seeds two local-only workspace/principal pairs, verifies create/list/get through HTTP, and confirms that the created run is hidden from the second workspace. It prints the identity values that can be supplied to the console. Identity creation remains outside the HTTP adapter; production systems must provision identities through an authenticated control plane.
-
-The server listens inside the container on `0.0.0.0:8080`, while Compose publishes it only as `127.0.0.1:8080` by default. To use another loopback port:
-
-```bash
-VESTRACE_HTTP_PORT=18080 docker compose -p vestrace-foundation up --build -d
-./scripts/foundation-smoke.sh http://127.0.0.1:18080
-bash ./scripts/foundation-run-smoke.sh http://127.0.0.1:18080
-```
-
-Compose waits for PostgreSQL to report healthy before starting the server. The server connects, applies embedded migrations, and then begins serving. `/health/live` reports process liveness. `/health/ready` checks database access and exact migration compatibility.
-
-The PostgreSQL image bootstraps with the local-only `vestrace_bootstrap` administrator and provisions a separate restricted `vestrace` runtime login. Verify HTTP health and runtime RLS behavior with:
-
-```bash
+docker compose -p vestrace up --build -d
 ./scripts/foundation-smoke.sh
 bash ./scripts/foundation-run-smoke.sh
 ./scripts/foundation-runtime-rls.sh
+docker compose -p vestrace down --remove-orphans
 ```
 
-Production deployments must use managed secrets and independently provisioned least-privilege migration and runtime identities. The fixed Compose credentials are not a production template.
+## Documentation phase constraint
 
-Stop services while retaining data:
+Until the v0.2 documentation set passes its consistency review:
 
-```bash
-docker compose -p vestrace-foundation down --remove-orphans
-```
-
-Remove the development database volume as well:
-
-```bash
-docker compose -p vestrace-foundation down -v --remove-orphans
-```
-
-## Console
-
-The console is located in `apps/console`. Configure the request identity explicitly. The local run smoke prints a usable development pair:
-
-```text
-VITE_VESTRACE_WORKSPACE_ID=<workspace UUID>
-VITE_VESTRACE_PRINCIPAL_ID=<principal UUID>
-```
-
-An absent identity is not replaced with a default. The backend returns `400 Bad Request`, and the console displays that failure.
-
-Run locally:
-
-```bash
-npm --prefix apps/console ci
-npm --prefix apps/console run typecheck
-npm --prefix apps/console run build
-npm --prefix apps/console run dev
-```
-
-## Configuration
-
-Configuration precedence is: built-in defaults, an optional non-secret TOML file selected with `--config`, `VESTRACE_` environment variables using `__` for nesting, then typed CLI overrides such as `--http-bind`. TOML rejects unknown fields. The secret-bearing database URL must come from `VESTRACE_DATABASE__URL` or another secret-management environment, never TOML or a CLI argument.
-
-Logging defaults to text at `info`. Set `VESTRACE_OBSERVABILITY__FORMAT=json` for structured JSON or change `VESTRACE_OBSERVABILITY__LOG_FILTER` for application verbosity. Dependency SQL and connection details remain filtered even at verbose levels.
-
-## Verification
-
-The project pins Rust 1.85.0. With a pgvector-enabled PostgreSQL 17 database available through `DATABASE_URL`, run:
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-targets --all-features
-npm --prefix apps/console ci
-npm --prefix apps/console run typecheck
-npm --prefix apps/console run build
-docker compose config --quiet
-```
-
-## Documentation
-
-Project references are under `docs/`:
-
-- [Architecture Guide](docs/architecture.md)
-- [Domain Model Reference](docs/domain-model.md)
-- [Database Schema & Migrations](docs/database-schema.md)
-- [Security & RLS Architecture](docs/security-and-rls.md)
-- [Getting Started Guide](docs/getting-started.md)
+- no implementation work belongs in this branch;
+- no migrations are added;
+- no runtime/API behavior is changed;
+- no target feature is claimed implemented merely because it is specified;
+- implementation gap analysis and PR planning happen only after the documentation baseline is complete.
