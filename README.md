@@ -24,6 +24,12 @@ Start here:
 - [Security & RLS](docs/security-and-rls.md)
 - [Getting Started](docs/getting-started.md)
 
+### Transition package
+
+- [36-PR Planning Index](docs/plans/v0.2-to-v1.0-pr-specification-index.md)
+- [Planning Directory Status](docs/plans/README.md)
+- [Documentation Status](docs/documentation-status-v0.2.md)
+
 The target docs describe what Vestrace **must become**. The implementation snapshot describes what is actually wired in `main@729d456f70f4de93c97d05cce795c09025c62f24`.
 
 ## Target architecture
@@ -56,7 +62,8 @@ Core architectural laws include:
 - deterministic repair only reconstructs downward from a more authoritative layer;
 - recovery does not restore trust without revalidation;
 - secrets are not ordinary memory;
-- v1.0 is defined by the `TRUSTED` qualification profile, not feature count.
+- v1.0 is defined by the `TRUSTED` qualification profile, not feature count;
+- milestone labels and qualification-profile claims are distinct and evidence-scoped (ADR-0010).
 
 ## Current implementation snapshot
 
@@ -121,12 +128,15 @@ bash ./scripts/foundation-run-smoke.sh
 docker compose -p vestrace down --remove-orphans
 ```
 
-## Documentation phase constraint
+## Documentation branch state
 
-Until the v0.2 documentation set passes its consistency review:
+The architecture baseline, implementation gap analysis, 36-PR transition package, migration/conformance matrices and consistency audit are complete for the inspected baseline.
+
+Branch rules remain:
 
 - no implementation work belongs in this branch;
-- no migrations are added;
+- no migrations are added or edited;
 - no runtime/API behavior is changed;
 - no target feature is claimed implemented merely because it is specified;
-- implementation gap analysis and PR planning happen only after the documentation baseline is complete.
+- if `main` moves materially, re-run a gap delta before using the plans unchanged;
+- architecture changes after freeze require deliberate spec/ADR amendment.
