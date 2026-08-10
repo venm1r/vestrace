@@ -3,11 +3,11 @@
 **Branch:** `docs/architecture-v0.2`  
 **Baseline:** `main@729d456f70f4de93c97d05cce795c09025c62f24`  
 **Date:** 2026-08-10  
-**Documentation state:** **FROZEN BASELINE — ready for review/gap analysis, not implementation**
+**Documentation state:** **FROZEN ARCHITECTURE + COMPLETED GAP ANALYSIS — implementation not started**
 
 ## 1. Purpose
 
-This file classifies the documentation tree so target architecture, current implementation, historical design and implementation plans cannot be mistaken for each other.
+This file classifies the documentation tree so target architecture, current implementation, historical design, gap analysis and implementation plans cannot be mistaken for each other.
 
 ## 2. Document classes
 
@@ -31,53 +31,47 @@ These documents define the v0.2+ target and take precedence for future architect
 
 ### B. Architecture/domain entry points
 
-These route readers to the correct documentation layer:
-
 - `README.md`
 - `docs/architecture.md`
 - `docs/domain-model.md`
 
-They must not duplicate detailed normative semantics that belong to specialized specs.
+These route readers to the correct documentation layer and should not duplicate detailed normative semantics.
 
 ### C. Current implementation reference
 
-These describe what is actually wired in the baseline source snapshot:
+These describe what is actually wired in the inspected source snapshot:
 
 - `docs/current-implementation.md`
 - `docs/database-schema.md`
 - `docs/security-and-rls.md`
 - `docs/getting-started.md`
 - `docs/acceptance/**`
-- generated/current schema artifacts where present
+- current schema artifacts where present
 
-Current implementation documents must never imply that a target feature is available merely because it is specified or a type exists.
+Source/migrations/tests remain authoritative for implementation reality.
 
-### D. Historical architecture/design artifacts
+### D. Gap-analysis / transition artifacts
 
-Documents created before the v0.2 normative baseline remain useful for rationale/history but do not override the new contract when they conflict.
+These are now complete for the inspected baseline:
 
-This includes especially:
+- `docs/gap-analysis-v0.2.md` — architecture-level gap analysis;
+- `docs/requirement-coverage-v0.2.md` — requirement-family/current-code coverage matrix;
+- `docs/implementation-plan-v0.2.md` — dependency, migration and PR sequence.
 
-- older `docs/superpowers/specs/**` design/ADR artifacts (directory now contains an explicit historical-archive README);
-- old State Engine/Harness horizon designs;
-- the 2026-07-31 v0.1 design;
-- earlier cross-workspace/encryption/export designs;
-- legacy `docs/specs/r1-*.md` implementation-oriented specs (explicitly classified by `docs/specs/LEGACY.md`).
+These are planning/analysis artifacts. They do not override the normative architecture and do not authorize code changes on this branch.
 
-A historical document may still be referenced for rationale, but its conflicting normative statements are superseded by the v0.2 Architecture Contract and Accepted ADRs.
+### E. Historical architecture/design artifacts
 
-### E. Implementation plans
+Older `docs/superpowers/specs/**`, legacy `docs/specs/r1-*.md`, v0.1 designs and earlier State Engine/Harness/federation/encryption designs are retained for history/rationale but are not normative where they conflict with v0.2.
 
-The following are plans, not architecture truth:
+### F. Old implementation plans
 
 - `docs/plans/**`
 - `docs/superpowers/plans/**`
 
-They may refer to older architecture and must not be executed automatically after the v0.2 documentation baseline without a new gap-analysis/implementation-plan phase.
+These may refer to superseded architecture and must not be executed automatically after this gap analysis.
 
 ## 3. Conflict precedence
-
-When documents disagree, use this order:
 
 ```text
 Architecture Contract v0.2
@@ -88,18 +82,20 @@ Specialized normative v0.2 specification
     ↓
 Normative Invariants Catalog / profile mapping
     ↓
-Current implementation documentation (describes reality, not target)
+Current implementation source/tests for implementation reality
+    ↓
+Current implementation documentation
+    ↓
+Gap analysis / implementation plan (transition guidance)
     ↓
 Historical design artifacts
     ↓
 Old implementation plans
 ```
 
-Current implementation truth is special: source/migrations/tests remain authoritative for what is actually implemented, even when the target architecture requires different future behavior.
+ADR-0009 remains the explicit clarification that `SUPPRESSED` and `ACCEPTED_RISK` are operational disposition overlays, not HealthFinding integrity states.
 
-ADR-0009 is an intentional clarification within the normative baseline: `SUPPRESSED` and `ACCEPTED_RISK` are operational disposition overlays, not `HealthFinding` integrity lifecycle states. It takes precedence over the older lifecycle listing in the Health contract.
-
-## 4. Documentation completed in this branch
+## 4. Normative architecture completed
 
 - [x] Canonical product definition fixed.
 - [x] Twelve architecture blocks consolidated into one Architecture Contract.
@@ -113,40 +109,71 @@ ADR-0009 is an intentional clarification within the normative baseline: `SUPPRES
 - [x] Qualification/conformance profiles and release gates documented.
 - [x] v0.2 → v1.0 roadmap documented.
 - [x] Key irreversible decisions captured as Accepted ADRs.
-- [x] README/architecture/domain entry points normalized.
-- [x] Current implementation snapshot separated from target architecture.
-- [x] Security/schema/getting-started marked as implementation references.
-- [x] Legacy `r1-*` and `docs/superpowers/specs/**` design artifacts explicitly marked historical.
-- [x] Documentation-only branch verified against `main` with no code/migration changes.
+- [x] Legacy design artifacts explicitly classified.
 
-## 5. Documentation-quality gates
+## 5. Documentation QA completed
 
-Final documentation QA completed:
+- [x] Normative links/indexes checked against files present on the branch.
+- [x] Core terminology/casing normalized.
+- [x] Finding lifecycle conflict resolved through ADR-0009.
+- [x] Requirement families referenced by specs/ADRs exist in the invariant catalog.
+- [x] Target specs explicitly separate specification from implementation availability.
+- [x] Current implementation docs separate wired behavior from target guarantees.
+- [x] Branch previously verified documentation-only against `main`.
 
-- [x] Relative links used by the new normative indexes/entry points resolve to files/directories present on `docs/architecture-v0.2`.
-- [x] Core terminology/casing is normalized: `Memory`, `Claim`, `HealthFinding`, `UNKNOWN`; health states; trust states; repairability/reversibility enums; conformance profile names.
-- [x] The identified finding-lifecycle contradiction was resolved by Accepted ADR-0009 with explicit precedence in the normative index.
-- [x] Requirement-family/range references used by the new ADRs and specialized specs map to families present in the Normative Invariants Catalog (`ARC`, `MEM`, `TMP`, `MUT`, `RET`, `LRN`, `CAP`, `IDW`, `HLT`, `EXT`, `REC`, `GOV`, `QUAL`).
-- [x] Roadmap milestones and conformance profiles are intentionally separated: release names (`Correct/Learn/Govern/Understand/Connect/Trust`) are not invented runtime profile names; qualification profiles remain `CORE/MEMORY/COGNITION/AUTONOMY/FEDERATION/TRUSTED`.
-- [x] Target specs contain explicit disclaimers that specification does not imply current implementation availability.
-- [x] Current-implementation docs explicitly distinguish wired behavior from target guarantees.
-- [x] Legacy `r1-*` specs and older `docs/superpowers/specs/**` are explicitly classified as historical rather than normative v0.2.
+## 6. Gap-analysis phase completed
 
-## 6. Documentation freeze criterion
+- [x] Reconfirmed inspected `main` baseline: `729d456f70f4de93c97d05cce795c09025c62f24`.
+- [x] Inspected Run, Memory, Event, Provenance, Retrieval, Security, Budget, Diagnostics, Tool, Enterprise, Artifact and evaluation foundations.
+- [x] Corrected implementation snapshot: `doctor` and `rebuild` are currently wired.
+- [x] Identified current ContextPack/retrieval semantic placeholders.
+- [x] Classified all normative requirement families as Candidate/Partial/Type-only/Missing/Conflict/Verify without claiming conformance PASS.
+- [x] Identified high-confidence schema/migration impact areas.
+- [x] Defined dependency-ordered implementation sequence.
+- [x] Defined first v0.2 `Correct` implementation tranche and later v0.3–v1.0 PR sequence.
 
-The v0.2 architecture documentation baseline is now considered **frozen for review** because the quality gates above pass and the branch remains documentation-only.
+## 7. Key transition conclusion
 
-“Frozen” means architectural changes should now be made deliberately through a new/updated normative specification or ADR rather than by silently editing assumptions during implementation planning.
+The current repository should **not be rewritten**.
 
-It does **not** authorize implementation work in this branch.
+Preserve:
 
-## 7. Next allowed phase
+```text
+Run event sourcing
+RLS
+Memory revisions
+idempotency / jobs / outbox
+diagnostics / doctor
+retrieval RRF shell
+existing acceptance scenario ideas
+```
 
-The next phase may produce documentation/analysis only:
+Normalize before expansion:
 
-1. gap analysis: current `main` vs v0.2 normative requirements;
-2. requirement-to-current-implementation coverage matrix;
-3. migration/schema impact analysis;
-4. implementation milestone/PR plan.
+```text
+Claim/conflict semantics
+Event/Memory temporal model
+ContextPack exact-revision hydration
+CapabilityGrant/delegation/risk
+cross-workspace grant + mount
+direct rebuild → RepairPlan protocol
+ToolInvocation → ExternalEffect UNKNOWN/reconciliation
+Run recovery → Incident/Trust/Revalidation
+crypto seeds → DataPolicy/SecretRef/lifecycle
+acceptance tests → requirement-driven conformance/qualification
+```
 
-Only after those artifacts are reviewed should code changes begin, and they must occur in a separate implementation branch.
+## 8. Implementation start gate
+
+No implementation work has been started by this phase.
+
+Before code changes begin:
+
+1. review `gap-analysis-v0.2.md`;
+2. review `requirement-coverage-v0.2.md`;
+3. review `implementation-plan-v0.2.md`;
+4. if `main` moves materially, re-run the gap delta;
+5. create a separate implementation branch/PR series;
+6. use requirement IDs as PR acceptance criteria.
+
+The documentation architecture remains frozen unless a deliberate ADR/spec amendment is required.
