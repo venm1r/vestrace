@@ -3,7 +3,9 @@
 **Branch:** `docs/architecture-v0.2`  
 **Baseline:** `main@729d456f70f4de93c97d05cce795c09025c62f24`  
 **Date:** 2026-08-10  
-**Documentation state:** **FROZEN ARCHITECTURE + COMPLETED GAP ANALYSIS + COMPLETED 36-PR TRANSITION PACKAGE + COMPLETED TRACEABILITY/ROLLOUT/RISK GATES**
+**Documentation state:** **READY FOR DOCUMENTATION REVIEW / MERGE**
+
+See the final audit: [`documentation-readiness-v0.2.md`](documentation-readiness-v0.2.md).
 
 ## 1. Normative architecture
 
@@ -19,7 +21,9 @@ Completed and frozen:
 - Crypto & Data Governance Contract;
 - Qualification / Conformance Specification;
 - v0.2 → v1.0 roadmap;
-- ADR-0001…ADR-0009.
+- ADR-0001…ADR-0010.
+
+ADR-0009 clarifies finding disposition vs integrity state. ADR-0010 clarifies milestone labels vs named qualification-profile evidence closure.
 
 ## 2. Current implementation / gap analysis
 
@@ -46,68 +50,80 @@ E1–E4
 T1–T8
 ```
 
-Primary index:
+Primary navigation:
 
-- `docs/plans/v0.2-to-v1.0-pr-specification-index.md`
+- `docs/plans/README.md`;
+- `docs/plans/v0.2-to-v1.0-pr-specification-index.md`.
 
-Global planning artifacts:
+Global planning artifacts include:
 
-- `v0.2-to-v1.0-36-pr-execution-matrix.md`;
-- `v0.2-to-v1.0-parallelization-map.md`;
-- `v0.2-to-v1.0-requirement-pr-traceability.md`;
-- `v0.2-to-v1.0-schema-impact-summary.md`;
-- `v0.2-to-v1.0-migration-rollout-compatibility-contract.md`;
-- `v0.2-to-v1.0-conformance-case-index.md`;
-- `v0.2-to-v1.0-release-evidence-gates.md`;
-- `v0.2-to-v1.0-risk-register.md`;
-- `future-pr-review-checklist.md`.
+- 36-PR execution matrix;
+- dependency/parallelization map;
+- requirement → PR traceability;
+- schema impact summary;
+- migration rollout/compatibility contract;
+- conformance-case index;
+- release evidence gates;
+- risk register;
+- universal future PR review checklist.
 
 Per-phase artifacts include detailed contracts plus migration/backfill and conformance matrices for Correct, Learn, Govern, Understand, Connect and Trust.
 
-## 4. Conflict precedence
+## 4. Final consistency corrections
+
+Completed:
+
+- stable conformance case-ID collision removed;
+- applicability separated from applicable-case execution status;
+- `MEM-011` explicit delivery/evidence ownership added;
+- `RET-014` moved to evidence-backed applicability handoff until mounted retrieval exists;
+- v0.2 foundational Memory security closure made explicit;
+- AUTONOMY/FEDERATION/TRUSTED claim boundaries clarified through ADR-0010;
+- current vs historical date-prefixed planning documents classified;
+- stale navigation text removed.
+
+## 5. Conflict precedence
+
+For target architecture:
 
 ```text
 Architecture Contract v0.2
 → newer Accepted ADR
 → specialized normative v0.2 spec
 → Normative Invariants Catalog
-→ current source/migrations/tests for implementation reality
-→ current implementation docs
 → transition planning docs
 → historical designs/plans
 ```
 
-ADR-0009 remains the clarification that suppression/accepted risk are disposition overlays, not HealthFinding integrity resolution states.
+For implementation reality:
 
-## 5. Completion checklist
+```text
+source/migrations/tests
+→ current implementation docs
+→ planning assumptions
+```
+
+## 6. Completion checklist
 
 - [x] 12 architecture blocks consolidated.
 - [x] stable requirement IDs defined.
 - [x] implementation reality separated from target architecture.
 - [x] gap analysis completed.
-- [x] requirement coverage classified without false PASS claims.
 - [x] all 36 future PRs documented.
 - [x] detailed contracts created for all phases.
 - [x] migration/backfill matrices created.
 - [x] conformance-case matrices/index created.
-- [x] global schema impact summary created.
-- [x] dependency/parallelization map created.
-- [x] requirement → PR traceability map created.
-- [x] migration rollout/compatibility policy created.
-- [x] release evidence gates created.
-- [x] architecture transition risk register created.
-- [x] universal future PR review checklist created.
-- [x] legacy/historical documents classified.
+- [x] requirement → PR traceability created.
+- [x] rollout/release/risk/review contracts created.
+- [x] stable case IDs reconciled.
+- [x] applicability semantics reconciled.
+- [x] milestone/profile claims reconciled.
+- [x] current/historical plans classified.
+- [x] final readiness audit completed with no remaining documentation blocker identified.
 - [x] documentation branch contains no authorized implementation changes.
 
-## 6. Maintenance-only state
+## 7. After merge
 
-No additional architecture discovery or transition-planning layer is required for the frozen baseline.
+The v0.2 architecture baseline should remain frozen unless changed deliberately through spec/ADR amendment.
 
-Only these documentation actions remain valid until implementation is separately authorized:
-
-1. re-run gap delta if `main` changes materially;
-2. amend architecture only through deliberate spec/ADR changes;
-3. update planning contracts if implementation reality invalidates an assumption;
-4. keep requirement/evidence/PR mappings synchronized;
-5. keep known risks and compatibility rules current.
+If `main` moves materially, re-run a gap delta before executing the 36-PR package unchanged.
