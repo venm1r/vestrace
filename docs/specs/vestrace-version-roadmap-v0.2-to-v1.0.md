@@ -2,11 +2,11 @@
 
 **Статус:** normative release-readiness roadmap  
 **Дата:** 2026-08-10  
-**Основание:** Architecture Contract v0.2 + Qualification / Conformance Specification.
+**Основание:** Architecture Contract v0.2 + Qualification / Conformance Specification + ADR-0010.
 
 ## 1. Принцип roadmap
 
-Версия определяется не количеством feature flags, а завершённостью соответствующего архитектурного capability layer и прохождением требуемого qualification profile.
+Версия определяется не количеством feature flags, а завершённостью соответствующего архитектурного capability layer и прохождением требуемого evidence gate. Milestone label и named qualification profile связаны, но не являются синонимами.
 
 ```text
 v0.2 Correct
@@ -17,7 +17,7 @@ v0.2 Correct
 → v1.0 Trust
 ```
 
-Каждый следующий milestone наследует предыдущие hard requirements.
+Каждый следующий milestone наследует предыдущие hard requirements. Named profile может быть заявлен только при полном applicable dependency/evidence closure для exact target.
 
 ---
 
@@ -52,12 +52,16 @@ MEMORY
 - retrieval не возвращает superseded state как current;
 - ContextPack соблюдает budget/provenance/security;
 - derived retrieval state rebuildable;
+- Memory scope не расширяет workspace authority;
 - no unauthorized workspace access;
-- requirement families `ARC/MEM/TMP/MUT/RET` проходят hard gates.
+- profile-scoped foundational capability/default-deny/no-self-escalation checks pass;
+- requirement families `ARC/MEM/TMP/MUT/RET` проходят applicable hard gates.
+
+`RET-014` может быть `NOT_APPLICABLE` только если qualified target не включает mounted cross-workspace retrieval; applicability должна иметь evidence.
 
 ## Non-goal
 
-Полная автономность, federation, crypto governance и внешние side effects не являются release gate v0.2.
+Полная capability governance, автономность, federation, crypto governance и внешние side effects не являются release gate v0.2.
 
 ---
 
@@ -107,14 +111,16 @@ COGNITION
 - MemoryShareGrant + MemoryMount;
 - federation trust/evidence model.
 
-## Required profiles
+## Required qualification state
 
 ```text
 CORE
 MEMORY
 COGNITION
 +
-FEDERATION where federation is enabled
+full CAP/IDW governance evidence
++
+FEDERATION only when enabled and its complete applicable evidence closure passes
 ```
 
 ## Exit criteria
@@ -125,8 +131,10 @@ FEDERATION where federation is enabled
 - approvals bound immutable intent;
 - workspace isolation bypass suite passes;
 - cross-workspace sharing requires source + target consent;
+- mounted retrieval satisfies `RET-014`;
 - no wildcard/transitive sharing;
-- federation identity does not imply data permission.
+- federation identity does not imply data permission;
+- a formal FEDERATION profile claim is made only with complete enabled-profile evidence closure.
 
 ---
 
@@ -145,6 +153,10 @@ FEDERATION where federation is enabled
 - RepairPlan / RepairExecution / Verification;
 - recurrence/flapping;
 - scope-aware health propagation.
+
+## Qualification status
+
+`Understand` — milestone label, а не отдельный named qualification profile. Его HLT/repair evidence входит в последующий AUTONOMY/TRUSTED dependency closure.
 
 ## Exit criteria
 
@@ -182,6 +194,8 @@ FEDERATION where federation is enabled
 AUTONOMY
 ```
 
+Формальный AUTONOMY claim допустим только при полном applicable dependency closure. По ADR-0010 crash/fault safety AUTONOMY относится к governed execution/repair/effect state across process failure; installation-level Incident/TrustState restoration/post-incident revalidation относится к TRUSTED.
+
 ## Exit criteria
 
 - no universal exactly-once claim;
@@ -190,8 +204,13 @@ AUTONOMY
 - unsafe retry after ambiguous dispatch prohibited;
 - approval bound exact effect intent;
 - compensation distinct from rollback;
-- fault scenarios around dispatch boundary pass;
+- deterministic crash/fault scenarios вокруг execution/effect boundary pass;
+- ambiguous effect state безопасно сохраняется/reconstructs после process failure;
 - adapters publish limitations.
+
+## Non-claim
+
+v0.6/AUTONOMY не означает TRUSTED incident containment, trust restoration или post-incident revalidation.
 
 ---
 
@@ -236,7 +255,8 @@ TRUSTED-FEDERATED
 - qualification bundle identifies exact build/config/environment;
 - security/governance hard gates cannot be offset by quality metrics;
 - known limitations are published;
-- full TRUSTED dependency closure passes.
+- full TRUSTED dependency closure passes;
+- federation deployment claims TRUSTED-FEDERATED only when FEDERATION closure also passes.
 
 ---
 
@@ -269,6 +289,10 @@ README/current architecture docs должны отдельно показыва�
 
 Наличие roadmap section не означает implementation availability.
 
+## 8.5 Milestone vs profile claim
+
+Release metadata MUST record milestone label and claimed qualification profiles separately. Partial capability evidence не должно называться полным profile claim.
+
 ---
 
 # 9. Release evidence
@@ -281,8 +305,10 @@ ReleaseEvidence
 ├─ source revision
 ├─ build digest
 ├─ schema version set
+├─ milestone label
 ├─ claimed profiles
 ├─ qualification bundle refs
+├─ applicability decisions
 ├─ known limitations
 └─ signed manifest? (profile-dependent)
 ```
@@ -291,4 +317,4 @@ ReleaseEvidence
 
 # 10. Roadmap completion definition
 
-Roadmap считается выполненным не когда все пункты отмечены вручную, а когда v1.0 target проходит TRUSTED profile для конкретной supported deployment configuration и Architecture Contract не содержит незакрытых MUST requirements для этого profile.
+Roadmap считается выполненным не когда все пункты отмечены вручную, а когда v1.0 target проходит TRUSTED profile для конкретной supported deployment configuration и Architecture Contract не содержит незакрытых applicable MUST requirements для этого profile.
