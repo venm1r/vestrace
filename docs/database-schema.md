@@ -2,7 +2,7 @@
 
 ## Documentation status
 
-This document describes the **current implementation schema foundation** for the source snapshot behind `docs/architecture-v0.2`.
+This document describes the **current implementation schema foundation** captured by the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
 
 It is not the target v0.2 domain schema specification. The normative target model is defined in:
 
@@ -10,7 +10,7 @@ It is not the target v0.2 domain schema specification. The normative target mode
 - [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md)
 - [`specs/vestrace-crypto-data-governance-contract-v0.2.md`](specs/vestrace-crypto-data-governance-contract-v0.2.md)
 
-No migrations are added or changed during this documentation phase.
+The v0.2 documentation merge did not add, edit, or apply runtime migrations.
 
 ## Migration source of truth
 
@@ -20,7 +20,7 @@ Runtime compatibility checks applied `_sqlx_migrations` entries against the embe
 
 ## Current storage role
 
-PostgreSQL is the primary authoritative transactional store for the current implementation: workspaces/principals, Run state/history, Memory state/revisions/provenance, jobs/outbox/idempotency, retrieval journals, audit and related product metadata.
+PostgreSQL is the primary authoritative transactional store for the inspected implementation: workspaces/principals, Run state/history, Memory state/revisions/provenance, jobs/outbox/idempotency, retrieval journals, audit and related product metadata.
 
 The target architecture preserves PostgreSQL as the authoritative transactional/domain-state store, while target artifact bytes may live in governed local content-addressed storage. A CAS hash identifies/integrity-checks bytes; it does not replace domain metadata or authorization.
 
@@ -43,7 +43,7 @@ The source migration SQL, not this summary, is authoritative for exact table/col
 
 Current Run persistence uses append-oriented event history plus projections and recovery checkpoints.
 
-The current foundation includes:
+The inspected foundation includes:
 
 - `run_events` — sequenced event envelopes;
 - `run_streams` — current stream version / optimistic concurrency;
@@ -56,7 +56,7 @@ The application layer replays canonical Run history and can rebuild projections.
 
 Current schema supports Memory identity/revisions, provenance/relations and retrieval-related projections/journals.
 
-Database-level integrity includes append-only event enforcement and an invariant requiring active memories to have a source in the current implementation snapshot.
+Database-level integrity includes append-only event enforcement and an invariant requiring active memories to have a source in the inspected implementation snapshot.
 
 The v0.2 target Domain Model introduces additional semantics such as Claim, richer Evidence/Derivation, conflicts, sharing, health/repair, external effects and governance. Their appearance in target docs does **not** imply corresponding migration tables currently exist.
 
@@ -83,5 +83,5 @@ Target v0.2 requires derived indexes/caches/projections to be rebuildable from m
 
 - migrations remain forward-only implementation artifacts;
 - applied migrations are not silently rewritten;
-- new target requirements require explicit migration planning only after documentation completion;
-- migration qualification must later verify data/history/invariant preservation.
+- target requirements that need schema changes require explicit future migration planning and implementation review;
+- migration qualification must verify data/history/invariant preservation before a release/profile claim relies on the new schema.
