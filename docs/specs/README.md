@@ -1,10 +1,10 @@
-# Vestrace v0.2 Normative Documentation Index
+# Vestrace Normative Documentation Index
 
-This directory contains the target architecture documentation for the frozen v0.2 baseline integrated into `main`.
+This directory contains the frozen v0.2 target architecture plus explicitly accepted post-v0.2 architecture extensions.
 
-> These specifications describe the target architecture. They do not by themselves assert current implementation availability.
+> These specifications describe target architecture. They do not by themselves assert current implementation availability.
 
-## Normative hierarchy
+## Frozen v0.2 normative hierarchy
 
 1. [Architecture Contract v0.2](vestrace-architecture-contract-v0.2.md) — top-level product and architecture contract.
 2. [Domain Model v0.2](vestrace-domain-model-v0.2.md) — entities, authority tiers and aggregate boundaries.
@@ -18,24 +18,39 @@ This directory contains the target architecture documentation for the frozen v0.
 10. [Version Roadmap v0.2 → v1.0](vestrace-version-roadmap-v0.2-to-v1.0.md) — release capability/qualification sequence.
 11. [`docs/adr/`](../adr/) — accepted architecture decisions.
 
+## Accepted post-v0.2 extensions
+
+- [Brain–Face–Organ System Model](vestrace-brain-face-organ-system-model.md) — system-level decomposition for the future autonomous-agent product: `Vestrace + Prime-like Runtime` as Brain, Desktop/CLI + Host Broker as Face, and replaceable execution endpoints as Organs.
+- [ADR-0011](../adr/0011-brain-face-organ-system-decomposition.md) — accepts that decomposition while preserving the v0.2 single-authority, capability, external-effect, and trust laws.
+
+Post-v0.2 extensions MUST NOT be interpreted as retroactively changing v0.2 implementation availability, qualification claims, or the frozen 36-PR v0.2→v1.0 transition package unless a later transition document explicitly amends that package.
+
 ## Legacy files in this directory
 
 The pre-v0.2 `r1-*` specifications are historical implementation/design artifacts, not part of the normative v0.2 set. See [LEGACY.md](LEGACY.md).
 
 ## Conflict resolution
 
-If an older specification conflicts with this normative set:
+For the frozen v0.2 baseline:
 
-1. the Architecture Contract has highest priority;
+1. the Architecture Contract v0.2 has highest priority;
 2. an Accepted newer ADR may explicitly supersede or clarify an older decision;
 3. specialized v0.2 specs refine but may not silently weaken the Architecture Contract or a newer Accepted ADR;
 4. legacy/current implementation documentation must be labeled as implementation status rather than target architecture.
+
+For post-v0.2 extensions:
+
+1. they MUST preserve frozen v0.2 laws unless a new ADR explicitly supersedes a specific decision;
+2. they MUST identify themselves as post-baseline extensions;
+3. they MUST NOT silently rewrite implementation or qualification status.
 
 Older specs are retained as historical design artifacts unless explicitly updated or marked superseded.
 
 ## Documentation state
 
-The normative architecture consistency pass is complete. A source-based gap analysis against implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` and a complete 36-PR transition package are integrated into `main` alongside the normative set.
+The v0.2 normative architecture consistency pass is complete. A source-based gap analysis against implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` and a complete 36-PR transition package are integrated into `main` alongside the frozen v0.2 set.
+
+The Brain–Face–Organ model is a later accepted documentation extension. It defines system topology and authority boundaries only; it does not claim the Brain runtime, Face/Host Broker, or Organ layer is implemented.
 
 See:
 
