@@ -4,7 +4,7 @@
 
 > **Memory Engine is the substrate. Persistent Cognition is the capability.**
 
-The v0.2 architecture baseline is now integrated into `main`. Target architecture, current implementation status, and future transition planning are intentionally documented as separate layers.
+The v0.2 architecture baseline is integrated into `main`. Target architecture, current implementation status, future transition planning, and accepted post-v0.2 extensions are intentionally documented as separate layers.
 
 ## Documentation layers
 
@@ -16,6 +16,13 @@ Start here:
 - [Normative Documentation Index](docs/specs/README.md)
 - [Accepted ADRs](docs/adr/README.md)
 - [Version Roadmap v0.2 → v1.0](docs/specs/vestrace-version-roadmap-v0.2-to-v1.0.md)
+
+### Accepted post-v0.2 system extension
+
+- [Brain–Face–Organ System Model](docs/specs/vestrace-brain-face-organ-system-model.md)
+- [ADR-0011 — Brain–Face–Organ System Decomposition](docs/adr/0011-brain-face-organ-system-decomposition.md)
+
+This extension defines the target product topology: `Vestrace + Prime-like Runtime` as the persistent Brain, Desktop/CLI + local Host Broker as the Face, and replaceable execution endpoints as Organs. It does not claim those components are implemented and does not silently expand the frozen 36-PR v0.2→v1.0 transition package.
 
 ### Current implementation
 
@@ -31,11 +38,11 @@ Start here:
 - [Documentation Status](docs/documentation-status-v0.2.md)
 - [Post-merge Documentation Audit](docs/documentation-post-merge-audit-v0.2.md)
 
-The target docs describe what Vestrace **must become**. The current implementation snapshot remains pinned to the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`; the documentation merge itself did not change runtime code or migrations.
+The target docs describe what Vestrace **must become**. The current implementation snapshot remains pinned to the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`; documentation changes do not by themselves change runtime code or migrations.
 
 ## Target architecture
 
-The v0.2 baseline completes twelve architecture blocks:
+The frozen v0.2 baseline completes twelve architecture blocks:
 
 ```text
 [✓] 1. Persistent Cognition Core
@@ -52,6 +59,22 @@ The v0.2 baseline completes twelve architecture blocks:
 [✓] 12. Qualification / Conformance
 ```
 
+The accepted post-v0.2 system model adds this product-level decomposition:
+
+```text
+USER
+  │
+FACE
+Desktop / CLI / Host Broker
+  │
+BRAIN
+Vestrace + Prime-like Runtime
+  │
+┌───────────────┬───────────────┐
+│               │               │
+Coding Organ  Browser Organ  Compute Organ
+```
+
 Core architectural laws include:
 
 - canonical state is distinct from derived projections;
@@ -64,7 +87,10 @@ Core architectural laws include:
 - recovery does not restore trust without revalidation;
 - secrets are not ordinary memory;
 - v1.0 is defined by the `TRUSTED` qualification profile, not feature count;
-- milestone labels and qualification-profile claims are distinct and evidence-scoped (ADR-0010).
+- milestone labels and qualification-profile claims are distinct and evidence-scoped (ADR-0010);
+- persistent agent identity and cognition live in the Brain, not in a Face, Organ, model, or transient worker (ADR-0011);
+- Face/Host Broker and Organ endpoints may further restrict delegated authority but never amplify it;
+- execution observations are evidence inputs, not automatically durable beliefs.
 
 ## Current implementation snapshot
 
@@ -131,7 +157,9 @@ docker compose -p vestrace down --remove-orphans
 
 ## Documentation baseline state
 
-The architecture baseline, source-based gap analysis, 36-PR transition package, migration/conformance matrices, and consistency audit are complete and integrated into `main`.
+The frozen v0.2 architecture baseline, source-based gap analysis, 36-PR transition package, migration/conformance matrices, and consistency audit are complete and integrated into `main`.
+
+ADR-0011 and the Brain–Face–Organ model are accepted post-v0.2 documentation extensions and require a separate transition plan before implementation.
 
 Rules going forward:
 
@@ -140,4 +168,5 @@ Rules going forward:
 - implementation work should use dedicated implementation branches;
 - no target feature may be claimed implemented merely because it is specified;
 - if implementation code changes materially from the inspected baseline, re-run a gap delta before using the plans unchanged;
-- architecture changes after freeze require deliberate spec/ADR amendment.
+- architecture changes after a frozen baseline require deliberate spec/ADR amendment;
+- post-baseline extensions must not silently alter frozen qualification or roadmap claims.
