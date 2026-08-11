@@ -1,6 +1,6 @@
 # Vestrace Architecture Decision Records
 
-This directory contains accepted architecture decisions for the v0.2 documentation baseline.
+This directory contains accepted architecture decisions for the frozen v0.2 documentation baseline and explicitly accepted post-v0.2 architecture extensions.
 
 | ADR | Decision | Status |
 |---|---|---|
@@ -14,13 +14,20 @@ This directory contains accepted architecture decisions for the v0.2 documentati
 | [ADR-0008](0008-v1-trust-is-a-qualification-contract.md) | v1.0 Trust Is a Qualification Contract | Accepted |
 | [ADR-0009](0009-finding-disposition-is-not-integrity-state.md) | Finding Disposition Is Not Integrity State | Accepted |
 | [ADR-0010](0010-qualification-profile-scope-follows-evidence-closure.md) | Qualification Profile Scope Follows Evidence Closure | Accepted |
+| [ADR-0011](0011-brain-face-organ-system-decomposition.md) | Brain–Face–Organ System Decomposition | Accepted, post-v0.2 extension |
 
 ## Status semantics
 
 - **Proposed** — documented but not authoritative.
-- **Accepted** — normative decision for the current architecture baseline.
+- **Accepted** — normative decision for the current architecture baseline or an explicitly identified post-baseline extension.
 - **Superseded** — replaced by a later ADR; retained for history.
 - **Deprecated** — should no longer guide new design but may describe legacy implementation.
+
+## Baseline rule
+
+ADR-0001 through ADR-0010 belong to the frozen v0.2 architecture package.
+
+ADR-0011 and later decisions are post-v0.2 extensions unless a later document explicitly assigns them to another frozen baseline. A post-v0.2 ADR MUST NOT be interpreted as retroactively changing v0.2 implementation availability, qualification claims, or the existing 36-PR v0.2→v1.0 transition package.
 
 ## Change rule
 
