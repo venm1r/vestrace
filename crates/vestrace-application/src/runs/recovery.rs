@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
+use std::{fmt::Write as _, sync::Arc};
 use vestrace_domain::{
-    DomainError,
+    DomainError, classify_recovery,
     id::AgentRunId,
     now,
     run::{AgentRun, RunState, RunVersion, apply, replay},
     time::Timestamp,
+    trust::{RecoveryClassification, RecoveryTarget},
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -64,6 +65,110 @@ pub trait RunRecoveryOperations: Send + Sync {
         context: &RequestContext,
         run_id: AgentRunId,
     ) -> Result<AgentRun, ApplicationError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartupRecoveryCandidate {
+    pub run_id: AgentRunId,
+    pub target: RecoveryTarget,
+}
+
+impl StartupRecoveryCandidate {
+    pub fn new(run_id: AgentRunId, target: RecoveryTarget) -> Self {
+        Self { run_id, target }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartupRecoveryOutcome {
+    Restored,
+    RetryReady,
+    ReconciliationRequired,
+    Aborted,
+    HumanReviewRequired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartupRecoveryRecord {
+    pub run_id: AgentRunId,
+    pub target: RecoveryTarget,
+    pub classification: RecoveryClassification,
+    pub outcome: StartupRecoveryOutcome,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StartupRecoveryReport {
+    records: Vec<StartupRecoveryRecord>,
+}
+
+impl StartupRecoveryReport {
+    pub fn records(&self) -> &[StartupRecoveryRecord] {
+        &self.records
+    }
+}
+
+pub struct StartupRecoveryService {
+    operations: Arc<dyn RunRecoveryOperations>,
+}
+
+impl StartupRecoveryService {
+    pub fn new(operations: Arc<dyn RunRecoveryOperations>) -> Self {
+        Self { operations }
+    }
+
+    pub async fn run(
+        &self,
+        context: &RequestContext,
+        candidates: Vec<StartupRecoveryCandidate>,
+    ) -> Result<StartupRecoveryReport, ApplicationError> {
+        let mut seen = Vec::with_capacity(candidates.len());
+        for candidate in &candidates {
+            if !seen.iter().any(|run_id| *run_id == candidate.run_id) {
+                seen.push(candidate.run_id);
+            } else {
+                return Err(DomainError::InvalidArgument(format!(
+                    "duplicate startup recovery candidate: {}",
+                    candidate.run_id
+                ))
+                .into());
+            }
+        }
+
+        let mut records = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let classification = classify_recovery(candidate.target);
+            let outcome = match classification {
+                RecoveryClassification::SafeToResume => {
+                    self.operations
+                        .rebuild_projection(context, candidate.run_id)
+                        .await?;
+                    StartupRecoveryOutcome::Restored
+                }
+                RecoveryClassification::SafeToRetry => {
+                    self.operations
+                        .rebuild_projection(context, candidate.run_id)
+                        .await?;
+                    StartupRecoveryOutcome::RetryReady
+                }
+                RecoveryClassification::MustReconcile => {
+                    StartupRecoveryOutcome::ReconciliationRequired
+                }
+                RecoveryClassification::MustAbort => StartupRecoveryOutcome::Aborted,
+                RecoveryClassification::HumanRequired => {
+                    StartupRecoveryOutcome::HumanReviewRequired
+                }
+            };
+
+            records.push(StartupRecoveryRecord {
+                run_id: candidate.run_id,
+                target: candidate.target,
+                classification,
+                outcome,
+            });
+        }
+
+        Ok(StartupRecoveryReport { records })
+    }
 }
 
 pub struct RunRecoveryService {

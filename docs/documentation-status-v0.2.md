@@ -92,6 +92,8 @@ The checkout now also contains the bounded Q10 post-incident delta: [`documentat
 
 The checkout now also contains the bounded Q11 recovery-persistence delta: [`documentation-gap-delta-2026-08-12-q11-recovery-persistence.md`](documentation-gap-delta-2026-08-12-q11-recovery-persistence.md). Migration `0126` and `PgRecoveryRepository` persist Incident/RevalidationRun/TrustState/RecoveryPoint payloads with indexed integrity checks and retry semantics. Startup recovery orchestration, runtime reconciliation/fault execution, and release approval remain open.
 
+The checkout now also contains the bounded Q12 startup-recovery-orchestration delta: [`documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md`](documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md). `StartupRecoveryService` validates candidate identity, applies the domain recovery classification, rebuilds safe projections, and reports reconciliation/abort/human-review barriers fail-closed. Durable candidate discovery, production startup wiring, runtime reconciliation/fault execution, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
