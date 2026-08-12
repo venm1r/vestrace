@@ -1,10 +1,13 @@
 use chrono::{TimeZone, Utc};
 use sqlx::PgPool;
-use vestrace_application::{ApplicationError, ExternalEffectRepository};
+use vestrace_application::{
+    ApplicationError, ExternalEffectFaultSuiteEvidence, ExternalEffectRepository,
+    FaultSuiteEvidenceRepository,
+};
 use vestrace_domain::external_effects::{
-    DeliverySemantics, EffectPrecondition, EffectReversibility, EvidenceStrength,
-    ExternalEffectIntent, ExternalEffectReceipt, IdempotencyProfile, ObservedEffectState,
-    ReconciliationOutcome, reconcile_effect,
+    DeliverySemantics, EffectFaultPoint, EffectPrecondition, EffectReversibility, EvidenceStrength,
+    ExternalEffectIntent, ExternalEffectReceipt, FaultObservation, IdempotencyProfile,
+    ObservedEffectState, ReconciliationOutcome, reconcile_effect,
 };
 use vestrace_domain::{Capability, PrincipalId, RiskCategory, WorkspaceId};
 use vestrace_infrastructure::{PgExternalEffectRepository, PgStore};
@@ -182,4 +185,74 @@ fn reconciliation_fixture_is_confirmed_before_persistence() {
     .unwrap();
 
     assert_eq!(reconciliation.outcome(), ReconciliationOutcome::Confirmed);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn fault_suite_evidence_repository_round_trips_and_is_idempotent(pool: PgPool) {
+    let repository =
+        vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
+    let evidence = fault_evidence(true);
+
+    repository.insert(&evidence).await.unwrap();
+    repository.insert(&evidence).await.unwrap();
+
+    assert_eq!(
+        repository.find_by_id(evidence.id()).await.unwrap(),
+        Some(evidence)
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn fault_suite_evidence_repository_rejects_conflicting_immutable_id(pool: PgPool) {
+    let repository =
+        vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
+    let first = fault_evidence(true);
+    let mut payload = serde_json::to_value(&first).unwrap();
+    payload["target_digest"] = serde_json::json!("sha256:other-target");
+    let conflicting: ExternalEffectFaultSuiteEvidence = serde_json::from_value(payload).unwrap();
+
+    repository.insert(&first).await.unwrap();
+    assert!(matches!(
+        repository.insert(&conflicting).await,
+        Err(ApplicationError::Conflict(_))
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn fault_suite_evidence_repository_preserves_failed_evidence(pool: PgPool) {
+    let repository =
+        vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
+    let evidence = fault_evidence(false);
+
+    repository.insert(&evidence).await.unwrap();
+
+    let stored = repository.find_by_id(evidence.id()).await.unwrap().unwrap();
+    assert!(!stored.is_passed());
+    assert!(!stored.failures().is_empty());
+}
+
+fn fault_evidence(passed: bool) -> ExternalEffectFaultSuiteEvidence {
+    let observations = EffectFaultPoint::required_points()
+        .into_iter()
+        .map(FaultObservation::expected)
+        .collect::<Vec<_>>();
+    serde_json::from_value::<ExternalEffectFaultSuiteEvidence>(serde_json::json!({
+        "id": uuid::Uuid::now_v7(),
+        "target_digest": "sha256:target",
+        "observations": observations.into_iter().map(|observation| serde_json::json!({
+            "point": observation.point,
+            "status": observation.status,
+            "retry_attempted": observation.retry_attempted,
+            "reconciliation_started": observation.reconciliation_started,
+            "receipt_persisted": observation.receipt_persisted
+        })).collect::<Vec<_>>(),
+        "passed": passed,
+        "failures": if passed {
+            Vec::<String>::new()
+        } else {
+            vec!["unsafe retry".to_owned()]
+        },
+        "created_at": at(40)
+    }))
+    .unwrap()
 }

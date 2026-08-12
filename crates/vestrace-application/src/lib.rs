@@ -10,6 +10,7 @@ pub mod effect_repository;
 mod error;
 pub mod execution_ports;
 pub mod external_effects;
+pub mod fault_evidence;
 pub mod fault_suite;
 mod health;
 pub mod idempotency;
@@ -57,6 +58,10 @@ pub use execution_ports::{
     SharedExecutionHistoryRepository, StepExecutionRecord, WorkflowExecutionRecord,
 };
 pub use external_effects::ExternalEffectService;
+pub use fault_evidence::{
+    ExternalEffectFaultObservationEvidence, ExternalEffectFaultSuiteEvidence,
+    FaultSuiteEvidenceRepository,
+};
 pub use fault_suite::{
     EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,
 };
