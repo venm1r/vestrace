@@ -15,12 +15,18 @@ import {
   useNotice,
 } from '../shell/PageState';
 
-const costFormatter = new Intl.NumberFormat(undefined, {
+// The console is English-only, and the backend reports costs in USD. Formatting in
+// the viewer's locale renders USD as "15,00 $", which reads as a different currency.
+const NUMBER_LOCALE = 'en-US';
+
+const costFormatter = new Intl.NumberFormat(NUMBER_LOCALE, {
   style: 'currency',
   currency: 'USD',
   minimumFractionDigits: 2,
   maximumFractionDigits: 4,
 });
+
+const countFormatter = new Intl.NumberFormat(NUMBER_LOCALE);
 
 function formatCost(value: number): string {
   return Number.isFinite(value) ? `${costFormatter.format(value)} / Mtok` : '—';
@@ -109,7 +115,7 @@ export const ModelsPage: React.FC = () => {
                       )}
                     </td>
                     <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>
-                      {model.context_window.toLocaleString()}
+                      {countFormatter.format(model.context_window)}
                     </td>
                     <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                       {formatCost(model.input_cost_per_mtoken)}

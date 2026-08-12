@@ -166,7 +166,9 @@ export function describeError(error: unknown, resourceName: string): DescribedEr
     if (error.isNotImplemented) {
       return {
         tone: 'info',
-        title: `${resourceName} is not available in the P0 foundation`,
+        // Phrased without the resource name so it reads correctly for both
+        // "artifacts" and "the metrics summary".
+        title: 'Not available in the P0 foundation',
         detail: error.body.message,
         retryable: false,
       };
