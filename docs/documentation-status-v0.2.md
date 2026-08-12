@@ -110,6 +110,8 @@ The checkout now also contains the bounded Q19 fault-suite-evidence-admission de
 
 The checkout now also contains the bounded Q20 fault-gate-evidence delta: [`documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md`](documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md). `ExternalEffectFaultGateEvidenceService` exposes exact-target fault evidence as local `QUAL-008` hard-gate evidence and preserves failed results as `Fail`. Complete bundle assembly, trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q21 fault-runtime-wiring delta: [`documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md`](documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md). `ConfiguredEffectFaultScenarioExecutor` provides a target-bound, non-production runtime hook with disabled-by-default caller control and point validation. Process crash execution, provider-specific destructive adapters, complete bundle assembly, trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

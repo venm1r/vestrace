@@ -226,6 +226,8 @@ The bounded Q19 slice adds `ExternalEffectFaultEvidenceAdmissionService`, a read
 
 The bounded Q20 slice adds `ExternalEffectFaultGateEvidenceService`, which maps exact-target persisted fault evidence into local executable `QUAL-008` hard-gate evidence. Passed evidence maps to `Pass`, failed evidence remains `Fail`, and missing, mismatched, or unreadable evidence fails closed. It does not assemble a complete `QualificationBundle`, restore trust, or approve a release. See [`documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md`](documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md).
 
+The bounded Q21 slice adds `ConfiguredEffectFaultScenarioExecutor` with explicit non-production isolation settings and a `FaultInjectionRuntime` hook. Disabled injection is rejected before runtime invocation; configured runs carry the exact target digest and fault point, validate the returned point, and propagate runtime failures. Real process crash/kill orchestration, provider-specific destructive execution, and automatic release qualification remain open. See [`documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md`](documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
