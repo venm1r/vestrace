@@ -238,6 +238,8 @@ The bounded Q25 slice adds `ReleaseApprovalService`, a fail-closed aggregate gat
 
 The bounded Q26 slice adds `CapabilityRestorationService` and an explicit capability-to-stage policy. Diagnostics remain available while `Untrusted`/`Revalidating`; `DegradedTrust` can restore only evidence-backed deterministic writes; semantic mutation and external effects require `Trusted`, qualification evidence, revalidation evidence, and referenced facts. Unknown capabilities and unreferenced evidence remain blocked. This is an application decision boundary, not durable grant issuance or live provider/KMS qualification. See [`documentation-gap-delta-2026-08-12-q26-capability-restoration.md`](documentation-gap-delta-2026-08-12-q26-capability-restoration.md).
 
+The bounded Q27 slice adds `CryptoAdapterQualificationService`, which requires exact production custody/provider/key metadata and evidence for authorized resolution, scope isolation, cryptographic round-trip, lifecycle/rotation, secret non-disclosure, and referenced facts. It explicitly rejects development-only local-file custody for production qualification. Backend integrations, key destruction, and live provider evidence remain open. See [`documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md`](documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**

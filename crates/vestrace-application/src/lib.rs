@@ -5,6 +5,7 @@ pub mod cognitive;
 pub mod cognitive_mutation;
 pub mod cognitive_ports;
 mod context;
+pub mod crypto_qualification;
 pub mod diagnostics;
 pub mod effect_recovery;
 pub mod effect_repository;
@@ -57,6 +58,11 @@ pub use cognitive_ports::{
     WorkflowDefinitionRecord, WorkflowRepository, WorkflowRevisionRecord,
 };
 pub use context::RequestContext;
+pub use crypto_qualification::{
+    CryptoAdapterQualificationEvidence, CryptoAdapterQualificationProbe,
+    CryptoAdapterQualificationService, CryptoAdapterQualificationTarget, CryptoCustody,
+    CryptoQualificationCheck, CryptoQualificationDecision, CryptoQualificationFailure,
+};
 pub use diagnostics::{DiagnosticsRepository, DoctorService, SharedDiagnosticsRepository};
 pub use effect_recovery::{
     ExternalEffectReadBackAdapter, ExternalEffectRecoveryReport, ExternalEffectRecoveryService,

@@ -122,6 +122,8 @@ The checkout now also contains the bounded Q25 Trusted release-approval delta: [
 
 The checkout now also contains the bounded Q26 capability-restoration delta: [`documentation-gap-delta-2026-08-12-q26-capability-restoration.md`](documentation-gap-delta-2026-08-12-q26-capability-restoration.md). `CapabilityRestorationService` enforces explicit progressive stages and trust/evidence barriers, including diagnostics-only behavior for Untrusted/Revalidating and a deterministic-write ceiling for DegradedTrust. Durable grant mutation, provider/KMS qualification, and exact-environment v1.0 evidence remain open.
 
+The checkout now also contains the bounded Q27 crypto/provider qualification delta: [`documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md`](documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md). `CryptoAdapterQualificationService` rejects development-only custody and requires exact key metadata plus complete production evidence. It defines the gate but does not provide KMS/HSM/Vault adapters or live provider evidence; exact-environment v1.0 qualification remains open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
