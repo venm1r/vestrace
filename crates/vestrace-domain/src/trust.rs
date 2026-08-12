@@ -283,6 +283,14 @@ impl Incident {
         &self.triggering_evidence
     }
 
+    pub fn opened_at(&self) -> Timestamp {
+        self.opened_at
+    }
+
+    pub fn revalidation_run_id(&self) -> Option<crate::RevalidationRunId> {
+        self.revalidation_run_id
+    }
+
     pub fn containment_actions(&self) -> &[ContainmentAction] {
         &self.containment_actions
     }
@@ -458,6 +466,18 @@ impl TrustStateRecord {
 
     pub fn reason(&self) -> &str {
         &self.reason
+    }
+
+    pub fn incident_id(&self) -> Option<IncidentId> {
+        self.incident_id
+    }
+
+    pub fn updated_at(&self) -> Timestamp {
+        self.updated_at
+    }
+
+    pub fn revalidation_run_id(&self) -> Option<crate::RevalidationRunId> {
+        self.revalidation_run_id
     }
 
     pub fn begin_revalidation(
@@ -713,6 +733,10 @@ impl RecoveryPoint {
     pub fn integrity_status(&self) -> IntegrityStatus {
         self.integrity_status
     }
+
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -832,6 +856,10 @@ impl RevalidationRun {
 
     pub fn evidence_refs(&self) -> &[String] {
         &self.evidence_refs
+    }
+
+    pub fn incident_id(&self) -> Option<IncidentId> {
+        self.incident_id
     }
 
     pub fn is_successful(&self) -> bool {

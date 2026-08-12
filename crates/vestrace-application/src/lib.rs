@@ -1,20 +1,25 @@
 #![forbid(unsafe_code)]
 
 pub mod cognitive;
+pub mod cognitive_mutation;
 pub mod cognitive_ports;
 mod context;
 pub mod diagnostics;
 mod error;
 pub mod execution_ports;
+pub mod external_effects;
 mod health;
 pub mod idempotency;
 pub mod jobs;
 pub mod memory;
 pub mod models;
 mod null_execution_history;
+pub mod operator;
 pub mod outbox;
 mod ports;
 pub mod providers;
+pub mod qualification;
+pub mod recovery;
 pub mod retrieval;
 pub mod run;
 pub mod runs;
@@ -24,8 +29,14 @@ pub use cognitive::{
     AgentRecord, AgentRepository, SharedAgentRepository, SharedSkillRepository, SkillRecord,
     SkillRepository,
 };
+pub use cognitive_mutation::{
+    CognitiveMutationCommand, CognitiveMutationRepository, CognitiveMutationResult,
+    CognitiveMutationService, ReconciliationRequest,
+};
 pub use cognitive_ports::{
-    EvaluationRecord, EvaluationRepository, SharedEvaluationRepository, SharedWorkflowRepository,
+    EvaluationFactRecord, EvaluationRecord, EvaluationRepository, LearnedProjectionRecord,
+    LearningProposalRecord, LearningRepository, SharedEvaluationRepository,
+    SharedLearningRepository, SharedWorkflowRepository, UnavailableLearningRepository,
     WorkflowDefinitionRecord, WorkflowRepository, WorkflowRevisionRecord,
 };
 pub use context::RequestContext;
@@ -35,6 +46,7 @@ pub use execution_ports::{
     ExecutionArtifactRecord, ExecutionHistoryRepository, ExecutionOutcomeRecord,
     SharedExecutionHistoryRepository, StepExecutionRecord, WorkflowExecutionRecord,
 };
+pub use external_effects::ExternalEffectService;
 pub use health::HealthRepository;
 pub use idempotency::{IdempotencyRecord, IdempotencyRepository};
 pub use jobs::*;
@@ -46,9 +58,15 @@ pub use models::{
     SharedRoutingDecisionRepository,
 };
 pub use null_execution_history::NullExecutionHistoryRepository;
+pub use operator::{HealthOperatorService, RepairPlanRequest, RepairRequest};
 pub use outbox::{OutboxMessage, OutboxRepository};
 pub use ports::{TransactionManager, UnitOfWork};
 pub use providers::*;
+pub use qualification::{
+    QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
+    RuntimeQualificationEvidence, SharedQualificationRepository, evaluate_runtime_qualification,
+};
+pub use recovery::{RecoveryRepository, SharedRecoveryRepository};
 pub use retrieval::{
     ContextPackBuilder, ExactRetriever, NormalizedRetrievalRequest, RetrievalJournal,
     RetrievalRequest, RetrievalResult, RetrievalService, SharedExactRetriever,
@@ -57,7 +75,9 @@ pub use retrieval::{
 };
 pub use runs::*;
 pub use security::{
-    AuditRepository, PolicyEngine, RedactionRule, RedactionService, SharedAuditRepository,
+    AuditRepository, AuthorizationBoundary, BudgetPolicyEngine, DenyAllPolicyEngine,
+    GrantPolicyEngine, PolicyDecisionEngine, PolicyEngine, RedactionRule, RedactionService,
+    SharedAuditRepository, SharedHierarchicalBudget, SharedPolicyDecisionEngine,
 };
 
 #[cfg(test)]

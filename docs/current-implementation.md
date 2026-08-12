@@ -206,6 +206,8 @@ The bounded Q9 trust-boundary slice adds `SignerTrustRule`/`SignerTrustPolicy` e
 
 The bounded Q10 slice adds typed `PostIncidentQualificationEvidence`, binds it to `POST_INCIDENT` bundles, requires `conformance bundle --post-incident-evidence-file`, and keeps unsuccessful revalidation from producing a passed bundle while preserving the artifact. It also adds a deterministic recovery qualification gate that checks exactly-once target observations and safe classified actions. Durable incident/revalidation repositories, runtime recovery orchestration, isolated crash/fault execution, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md`](documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md).
 
+The bounded Q11 slice adds the application `RecoveryRepository`, migration `0126`, and `PgRecoveryRepository` for lossless Incident/RevalidationRun/TrustState/RecoveryPoint evidence. Immutable records are retry-idempotent with indexed-payload integrity checks; trust state is append-oriented with latest-by-scope lookup. Startup recovery orchestration, runtime reconciliation, isolated fault execution, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q11-recovery-persistence.md`](documentation-gap-delta-2026-08-12-q11-recovery-persistence.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
@@ -296,7 +298,7 @@ The bounded T1–T8 contract now establishes additive domain semantics for:
 - typed RevalidationRun/RecoveryPoint evidence;
 - target-bound QualificationBundle/Baseline and TRUSTED gate.
 
-Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation is also available. Durable recovery orchestration, Incident/RevalidationRun repositories, and production-safe fault execution remain open.
+Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation and durable Incident/RevalidationRun/TrustState/RecoveryPoint persistence are available. Startup recovery orchestration, runtime reconciliation, and production-safe fault execution remain open.
 
 ## 13. Crypto / data-governance seeds
 
@@ -328,7 +330,7 @@ The suite is **not** target conformance/qualification because it lacks:
 - stable requirement-ID mapping;
 - profile dependency closure;
 - deterministic named fault injection around crash/effect boundaries;
-- durable incident/revalidation evidence persistence and runtime recovery execution;
+- runtime recovery execution and reconciliation after process failure;
 - exact build/config/environment identity;
 - hard-gate profile runner/known-limitations contract.
 
@@ -362,7 +364,7 @@ The current snapshot does **not** establish complete target support for:
 - governed ExternalEffectIntent/receipt/reconciliation;
 - Incident/Trust/Revalidation model;
 - target Crypto/Data Governance contract;
-- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, and Q9 adds provider-bound local signing plus signer trust evaluation. KMS/HSM/Vault-backed key resolution, durable policy storage, key rotation execution, fault/recovery execution, post-incident requalification, and release qualification remain open.
+- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, Q9 adds provider-bound local signing plus signer trust evaluation, Q10 adds post-incident evidence gating, and Q11 adds durable recovery/trust evidence persistence. KMS/HSM/Vault-backed key resolution, durable policy storage, key rotation execution, startup recovery orchestration, runtime fault/recovery execution, and release qualification remain open.
 
 ## 18. Documentation rule
 

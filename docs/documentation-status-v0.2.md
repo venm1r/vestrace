@@ -90,6 +90,8 @@ The checkout now also contains the bounded Q9 key-provider/signer-trust delta: [
 
 The checkout now also contains the bounded Q10 post-incident delta: [`documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md`](documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md). `POST_INCIDENT` bundles require typed incident/revalidation evidence, failed or inconclusive revalidation cannot yield a passed bundle, and a deterministic recovery gate checks one evidence-bearing safe action per target. Durable incident/revalidation repositories, runtime recovery/fault execution, and release approval remain open.
 
+The checkout now also contains the bounded Q11 recovery-persistence delta: [`documentation-gap-delta-2026-08-12-q11-recovery-persistence.md`](documentation-gap-delta-2026-08-12-q11-recovery-persistence.md). Migration `0126` and `PgRecoveryRepository` persist Incident/RevalidationRun/TrustState/RecoveryPoint payloads with indexed integrity checks and retry semantics. Startup recovery orchestration, runtime reconciliation/fault execution, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
