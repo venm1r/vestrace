@@ -236,6 +236,8 @@ The bounded Q24 slice adds `ProgressiveTrustRestorationService`, which persists 
 
 The bounded Q25 slice adds `ReleaseApprovalService`, a fail-closed aggregate gate for an exact `RELEASE`/`TRUSTED` manifest-bound and passed bundle, qualified matching baseline, `Trusted` scope state, full Trusted hard-gate closure, valid trusted signatures with upstream cryptographic verification, and non-blank known limitations. It is an application decision boundary, not live deployment evidence or a v1.0 claim; KMS/HSM/Vault custody, provider adapter qualification, and exact-environment release execution remain open. See [`documentation-gap-delta-2026-08-12-q25-release-approval.md`](documentation-gap-delta-2026-08-12-q25-release-approval.md).
 
+The bounded Q26 slice adds `CapabilityRestorationService` and an explicit capability-to-stage policy. Diagnostics remain available while `Untrusted`/`Revalidating`; `DegradedTrust` can restore only evidence-backed deterministic writes; semantic mutation and external effects require `Trusted`, qualification evidence, revalidation evidence, and referenced facts. Unknown capabilities and unreferenced evidence remain blocked. This is an application decision boundary, not durable grant issuance or live provider/KMS qualification. See [`documentation-gap-delta-2026-08-12-q26-capability-restoration.md`](documentation-gap-delta-2026-08-12-q26-capability-restoration.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**

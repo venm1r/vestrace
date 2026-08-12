@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod capability_restoration;
 pub mod cognitive;
 pub mod cognitive_mutation;
 pub mod cognitive_ports;
@@ -37,6 +38,10 @@ pub mod runs;
 pub mod security;
 pub mod trust_restoration;
 
+pub use capability_restoration::{
+    CapabilityRestorationDecision, CapabilityRestorationPolicy, CapabilityRestorationService,
+    RestorationBlockReason, RestorationEvidence, RestorationStage,
+};
 pub use cognitive::{
     AgentRecord, AgentRepository, SharedAgentRepository, SharedSkillRepository, SkillRecord,
     SkillRepository,

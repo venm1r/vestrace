@@ -120,6 +120,8 @@ The checkout now also contains the bounded Q24 progressive-trust-restoration del
 
 The checkout now also contains the bounded Q25 Trusted release-approval delta: [`documentation-gap-delta-2026-08-12-q25-release-approval.md`](documentation-gap-delta-2026-08-12-q25-release-approval.md). `ReleaseApprovalService` requires exact release/profile/manifest identity, a passed bundle, a qualified matching baseline, Trusted state, full hard-gate closure, cryptographically verified and policy-trusted signatures, and published non-blank limitations. This closes the aggregate application decision boundary; fresh exact-environment qualification and v1.0 release evidence are still required before claiming v1.0.
 
+The checkout now also contains the bounded Q26 capability-restoration delta: [`documentation-gap-delta-2026-08-12-q26-capability-restoration.md`](documentation-gap-delta-2026-08-12-q26-capability-restoration.md). `CapabilityRestorationService` enforces explicit progressive stages and trust/evidence barriers, including diagnostics-only behavior for Untrusted/Revalidating and a deterministic-write ceiling for DegradedTrust. Durable grant mutation, provider/KMS qualification, and exact-environment v1.0 evidence remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
