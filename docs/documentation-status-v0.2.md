@@ -124,6 +124,8 @@ The checkout now also contains the bounded Q26 capability-restoration delta: [`d
 
 The checkout now also contains the bounded Q27 crypto/provider qualification delta: [`documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md`](documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md). `CryptoAdapterQualificationService` rejects development-only custody and requires exact key metadata plus complete production evidence. It defines the gate but does not provide KMS/HSM/Vault adapters or live provider evidence; exact-environment v1.0 qualification remains open.
 
+The checkout now also contains the bounded Q28 exact-environment release-evidence delta: [`documentation-gap-delta-2026-08-12-q28-v1-release-evidence.md`](documentation-gap-delta-2026-08-12-q28-v1-release-evidence.md). `V1ReleaseEvidenceService` binds exact release/build/configuration/environment identity to typed release approval, runtime deployment, crypto, recovery/fault, and capability-restoration decisions, rejects missing or drifting evidence, and requires unique evidence references and published limitations. It is the final application-side v1.0 gate; live Docker/runtime/provider evidence and a passed deployment-specific TRUSTED profile are still required before making a v1.0 claim.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

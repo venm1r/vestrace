@@ -38,6 +38,7 @@ pub mod run;
 pub mod runs;
 pub mod security;
 pub mod trust_restoration;
+pub mod v1_release_evidence;
 
 pub use capability_restoration::{
     CapabilityRestorationDecision, CapabilityRestorationPolicy, CapabilityRestorationService,
@@ -129,6 +130,11 @@ pub use security::{
     SharedAuditRepository, SharedHierarchicalBudget, SharedPolicyDecisionEngine,
 };
 pub use trust_restoration::ProgressiveTrustRestorationService;
+pub use v1_release_evidence::{
+    ExactEnvironmentReleaseDecision, ExactEnvironmentReleaseEvidence,
+    ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget, V1ReleaseEvidenceProbe,
+    V1ReleaseEvidenceService,
+};
 
 #[cfg(test)]
 mod tests {
