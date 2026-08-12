@@ -114,6 +114,8 @@ The checkout now also contains the bounded Q21 fault-runtime-wiring delta: [`doc
 
 The checkout now also contains the bounded Q22 fault-bundle-assembly delta: [`documentation-gap-delta-2026-08-12-q22-fault-bundle-assembly.md`](documentation-gap-delta-2026-08-12-q22-fault-bundle-assembly.md). `ExternalEffectQualificationBundleService` consumes exact-target persisted fault evidence, adds it as `QUAL-008` hard-gate evidence and a conformance case, then persists a manifest-bound passed or failed bundle. A real isolated process/provider fault driver, trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q23 fault-process-runtime delta: [`documentation-gap-delta-2026-08-12-q23-fault-process-runtime.md`](documentation-gap-delta-2026-08-12-q23-fault-process-runtime.md). `ProcessFaultInjectionRuntime` executes an explicitly configured child with target/point/isolation forwarding, minimal inherited environment, timeout termination, and strict observation parsing. Provider sandbox adapters, Docker qualification evidence, trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

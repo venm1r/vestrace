@@ -73,7 +73,7 @@ pub use fault_gate_evidence::ExternalEffectFaultGateEvidenceService;
 pub use fault_qualification::ExternalEffectFaultQualificationService;
 pub use fault_runtime::{
     ConfiguredEffectFaultScenarioExecutor, FaultInjectionEnvironment, FaultInjectionRuntime,
-    FaultInjectionSettings,
+    FaultInjectionSettings, ProcessFaultInjectionRuntime,
 };
 pub use fault_suite::{
     EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,
