@@ -30,6 +30,7 @@ pub mod providers;
 pub mod qualification;
 pub mod recovery;
 pub mod recovery_reconciliation;
+pub mod release_approval;
 pub mod retrieval;
 pub mod run;
 pub mod runs;
@@ -100,6 +101,10 @@ pub use qualification::{
 };
 pub use recovery::{RecoveryRepository, SharedRecoveryRepository};
 pub use recovery_reconciliation::ExternalEffectReconciliationService;
+pub use release_approval::{
+    ReleaseApprovalDecision, ReleaseApprovalFailure, ReleaseApprovalService,
+    ReleaseSignatureEvidence,
+};
 pub use retrieval::{
     ContextPackBuilder, ExactRetriever, NormalizedRetrievalRequest, RetrievalJournal,
     RetrievalRequest, RetrievalResult, RetrievalService, SharedExactRetriever,
