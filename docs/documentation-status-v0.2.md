@@ -88,6 +88,8 @@ The checkout now also contains the bounded Q8 automatic-runtime delta: [`documen
 
 The checkout now also contains the bounded Q9 key-provider/signer-trust delta: [`documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md`](documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md). Signing resolves material through the existing `KeyProvider` boundary, the explicit local-file adapter rejects unsupported providers, and both signature verification paths separate cryptographic validity from exact signer/key trust policy. KMS/HSM/Vault/OS-keyring custody, durable policy storage, rotation execution, fault/recovery execution, post-incident requalification, release approval, and a passing v1.0 profile remain open.
 
+The checkout now also contains the bounded Q10 post-incident delta: [`documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md`](documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md). `POST_INCIDENT` bundles require typed incident/revalidation evidence, failed or inconclusive revalidation cannot yield a passed bundle, and a deterministic recovery gate checks one evidence-bearing safe action per target. Durable incident/revalidation repositories, runtime recovery/fault execution, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

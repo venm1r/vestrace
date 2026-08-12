@@ -14,9 +14,10 @@ use vestrace_domain::conformance::{CaseStatus, ConformanceReport, QualificationP
 use vestrace_domain::now;
 use vestrace_domain::release::VestraceCapabilityManifest;
 use vestrace_domain::trust::{
-    KeyProvider, KeyProviderError, KeyPurpose, KeyReference, QualificationBundle,
-    QualificationLifecycle, QualificationStatus, ResolvedKeyMaterial, SecretResolutionRequest,
-    SignatureAlgorithm, SignatureRecord, SignerTrustPolicy, SignerTrustRule,
+    KeyProvider, KeyProviderError, KeyPurpose, KeyReference, PostIncidentQualificationEvidence,
+    QualificationBundle, QualificationLifecycle, QualificationStatus, ResolvedKeyMaterial,
+    SecretResolutionRequest, SignatureAlgorithm, SignatureRecord, SignerTrustPolicy,
+    SignerTrustRule,
 };
 use vestrace_infrastructure::{
     AppConfig, ConfigOverrides, PgQualificationRepository, PgStore, QualificationConfig,
@@ -130,6 +131,7 @@ pub async fn run(
             environment_manifest,
             suite_version,
             known_limitations,
+            post_incident_evidence_file,
         } => {
             run_bundle(
                 profile.into(),
@@ -144,6 +146,7 @@ pub async fn run(
                 environment_manifest,
                 suite_version,
                 known_limitations,
+                post_incident_evidence_file,
                 config_path,
                 &config_overrides,
             )
@@ -299,6 +302,7 @@ pub async fn run_bundle(
     environment_manifest: Option<String>,
     suite_version: String,
     known_limitations: Vec<String>,
+    post_incident_evidence_file: Option<PathBuf>,
     config_path: Option<&Path>,
     config_overrides: &ConfigOverrides,
 ) -> anyhow::Result<()> {
@@ -308,6 +312,16 @@ pub async fn run_bundle(
     let started_at = vestrace_domain::now();
     let report = build_report(Some(profile));
     let evidence = hard_gate_evidence(&report);
+    let lifecycle = lifecycle.unwrap_or(QualificationLifecycle::Release);
+    if lifecycle == QualificationLifecycle::PostIncident && post_incident_evidence_file.is_none() {
+        anyhow::bail!("--post-incident-evidence-file is required for post-incident qualification");
+    }
+    if lifecycle != QualificationLifecycle::PostIncident && post_incident_evidence_file.is_some() {
+        anyhow::bail!(
+            "--post-incident-evidence-file is only valid for post-incident qualification"
+        );
+    }
+
     let bundle = if let Some(manifest_path) = target_manifest_file {
         if source_revision.is_some()
             || build_digest.is_some()
@@ -326,7 +340,7 @@ pub async fn run_bundle(
                 )
             })?;
         QualificationBundle::from_conformance_report_for_manifest(
-            lifecycle.unwrap_or(QualificationLifecycle::Release),
+            lifecycle,
             profile,
             &manifest,
             suite_version,
@@ -338,7 +352,7 @@ pub async fn run_bundle(
         )
     } else {
         QualificationBundle::from_conformance_report(
-            lifecycle.unwrap_or(QualificationLifecycle::Release),
+            lifecycle,
             profile,
             required_bundle_argument("target manifest", target_manifest)?,
             required_bundle_argument("source revision", source_revision)?,
@@ -354,6 +368,21 @@ pub async fn run_bundle(
         )
     }
     .map_err(|error| anyhow::anyhow!("failed to build qualification bundle: {error}"))?;
+
+    let bundle = if let Some(evidence_path) = post_incident_evidence_file {
+        let evidence: PostIncidentQualificationEvidence =
+            serde_json::from_slice(&std::fs::read(&evidence_path)?).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to load post-incident evidence {}: {error}",
+                    evidence_path.display()
+                )
+            })?;
+        bundle
+            .attach_post_incident_evidence(evidence)
+            .map_err(|error| anyhow::anyhow!("invalid post-incident evidence: {error}"))?
+    } else {
+        bundle
+    };
 
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {

@@ -10,7 +10,7 @@ use crate::conformance::{ConformanceReport, QualificationProfile, RequirementId}
 use crate::release::VestraceCapabilityManifest;
 use crate::{
     Capability, DataDestination, DomainError, HealthFindingId, HealthScope, IncidentId,
-    PrincipalId, Timestamp, WorkspaceId,
+    PrincipalId, RevalidationRunId, Timestamp, WorkspaceId,
 };
 
 fn required_text(field: &str, value: impl Into<String>) -> Result<String, DomainError> {
@@ -514,6 +514,128 @@ pub enum RecoveryTarget {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    Resume,
+    Retry,
+    Reconcile,
+    Abort,
+    HumanReview,
+}
+
+impl RecoveryTarget {
+    pub fn required_targets() -> [Self; 8] {
+        [
+            Self::RunningExecution,
+            Self::DispatchingExternalEffect,
+            Self::VerifyingRepair,
+            Self::StaleLease,
+            Self::UnfinishedWorkflow,
+            Self::OrphanTemporaryState,
+            Self::UnknownOutcome,
+            Self::DivergentHistory,
+        ]
+    }
+}
+
+impl RecoveryClassification {
+    fn expected_action(self) -> RecoveryAction {
+        match self {
+            Self::SafeToResume => RecoveryAction::Resume,
+            Self::SafeToRetry => RecoveryAction::Retry,
+            Self::MustReconcile => RecoveryAction::Reconcile,
+            Self::MustAbort => RecoveryAction::Abort,
+            Self::HumanRequired => RecoveryAction::HumanReview,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryQualificationObservation {
+    pub target: RecoveryTarget,
+    pub classification: RecoveryClassification,
+    pub action: RecoveryAction,
+    pub evidence_ref: String,
+}
+
+impl RecoveryQualificationObservation {
+    pub fn new(
+        target: RecoveryTarget,
+        classification: RecoveryClassification,
+        action: RecoveryAction,
+        evidence_ref: impl Into<String>,
+    ) -> Result<Self, DomainError> {
+        Ok(Self {
+            target,
+            classification,
+            action,
+            evidence_ref: required_text("recovery qualification evidence", evidence_ref)?,
+        })
+    }
+
+    pub fn expected(target: RecoveryTarget, evidence_ref: impl Into<String>) -> Self {
+        let classification = classify_recovery(target);
+        Self::new(
+            target,
+            classification,
+            classification.expected_action(),
+            evidence_ref,
+        )
+        .expect("expected recovery qualification observation is valid")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryQualificationDecision {
+    failures: Vec<String>,
+}
+
+impl RecoveryQualificationDecision {
+    pub fn is_passed(&self) -> bool {
+        self.failures.is_empty()
+    }
+
+    pub fn failures(&self) -> &[String] {
+        &self.failures
+    }
+}
+
+pub fn evaluate_recovery_qualification(
+    observations: &[RecoveryQualificationObservation],
+) -> RecoveryQualificationDecision {
+    let mut failures = Vec::new();
+    for target in RecoveryTarget::required_targets() {
+        let matches = observations
+            .iter()
+            .filter(|observation| observation.target == target)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            failures.push(format!(
+                "recovery target {target:?} must have exactly one observation"
+            ));
+            continue;
+        }
+
+        let observation = matches[0];
+        let classification = classify_recovery(target);
+        if observation.classification != classification {
+            failures.push(format!(
+                "recovery target {target:?} has incorrect classification"
+            ));
+        }
+        if observation.action != classification.expected_action() {
+            failures.push(format!("recovery target {target:?} has unsafe action"));
+        }
+        if observation.evidence_ref.trim().is_empty() {
+            failures.push(format!(
+                "recovery target {target:?} has no evidence reference"
+            ));
+        }
+    }
+    RecoveryQualificationDecision { failures }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RecoveryClassification {
     SafeToResume,
     SafeToRetry,
@@ -715,6 +837,54 @@ impl RevalidationRun {
     pub fn is_successful(&self) -> bool {
         matches!(
             self.result,
+            RevalidationResult::Passed | RevalidationResult::PassedWithDegradation
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PostIncidentQualificationEvidence {
+    incident_id: IncidentId,
+    revalidation_run_id: RevalidationRunId,
+    revalidation_result: RevalidationResult,
+    evidence_refs: Vec<String>,
+}
+
+impl PostIncidentQualificationEvidence {
+    pub fn new(
+        incident_id: IncidentId,
+        revalidation_run_id: RevalidationRunId,
+        revalidation_result: RevalidationResult,
+        evidence_refs: Vec<String>,
+    ) -> Result<Self, DomainError> {
+        required_refs("post-incident qualification evidence", &evidence_refs)?;
+        Ok(Self {
+            incident_id,
+            revalidation_run_id,
+            revalidation_result,
+            evidence_refs,
+        })
+    }
+
+    pub fn incident_id(&self) -> IncidentId {
+        self.incident_id
+    }
+
+    pub fn revalidation_run_id(&self) -> RevalidationRunId {
+        self.revalidation_run_id
+    }
+
+    pub fn revalidation_result(&self) -> RevalidationResult {
+        self.revalidation_result
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
+
+    pub fn is_successful(&self) -> bool {
+        matches!(
+            self.revalidation_result,
             RevalidationResult::Passed | RevalidationResult::PassedWithDegradation
         )
     }
@@ -2159,6 +2329,8 @@ pub struct QualificationBundle {
     completed_at: Option<Timestamp>,
     #[serde(default)]
     signature: Option<SignatureRecord>,
+    #[serde(default)]
+    post_incident_evidence: Option<PostIncidentQualificationEvidence>,
 }
 
 impl QualificationBundle {
@@ -2222,6 +2394,7 @@ impl QualificationBundle {
             started_at,
             completed_at,
             signature: None,
+            post_incident_evidence: None,
         })
     }
 
@@ -2442,6 +2615,28 @@ impl QualificationBundle {
         self.signature.as_ref()
     }
 
+    pub fn attach_post_incident_evidence(
+        mut self,
+        evidence: PostIncidentQualificationEvidence,
+    ) -> Result<Self, DomainError> {
+        if self.lifecycle != QualificationLifecycle::PostIncident {
+            return Err(DomainError::PolicyViolation(
+                "post-incident evidence requires post-incident qualification lifecycle".into(),
+            ));
+        }
+        if self.post_incident_evidence.is_some() {
+            return Err(DomainError::PolicyViolation(
+                "qualification bundle already has post-incident evidence".into(),
+            ));
+        }
+        self.post_incident_evidence = Some(evidence);
+        Ok(self)
+    }
+
+    pub fn post_incident_evidence(&self) -> Option<&PostIncidentQualificationEvidence> {
+        self.post_incident_evidence.as_ref()
+    }
+
     pub fn unsigned_signing_payload(&self) -> Result<Vec<u8>, DomainError> {
         let mut unsigned = self.clone();
         unsigned.signature = None;
@@ -2495,6 +2690,14 @@ impl QualificationBundle {
     }
 
     pub fn status(&self) -> QualificationStatus {
+        if self.lifecycle == QualificationLifecycle::PostIncident {
+            let Some(evidence) = self.post_incident_evidence.as_ref() else {
+                return QualificationStatus::Incomplete;
+            };
+            if !evidence.is_successful() {
+                return QualificationStatus::Failed;
+            }
+        }
         let Some(report) = &self.conformance_report else {
             return QualificationStatus::Incomplete;
         };

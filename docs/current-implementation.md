@@ -202,7 +202,9 @@ The bounded Q5 manifest-binding slice adds validated serialized-manifest loading
 
 The bounded Q8 runtime-wiring slice adds default-disabled typed qualification configuration and a shared automatic runner invoked by both `server` and `worker` before readiness/polling. It collects live migration/runtime-role evidence, writes and persists a deployment bundle including failed evidence, and fails closed on a failed decision. It does not claim a passed profile, signature trust, KMS/HSM/Vault resolution, fault/recovery execution, or release approval. See [`documentation-gap-delta-2026-08-12-q8-automatic-runtime-qualification.md`](documentation-gap-delta-2026-08-12-q8-automatic-runtime-qualification.md).
 
-The bounded Q9 trust-boundary slice adds `SignerTrustRule`/`SignerTrustPolicy` exact metadata allowlisting, fail-closed lifecycle checks, and a `KeyProvider`-backed local-file signing adapter. `conformance verify-signature` and `conformance verify` now expose cryptographic and trusted-signer verdicts separately and require an explicit trust policy for a trusted result. It does not add KMS/HSM/Vault/OS-keyring custody, remote signing, durable policy storage, rotation execution, post-incident requalification, or release approval. See [`documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md`](documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md).
+The bounded Q9 trust-boundary slice adds `SignerTrustRule`/`SignerTrustPolicy` exact metadata allowlisting, fail-closed lifecycle checks, and a `KeyProvider`-backed local-file signing adapter. `conformance verify-signature` and `conformance verify` now expose cryptographic and trusted-signer verdicts separately and require an explicit trust policy for a trusted result. It does not add KMS/HSM/Vault/OS-keyring custody, remote signing, durable policy storage, rotation execution, or release approval. See [`documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md`](documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md).
+
+The bounded Q10 slice adds typed `PostIncidentQualificationEvidence`, binds it to `POST_INCIDENT` bundles, requires `conformance bundle --post-incident-evidence-file`, and keeps unsuccessful revalidation from producing a passed bundle while preserving the artifact. It also adds a deterministic recovery qualification gate that checks exactly-once target observations and safe classified actions. Durable incident/revalidation repositories, runtime recovery orchestration, isolated crash/fault execution, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md`](documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md).
 
 ## 9. Diagnostics / doctor / rebuild currently wired
 
@@ -294,7 +296,7 @@ The bounded T1–T8 contract now establishes additive domain semantics for:
 - typed RevalidationRun/RecoveryPoint evidence;
 - target-bound QualificationBundle/Baseline and TRUSTED gate.
 
-Durable recovery orchestration and post-incident runtime evidence remain open.
+Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation is also available. Durable recovery orchestration, Incident/RevalidationRun repositories, and production-safe fault execution remain open.
 
 ## 13. Crypto / data-governance seeds
 
@@ -326,6 +328,7 @@ The suite is **not** target conformance/qualification because it lacks:
 - stable requirement-ID mapping;
 - profile dependency closure;
 - deterministic named fault injection around crash/effect boundaries;
+- durable incident/revalidation evidence persistence and runtime recovery execution;
 - exact build/config/environment identity;
 - hard-gate profile runner/known-limitations contract.
 

@@ -94,6 +94,8 @@ enum ConformanceAction {
         suite_version: String,
         #[arg(long = "known-limitation")]
         known_limitations: Vec<String>,
+        #[arg(long)]
+        post_incident_evidence_file: Option<PathBuf>,
     },
     Verify {
         #[arg(long, value_enum)]
