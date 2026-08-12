@@ -116,6 +116,8 @@ The checkout now also contains the bounded Q22 fault-bundle-assembly delta: [`do
 
 The checkout now also contains the bounded Q23 fault-process-runtime delta: [`documentation-gap-delta-2026-08-12-q23-fault-process-runtime.md`](documentation-gap-delta-2026-08-12-q23-fault-process-runtime.md). `ProcessFaultInjectionRuntime` executes an explicitly configured child with target/point/isolation forwarding, minimal inherited environment, timeout termination, and strict observation parsing. Provider sandbox adapters, Docker qualification evidence, trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q24 progressive-trust-restoration delta: [`documentation-gap-delta-2026-08-12-q24-progressive-trust-restoration.md`](documentation-gap-delta-2026-08-12-q24-progressive-trust-restoration.md). `ProgressiveTrustRestorationService` persists `REVALIDATING` and permits `Trusted` only after exact post-incident evidence, manifest binding, qualified baseline matching, and full local Trusted hard-gate closure. Capability-level restoration policy and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

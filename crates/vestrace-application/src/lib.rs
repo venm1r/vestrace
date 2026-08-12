@@ -34,6 +34,7 @@ pub mod retrieval;
 pub mod run;
 pub mod runs;
 pub mod security;
+pub mod trust_restoration;
 
 pub use cognitive::{
     AgentRecord, AgentRepository, SharedAgentRepository, SharedSkillRepository, SkillRecord,
@@ -111,6 +112,7 @@ pub use security::{
     GrantPolicyEngine, PolicyDecisionEngine, PolicyEngine, RedactionRule, RedactionService,
     SharedAuditRepository, SharedHierarchicalBudget, SharedPolicyDecisionEngine,
 };
+pub use trust_restoration::ProgressiveTrustRestorationService;
 
 #[cfg(test)]
 mod tests {
