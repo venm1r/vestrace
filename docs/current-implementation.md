@@ -216,6 +216,8 @@ The bounded Q14 slice adds `ExternalEffectRepository`, migration `0127`, and `Pg
 
 The bounded Q15 slice adds `ExternalEffectFaultSuiteService` over an injected deterministic executor. It runs every required effect fault point, rejects point/observation mismatches, preserves unsafe-retry failures as a non-passed decision, and fails closed when the executor is unavailable. This is a harness/application boundary only; it does not inject faults into production adapters, persist fault evidence, perform chaos testing, restore trust, or qualify a release. See [`documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md`](documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md).
 
+The bounded Q16 slice adds durable UNKNOWN-effect discovery and provider read-back orchestration. `PgExternalEffectRepository` returns only workspace-scoped UNKNOWN receipts without an existing reconciliation, validates indexed identity against the authoritative payload, and `ExternalEffectRecoveryService` delegates injected observations to the existing strongest-evidence reconciler before persisting a new immutable fact. It never dispatches or retries the original effect. Production startup wiring, provider-specific adapters, production fault injection/evidence, progressive trust restoration, and release qualification remain open. See [`documentation-gap-delta-2026-08-12-q16-effect-recovery-discovery.md`](documentation-gap-delta-2026-08-12-q16-effect-recovery-discovery.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**

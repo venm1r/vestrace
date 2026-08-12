@@ -13,10 +13,10 @@ fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
     Utc.timestamp_opt(seconds, 0).single().unwrap()
 }
 
-fn intent() -> ExternalEffectIntent {
+fn intent_for(workspace_id: WorkspaceId, execution_ref: &str) -> ExternalEffectIntent {
     ExternalEffectIntent::new(
-        "run-step-1",
-        WorkspaceId::new(),
+        execution_ref,
+        workspace_id,
         PrincipalId::new(),
         "webhook-v1",
         "send",
@@ -35,6 +35,10 @@ fn intent() -> ExternalEffectIntent {
         at(10),
     )
     .unwrap()
+}
+
+fn intent() -> ExternalEffectIntent {
+    intent_for(WorkspaceId::new(), "run-step-1")
 }
 
 fn unknown_receipt(intent: &ExternalEffectIntent) -> ExternalEffectReceipt {
@@ -108,6 +112,56 @@ async fn external_effect_repository_rejects_conflicting_immutable_intent_id(pool
         repository.insert_intent(&conflicting).await,
         Err(ApplicationError::Conflict(_))
     ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_in_workspace(
+    pool: PgPool,
+) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let workspace_id = WorkspaceId::new();
+    let current = intent_for(workspace_id, "current");
+    let other = intent_for(WorkspaceId::new(), "other");
+    let current_receipt = unknown_receipt(&current);
+    let other_receipt = unknown_receipt(&other);
+
+    repository.insert_intent(&current).await.unwrap();
+    repository.insert_receipt(&current_receipt).await.unwrap();
+    repository.insert_intent(&other).await.unwrap();
+    repository.insert_receipt(&other_receipt).await.unwrap();
+
+    let candidates = repository
+        .find_reconciliation_candidates(workspace_id)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].intent(), &current);
+    assert_eq!(candidates[0].receipt(), &current_receipt);
+
+    let reconciliation = reconcile_effect(
+        &current,
+        &current_receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(false),
+            "external:not-found",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&reconciliation)
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .find_reconciliation_candidates(workspace_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

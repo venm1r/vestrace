@@ -100,6 +100,8 @@ The checkout now also contains the bounded Q14 effect-persistence delta: [`docum
 
 The checkout now also contains the bounded Q15 effect-fault-suite delta: [`documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md`](documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md). `ExternalEffectFaultSuiteService` executes all required deterministic fault points through an injected executor and preserves failed/unsafe evidence without converting it into a qualification claim. Production fault wiring, evidence persistence, progressive trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q16 effect-recovery-discovery delta: [`documentation-gap-delta-2026-08-12-q16-effect-recovery-discovery.md`](documentation-gap-delta-2026-08-12-q16-effect-recovery-discovery.md). Migration `0128`, indexed reconciliation identity, workspace-scoped UNKNOWN discovery, and an injected provider read-back/reconciliation service now survive restart at the repository boundary. Production startup wiring, provider-specific adapters, production fault evidence, progressive trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.
