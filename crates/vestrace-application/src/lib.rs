@@ -11,6 +11,7 @@ mod error;
 pub mod execution_ports;
 pub mod external_effects;
 pub mod fault_evidence;
+pub mod fault_qualification;
 pub mod fault_suite;
 mod health;
 pub mod idempotency;
@@ -62,6 +63,7 @@ pub use fault_evidence::{
     ExternalEffectFaultObservationEvidence, ExternalEffectFaultSuiteEvidence,
     FaultSuiteEvidenceRepository,
 };
+pub use fault_qualification::ExternalEffectFaultQualificationService;
 pub use fault_suite::{
     EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,
 };

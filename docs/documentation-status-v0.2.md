@@ -104,6 +104,8 @@ The checkout now also contains the bounded Q16 effect-recovery-discovery delta: 
 
 The checkout now also contains the bounded Q17 fault-suite-evidence delta: [`documentation-gap-delta-2026-08-12-q17-fault-suite-evidence-persistence.md`](documentation-gap-delta-2026-08-12-q17-fault-suite-evidence-persistence.md). Migration `0129` and `PgFaultSuiteEvidenceRepository` persist target-bound deterministic fault observations, including failed/unsafe decisions, with immutable retry/conflict and payload-integrity semantics. Production fault injection, qualification-runner consumption, progressive trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q18 fault-suite-qualification delta: [`documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md`](documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md). `ExternalEffectFaultQualificationService` composes deterministic execution with durable evidence persistence and preserves failed results without promotion. Production fault injector wiring, complete qualification-bundle consumption, progressive trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

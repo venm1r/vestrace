@@ -220,6 +220,8 @@ The bounded Q16 slice adds durable UNKNOWN-effect discovery and provider read-ba
 
 The bounded Q17 slice adds target-bound `ExternalEffectFaultSuiteEvidence`, migration `0129`, and `PgFaultSuiteEvidenceRepository`. It persists all required fault observations and failed/unsafe decisions with immutable retry/conflict semantics and indexed-payload integrity checks. It does not execute production fault injection, consume evidence into qualification, restore trust, or qualify a release. See [`documentation-gap-delta-2026-08-12-q17-fault-suite-evidence-persistence.md`](documentation-gap-delta-2026-08-12-q17-fault-suite-evidence-persistence.md).
 
+The bounded Q18 slice adds `ExternalEffectFaultQualificationService`, which composes the deterministic fault suite with target-bound evidence persistence. Passed and failed decisions are both persisted with their original semantics, while executor errors fail before persistence. Production injector selection, full `QualificationBundle` consumption, progressive trust restoration, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md`](documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
