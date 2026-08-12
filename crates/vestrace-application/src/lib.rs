@@ -11,6 +11,7 @@ mod error;
 pub mod execution_ports;
 pub mod external_effects;
 pub mod fault_admission;
+pub mod fault_bundle;
 pub mod fault_evidence;
 pub mod fault_gate_evidence;
 pub mod fault_qualification;
@@ -63,6 +64,7 @@ pub use execution_ports::{
 };
 pub use external_effects::ExternalEffectService;
 pub use fault_admission::ExternalEffectFaultEvidenceAdmissionService;
+pub use fault_bundle::ExternalEffectQualificationBundleService;
 pub use fault_evidence::{
     ExternalEffectFaultObservationEvidence, ExternalEffectFaultSuiteEvidence,
     FaultSuiteEvidenceRepository,

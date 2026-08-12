@@ -228,6 +228,8 @@ The bounded Q20 slice adds `ExternalEffectFaultGateEvidenceService`, which maps 
 
 The bounded Q21 slice adds `ConfiguredEffectFaultScenarioExecutor` with explicit non-production isolation settings and a `FaultInjectionRuntime` hook. Disabled injection is rejected before runtime invocation; configured runs carry the exact target digest and fault point, validate the returned point, and propagate runtime failures. Real process crash/kill orchestration, provider-specific destructive execution, and automatic release qualification remain open. See [`documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md`](documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md).
 
+The bounded Q22 slice adds `ExternalEffectQualificationBundleService`, which loads exact-target persisted fault evidence, maps it to `QUAL-008` hard-gate evidence and a conformance result, binds the assembled report to the capability manifest, and persists passed or failed bundles. Duplicate `QUAL-008` inputs and repository failures fail closed. A real isolated process/provider fault driver, progressive trust restoration, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q22-fault-bundle-assembly.md`](documentation-gap-delta-2026-08-12-q22-fault-bundle-assembly.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
@@ -318,7 +320,7 @@ The bounded T1–T8 contract now establishes additive domain semantics for:
 - typed RevalidationRun/RecoveryPoint evidence;
 - target-bound QualificationBundle/Baseline and TRUSTED gate.
 
-Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation, durable Incident/RevalidationRun/TrustState/RecoveryPoint and external effect/reconciliation persistence, startup recovery orchestration, workspace-scoped UNKNOWN-effect reconciliation, and an injected deterministic effect fault-suite boundary are available. Production fault wiring, fault evidence persistence, and trust restoration remain open.
+Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation, durable Incident/RevalidationRun/TrustState/RecoveryPoint and external effect/reconciliation persistence, startup recovery orchestration, workspace-scoped UNKNOWN-effect reconciliation, an injected deterministic effect fault-suite boundary, and fault-evidence-backed qualification-bundle assembly are available. A real isolated fault driver, progressive trust restoration, and release approval remain open.
 
 ## 13. Crypto / data-governance seeds
 
@@ -384,7 +386,7 @@ The current snapshot does **not** establish complete target support for:
 - governed ExternalEffectIntent/receipt/reconciliation;
 - Incident/Trust/Revalidation model;
 - target Crypto/Data Governance contract;
-- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, Q9 adds provider-bound local signing plus signer trust evaluation, Q10 adds post-incident evidence gating, Q11 adds durable recovery/trust evidence persistence, Q12 adds startup recovery orchestration, Q13 adds UNKNOWN-effect reconciliation, Q14 adds durable effect/reconciliation evidence, and Q15 adds the deterministic effect fault-suite application boundary. KMS/HSM/Vault-backed key resolution, key rotation execution, production fault wiring/evidence persistence, progressive trust restoration, and release qualification remain open.
+- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, Q9 adds provider-bound local signing plus signer trust evaluation, Q10 adds post-incident evidence gating, Q11 adds durable recovery/trust evidence persistence, Q12 adds startup recovery orchestration, Q13 adds UNKNOWN-effect reconciliation, Q14 adds durable effect/reconciliation evidence, Q15 adds the deterministic effect fault-suite application boundary, Q17 adds durable fault evidence, Q20 maps it to `QUAL-008`, Q21 wires the configured runtime hook, and Q22 assembles and persists fault-evidence-backed bundles. KMS/HSM/Vault-backed key resolution, key rotation execution, a real isolated fault driver, progressive trust restoration, and release qualification remain open.
 
 ## 18. Documentation rule
 
