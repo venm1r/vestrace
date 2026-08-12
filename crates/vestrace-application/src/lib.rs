@@ -12,6 +12,7 @@ pub mod execution_ports;
 pub mod external_effects;
 pub mod fault_admission;
 pub mod fault_evidence;
+pub mod fault_gate_evidence;
 pub mod fault_qualification;
 pub mod fault_suite;
 mod health;
@@ -65,6 +66,7 @@ pub use fault_evidence::{
     ExternalEffectFaultObservationEvidence, ExternalEffectFaultSuiteEvidence,
     FaultSuiteEvidenceRepository,
 };
+pub use fault_gate_evidence::ExternalEffectFaultGateEvidenceService;
 pub use fault_qualification::ExternalEffectFaultQualificationService;
 pub use fault_suite::{
     EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,

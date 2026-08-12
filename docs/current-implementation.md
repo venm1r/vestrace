@@ -224,6 +224,8 @@ The bounded Q18 slice adds `ExternalEffectFaultQualificationService`, which comp
 
 The bounded Q19 slice adds `ExternalEffectFaultEvidenceAdmissionService`, a read-side gate that admits only persisted passed evidence whose target digest exactly matches the requested deployment target. Missing, failed, or mismatched evidence is rejected as a policy failure, and repository errors propagate unchanged. It does not attach evidence to a complete `QualificationBundle`, restore trust, or approve a release. See [`documentation-gap-delta-2026-08-12-q19-fault-suite-evidence-admission.md`](documentation-gap-delta-2026-08-12-q19-fault-suite-evidence-admission.md).
 
+The bounded Q20 slice adds `ExternalEffectFaultGateEvidenceService`, which maps exact-target persisted fault evidence into local executable `QUAL-008` hard-gate evidence. Passed evidence maps to `Pass`, failed evidence remains `Fail`, and missing, mismatched, or unreadable evidence fails closed. It does not assemble a complete `QualificationBundle`, restore trust, or approve a release. See [`documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md`](documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**

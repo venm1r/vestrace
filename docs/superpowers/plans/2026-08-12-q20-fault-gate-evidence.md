@@ -1,0 +1,25 @@
+# Q20 — Fault-Gate Evidence
+
+## Goal
+
+Expose target-bound durable fault-suite results as local executable `QUAL-008`
+hard-gate evidence while preserving failed results and fail-closed read errors.
+
+## Tasks
+
+- [x] Add RED tests for passed mapping, failed mapping, target mismatch, and missing evidence.
+- [x] Add `ExternalEffectFaultGateEvidenceService`.
+- [x] Map passed/failed evidence to `QUAL-008` `Pass`/`Fail` without promotion.
+- [x] Preserve target and repository failure boundaries.
+- [x] Document the adapter boundary and explicit non-claims.
+- [ ] Assemble this evidence into a complete qualification bundle and release gate later.
+
+## Verification
+
+- `cargo test --test effect_fault_gate_evidence -- --nocapture`
+- `cargo test --test effect_fault_admission -- --nocapture`
+- `cargo test --test effect_fault_qualification -- --nocapture`
+- `cargo test --workspace --lib -- --nocapture`
+- `cargo test --workspace --no-run`
+- `cargo fmt -- --check`
+- `git diff --check`
