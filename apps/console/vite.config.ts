@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/ag-ui/, '/ag-ui'),
       },
+      '/api/health': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/health/, '/health'),
+      },
     },
   },
 });

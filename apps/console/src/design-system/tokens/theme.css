@@ -1,13 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+/* `display=block` keeps ligature names ("home", "smart_toy") from rendering as
+   literal words while the icon font is still loading. */
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block');
 
 :root {
-  --brand-navy: #0A1E33;
-  --brand-blue: #2563EB;
-  --brand-cyan: #22D3EE;
-  --brand-white: #F3F6F9;
-  --brand-ink: #0F172A;
-  --brand-muted: #7C8AA0;
+  color-scheme: dark;
+
+  --brand-navy: #0a1e33;
+  --brand-blue: #2563eb;
+  --brand-cyan: #22d3ee;
+  --brand-white: #f3f6f9;
+  --brand-ink: #0f172a;
+  --brand-muted: #7c8aa0;
 
   --color-surface: #0b1326;
   --color-surface-container-lowest: #060e20;
@@ -28,18 +32,86 @@
   --color-success: #00e676;
   --color-warning: #ffb800;
 
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-sans: 'Geist', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'Geist', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Aliases consumed by the design-system primitives (Surface, Button) and by
+     the shell/memory components. They are defined here so every component
+     resolves against a single palette. */
+  --bg-level-0: var(--color-surface-container-lowest);
+  --bg-level-1: var(--color-surface-container-low);
+  --bg-level-2: var(--color-surface-container);
+  --bg-level-3: var(--color-surface-container-high);
+  --bg-level-4: var(--color-surface-container-highest);
+
+  --border-color: var(--color-outline);
+  --text-primary: var(--brand-white);
+  --text-secondary: var(--color-on-surface-variant);
+
+  --semantic-success: var(--color-success);
+  --semantic-warning: var(--color-warning);
+  --semantic-error: var(--color-error);
+  --semantic-critical: #ff1744;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-round: 999px;
+
+  --focus-ring: var(--color-tertiary);
 }
 
-[data-theme="dark"], body {
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
   background-color: var(--color-surface);
   color: var(--color-on-surface);
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Native controls inherit the app typography instead of the UA default. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+select option {
+  background-color: var(--color-surface-container-lowest);
+  color: var(--brand-white);
+}
+
+a {
+  color: var(--color-tertiary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .material-symbols-outlined {
@@ -55,4 +127,65 @@
   word-wrap: normal;
   direction: ltr;
   -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* Wide content (tables) scrolls inside its own container so the page body
+   never scrolls horizontally. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll table {
+  min-width: 720px;
+}
+
+.app-nav-link:hover {
+  background-color: var(--color-surface-container-high);
+  color: var(--brand-white);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1100;
+  padding: 10px 16px;
+  background: var(--color-primary);
+  color: #ffffff;
+  border-radius: 0 0 var(--radius-md) 0;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Sidebar collapses to an icon rail on narrow viewports so the main content
+   keeps a usable width. */
+@media (max-width: 900px) {
+  .app-sidebar {
+    width: 64px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .app-sidebar .app-sidebar-label {
+    display: none !important;
+  }
+
+  .app-sidebar .app-nav-link {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

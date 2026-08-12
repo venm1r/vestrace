@@ -1,55 +1,62 @@
 import React from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import {
+  ActionButton,
+  NoticeBanner,
+  PageHeader,
+  PageShell,
+  Panel,
+  ResourceState,
+  useNotice,
+} from '../shell/PageState';
+
+function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
 
 export const WorkflowsPage: React.FC = () => {
-  const { data: workflows, error, loading } = useApiResource(vestraceClient.listWorkflows);
+  const { data: workflows, error, loading, reload } = useApiResource(vestraceClient.listWorkflows);
+  const { notice, notify, dismiss } = useNotice();
 
-  if (error) {
-    return (
-      <div role="alert" style={{ padding: '24px' }}>
-        Backend data is unavailable: {error}
-      </div>
-    );
-  }
+  const items = workflows ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
-            Workflow Management
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
-            Orchestrated multi-step agent plans, graph dependencies, and automated triggers.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Workflow Definitions"
+        description="Registered workflow definitions and the revision currently published for each one."
+        actions={
+          <ActionButton
+            icon="add"
+            onClick={() =>
+              notify('info', 'Workflow authoring from the console is not implemented in the P0 foundation.')
+            }
+          >
+            Create Workflow
+          </ActionButton>
+        }
+      />
 
-        <button
-          onClick={() => alert('Workflow creation is not implemented in the P0 foundation')}
-          style={{
-            background: 'var(--color-primary)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span className="material-symbols-outlined">add</span> Create Workflow
-        </button>
-      </div>
+      <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {loading ? (
-          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading workflows...</div>
-        ) : (
-          (workflows ?? []).map((workflow) => (
+      {(loading || error || items.length === 0) && (
+        <Panel>
+          <ResourceState
+            loading={loading}
+            error={error}
+            isEmpty={items.length === 0}
+            resourceName="workflows"
+            emptyMessage="No workflows are defined in this workspace."
+            onRetry={reload}
+          />
+        </Panel>
+      )}
+
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {items.map((workflow) => (
             <div
               key={workflow.id}
               style={{
@@ -60,59 +67,65 @@ export const WorkflowsPage: React.FC = () => {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
+                gap: '16px',
+                flexWrap: 'wrap',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: '28px', color: 'var(--color-tertiary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                <span
+                  className="material-symbols-outlined"
+                  aria-hidden="true"
+                  style={{ fontSize: '28px', color: 'var(--color-tertiary)' }}
+                >
                   account_tree
                 </span>
-                <div>
-                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
+                <div style={{ minWidth: 0 }}>
+                  <h2
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '16px',
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      margin: 0,
+                    }}
+                  >
                     {workflow.name}
-                  </h3>
-                  <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px', display: 'flex', gap: '16px' }}>
-                    <span>ID: {workflow.id}</span>
-                    <span>Steps: {workflow.steps_count}</span>
-                    <span>Last Run: {workflow.last_run}</span>
+                  </h2>
+                  <div
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary)',
+                      marginTop: '2px',
+                      display: 'flex',
+                      gap: '16px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', wordBreak: 'break-all' }}>
+                      {workflow.id}
+                    </span>
+                    <span>Created: {formatTimestamp(workflow.created_at)}</span>
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span
-                  style={{
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    background: 'rgba(0, 230, 118, 0.15)',
-                    color: '#00e676',
-                  }}
-                >
-                  {workflow.status}
-                </span>
-
-                <button
-                  onClick={() => alert(`Workflow execution is not implemented for ${workflow.name}`)}
-                  style={{
-                    background: 'var(--color-primary)',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '6px',
-                    padding: '6px 14px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Run Now
-                </button>
-              </div>
+              <span
+                style={{
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  background: 'var(--color-surface-container-high)',
+                  color: 'var(--color-tertiary)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Revision {workflow.current_revision}
+              </span>
             </div>
-          ))
-        )}
-      </div>
-    </div>
+          ))}
+        </div>
+      )}
+    </PageShell>
   );
 };

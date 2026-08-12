@@ -30,7 +30,15 @@ export const ApprovalChallenge: React.FC<ApprovalChallengeProps> = ({
   };
 
   return (
-    <Surface level={4} style={{ borderLeft: `4px solid ${getRiskBadgeColor()}`, gap: 'var(--space-3)' }}>
+    <Surface
+      level={4}
+      style={{
+        borderLeft: `4px solid ${getRiskBadgeColor()}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--space-3)',
+      }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--text-primary)' }}>Approval Required</h3>
         <span style={{ backgroundColor: getRiskBadgeColor(), color: '#000', padding: '2px 8px', borderRadius: 'var(--radius-round)', fontSize: '12px', fontWeight: 700 }}>

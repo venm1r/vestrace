@@ -1,55 +1,78 @@
 import React from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import {
+  ActionButton,
+  NoticeBanner,
+  PageHeader,
+  PageShell,
+  Panel,
+  ResourceState,
+  useNotice,
+} from '../shell/PageState';
+
+function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function statusColor(status: string | null): string {
+  switch (status?.toLowerCase()) {
+    case 'passed':
+    case 'succeeded':
+    case 'completed':
+      return 'var(--color-success)';
+    case 'failed':
+      return 'var(--color-error)';
+    case 'running':
+    case 'pending':
+      return 'var(--color-warning)';
+    default:
+      return 'var(--text-secondary)';
+  }
+}
 
 export const EvaluationsPage: React.FC = () => {
-  const { data: evaluations, error, loading } = useApiResource(vestraceClient.listEvaluations);
+  const { data: evaluations, error, loading, reload } = useApiResource(vestraceClient.listEvaluations);
+  const { notice, notify, dismiss } = useNotice();
 
-  if (error) {
-    return (
-      <div role="alert" style={{ padding: '24px' }}>
-        Backend data is unavailable: {error}
-      </div>
-    );
-  }
+  const items = evaluations ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
-            Evaluations & Safety Benchmarks
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
-            Automated test suites, safety alignment, schema compliance, and performance metrics.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Evaluations"
+        description="Recorded evaluation runs, their reported status, and the score persisted for each one."
+        actions={
+          <ActionButton
+            icon="insights"
+            onClick={() =>
+              notify('info', 'Triggering evaluation suites from the console is not implemented in the P0 foundation.')
+            }
+          >
+            Run Eval Suite
+          </ActionButton>
+        }
+      />
 
-        <button
-          onClick={() => alert('Evaluation execution is not implemented in the P0 foundation')}
-          style={{
-            background: 'var(--color-primary)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span className="material-symbols-outlined">insights</span> Run Eval Suite
-        </button>
-      </div>
+      <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {loading ? (
-          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading evaluation suites...</div>
-        ) : (
-          (evaluations ?? []).map((evaluation) => (
+      {(loading || error || items.length === 0) && (
+        <Panel>
+          <ResourceState
+            loading={loading}
+            error={error}
+            isEmpty={items.length === 0}
+            resourceName="evaluations"
+            emptyMessage="No evaluations are recorded in this workspace."
+            onRetry={reload}
+          />
+        </Panel>
+      )}
+
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {items.map((evaluation) => (
             <div
               key={evaluation.id}
               style={{
@@ -60,29 +83,55 @@ export const EvaluationsPage: React.FC = () => {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
+                gap: '16px',
+                flexWrap: 'wrap',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: '28px', color: 'var(--color-success)' }}>
-                  verified
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                <span
+                  className="material-symbols-outlined"
+                  aria-hidden="true"
+                  style={{ fontSize: '28px', color: statusColor(evaluation.status) }}
+                >
+                  fact_check
                 </span>
-                <div>
-                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, color: '#F3F6F9' }}>
-                    {evaluation.suite}
-                  </h3>
-                  <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', marginTop: '2px' }}>
-                    Last Evaluated: {evaluation.last_evaluated}
+                <div style={{ minWidth: 0 }}>
+                  <h2
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '16px',
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      margin: 0,
+                    }}
+                  >
+                    {evaluation.name}
+                  </h2>
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    Recorded: {formatTimestamp(evaluation.created_at)}
                   </div>
+                  {evaluation.summary && (
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      {evaluation.summary}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700, color: '#00e676' }}>
-                    {evaluation.score}
+                  <div
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '20px',
+                      fontWeight: 700,
+                      color: evaluation.score === null ? 'var(--text-secondary)' : 'var(--text-primary)',
+                    }}
+                  >
+                    {evaluation.score === null ? '—' : evaluation.score}
                   </div>
-                  <span style={{ fontSize: '11px', color: 'var(--color-on-surface-variant)', textTransform: 'uppercase' }}>
-                    Accuracy Score
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    Score
                   </span>
                 </div>
 
@@ -93,17 +142,18 @@ export const EvaluationsPage: React.FC = () => {
                     fontSize: '12px',
                     fontWeight: 600,
                     textTransform: 'uppercase',
-                    background: 'rgba(0, 230, 118, 0.15)',
-                    color: '#00e676',
+                    background: 'var(--color-surface-container-high)',
+                    color: statusColor(evaluation.status),
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  {evaluation.status}
+                  {evaluation.status ?? 'unknown'}
                 </span>
               </div>
             </div>
-          ))
-        )}
-      </div>
-    </div>
+          ))}
+        </div>
+      )}
+    </PageShell>
   );
 };

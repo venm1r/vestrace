@@ -1,92 +1,129 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import {
+  ActionButton,
+  NoticeBanner,
+  PageHeader,
+  PageShell,
+  Panel,
+  ResourceState,
+  Th,
+  rowStyle,
+  tableHeadRowStyle,
+  tableStyle,
+  useNotice,
+} from '../shell/PageState';
+
+const costFormatter = new Intl.NumberFormat(undefined, {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
+function formatCost(value: number): string {
+  return Number.isFinite(value) ? `${costFormatter.format(value)} / Mtok` : '—';
+}
 
 export const ModelsPage: React.FC = () => {
-  const { data: models, error, loading } = useApiResource(vestraceClient.listModels);
+  const { data: models, error, loading, reload } = useApiResource(vestraceClient.listModels);
+  const { data: providers } = useApiResource(vestraceClient.listProviders);
+  const { notice, notify, dismiss } = useNotice();
 
-  if (error) {
-    return (
-      <div role="alert" style={{ padding: '24px' }}>
-        Backend data is unavailable: {error}
-      </div>
-    );
-  }
+  const providerNames = useMemo(
+    () => new Map((providers ?? []).map((provider) => [provider.id, provider.name])),
+    [providers],
+  );
+
+  const items = models ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
-            AI Models & Providers Registry
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
-            Model profiles, context windows, token pricing profiles, and embedding models.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Models & Providers Registry"
+        description="Registered model profiles, their provider binding, context windows, and per-million-token pricing."
+        actions={
+          <ActionButton
+            icon="extension"
+            onClick={() =>
+              notify('info', 'Model registration from the console is not implemented in the P0 foundation.')
+            }
+          >
+            Register Model
+          </ActionButton>
+        }
+      />
 
-        <button
-          onClick={() => alert('Model registration is not implemented in the P0 foundation')}
-          style={{
-            background: 'var(--color-primary)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span className="material-symbols-outlined">extension</span> Register Model
-        </button>
-      </div>
+      <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <div
-        style={{
-          background: 'var(--color-surface-container-low)',
-          border: '1px solid var(--color-outline)',
-          borderRadius: '12px',
-          overflow: 'hidden',
-        }}
-      >
-        {loading ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-on-surface-variant)' }}>
-            Loading model profiles...
-          </div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
-            <thead>
-              <tr style={{ background: 'var(--color-surface-container)', borderBottom: '1px solid var(--color-outline)', color: 'var(--color-on-surface-variant)', fontSize: '12px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 24px' }}>Model Name</th>
-                <th style={{ padding: '12px 16px' }}>Provider</th>
-                <th style={{ padding: '12px 16px' }}>Context Window</th>
-                <th style={{ padding: '12px 16px' }}>Input Cost</th>
-                <th style={{ padding: '12px 16px' }}>Output Cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(models ?? []).map((model) => (
-                <tr key={model.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
-                  <td style={{ padding: '16px 24px' }}>
-                    <div style={{ fontWeight: 600, color: '#F3F6F9', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>extension</span>
-                      {model.model_name}
-                    </div>
-                  </td>
-                  <td style={{ padding: '16px' }}>{model.provider}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.context_window}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.cost_input}</td>
-                  <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{model.cost_output}</td>
+      <Panel>
+        <ResourceState
+          loading={loading}
+          error={error}
+          isEmpty={items.length === 0}
+          resourceName="models"
+          emptyMessage="No models are registered in this workspace."
+          onRetry={reload}
+        />
+        {!loading && !error && items.length > 0 && (
+          <div className="table-scroll">
+            <table style={tableStyle}>
+              <thead>
+                <tr style={tableHeadRowStyle}>
+                  <Th>Model Name</Th>
+                  <Th style={{ padding: '12px 16px' }}>Provider</Th>
+                  <Th style={{ padding: '12px 16px' }}>Context Window</Th>
+                  <Th style={{ padding: '12px 16px' }}>Input Cost</Th>
+                  <Th style={{ padding: '12px 16px' }}>Output Cost</Th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {items.map((model) => (
+                  <tr key={model.id} style={rowStyle}>
+                    <td style={{ padding: '16px 24px' }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          color: 'var(--text-primary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <span
+                          className="material-symbols-outlined"
+                          aria-hidden="true"
+                          style={{ color: 'var(--color-tertiary)' }}
+                        >
+                          extension
+                        </span>
+                        {model.model_name}
+                      </div>
+                    </td>
+                    <td style={{ padding: '16px' }}>
+                      {providerNames.get(model.provider_id) ?? (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          {model.provider_id}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>
+                      {model.context_window.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                      {formatCost(model.input_cost_per_mtoken)}
+                    </td>
+                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                      {formatCost(model.output_cost_per_mtoken)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
-    </div>
+      </Panel>
+    </PageShell>
   );
 };

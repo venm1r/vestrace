@@ -1,55 +1,57 @@
 import React from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import {
+  ActionButton,
+  NoticeBanner,
+  PageHeader,
+  PageShell,
+  Panel,
+  ResourceState,
+  useNotice,
+} from '../shell/PageState';
 
 export const AgentsPage: React.FC = () => {
-  const { data: agents, error, loading } = useApiResource(vestraceClient.listAgents);
+  const { data: agents, error, loading, reload } = useApiResource(vestraceClient.listAgents);
+  const { notice, notify, dismiss } = useNotice();
 
-  if (error) {
-    return (
-      <div role="alert" style={{ padding: '24px' }}>
-        Backend data is unavailable: {error}
-      </div>
-    );
-  }
+  const items = agents ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
-            Agent Fleet Dashboard
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
-            Registered autonomous agents, model bindings, and execution statistics.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Agent Registry"
+        description="Registered agent definitions: name, purpose, and the system prompt bound to each agent."
+        actions={
+          <ActionButton
+            icon="smart_toy"
+            onClick={() =>
+              notify('info', 'Agent registration from the console is not implemented in the P0 foundation.')
+            }
+          >
+            Register Agent
+          </ActionButton>
+        }
+      />
 
-        <button
-          onClick={() => alert('Agent registration is not implemented in the P0 foundation')}
-          style={{
-            background: 'var(--color-primary)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span className="material-symbols-outlined">smart_toy</span> Register Agent
-        </button>
-      </div>
+      <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-        {loading ? (
-          <div style={{ padding: '40px', color: 'var(--color-on-surface-variant)' }}>Loading agent fleet...</div>
-        ) : (
-          (agents ?? []).map((agent) => (
+      {(loading || error || items.length === 0) && (
+        <Panel>
+          <ResourceState
+            loading={loading}
+            error={error}
+            isEmpty={items.length === 0}
+            resourceName="agents"
+            emptyMessage="No agents are registered in this workspace."
+            onRetry={reload}
+          />
+        </Panel>
+      )}
+
+      {items.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+          {items.map((agent) => (
             <div
               key={agent.id}
               style={{
@@ -62,58 +64,71 @@ export const AgentsPage: React.FC = () => {
                 gap: '16px',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'var(--color-tertiary)' }}>
-                    smart_toy
-                  </span>
-                  <div>
-                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, color: '#F3F6F9' }}>
-                      {agent.name}
-                    </h3>
-                    <span style={{ fontSize: '12px', color: 'var(--color-on-surface-variant)' }}>ID: {agent.id}</span>
-                  </div>
-                </div>
-
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span
+                  className="material-symbols-outlined"
+                  aria-hidden="true"
+                  style={{ fontSize: '32px', color: 'var(--color-tertiary)' }}
+                >
+                  smart_toy
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <h2
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '18px',
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      margin: 0,
+                    }}
+                  >
+                    {agent.name}
+                  </h2>
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--text-secondary)',
+                      fontFamily: 'var(--font-mono)',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {agent.id}
+                  </span>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                {agent.description || 'No description was recorded for this agent.'}
+              </p>
+
+              <details>
+                <summary style={{ fontSize: '13px', color: 'var(--color-tertiary)', cursor: 'pointer' }}>
+                  System prompt
+                </summary>
+                <pre
                   style={{
-                    padding: '2px 8px',
-                    borderRadius: '4px',
+                    marginTop: '8px',
+                    marginBottom: 0,
+                    background: 'var(--color-surface-container-lowest)',
+                    border: '1px solid var(--color-outline)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    fontFamily: 'var(--font-mono)',
                     fontSize: '12px',
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    background: agent.status === 'Active' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(196, 198, 205, 0.15)',
-                    color: agent.status === 'Active' ? '#00e676' : '#c4c6cd',
+                    color: 'var(--color-on-surface)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '220px',
+                    overflowY: 'auto',
                   }}
                 >
-                  {agent.status}
-                </span>
-              </div>
-
-              <div style={{ fontSize: '13px', color: 'var(--color-on-surface-variant)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div>Bound Model: <strong style={{ color: '#F3F6F9' }}>{agent.model}</strong></div>
-                <div>Total Lifetime Runs: <strong style={{ color: '#F3F6F9' }}>{agent.runs_count}</strong></div>
-              </div>
-
-              <button
-                onClick={() => alert(`Agent configuration is not implemented for ${agent.name}`)}
-                style={{
-                  background: 'var(--color-surface-container-high)',
-                  color: '#F3F6F9',
-                  border: '1px solid var(--color-outline)',
-                  borderRadius: '6px',
-                  padding: '8px 14px',
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                Configure Agent
-              </button>
+                  {agent.system_prompt || '(empty)'}
+                </pre>
+              </details>
             </div>
-          ))
-        )}
-      </div>
-    </div>
+          ))}
+        </div>
+      )}
+    </PageShell>
   );
 };

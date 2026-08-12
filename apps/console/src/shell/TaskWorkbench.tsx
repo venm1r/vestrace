@@ -2,38 +2,75 @@ import React from 'react';
 import { Surface } from '../design-system/primitives/Surface';
 import { Button } from '../design-system/primitives/Button';
 
-export interface TaskWorkbenchProps {
-  title: string;
-  status: 'Running' | 'Waiting' | 'Completed' | 'Failed' | 'Unknown';
-  stepSummary: string;
+export type TaskStatus = 'Running' | 'Waiting' | 'Completed' | 'Failed' | 'Unknown';
+
+export interface TaskDetail {
+  label: string;
+  value: string;
 }
 
-export const TaskWorkbench: React.FC<TaskWorkbenchProps> = ({ title, status, stepSummary }) => {
+export interface TaskEvidence {
+  tone: 'pass' | 'info' | 'fail';
+  text: string;
+}
+
+export interface TaskWorkbenchProps {
+  title: string;
+  status: TaskStatus;
+  stepSummary: string;
+  /** Details supplied by the caller; the workbench never invents run data. */
+  details?: TaskDetail[];
+  /** Verification findings supplied by the caller. */
+  evidence?: TaskEvidence[];
+}
+
+const STATUS_COLOR: Record<TaskStatus, string> = {
+  Completed: 'var(--semantic-success)',
+  Waiting: 'var(--semantic-warning)',
+  Failed: 'var(--semantic-error)',
+  Running: 'var(--brand-cyan)',
+  Unknown: 'var(--brand-muted)',
+};
+
+const EVIDENCE_COLOR: Record<TaskEvidence['tone'], string> = {
+  pass: 'var(--semantic-success)',
+  info: 'var(--brand-cyan)',
+  fail: 'var(--semantic-error)',
+};
+
+const panelStyle: React.CSSProperties = {
+  padding: 'var(--space-3)',
+  backgroundColor: 'var(--bg-level-2)',
+  borderRadius: 'var(--radius-md)',
+  fontSize: '13px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 'var(--space-2)',
+};
+
+export const TaskWorkbench: React.FC<TaskWorkbenchProps> = ({
+  title,
+  status,
+  stepSummary,
+  details = [],
+  evidence = [],
+}) => {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [evidenceOpen, setEvidenceOpen] = React.useState(false);
 
-  const getStatusColor = () => {
-    switch (status) {
-      case 'Completed': return 'var(--semantic-success)';
-      case 'Waiting': return 'var(--semantic-warning)';
-      case 'Failed': return 'var(--semantic-error)';
-      case 'Running': return 'var(--brand-cyan)';
-      default: return 'var(--brand-muted)';
-    }
-  };
-
   return (
     <Surface level={1} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: '20px' }}>{title}</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+        <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--text-primary)' }}>{title}</h2>
         <span
           style={{
-            backgroundColor: getStatusColor(),
-            color: '#000',
+            backgroundColor: STATUS_COLOR[status],
+            color: '#04121f',
             padding: 'var(--space-1) var(--space-3)',
             borderRadius: 'var(--radius-round)',
             fontSize: '12px',
             fontWeight: 700,
+            whiteSpace: 'nowrap',
           }}
         >
           {status}
@@ -41,30 +78,47 @@ export const TaskWorkbench: React.FC<TaskWorkbenchProps> = ({ title, status, ste
       </div>
       <p style={{ margin: 0, color: 'var(--text-secondary)' }}>{stepSummary}</p>
 
-      {/* Dynamic Task Details */}
       {detailsOpen && (
-        <div style={{ padding: 'var(--space-3)', backgroundColor: 'var(--bg-level-2)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <div><strong>Run ID:</strong> <code style={{ color: 'var(--brand-cyan)' }}>run_7f81a4b9</code></div>
-          <div><strong>Execution Mode:</strong> Direct Step Pipeline</div>
-          <div><strong>Step 1:</strong> Pre-flight database check (Completed)</div>
-          <div><strong>Step 2:</strong> Validating Row-Level Security Isolation Policies (In Progress)</div>
+        <div style={panelStyle}>
+          {details.length === 0 ? (
+            <span style={{ color: 'var(--text-secondary)' }}>No task details were provided.</span>
+          ) : (
+            details.map((detail) => (
+              <div key={detail.label}>
+                <strong>{detail.label}:</strong> {detail.value}
+              </div>
+            ))
+          )}
         </div>
       )}
 
-      {/* Dynamic Evidence Findings */}
       {evidenceOpen && (
-        <div style={{ padding: 'var(--space-3)', backgroundColor: 'var(--bg-level-2)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <div style={{ color: 'var(--semantic-success)' }}>✓ RLS session variable vestrace.workspace_id set correctly</div>
-          <div style={{ color: 'var(--semantic-success)' }}>✓ Audit log entry aud_90f81a2c generated</div>
-          <div style={{ color: 'var(--brand-cyan)' }}>ℹ 3 SQL migrations validated with zero warnings</div>
+        <div style={panelStyle}>
+          {evidence.length === 0 ? (
+            <span style={{ color: 'var(--text-secondary)' }}>No verification evidence was provided.</span>
+          ) : (
+            evidence.map((item) => (
+              <div key={item.text} style={{ color: EVIDENCE_COLOR[item.tone] }}>
+                {item.text}
+              </div>
+            ))
+          )}
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-        <Button variant="primary" onClick={() => setDetailsOpen(!detailsOpen)}>
+      <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <Button
+          variant="primary"
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
           {detailsOpen ? 'Hide Task Details' : 'View Task Details'}
         </Button>
-        <Button variant="ghost" onClick={() => setEvidenceOpen(!evidenceOpen)}>
+        <Button
+          variant="ghost"
+          aria-expanded={evidenceOpen}
+          onClick={() => setEvidenceOpen((open) => !open)}
+        >
           {evidenceOpen ? 'Hide Evidence' : 'Inspect Evidence'}
         </Button>
       </div>

@@ -10,6 +10,8 @@ export const Button: React.FC<ButtonProps> = ({
   variant = 'primary',
   children,
   style,
+  type = 'button',
+  disabled,
   ...props
 }) => {
   const getBackgroundColor = () => {
@@ -27,6 +29,8 @@ export const Button: React.FC<ButtonProps> = ({
 
   return (
     <button
+      type={type}
+      disabled={disabled}
       style={{
         backgroundColor: getBackgroundColor(),
         color: 'var(--brand-white)',
@@ -35,10 +39,12 @@ export const Button: React.FC<ButtonProps> = ({
         padding: 'var(--space-2) var(--space-4)',
         fontSize: '14px',
         fontWeight: 600,
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
         display: 'inline-flex',
         alignItems: 'center',
         gap: 'var(--space-2)',
+        whiteSpace: 'nowrap',
         ...style,
       }}
       {...props}

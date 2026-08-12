@@ -1,133 +1,218 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Surface } from '../design-system/primitives/Surface';
 import { Button } from '../design-system/primitives/Button';
-import { agUiClient, AgUiEvent } from '../sdk/agUiClient';
+import { agUiClient, type AgUiEvent, type AgUiStreamStatus } from '../sdk/agUiClient';
+
+interface ChatMessage {
+  id: string;
+  sender: string;
+  kind: 'operator' | 'gateway' | 'error';
+  text: string;
+  timestamp: string;
+}
+
+const STREAM_PRESENTATION: Record<AgUiStreamStatus, { label: string; color: string }> = {
+  connecting: { label: 'AG-UI STREAM CONNECTING', color: 'var(--color-warning)' },
+  open: { label: 'AG-UI STREAM ACTIVE', color: 'var(--color-success)' },
+  closed: { label: 'AG-UI STREAM UNAVAILABLE', color: 'var(--color-error)' },
+};
+
+let messageCounter = 0;
+function nextMessageId(): string {
+  messageCounter += 1;
+  return `msg-${messageCounter}`;
+}
+
+function timestamp(): string {
+  return new Date().toLocaleTimeString();
+}
 
 export const CompactChat: React.FC = () => {
-  const [messages, setMessages] = useState<Array<{ sender: string; text: string; timestamp: string }>>([
-    {
-      sender: 'User',
-      text: 'Execute safety verification audit on migration 0090.',
-      timestamp: '10:14:00',
-    },
-    {
-      sender: 'System (AG-UI)',
-      text: 'Task #4092 created via AG-UI gateway. Step 1: Pre-flight check passed.',
-      timestamp: '10:14:02',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [agUiActive] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<AgUiStreamStatus>('connecting');
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  const append = (message: Omit<ChatMessage, 'id' | 'timestamp'>) =>
+    setMessages((previous) => [...previous, { ...message, id: nextMessageId(), timestamp: timestamp() }]);
 
   useEffect(() => {
-    if (!agUiActive) return;
-    const disconnect = agUiClient.connectEventStream((evt: AgUiEvent) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: `AG-UI Event: ${evt.event}`,
-          text: typeof evt.data === 'string' ? evt.data : JSON.stringify(evt.data),
-          timestamp: new Date().toLocaleTimeString(),
-        },
-      ]);
+    const disconnect = agUiClient.connectEventStream({
+      onStatus: setStreamStatus,
+      onEvent: (event: AgUiEvent) =>
+        append({
+          sender: `AG-UI ${event.event}`,
+          kind: 'gateway',
+          text: typeof event.data === 'string' ? event.data : JSON.stringify(event.data),
+        }),
+      onError: (message) => append({ sender: 'AG-UI gateway', kind: 'error', text: message }),
     });
+
     return disconnect;
-  }, [agUiActive]);
+    // The stream is opened once for the lifetime of the component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim()) return;
-    const userMsg = input;
-    setInput('');
-    setMessages((prev) => [
-      ...prev,
-      { sender: 'User', text: userMsg, timestamp: new Date().toLocaleTimeString() },
-    ]);
+    const message = input.trim();
+    if (!message || sending) return;
 
-    const res = await agUiClient.runAgent({ message: userMsg });
-    setMessages((prev) => [
-      ...prev,
-      {
-        sender: 'System (AG-UI)',
-        text: res.message || 'Message acknowledged by AG-UI boundary.',
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
+    setInput('');
+    setSending(true);
+    append({ sender: 'Operator', kind: 'operator', text: message });
+
+    try {
+      const result = await agUiClient.runAgent({ message });
+      append({
+        sender: 'AG-UI gateway',
+        kind: 'gateway',
+        text: result.message ?? result.status ?? 'The gateway accepted the instruction.',
+      });
+    } catch (reason: unknown) {
+      append({
+        sender: 'AG-UI gateway',
+        kind: 'error',
+        text: reason instanceof Error ? reason.message : 'the instruction could not be delivered',
+      });
+    } finally {
+      setSending(false);
+    }
   };
+
+  const presentation = STREAM_PRESENTATION[streamStatus];
 
   return (
     <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="material-symbols-outlined" style={{ color: 'var(--color-tertiary)' }}>
+          <span className="material-symbols-outlined" aria-hidden="true" style={{ color: 'var(--color-tertiary)' }}>
             forum
           </span>
-          <h3 style={{ margin: 0, fontSize: '16px', color: '#F3F6F9', fontFamily: 'var(--font-display)' }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: '16px',
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
             Compact Chat (AG-UI Gateway)
           </h3>
         </div>
         <span
+          role="status"
           style={{
             fontSize: '11px',
             padding: '2px 8px',
             borderRadius: '4px',
-            backgroundColor: agUiActive ? 'rgba(0, 230, 118, 0.15)' : 'rgba(196, 198, 205, 0.15)',
-            color: agUiActive ? '#00e676' : '#c4c6cd',
+            backgroundColor: 'var(--bg-level-3)',
+            color: presentation.color,
             fontWeight: 600,
+            whiteSpace: 'nowrap',
           }}
         >
-          {agUiActive ? 'AG-UI STREAM ACTIVE' : 'STREAM DISCONNECTED'}
+          {presentation.label}
         </span>
       </div>
 
       <div
+        ref={logRef}
+        role="log"
+        aria-live="polite"
+        aria-label="AG-UI conversation"
         style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 'var(--space-2)',
+          minHeight: '120px',
           maxHeight: '220px',
           overflowY: 'auto',
           padding: 'var(--space-2)',
-          backgroundColor: 'var(--color-surface-container-lowest)',
+          backgroundColor: 'var(--bg-level-0)',
           borderRadius: '8px',
-          border: '1px solid var(--color-outline)',
+          border: '1px solid var(--border-color)',
         }}
       >
-        {messages.map((m, idx) => (
-          <div key={idx} style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-on-surface-variant)', fontSize: '11px' }}>
-              <strong style={{ color: m.sender.includes('User') ? 'var(--color-tertiary)' : '#F3F6F9' }}>
-                {m.sender}
-              </strong>
-              <span>{m.timestamp}</span>
-            </div>
-            <div style={{ color: '#F3F6F9', fontFamily: m.sender.includes('AG-UI') ? 'var(--font-mono)' : 'var(--font-sans)', fontSize: '13px' }}>
-              {m.text}
-            </div>
+        {messages.length === 0 ? (
+          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            No AG-UI activity yet.
           </div>
-        ))}
+        ) : (
+          messages.map((message) => (
+            <div key={message.id} style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  color: 'var(--text-secondary)',
+                  fontSize: '11px',
+                }}
+              >
+                <strong
+                  style={{
+                    color:
+                      message.kind === 'operator'
+                        ? 'var(--color-tertiary)'
+                        : message.kind === 'error'
+                          ? 'var(--color-error)'
+                          : 'var(--text-primary)',
+                  }}
+                >
+                  {message.sender}
+                </strong>
+                <span>{message.timestamp}</span>
+              </div>
+              <div
+                style={{
+                  color: message.kind === 'error' ? 'var(--color-error)' : 'var(--text-primary)',
+                  fontFamily: message.kind === 'operator' ? 'var(--font-sans)' : 'var(--font-mono)',
+                  fontSize: '13px',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {message.text}
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+        <label htmlFor="ag-ui-input" style={{ position: 'absolute', left: '-9999px' }}>
+          Send instruction via AG-UI stream
+        </label>
         <input
+          id="ag-ui-input"
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void handleSend();
+            }
+          }}
           placeholder="Send instruction via AG-UI stream..."
           style={{
             flex: 1,
+            minWidth: 0,
             padding: '8px 12px',
-            backgroundColor: 'var(--color-surface-container-lowest)',
-            border: '1px solid var(--color-outline)',
+            backgroundColor: 'var(--bg-level-0)',
+            border: '1px solid var(--border-color)',
             borderRadius: '6px',
-            color: '#F3F6F9',
+            color: 'var(--text-primary)',
             fontSize: '13px',
-            fontFamily: 'var(--font-sans)',
-            outline: 'none',
           }}
         />
-        <Button variant="primary" onClick={handleSend}>
-          Send
+        <Button variant="primary" onClick={() => void handleSend()} disabled={sending || !input.trim()}>
+          {sending ? 'Sending...' : 'Send'}
         </Button>
       </div>
     </Surface>

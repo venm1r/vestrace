@@ -1,91 +1,108 @@
 import React from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import {
+  ActionButton,
+  NoticeBanner,
+  PageHeader,
+  PageShell,
+  Panel,
+  ResourceState,
+  Th,
+  rowStyle,
+  tableHeadRowStyle,
+  tableStyle,
+  useNotice,
+} from '../shell/PageState';
+
+function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
 
 export const AuditPage: React.FC = () => {
-  const { data: events, error, loading } = useApiResource(vestraceClient.listAuditEvents);
+  const { data: events, error, loading, reload } = useApiResource(vestraceClient.listAuditEvents);
+  const { notice, notify, dismiss } = useNotice();
 
-  if (error) {
-    return (
-      <div role="alert" style={{ padding: '24px' }}>
-        Backend data is unavailable: {error}
-      </div>
-    );
-  }
+  const items = events ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: '#F3F6F9' }}>
-            Audit Log & Trace Registry
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-on-surface-variant)', marginTop: '4px' }}>
-            Immutable security event stream, capability authorization logs, and RLS enforcement history.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Audit Log & Trace Registry"
+        description="Immutable security event stream, capability authorization logs, and RLS enforcement history."
+        actions={
+          <ActionButton
+            icon="shield"
+            disabled={items.length === 0}
+            onClick={() => notify('info', 'Audit export is not implemented in the P0 foundation.')}
+          >
+            Export Audit Trail
+          </ActionButton>
+        }
+      />
 
-        <button
-          onClick={() => alert('Audit export is not implemented in the P0 foundation')}
-          style={{
-            background: 'var(--color-primary)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span className="material-symbols-outlined">shield</span> Export Audit Trail
-        </button>
-      </div>
+      <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <div
-        style={{
-          background: 'var(--color-surface-container-low)',
-          border: '1px solid var(--color-outline)',
-          borderRadius: '12px',
-          overflow: 'hidden',
-        }}
-      >
-        {loading ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-on-surface-variant)' }}>
-            Loading audit stream...
-          </div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
-            <thead>
-              <tr style={{ background: 'var(--color-surface-container)', borderBottom: '1px solid var(--color-outline)', color: 'var(--color-on-surface-variant)', fontSize: '12px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 24px' }}>Timestamp</th>
-                <th style={{ padding: '12px 16px' }}>Actor</th>
-                <th style={{ padding: '12px 16px' }}>Action</th>
-                <th style={{ padding: '12px 24px' }}>Target Resource</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(events ?? []).map((event) => (
-                <tr key={event.id} style={{ borderBottom: '1px solid var(--color-surface-container-high)' }}>
-                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-on-surface-variant)' }}>
-                    {event.timestamp}
-                  </td>
-                  <td style={{ padding: '16px', fontWeight: 600, color: '#F3F6F9' }}>{event.actor}</td>
-                  <td style={{ padding: '16px' }}>
-                    <span style={{ padding: '4px 8px', background: 'var(--color-surface-container-high)', borderRadius: '4px', fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--color-tertiary)' }}>
-                      {event.action}
-                    </span>
-                  </td>
-                  <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{event.resource}</td>
+      <Panel>
+        <ResourceState
+          loading={loading}
+          error={error}
+          isEmpty={items.length === 0}
+          resourceName="audit events"
+          emptyMessage="No audit events are recorded for this workspace."
+          onRetry={reload}
+        />
+        {!loading && !error && items.length > 0 && (
+          <div className="table-scroll">
+            <table style={tableStyle}>
+              <thead>
+                <tr style={tableHeadRowStyle}>
+                  <Th>Timestamp</Th>
+                  <Th style={{ padding: '12px 16px' }}>Actor</Th>
+                  <Th style={{ padding: '12px 16px' }}>Action</Th>
+                  <Th>Target Resource</Th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {items.map((event) => (
+                  <tr key={event.id} style={rowStyle}>
+                    <td
+                      style={{
+                        padding: '16px 24px',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '13px',
+                        color: 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatTimestamp(event.timestamp)}
+                    </td>
+                    <td style={{ padding: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>{event.actor}</td>
+                    <td style={{ padding: '16px' }}>
+                      <span
+                        style={{
+                          padding: '4px 8px',
+                          background: 'var(--color-surface-container-high)',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontFamily: 'var(--font-mono)',
+                          color: 'var(--color-tertiary)',
+                        }}
+                      >
+                        {event.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px 24px', fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
+                      {event.resource}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
-    </div>
+      </Panel>
+    </PageShell>
   );
 };

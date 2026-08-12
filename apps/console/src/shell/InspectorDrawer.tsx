@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Surface } from '../design-system/primitives/Surface';
 
 export interface InspectorDrawerProps {
@@ -16,16 +16,28 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   runStatus,
   budgetUsed,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
     <div
+      role="dialog"
+      aria-modal="false"
+      aria-label="Context inspector"
       style={{
         position: 'fixed',
         top: 0,
         right: 0,
-        width: '380px',
-        height: '100vh',
+        width: 'min(380px, 100vw)',
+        height: '100%',
         backgroundColor: 'var(--bg-level-3)',
         borderLeft: '1px solid var(--border-color)',
         padding: 'var(--space-4)',
@@ -34,29 +46,40 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--space-4)',
+        overflowY: 'auto',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: 0, fontSize: '18px' }}>Context Inspector</h3>
+        <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--text-primary)' }}>Context Inspector</h2>
         <button
+          type="button"
           onClick={onClose}
-          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '20px', cursor: 'pointer' }}
+          aria-label="Close context inspector"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--text-secondary)',
+            fontSize: '20px',
+            cursor: 'pointer',
+            lineHeight: 1,
+          }}
         >
           &times;
         </button>
       </div>
 
       <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--brand-cyan)' }}>Run Overview</h4>
-        <div><strong>Run ID:</strong> <code style={{ fontSize: '12px' }}>{runId || 'N/A'}</code></div>
-        <div><strong>Status:</strong> {runStatus || 'Unknown'}</div>
-        <div><strong>Budget Used:</strong> {budgetUsed || '$0.00'}</div>
-      </Surface>
-
-      <Surface level={2} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--brand-cyan)' }}>Verification Checks</h4>
-        <div style={{ color: 'var(--semantic-success)', fontSize: '13px' }}>✓ RLS Workspace Isolation Verified</div>
-        <div style={{ color: 'var(--semantic-success)', fontSize: '13px' }}>✓ Memory Provenance Check Passed</div>
+        <h3 style={{ margin: 0, fontSize: '14px', color: 'var(--brand-cyan)' }}>Run Overview</h3>
+        <div>
+          <strong>Run ID:</strong>{' '}
+          <code style={{ fontSize: '12px', wordBreak: 'break-all' }}>{runId ?? 'not selected'}</code>
+        </div>
+        <div>
+          <strong>Status:</strong> {runStatus ?? 'unknown'}
+        </div>
+        <div>
+          <strong>Budget used:</strong> {budgetUsed ?? 'not reported'}
+        </div>
       </Surface>
     </div>
   );
