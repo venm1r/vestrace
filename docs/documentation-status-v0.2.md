@@ -98,6 +98,8 @@ The checkout now also contains the bounded Q13 runtime-reconciliation delta: [`d
 
 The checkout now also contains the bounded Q14 effect-persistence delta: [`documentation-gap-delta-2026-08-12-q14-effect-persistence.md`](documentation-gap-delta-2026-08-12-q14-effect-persistence.md). Migration `0127` and `PgExternalEffectRepository` persist immutable intent/receipt/reconciliation payloads with indexed integrity checks and retry/conflict semantics. Startup discovery, provider read-back, deterministic fault execution, progressive trust restoration, and release approval remain open.
 
+The checkout now also contains the bounded Q15 effect-fault-suite delta: [`documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md`](documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md). `ExternalEffectFaultSuiteService` executes all required deterministic fault points through an injected executor and preserves failed/unsafe evidence without converting it into a qualification claim. Production fault wiring, evidence persistence, progressive trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

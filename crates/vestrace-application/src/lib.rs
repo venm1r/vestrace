@@ -9,6 +9,7 @@ pub mod effect_repository;
 mod error;
 pub mod execution_ports;
 pub mod external_effects;
+pub mod fault_suite;
 mod health;
 pub mod idempotency;
 pub mod jobs;
@@ -50,6 +51,9 @@ pub use execution_ports::{
     SharedExecutionHistoryRepository, StepExecutionRecord, WorkflowExecutionRecord,
 };
 pub use external_effects::ExternalEffectService;
+pub use fault_suite::{
+    EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,
+};
 pub use health::HealthRepository;
 pub use idempotency::{IdempotencyRecord, IdempotencyRepository};
 pub use jobs::*;
