@@ -5,6 +5,7 @@ pub mod cognitive_mutation;
 pub mod cognitive_ports;
 mod context;
 pub mod diagnostics;
+pub mod effect_repository;
 mod error;
 pub mod execution_ports;
 pub mod external_effects;
@@ -42,6 +43,7 @@ pub use cognitive_ports::{
 };
 pub use context::RequestContext;
 pub use diagnostics::{DiagnosticsRepository, DoctorService, SharedDiagnosticsRepository};
+pub use effect_repository::{ExternalEffectRepository, SharedExternalEffectRepository};
 pub use error::ApplicationError;
 pub use execution_ports::{
     ExecutionArtifactRecord, ExecutionHistoryRepository, ExecutionOutcomeRecord,
