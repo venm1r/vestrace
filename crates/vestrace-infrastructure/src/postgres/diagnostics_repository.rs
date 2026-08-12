@@ -253,7 +253,7 @@ impl DiagnosticsRepository for PgDiagnosticsRepository {
             SELECT count(*) AS expired_count
             FROM run_leases
             WHERE workspace_id = $1
-              AND expires_at < NOW()
+              AND lease_until < NOW()
             "#,
         )
         .bind(context.workspace_id.as_uuid())
