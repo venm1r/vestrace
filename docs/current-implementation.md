@@ -222,6 +222,8 @@ The bounded Q17 slice adds target-bound `ExternalEffectFaultSuiteEvidence`, migr
 
 The bounded Q18 slice adds `ExternalEffectFaultQualificationService`, which composes the deterministic fault suite with target-bound evidence persistence. Passed and failed decisions are both persisted with their original semantics, while executor errors fail before persistence. Production injector selection, full `QualificationBundle` consumption, progressive trust restoration, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md`](documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md).
 
+The bounded Q19 slice adds `ExternalEffectFaultEvidenceAdmissionService`, a read-side gate that admits only persisted passed evidence whose target digest exactly matches the requested deployment target. Missing, failed, or mismatched evidence is rejected as a policy failure, and repository errors propagate unchanged. It does not attach evidence to a complete `QualificationBundle`, restore trust, or approve a release. See [`documentation-gap-delta-2026-08-12-q19-fault-suite-evidence-admission.md`](documentation-gap-delta-2026-08-12-q19-fault-suite-evidence-admission.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
