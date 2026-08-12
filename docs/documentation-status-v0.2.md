@@ -94,6 +94,8 @@ The checkout now also contains the bounded Q11 recovery-persistence delta: [`doc
 
 The checkout now also contains the bounded Q12 startup-recovery-orchestration delta: [`documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md`](documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md). `StartupRecoveryService` validates candidate identity, applies the domain recovery classification, rebuilds safe projections, and reports reconciliation/abort/human-review barriers fail-closed. Durable candidate discovery, production startup wiring, runtime reconciliation/fault execution, and release approval remain open.
 
+The checkout now also contains the bounded Q13 runtime-reconciliation delta: [`documentation-gap-delta-2026-08-12-q13-runtime-reconciliation.md`](documentation-gap-delta-2026-08-12-q13-runtime-reconciliation.md). `ExternalEffectReconciliationService` restricts recovery to the intent workspace and `UNKNOWN` receipts, requires evidence-bearing observations, and preserves the domain strongest-evidence outcome without automatic retry. Durable effect/reconciliation persistence, provider adapters, deterministic fault execution, progressive trust restoration, and release approval remain open.
+
 The pinned implementation baseline remains the historical comparison point. The current dirty checkout contains bounded, uncommitted runtime and documentation deltas; each slice above records its actual scope and non-claims, and none of them qualifies a release profile.
 
 Main conclusion: preserve the existing Run/RLS/Memory/idempotency/jobs/outbox/diagnostics foundation; normalize target authority models instead of rewriting the repository.

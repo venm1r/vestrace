@@ -210,6 +210,8 @@ The bounded Q11 slice adds the application `RecoveryRepository`, migration `0126
 
 The bounded Q12 slice adds `StartupRecoveryService`, which validates unique recovery candidates, classifies them through the domain recovery matrix, rebuilds projections only for `SAFE_TO_RESUME` and `SAFE_TO_RETRY`, and emits explicit reconciliation/abort/human-review outcomes for unsafe barriers. Any rebuild failure aborts the report fail-closed. This is an application orchestration boundary; durable candidate discovery, server/worker startup wiring, runtime reconciliation, isolated fault execution, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md`](documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md).
 
+The bounded Q13 slice adds `ExternalEffectReconciliationService` over the existing immutable intent/receipt model. It is workspace-scoped, accepts only `UNKNOWN` receipts, requires observations, delegates strongest-evidence selection to the domain reconciler, and exposes no automatic dispatch/retry path. Durable effect/reconciliation persistence, startup discovery wiring, provider read-back adapters, deterministic fault injection, progressive trust restoration, and release approval remain open. See [`documentation-gap-delta-2026-08-12-q13-runtime-reconciliation.md`](documentation-gap-delta-2026-08-12-q13-runtime-reconciliation.md).
+
 ## 9. Diagnostics / doctor / rebuild currently wired
 
 Gap analysis corrected an earlier documentation assumption: **`doctor` and `rebuild` are implemented in the current main snapshot.**
@@ -300,7 +302,7 @@ The bounded T1–T8 contract now establishes additive domain semantics for:
 - typed RevalidationRun/RecoveryPoint evidence;
 - target-bound QualificationBundle/Baseline and TRUSTED gate.
 
-Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation and durable Incident/RevalidationRun/TrustState/RecoveryPoint persistence are available. Startup recovery orchestration, runtime reconciliation, and production-safe fault execution remain open.
+Post-incident qualification now has a typed local evidence input and a fail-closed bundle lifecycle; deterministic recovery action evaluation, durable Incident/RevalidationRun/TrustState/RecoveryPoint persistence, startup recovery orchestration, and workspace-scoped UNKNOWN-effect reconciliation are available. Durable effect/reconciliation persistence, production-safe fault execution, and trust restoration remain open.
 
 ## 13. Crypto / data-governance seeds
 
@@ -366,7 +368,7 @@ The current snapshot does **not** establish complete target support for:
 - governed ExternalEffectIntent/receipt/reconciliation;
 - Incident/Trust/Revalidation model;
 - target Crypto/Data Governance contract;
-- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, Q9 adds provider-bound local signing plus signer trust evaluation, Q10 adds post-incident evidence gating, and Q11 adds durable recovery/trust evidence persistence. KMS/HSM/Vault-backed key resolution, durable policy storage, key rotation execution, startup recovery orchestration, runtime fault/recovery execution, and release qualification remain open.
+- durable QualificationBundle persistence now exists through the bounded Q2 repository slice, Q4 emits a machine-readable capability/deployment assertion, Q5 binds that assertion into bundle identity, Q6 adds a read-only `conformance verify` deployment gate for exact binding, migration compatibility, and restricted runtime-role evidence, Q7 adds structured Ed25519 signatures, Q8 wires automatic server/worker qualification, Q9 adds provider-bound local signing plus signer trust evaluation, Q10 adds post-incident evidence gating, Q11 adds durable recovery/trust evidence persistence, Q12 adds startup recovery orchestration, and Q13 adds UNKNOWN-effect reconciliation. KMS/HSM/Vault-backed key resolution, durable effect/reconciliation storage, key rotation execution, runtime fault/recovery execution, progressive trust restoration, and release qualification remain open.
 
 ## 18. Documentation rule
 
