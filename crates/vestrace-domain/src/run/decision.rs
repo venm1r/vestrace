@@ -123,6 +123,13 @@ fn decide_existing(
                 dependency_run_id: *dependency_run_id,
             }
         }
+        // An approval is only meaningful where one was actually pending, so it
+        // is accepted from `WaitingForApproval` and nowhere else.
+        RunCommand::Approve { approver_id } if state.status == RunStatus::WaitingForApproval => {
+            LegacyRunEvent::ApprovalGranted {
+                approver_id: *approver_id,
+            }
+        }
         RunCommand::Resume if state.status.is_waiting() || state.status.can_resume() => {
             LegacyRunEvent::Resumed
         }

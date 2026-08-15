@@ -11,7 +11,7 @@ Make `POST_INCIDENT` qualification fail closed unless it carries typed revalidat
 - [x] Require the evidence file in the CLI and preserve failed artifacts before non-zero exit.
 - [x] Add deterministic recovery-target observations and action evaluation.
 - [x] Add focused domain and CLI tests.
-- [ ] Keep durable incident/revalidation repositories, runtime orchestration, and isolated production-safe fault execution as explicit follow-up gates.
+- [x] Durable incident/revalidation repositories delivered by Q11 (`PgRecoveryRepository`) and isolated fault execution by Q23 (`ProcessFaultInjectionRuntime`). Runtime orchestration exists as the Q12 `StartupRecoveryService` contract only; candidate discovery and startup wiring remain open as R1 in [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

@@ -100,6 +100,8 @@ fn bundle(
             },
             message: "trusted gate passed".into(),
             evidence: Some(format!("test://{requirement_id}")),
+            // A fixture standing in for a run that happened.
+            origin: vestrace_domain::conformance::CaseOrigin::Executed,
         })
         .collect();
     let report = ConformanceReport::from_results(Some(profile), results);

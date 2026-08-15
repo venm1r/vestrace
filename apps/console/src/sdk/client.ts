@@ -12,7 +12,7 @@ export class ApiRequestError extends Error {
     this.name = 'ApiRequestError';
   }
 
-  /** The backend answers 501 for surfaces that are deliberately out of P0 scope. */
+  /** The backend answers 501 for surfaces that are reserved but unimplemented. */
   get isNotImplemented(): boolean {
     return this.status === 501 || this.body.code === 'not_implemented';
   }
@@ -97,20 +97,31 @@ export interface EvaluationItem {
   created_at: string;
 }
 
-/*
- * The surfaces below are reserved by the HTTP adapter but answer 501 in the P0
- * foundation. The shapes describe the intended contract; the console renders an
- * explicit "not implemented" state until the endpoints exist.
+/** Mirrors the JSON emitted by `api::artifacts::list_artifacts`.
+ *
+ * These are the field names the adapter actually sends. The previous shape
+ * declared `kind`, `size` and `checksum`, none of which exist in the response,
+ * so all three columns rendered blank — including the digest, which is the
+ * whole point of showing an artifact. It went unnoticed because no artifact
+ * existed until a run step produced one, and an empty table hides a field
+ * mismatch perfectly.
  */
-
 export interface ArtifactItem {
   id: string;
   name: string;
-  kind: string;
-  size: string;
+  status: string;
   created_at: string;
-  checksum: string;
+  media_type: string;
+  size_bytes: number;
+  content_sha256: string;
+  revision_number: number;
 }
+
+/*
+ * The surfaces below are reserved by the HTTP adapter but answer 501 in this
+ * foundation. The shapes describe the intended contract; the console renders an
+ * explicit "not implemented" state until the endpoints exist.
+ */
 
 export interface TriggerItem {
   id: string;
@@ -136,14 +147,56 @@ export interface AuditEventItem {
   resource: string;
 }
 
+/**
+ * Only values the runtime can actually observe. An earlier shape also declared
+ * an average latency and a spent budget; neither is measured or accounted
+ * anywhere, so they were removed rather than filled with plausible numbers.
+ */
 export interface MetricsSummary {
   live_runs: number;
-  active_agents: number;
-  resource_health: string;
-  avg_latency: string;
-  total_runs_today: number;
-  budget_spent: string;
-  budget_limit: string;
+  runs_today: number;
+  registered_agents: number;
+  registered_models: number;
+  /** Per-run ceiling in micro-units, or null when no cap is expressed. */
+  run_budget_cap_micros: number | null;
+}
+
+export interface SystemHealthFinding {
+  /** The invariant's id, e.g. `outbox.backlog_within_budget`. */
+  code: string;
+  /**
+   * The version of the invariant that produced this finding. Two findings with
+   * the same code and different versions came from different definitions of the
+   * same check.
+   */
+  invariant_version: string;
+  /** `critical`, `error`, `warning` or `info`, from the invariant's definition. */
+  severity: string;
+  message: string;
+  remediation: string;
+  /** Stable identity for this violation, so the same problem is recognisable across runs. */
+  fingerprint: string;
+  /**
+   * How many times this finding has been observed, across every run. Findings
+   * are durable, so a count of eleven means the problem has been seen eleven
+   * times rather than that eleven problems exist.
+   */
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  /** False when the finding is known but the latest run did not reproduce it. */
+  observed_on_this_run: boolean;
+  /** `open`, `reopened`, `resolved`, `suppressed` or `accepted_risk`. */
+  status: string;
+}
+
+export interface SystemHealth {
+  healthy: boolean;
+  findings: SystemHealthFinding[];
+  database_role: string;
+  database_role_is_superuser: boolean;
+  database_role_bypasses_rls: boolean;
+  migration_history_compatible: boolean;
 }
 
 export interface ProfileItem {
@@ -246,7 +299,34 @@ export async function getKernelReadiness(): Promise<KernelReadiness> {
   }
 }
 
+export interface WorkspaceSettings {
+  workspace_id: string;
+  max_concurrent_runs: number;
+  run_budget_cap_micros: number;
+  budget_unlimited: boolean;
+  log_level: string;
+  /** Optimistic-concurrency token; send it back as If-Match when saving. */
+  version: number;
+}
+
+export interface UpdateWorkspaceSettingsPayload {
+  max_concurrent_runs: number;
+  run_budget_cap_micros: number;
+  log_level: string;
+}
+
 export const vestraceClient = {
+  getSettings: (): Promise<WorkspaceSettings> => request<WorkspaceSettings>('/settings'),
+  getSystemHealth: (): Promise<SystemHealth> => request<SystemHealth>('/system/health'),
+  updateSettings: (
+    payload: UpdateWorkspaceSettingsPayload,
+    expectedVersion: number,
+  ): Promise<WorkspaceSettings> =>
+    request<WorkspaceSettings>('/settings', {
+      method: 'PUT',
+      headers: { 'If-Match': String(expectedVersion) },
+      body: JSON.stringify(payload),
+    }),
   getMetricsSummary: (): Promise<MetricsSummary> => request<MetricsSummary>('/metrics/summary'),
   listRuns: (): Promise<RunItem[]> => request<RunItem[]>('/runs'),
   createRun: (payload: CreateRunPayload): Promise<RunItem> =>

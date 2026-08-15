@@ -6,13 +6,29 @@ use vestrace_application::run::{
     AdvanceRunHandler, ExecuteStepHandler, ResumeRunHandler, RunWorkHandlerRegistry, RunWorker,
     RunWorkerConfig, SystemClock,
 };
-use vestrace_application::{RequestContext, Worker};
+use vestrace_application::retrieval::EmbedMemoryHandler;
+use vestrace_application::{OutboxDispatcher, QualificationRuntime, RequestContext};
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
-    AppConfig, PgJobRepository, PgRunLeasePort, PgStore, PgWorkQueuePort, PostgresRunStore,
+    AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
+    PgMemoryTextSource,
+    PgModelExecutionRepository, PgModelRepository, PgOutboxRepository, PgRunLeasePort,
+    PgSecretStore, PgStore, PgWorkQueuePort, PostgresRunStore, SecretBackedProviderFactory,
 };
 
+/// How many messages one drain pass claims per workspace.
+///
+/// Small enough that a workspace with a large backlog does not starve the run
+/// worker sharing this loop, and the loop returns immediately when it did work,
+/// so a backlog still clears at full speed.
+const OUTBOX_BATCH: u32 = 32;
+
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
+    // Without this the worker installs no subscriber, and every warning it
+    // emits is discarded — which is how it ran silently until now.
+    super::server::init_tracing(&config.observability)?;
+    tracing::info!("starting vestrace worker");
+
     let store = PgStore::connect(&config.database)
         .await
         .map_err(|_| anyhow::anyhow!("database is unavailable"))?;
@@ -21,9 +37,44 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         .migrate()
         .await
         .map_err(|_| anyhow::anyhow!("database migrations are unavailable"))?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(anyhow::anyhow!(
+                "database migration history is incompatible"
+            ));
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "database migration verification is unavailable"
+            ));
+        }
+    }
+    if config.qualification.enabled {
+        crate::commands::conformance::run_automatic_qualification(
+            &config.qualification,
+            QualificationRuntime::Worker,
+            &store,
+        )
+        .await?;
+    }
+    if config.recovery.enabled {
+        crate::commands::recovery::run_startup_recovery(&config.workspaces, &store).await?;
+    }
 
-    let job_repo = PgJobRepository::new(store.pool().clone());
-    let job_worker = Worker::new(job_repo);
+    let outbox = build_outbox_dispatcher(config, &store)?;
+    let reconciliation = build_effect_reconciliation(config, &store)?;
+    // Built unconditionally, unlike the sweep: a debt can be owed by a
+    // reconciliation recorded before this worker started, or by one an adapter
+    // that is no longer configured produced. Refusing to deliver those because
+    // no adapter is configured *now* would strand them.
+    let outcome_delivery = Arc::new(
+        vestrace_application::EffectOutcomeDeliveryService::new(
+            Arc::new(PgExternalEffectRepository::new(store.clone())),
+            Arc::new(vestrace_infrastructure::PgRunEventStore::new(store.clone())),
+            Arc::new(vestrace_infrastructure::PgRunRecoveryStore::new(store.clone())),
+        ),
+    );
 
     let run_store = Arc::new(PostgresRunStore::new(&store));
     let lease_port = Arc::new(PgRunLeasePort::new(&store));
@@ -48,23 +99,79 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         run_store.clone(),
         clock.clone(),
     )));
-    registry.register(Arc::new(ExecuteStepHandler::new(
-        run_store.clone(),
-        clock.clone(),
-    )));
+    let execute_step = ExecuteStepHandler::new(run_store.clone(), clock.clone());
+    let execute_step = match build_model_executor(config, &store)? {
+        Some(executor) => {
+            tracing::info!(
+                model = %config.model.model_name,
+                "agent steps will invoke a model"
+            );
+            execute_step.with_model_executor(executor)
+        }
+        None => {
+            // Stated as a warning rather than left silent: with no executor an
+            // agent-assigned step fails, which is a visible behaviour change
+            // from the build that reported success without running anything.
+            tracing::warn!(
+                "no model is configured; steps assigned to an agent will fail rather than report success"
+            );
+            execute_step
+        }
+    };
+    registry.register(Arc::new(execute_step));
 
-    let run_worker = Arc::new(RunWorker::new(
+    let run_worker = Arc::new(RunWorker::new_with_policy(
         run_worker_config,
         run_store,
         lease_port,
         queue_port,
         clock,
         registry,
+        // Built from configuration, exactly as the server does. This was
+        // hardcoded to `DenyAllPolicyEngine`, so every work item the worker
+        // leased was refused with `authorization_denied: DefaultDeny` and
+        // dead-lettered — no run could ever advance, whatever `policy.engine`
+        // was set to.
+        // The worker consults the same grant store as the server, so a
+        // grant issued over HTTP governs run execution too. A worker with a
+        // different view of authority than the surface that issued it would be
+        // two policies wearing one name.
+        super::server::build_policy_engine(
+            &config.policy,
+            std::sync::Arc::new(vestrace_infrastructure::PgCapabilityGrantRepository::new(
+                store.clone(),
+            )),
+        )?,
     )?);
 
-    let run_context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
+    // Every run/lease/work-queue query is scoped by `WHERE workspace_id = $1`,
+    // so the worker polls the workspaces it was configured to serve. A worker
+    // with no configured workspace can never claim run work, so say so once at
+    // startup instead of spinning silently against nothing.
+    let run_contexts: Vec<RequestContext> = config
+        .workspaces
+        .iter()
+        .map(|workspace| {
+            RequestContext::new(
+                WorkspaceId::from_uuid(*workspace),
+                PrincipalId::from_uuid(*workspace),
+            )
+        })
+        .collect();
+    if run_contexts.is_empty() {
+        // The outbox drain is scoped by workspace for the same reason, so a
+        // worker with no configured workspace now does nothing at all rather
+        // than only failing to claim run work.
+        tracing::warn!(
+            "no workspaces are configured; the worker will claim neither run work nor outbox messages"
+        );
+    }
 
-    tracing::info!("worker started, polling for jobs and run work items");
+    tracing::info!(
+        workspaces = run_contexts.len(),
+        outbox_topics = outbox.topics().count(),
+        "worker started, polling for run work items and outbox messages"
+    );
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_clone = shutdown_notify.clone();
@@ -74,35 +181,306 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         shutdown_clone.notify_waiters();
     });
 
+    // The two pollers run one after the other, not raced against each other.
+    //
+    // They were previously branches of a `tokio::select!`, which cancels the
+    // losing branch. Whenever the job poller finished first — which it does
+    // constantly, because an empty job table returns immediately — the run-work
+    // future was dropped at whatever await point it had reached. An item leased
+    // a moment earlier was then abandoned: still `leased` in the queue, with no
+    // run lease, no error and nothing in the log. `lease_next` only considers
+    // `status = 'ready'`, so the item was stranded permanently.
+    //
+    // Only shutdown is raced, and cancelling a poll at shutdown is exactly what
+    // is wanted there.
     loop {
-        tokio::select! {
-            result = job_worker.process_one() => {
-                let processed = result?;
-                if !processed {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-            result = run_worker.run_once(&run_context) => {
-                match result {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "run worker iteration failed");
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                    }
-                }
-            }
+        let outcome = tokio::select! {
+            biased;
+
             _ = shutdown_notify.notified() => {
                 tracing::info!("worker shutdown requested, draining current work");
                 break;
             }
+
+            outcome = async {
+                let runs = poll_run_work(&run_worker, &run_contexts).await;
+                let messages = drain_outbox(&outbox, &run_contexts).await;
+                let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
+                let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
+                Ok::<_, anyhow::Error>(runs || messages || reconciled || delivered)
+            } => outcome?,
+        };
+
+        if !outcome {
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 
     tracing::info!("worker stopped gracefully");
     Ok(())
+}
+
+/// Poll each configured workspace once, returning whether any of them had work.
+///
+/// A failure in one workspace is logged and does not stop the others: one
+/// workspace's storage problem must not stall every other workspace's runs.
+async fn poll_run_work(worker: &Arc<RunWorker>, contexts: &[RequestContext]) -> bool {
+    let mut processed = false;
+    for context in contexts {
+        match worker.run_once(context).await {
+            Ok(true) => processed = true,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    workspace = %context.workspace_id,
+                    "run worker iteration failed"
+                );
+            }
+        }
+    }
+    processed
+}
+
+/// The outbox drain, and the handlers that give it something to deliver.
+///
+/// # Why this did not exist
+///
+/// `OutboxRepository::claim_pending` and `mark_processed` were implemented and
+/// called by nothing. Every memory written since the system began recorded a
+/// message that was never delivered, and `outbox.backlog_within_budget` fired on
+/// every deployment with a remediation — "process the outbox queue" — naming no
+/// component able to do it.
+///
+/// A dispatcher with no handlers is still built, deliberately: it reports
+/// unhandled topics rather than pretending the backlog is being cleared, which
+/// is the distinction between an idle drain and a missing one.
+fn build_outbox_dispatcher(
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<Arc<OutboxDispatcher>> {
+    let repository = Arc::new(PgOutboxRepository::new(store.clone()));
+    let mut dispatcher = OutboxDispatcher::new(repository);
+
+    match super::server::build_embedding_provider(&config.embedding)? {
+        Some(provider) => {
+            let embeddings = Arc::new(PgEmbeddingStore::new(store.clone()));
+            let memories = Arc::new(PgMemoryTextSource::new(store.clone()));
+            // Two topics, one behaviour: a revision changes the text a memory
+            // means, so an index that only followed creation would answer with
+            // the superseded meaning and look perfectly healthy doing it.
+            for topic in ["memory.created", "memory.revised"] {
+                dispatcher = dispatcher.with_handler(Arc::new(EmbedMemoryHandler::new(
+                    provider.clone(),
+                    embeddings.clone(),
+                    memories.clone(),
+                    config.embedding.space_name.clone(),
+                    topic,
+                )));
+            }
+            tracing::info!(
+                model = %config.embedding.model_name,
+                space = %config.embedding.space_name,
+                "memories will be embedded as they are written"
+            );
+        }
+        None => {
+            // Said out loud, because the consequence is a vector channel that
+            // returns nothing while every retrieval still succeeds — the exact
+            // silence `memory.active_memory_is_embedded` exists to break.
+            tracing::warn!(
+                "no embedding provider is configured; memories will not be embedded on write"
+            );
+        }
+    }
+
+    Ok(Arc::new(dispatcher))
+}
+
+/// Drain each configured workspace once, returning whether any of them had work.
+///
+/// One workspace's failure is logged and does not stop the others, and an
+/// undelivered message stays pending: the backlog is the signal, and a drain
+/// that discarded what it could not deliver would erase it.
+async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestContext]) -> bool {
+    let mut worked = false;
+    for context in contexts {
+        match dispatcher.drain_once(context, OUTBOX_BATCH).await {
+            Ok(report) => {
+                if report.delivered > 0 || report.unhandled > 0 || report.failed > 0 {
+                    tracing::debug!(
+                        workspace = %context.workspace_id,
+                        delivered = report.delivered,
+                        unhandled = report.unhandled,
+                        failed = report.failed,
+                        dead_lettered = report.dead_lettered,
+                        "outbox drained"
+                    );
+                }
+                worked = worked || report.did_work();
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    workspace = %context.workspace_id,
+                    "outbox drain failed"
+                );
+            }
+        }
+    }
+    worked
+}
+
+
+/// The sweep that answers "did that actually happen".
+///
+/// # Why this is the worker's job
+///
+/// An effect whose outcome is unknown cannot be retried and cannot be assumed
+/// away; the only route out is asking the far side. Until now nothing asked:
+/// `ExternalEffectRecoveryService` and `HttpExternalEffectReadBackAdapter` were
+/// both written and neither was constructed, so an unknown outcome stayed
+/// unknown for the life of the deployment.
+///
+/// It runs beside the outbox drain rather than at startup because an unknown
+/// outcome does not wait for a restart to appear — the timeout that produces
+/// one happens while the system is running.
+fn build_effect_reconciliation(
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<Option<Arc<vestrace_application::ExternalEffectRecoveryService>>> {
+    let Some(adapter) = config.effects.configured().into_iter().next() else {
+        tracing::info!(
+            "no external effect adapter is configured; nothing can produce an unknown outcome \
+             and nothing needs reconciling"
+        );
+        return Ok(None);
+    };
+
+    let read_back = vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(
+        &adapter.read_back_url,
+    )
+    .map_err(|error| anyhow::anyhow!("effect read-back is not configurable: {error}"))?;
+
+    tracing::info!(
+        adapter = %adapter.name,
+        read_back = %adapter.read_back_url,
+        "unknown external effect outcomes will be reconciled against the far side"
+    );
+    Ok(Some(Arc::new(
+        vestrace_application::ExternalEffectRecoveryService::new(
+            Arc::new(PgExternalEffectRepository::new(store.clone())),
+            Arc::new(read_back),
+        ),
+    )))
+}
+
+/// Reconcile each configured workspace once, returning whether anything moved.
+///
+/// A candidate that could not be asked is logged and left; it stays a candidate
+/// because nothing about it has been settled.
+async fn reconcile_effects(
+    service: Option<&Arc<vestrace_application::ExternalEffectRecoveryService>>,
+    contexts: &[RequestContext],
+) -> bool {
+    let Some(service) = service else {
+        return false;
+    };
+    let mut worked = false;
+    for context in contexts {
+        match service.sweep(context, vestrace_domain::now()).await {
+            Ok(report) => {
+                for (reconciliation, run_id) in report.settled_with_runs() {
+                    // The run is named because the outcome is only useful to
+                    // whoever asked for the effect. `execution_ref` was a free
+                    // string until this slice, so this could not be reported at
+                    // all — an operator learning that an effect did not happen
+                    // had no way to find what had asked for it.
+                    tracing::info!(
+                        workspace = %context.workspace_id,
+                        outcome = ?reconciliation.outcome(),
+                        strength = ?reconciliation.evidence_strength(),
+                        effect = %reconciliation.effect_id(),
+                        run = run_id.map(|id| id.to_string()).unwrap_or_else(|| "none".into()),
+                        "an unknown external effect outcome was settled"
+                    );
+                    worked = true;
+                }
+                // Every outcome used to be logged with the line above, so
+                // "the provider could not tell us" and "a human has to decide"
+                // both read as *settled* at `info` — indistinguishable from
+                // "confirmed, all fine". They are neither settled nor fine, and
+                // they do not count as work: counting them would keep the
+                // worker from ever sleeping while nothing was being resolved.
+                for reconciliation in report.unsettled() {
+                    tracing::warn!(
+                        workspace = %context.workspace_id,
+                        outcome = ?reconciliation.outcome(),
+                        strength = ?reconciliation.evidence_strength(),
+                        effect = %reconciliation.effect_id(),
+                        retry_after_seconds =
+                            vestrace_application::RECONCILIATION_RETRY_AFTER.num_seconds(),
+                        "an external effect was asked about and its outcome is still unknown"
+                    );
+                }
+                for pending in report.unreachable() {
+                    tracing::warn!(
+                        workspace = %context.workspace_id,
+                        effect = %pending.effect_id,
+                        reason = %pending.reason,
+                        "an unknown external effect could not be asked about and stays unknown"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    workspace = %context.workspace_id,
+                    "effect reconciliation sweep failed"
+                );
+            }
+        }
+    }
+    worked
+}
+
+/// Tell each configured workspace's runs what became of their effects.
+///
+/// A settled outcome is owed to the run that asked for the effect until this
+/// records that it was delivered. A workspace whose delivery fails is logged and
+/// skipped: its debts stay owed and the next pass retries them, and one
+/// workspace's storage problem must not stop the others.
+async fn deliver_outcomes(
+    service: &Arc<vestrace_application::EffectOutcomeDeliveryService>,
+    contexts: &[RequestContext],
+) -> bool {
+    let mut worked = false;
+    for context in contexts {
+        match vestrace_application::deliver_effect_outcomes(service, context).await {
+            Ok(report) => {
+                if report.delivered > 0 || report.unattributable > 0 || report.deferred > 0 {
+                    tracing::info!(
+                        workspace = %context.workspace_id,
+                        delivered = report.delivered,
+                        unattributable = report.unattributable,
+                        deferred = report.deferred,
+                        "settled external effect outcomes were recorded in their runs"
+                    );
+                }
+                // A deferred debt is not work: counting it would keep the worker
+                // spinning while nothing was being resolved.
+                worked = worked || report.did_work();
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    workspace = %context.workspace_id,
+                    "settled external effect outcomes could not be delivered to their runs"
+                );
+            }
+        }
+    }
+    worked
 }
 
 async fn shutdown_signal() {
@@ -127,4 +505,55 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+}
+
+/// Build the executor that performs an agent step's model call.
+///
+/// Returns `None` when model execution is disabled, which is the default. The
+/// credential is not read here: it is a per-workspace secret resolved through
+/// the secret store at invocation time, so a rotated key takes effect without
+/// restarting this process.
+fn build_model_executor(
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<Option<vestrace_application::run::SharedStepModelExecutor>> {
+    use secrecy::ExposeSecret;
+
+    if !config.model.enabled {
+        return Ok(None);
+    }
+    let Some(key) = config.secrets.master_key.as_ref() else {
+        // Configuration validation already rejects this combination; the guard
+        // remains so a future caller cannot bypass it and silently disable
+        // execution instead of failing.
+        return Err(anyhow::anyhow!(
+            "model execution requires secret storage, but no master key is configured"
+        ));
+    };
+    let master = vestrace_infrastructure::crypto::MasterKey::from_base64(
+        key.expose_secret(),
+        config.secrets.effective_key_version(),
+    )
+    // Not chained: the rendering must never risk carrying the key.
+    .map_err(|_| anyhow::anyhow!("secrets.master_key must be 32 bytes encoded as base64"))?;
+
+    let secrets = Arc::new(PgSecretStore::new(store.clone(), Arc::new(master)));
+    let providers = Arc::new(SecretBackedProviderFactory::new(
+        config.model.base_url.clone(),
+        secrets,
+        config.model.secret_name.clone(),
+    ));
+
+    Ok(Some(Arc::new(
+        vestrace_application::run::ProviderStepModelExecutor::new(
+            providers,
+            Arc::new(PgModelRepository::new(store.clone())),
+            Arc::new(PgArtifactRepository::new(store.clone())),
+            Arc::new(PgModelExecutionRepository::new(store.clone())),
+            vestrace_application::run::StepModelSettings {
+                model_name: config.model.model_name.clone(),
+                max_tokens: config.model.max_tokens,
+            },
+        ),
+    )))
 }

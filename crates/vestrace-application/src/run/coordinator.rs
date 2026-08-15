@@ -10,8 +10,8 @@ use vestrace_domain::{
 use crate::{ApplicationError, RequestContext};
 
 use super::commands::{
-    AddRunSteps, CancelRun, CreateCheckpoint, CreateRun, PauseRun, ResumeRun, TransitionRun,
-    TransitionRunStep,
+    AddRunSteps, ApproveRun, CancelRun, CreateCheckpoint, CreateRun, PauseRun, ResumeRun,
+    TransitionRun, TransitionRunStep,
 };
 use super::ports::{
     CommitRun, RunClockPort, RunLeasePort, RunSnapshot, RunStorePort, WorkItem, WorkItemKind,
@@ -75,14 +75,27 @@ where
             context.workspace_id,
             RunVersion::INITIAL,
             vestrace_domain::run::ResumeCursor::from_version(RunVersion::INITIAL),
-            RunActorRef::System,
+            // The authenticated caller, not `System`.
+            //
+            // This was hardcoded to `System`, so the canonical event log said
+            // the system created every run while `agent_runs.principal_id`
+            // named a person — the authoritative record disagreed with the
+            // projection about who acted. It was invisible while one shared
+            // administrator token mapped to one identity, and it is exactly
+            // what per-principal credentials exist to fix.
+            //
+            // Taken from the context rather than from the command on purpose:
+            // the context is the identity authentication resolved and the
+            // middleware overwrote the caller's headers with, so it cannot be
+            // asserted. A command field could be.
+            RunActorRef::Principal(context.principal_id),
             RunEventPayload::RunCreated {
                 objective: command.objective,
                 execution_mode: command.execution_mode,
                 coordinator_snapshot_id: run.coordinator_snapshot_id,
                 parent: run.parent,
             },
-            CorrelationId::new(),
+            command.correlation_id.unwrap_or_else(CorrelationId::new),
             None,
             at,
         )?;
@@ -112,6 +125,20 @@ where
         &self,
         context: &RequestContext,
         command: TransitionRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        self.transition_run_with(context, command, Vec::new()).await
+    }
+
+    /// A transition that also enqueues `extra` work items.
+    ///
+    /// They travel in the same commit as the transition rather than through a
+    /// separate write, so a crash between the two cannot leave a run that has
+    /// transitioned with nothing scheduled to act on it.
+    async fn transition_run_with(
+        &self,
+        context: &RequestContext,
+        command: TransitionRun,
+        extra: Vec<WorkItem>,
     ) -> Result<RunSnapshot, ApplicationError> {
         let at = self.clock.now();
         let snapshot = self
@@ -150,12 +177,12 @@ where
                 to: command.target,
                 result: command.result.clone(),
             },
-            CorrelationId::new(),
+            command.correlation_id.unwrap_or_else(CorrelationId::new),
             command.causation_event_id,
             at,
         )?;
 
-        let mut work_items = Vec::new();
+        let mut work_items = extra;
         if command.target == RunStatus::Running && snapshot.run.status != RunStatus::Running {
             work_items.push(WorkItem {
                 id: WorkItemId::new(),
@@ -240,7 +267,7 @@ where
             RunEventPayload::StepsAdded {
                 steps: steps.clone(),
             },
-            CorrelationId::new(),
+            command.correlation_id.unwrap_or_else(CorrelationId::new),
             None,
             at,
         )?;
@@ -430,6 +457,7 @@ where
                 result: None,
                 actor: command.actor,
                 causation_event_id: None,
+                correlation_id: command.correlation_id,
                 idempotency_key: command.idempotency_key,
             },
         )
@@ -441,7 +469,72 @@ where
         context: &RequestContext,
         command: ResumeRun,
     ) -> Result<RunSnapshot, ApplicationError> {
+        let next_version = command.expected_version.next()?;
+        // Previously this work item was built and then thrown away with
+        // `let _ = resume_item;`, so nothing ever enqueued `ResumeRun` and the
+        // worker's `ResumeRunHandler` was unreachable.
+        //
+        // The `AdvanceRun` item the transition queues is not a substitute:
+        // resuming has to re-establish the run's position from its checkpoint,
+        // and advancing without that steps the run forward from stale state.
+        let resume_item = WorkItem {
+            id: WorkItemId::new(),
+            run_id: command.run_id,
+            kind: WorkItemKind::ResumeRun,
+            expected_run_version: next_version,
+            available_at: self.clock.now(),
+            idempotency_key: deterministic_idempotency_key(command.run_id, next_version, "resume"),
+            attempt: 1,
+        };
+
+        self.transition_run_with(
+            context,
+            TransitionRun {
+                run_id: command.run_id,
+                expected_version: command.expected_version,
+                target: RunStatus::Running,
+                result: None,
+                actor: command.actor,
+                causation_event_id: None,
+                correlation_id: command.correlation_id,
+                idempotency_key: command.idempotency_key.clone(),
+            },
+            vec![resume_item],
+        )
+        .await
+    }
+
+    /// Grant a pending approval and return the run to `Running`.
+    ///
+    /// Emits `run.approval_granted` naming the approver **in addition to** the
+    /// status change, because an approval that is only a status change records
+    /// that the run resumed and not who permitted it.
+    pub async fn approve_run(
+        &self,
+        context: &RequestContext,
+        command: ApproveRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
         let snapshot = self
+            .store
+            .load(context, command.run_id)
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::Domain(DomainError::NotFound("run not found".into()))
+            })?;
+
+        // Checked before the transition so the caller is told the run was not
+        // awaiting approval, rather than being told about a version mismatch or
+        // an illegal transition.
+        if snapshot.run.status != RunStatus::WaitingForApproval {
+            return Err(ApplicationError::Domain(DomainError::InvalidArgument(
+                format!(
+                    "run is {} and is not awaiting approval",
+                    snapshot.run.status.as_str()
+                ),
+            )));
+        }
+
+        let approved = self
             .transition_run(
                 context,
                 TransitionRun {
@@ -449,29 +542,48 @@ where
                     expected_version: command.expected_version,
                     target: RunStatus::Running,
                     result: None,
-                    actor: command.actor,
+                    actor: command.actor.clone(),
                     causation_event_id: None,
-                    idempotency_key: command.idempotency_key.clone(),
+                    correlation_id: command.correlation_id,
+                    idempotency_key: command.idempotency_key,
                 },
             )
             .await?;
 
-        let resume_item = WorkItem {
-            id: WorkItemId::new(),
-            run_id: command.run_id,
-            kind: WorkItemKind::ResumeRun,
-            expected_run_version: snapshot.run.version,
-            available_at: self.clock.now(),
-            idempotency_key: deterministic_idempotency_key(
-                command.run_id,
-                snapshot.run.version,
-                "resume",
-            ),
-            attempt: 1,
-        };
-        let _ = resume_item;
+        let at = self.clock.now();
+        let next_version = approved.run.version.next()?;
+        let event = RunEvent::new(
+            command.run_id,
+            context.workspace_id,
+            next_version,
+            vestrace_domain::run::ResumeCursor::from_version(next_version),
+            command.actor,
+            RunEventPayload::ApprovalGranted {
+                approver_id: command.approver_id,
+            },
+            // Same correlation as the transition it accompanies, so both halves
+            // of the approval trace back to one request.
+            command.correlation_id.unwrap_or_else(CorrelationId::new),
+            None,
+            at,
+        )?;
 
-        Ok(snapshot)
+        let mut run = approved.run.clone();
+        run.version = next_version;
+        run.updated_at = at;
+
+        self.store
+            .commit(
+                context,
+                CommitRun {
+                    run,
+                    event,
+                    new_steps: vec![],
+                    checkpoint: None,
+                    work_items: vec![],
+                },
+            )
+            .await
     }
 
     pub async fn cancel_run(
@@ -492,9 +604,115 @@ where
                 result: Some(result),
                 actor: command.actor,
                 causation_event_id: None,
+                correlation_id: command.correlation_id,
                 idempotency_key: command.idempotency_key,
             },
         )
         .await
+    }
+}
+
+/// The run operations the transport layer issues.
+///
+/// Object-safe, because `RunCoordinator` is generic over its four ports and an
+/// application state cannot hold it directly. Only the commands a caller can
+/// legitimately issue appear here: step transitions and checkpoints belong to
+/// the worker and are deliberately absent, so no HTTP route can drive a run's
+/// internals by hand.
+#[async_trait::async_trait]
+pub trait RunOrchestrator: Send + Sync {
+    async fn create_run(
+        &self,
+        context: &RequestContext,
+        command: CreateRun,
+    ) -> Result<RunSnapshot, ApplicationError>;
+
+    async fn add_steps(
+        &self,
+        context: &RequestContext,
+        command: AddRunSteps,
+    ) -> Result<RunSnapshot, ApplicationError>;
+
+    async fn pause_run(
+        &self,
+        context: &RequestContext,
+        command: PauseRun,
+    ) -> Result<RunSnapshot, ApplicationError>;
+
+    async fn resume_run(
+        &self,
+        context: &RequestContext,
+        command: ResumeRun,
+    ) -> Result<RunSnapshot, ApplicationError>;
+
+    async fn cancel_run(
+        &self,
+        context: &RequestContext,
+        command: CancelRun,
+    ) -> Result<RunSnapshot, ApplicationError>;
+
+    async fn approve_run(
+        &self,
+        context: &RequestContext,
+        command: ApproveRun,
+    ) -> Result<RunSnapshot, ApplicationError>;
+}
+
+pub type SharedRunOrchestrator = std::sync::Arc<dyn RunOrchestrator>;
+
+#[async_trait::async_trait]
+impl<S, C, Q, L> RunOrchestrator for RunCoordinator<S, C, Q, L>
+where
+    S: RunStorePort + Send + Sync,
+    C: RunClockPort + Send + Sync,
+    Q: WorkQueuePort + Send + Sync,
+    L: RunLeasePort + Send + Sync,
+{
+    async fn create_run(
+        &self,
+        context: &RequestContext,
+        command: CreateRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::create_run(self, context, command).await
+    }
+
+    async fn add_steps(
+        &self,
+        context: &RequestContext,
+        command: AddRunSteps,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::add_steps(self, context, command).await
+    }
+
+    async fn pause_run(
+        &self,
+        context: &RequestContext,
+        command: PauseRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::pause_run(self, context, command).await
+    }
+
+    async fn resume_run(
+        &self,
+        context: &RequestContext,
+        command: ResumeRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::resume_run(self, context, command).await
+    }
+
+    async fn cancel_run(
+        &self,
+        context: &RequestContext,
+        command: CancelRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::cancel_run(self, context, command).await
+    }
+
+    async fn approve_run(
+        &self,
+        context: &RequestContext,
+        command: ApproveRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        RunCoordinator::approve_run(self, context, command).await
     }
 }

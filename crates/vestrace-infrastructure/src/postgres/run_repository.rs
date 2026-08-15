@@ -26,10 +26,15 @@ struct AgentRunRow {
     workspace_id: uuid::Uuid,
     principal_id: uuid::Uuid,
     title: String,
+    objective: String,
+    coordinator_snapshot_id: Option<uuid::Uuid>,
+    execution_mode: String,
     status: String,
     run_version: i64,
+    root_run_id: uuid::Uuid,
     created_at: Timestamp,
     updated_at: Timestamp,
+    finished_at: Option<Timestamp>,
 }
 
 impl TryFrom<AgentRunRow> for AgentRun {
@@ -39,26 +44,31 @@ impl TryFrom<AgentRunRow> for AgentRun {
         let status = parse_status(&row.status)?;
         let run_version = u64::try_from(row.run_version)
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let execution_mode = RunExecutionMode::parse(&row.execution_mode).ok_or_else(|| {
+            ApplicationError::Storage(format!("invalid execution_mode: {}", row.execution_mode))
+        })?;
 
         Ok(Self {
             id: AgentRunId::from_uuid(row.id),
             workspace_id: WorkspaceId::from_uuid(row.workspace_id),
-            objective: row.title,
-            coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(row.principal_id),
+            objective: row.objective,
+            coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(
+                row.coordinator_snapshot_id.unwrap_or(row.principal_id),
+            ),
             active_plan_revision_id: None,
-            execution_mode: RunExecutionMode::Autopilot,
+            execution_mode,
             status,
             current_step_id: None,
             checkpoint_id: None,
             parent: None,
-            root_run_id: AgentRunId::from_uuid(row.id),
+            root_run_id: AgentRunId::from_uuid(row.root_run_id),
             budget_snapshot_id: None,
             resource_usage_snapshot_id: None,
             version: RunVersion::new(run_version)?,
             result: None,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            finished_at: None,
+            finished_at: row.finished_at,
         })
     }
 }
@@ -95,22 +105,30 @@ impl RunRepository for PgRunRepository {
                  workspace_id,
                  principal_id,
                  title,
+                 objective,
+                 coordinator_snapshot_id,
+                 execution_mode,
                  status,
                  run_version,
+                 root_run_id,
                  created_at,
                  updated_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(run.id.as_uuid())
         .bind(run.workspace_id.as_uuid())
-        .bind(run.coordinator_snapshot_id.as_uuid())
+        .bind(context.principal_id.as_uuid())
         .bind(&run.objective)
+        .bind(&run.objective)
+        .bind(run.coordinator_snapshot_id.as_uuid())
+        .bind(run.execution_mode.as_str())
         .bind(status_as_str(run.status))
         .bind(
             i64::try_from(run.version.value())
                 .map_err(|error| ApplicationError::Storage(error.to_string()))?,
         )
+        .bind(run.root_run_id.as_uuid())
         .bind(run.created_at)
         .bind(run.updated_at)
         .execute(transaction.connection())
@@ -137,10 +155,15 @@ impl RunRepository for PgRunRepository {
                  workspace_id,
                  principal_id,
                  title,
+                 objective,
+                 coordinator_snapshot_id,
+                 execution_mode,
                  status,
                  run_version,
+                 root_run_id,
                  created_at,
-                 updated_at
+                 updated_at,
+                 finished_at
              FROM agent_runs
              WHERE workspace_id = $1
              ORDER BY created_at ASC, id ASC
@@ -172,10 +195,15 @@ impl RunRepository for PgRunRepository {
                  workspace_id,
                  principal_id,
                  title,
+                 objective,
+                 coordinator_snapshot_id,
+                 execution_mode,
                  status,
                  run_version,
+                 root_run_id,
                  created_at,
-                 updated_at
+                 updated_at,
+                 finished_at
              FROM agent_runs
              WHERE workspace_id = $1
                AND id = $2",

@@ -13,12 +13,12 @@ fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
 
 fn intent(workspace_id: WorkspaceId, actor_id: PrincipalId) -> ExternalEffectIntent {
     ExternalEffectIntent::new(
-        "run-step-1",
+        "run://01900000-0000-7000-8000-000000000001",
         workspace_id,
         actor_id,
         "webhook-v1",
         "send",
-        "endpoint:alpha",
+        "https://alpha.effects.test/hook",
         "sha256:arguments",
         "deliver notification",
         vec![EffectPrecondition::new("resource-version", "v1").unwrap()],

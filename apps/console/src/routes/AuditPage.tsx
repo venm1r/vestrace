@@ -35,7 +35,7 @@ export const AuditPage: React.FC = () => {
           <ActionButton
             icon="shield"
             disabled={items.length === 0}
-            onClick={() => notify('info', 'Audit export is not implemented in the P0 foundation.')}
+            onClick={() => notify('info', 'Audit export is not implemented in this build.')}
           >
             Export Audit Trail
           </ActionButton>

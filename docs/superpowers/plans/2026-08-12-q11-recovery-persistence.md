@@ -12,7 +12,7 @@ Persist incident/revalidation/trust/recovery evidence without losing typed paylo
 - [x] Add migration `0126_incident_recovery_trust_records.sql`.
 - [x] Add `PgRecoveryRepository` with idempotent immutable inserts and latest trust-state lookup.
 - [x] Add host compile/library verification and Docker PostgreSQL migration smoke.
-- [ ] Keep startup recovery orchestration and production fault execution as the next gate.
+- [x] Startup recovery orchestration contract delivered by Q12 and production fault execution by Q21/Q23. Run-candidate discovery and startup wiring remain open as R1 in [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

@@ -53,6 +53,7 @@ ALTER TABLE run_events
 -- Checkpoints created before P1 did not carry a typed format or an integrity
 -- hash and cannot be authoritatively validated. They are derived acceleration
 -- data, so discard them instead of assigning a fabricated checksum.
+ALTER TABLE agent_runs DROP CONSTRAINT IF EXISTS fk_agent_runs_checkpoint_id;
 TRUNCATE TABLE run_checkpoints;
 
 ALTER TABLE run_checkpoints

@@ -1,4 +1,4 @@
-use crate::ApplicationError;
+use crate::{ApplicationError, RequestContext};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use vestrace_domain::{WorkspaceId, time::Timestamp};
@@ -18,9 +18,13 @@ pub struct IdempotencyRecord {
 pub trait IdempotencyRepository: Send + Sync {
     async fn find_by_key(
         &self,
-        workspace_id: WorkspaceId,
+        context: &RequestContext,
         key: &str,
     ) -> Result<Option<IdempotencyRecord>, ApplicationError>;
 
-    async fn save(&self, record: &IdempotencyRecord) -> Result<(), ApplicationError>;
+    async fn save(
+        &self,
+        context: &RequestContext,
+        record: &IdempotencyRecord,
+    ) -> Result<(), ApplicationError>;
 }

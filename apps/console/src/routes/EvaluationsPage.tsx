@@ -45,9 +45,9 @@ export const EvaluationsPage: React.FC = () => {
         description="Recorded evaluation runs, their reported status, and the score persisted for each one."
         actions={
           <ActionButton
-            icon="insights"
+            icon="analytics"
             onClick={() =>
-              notify('info', 'Triggering evaluation suites from the console is not implemented in the P0 foundation.')
+              notify('info', 'Triggering evaluation suites from the console is not implemented in this build.')
             }
           >
             Run Eval Suite

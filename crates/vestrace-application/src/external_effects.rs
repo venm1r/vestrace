@@ -1,0 +1,132 @@
+use vestrace_domain::external_effects::{
+    AuthorizedExternalEffect, DispatchError, EffectAuthorization, ExternalEffectAdapter,
+    ExternalEffectIntent, ExternalEffectReceipt,
+};
+use vestrace_domain::{AuthorizationRequest, Timestamp};
+
+use crate::{
+    ApplicationError, AuthorizationBoundary, RequestContext, SharedExternalEffectRepository,
+};
+
+pub struct ExternalEffectService {
+    authorization: AuthorizationBoundary,
+}
+
+impl ExternalEffectService {
+    pub fn new(authorization: AuthorizationBoundary) -> Self {
+        Self { authorization }
+    }
+
+    pub async fn authorize(
+        &self,
+        context: &RequestContext,
+        intent: &ExternalEffectIntent,
+        request: AuthorizationRequest,
+    ) -> Result<AuthorizedExternalEffect, ApplicationError> {
+        let decision = self.authorization.require(context, request).await?;
+        intent
+            .authorize(&EffectAuthorization::from_policy_decision(&decision))
+            .map_err(ApplicationError::from)
+    }
+
+    pub fn dispatch<A: ExternalEffectAdapter + ?Sized>(
+        &self,
+        authorized: &AuthorizedExternalEffect,
+        adapter: &A,
+        current_precondition_digest: &str,
+        recorded_at: Timestamp,
+    ) -> Result<ExternalEffectReceipt, ApplicationError> {
+        authorized
+            .dispatch(adapter, current_precondition_digest, recorded_at)
+            .map_err(|error| match error {
+                DispatchError::StaleIntent => ApplicationError::Conflict("STALE_INTENT".into()),
+                DispatchError::AdapterDoesNotMatchIntent
+                | DispatchError::AdapterContractViolation(_) => ApplicationError::Policy(format!(
+                    "external adapter contract rejected: {error:?}"
+                )),
+                DispatchError::AdapterFailure(error) => {
+                    ApplicationError::Unavailable(format!("external adapter failed: {error:?}"))
+                }
+            })
+    }
+}
+
+/// Perform an external effect: record the intent, authorize it, dispatch it,
+/// record the receipt.
+///
+/// # Why the intent is written before the dispatch
+///
+/// EXT-001 requires an immutable intent to be **stored** before anything leaves
+/// the process, and the reason is the crash in between. If the process dies
+/// after the request and before any record of it, the system has caused
+/// something in the world and holds no evidence that it tried — nothing to
+/// reconcile against, nothing to find during startup recovery, nothing to tell
+/// an operator. Writing the intent first turns an invisible act into an effect
+/// with an unknown outcome, which is a state the rest of this machinery knows
+/// how to handle.
+///
+/// The receipt is written after, in a second transaction. That ordering is the
+/// honest one: an effect whose receipt is missing is exactly the unknown the
+/// reconciliation path exists for, whereas an intent written after a dispatch
+/// would be a record fabricated to match what already happened.
+pub struct PerformExternalEffectService {
+    effects: SharedExternalEffectRepository,
+    authorization: AuthorizationBoundary,
+}
+
+impl PerformExternalEffectService {
+    pub fn new(
+        effects: SharedExternalEffectRepository,
+        authorization: AuthorizationBoundary,
+    ) -> Self {
+        Self {
+            effects,
+            authorization,
+        }
+    }
+
+    pub async fn perform<A: ExternalEffectAdapter + ?Sized>(
+        &self,
+        context: &RequestContext,
+        intent: ExternalEffectIntent,
+        adapter: &A,
+        at: Timestamp,
+    ) -> Result<ExternalEffectReceipt, ApplicationError> {
+        // 1. The record, before anything can happen in the world.
+        self.effects.insert_intent(context, &intent).await?;
+
+        // 2. Authority, checked against the intent it will act on.
+        let request = AuthorizationRequest::new(
+            intent.required_capability(),
+            intent.operation().to_owned(),
+            intent.target().to_owned(),
+            intent.risk(),
+        );
+        let decision = self.authorization.require(context, request).await?;
+        let authorized = intent
+            .authorize(&EffectAuthorization::from_policy_decision(&decision))
+            .map_err(ApplicationError::from)?;
+
+        // 3. The preconditions as they are now, not as they were when the
+        //    intent was written.
+        let precondition_digest = authorized.intent().precondition_digest().to_owned();
+
+        // 4. Out.
+        let receipt = authorized
+            .dispatch(adapter, &precondition_digest, at)
+            .map_err(|error| match error {
+                DispatchError::StaleIntent => ApplicationError::Conflict("STALE_INTENT".into()),
+                DispatchError::AdapterDoesNotMatchIntent
+                | DispatchError::AdapterContractViolation(_) => ApplicationError::Policy(format!(
+                    "external adapter contract rejected: {error:?}"
+                )),
+                DispatchError::AdapterFailure(error) => {
+                    ApplicationError::Unavailable(format!("external adapter failed: {error:?}"))
+                }
+            })?;
+
+        // 5. What came back, including "nothing came back".
+        self.effects.insert_receipt(context, &receipt).await?;
+        Ok(receipt)
+    }
+}

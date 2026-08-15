@@ -14,6 +14,9 @@ interface AppLayoutProps {
 interface NavItem {
   label: string;
   path: string;
+  /** Material Symbols ligature. These match the reference screens: a different
+   *  glyph for the same destination is a different product to a returning
+   *  operator. */
   icon: string;
 }
 
@@ -22,8 +25,8 @@ const NAV_GROUPS: Array<{ title: string; items: NavItem[] }> = [
     title: 'Workspace',
     items: [
       { label: 'Home', path: '/', icon: 'home' },
-      { label: 'Runs', path: '/runs', icon: 'play_circle' },
-      { label: 'Artifacts', path: '/artifacts', icon: 'folder' },
+      { label: 'Runs', path: '/runs', icon: 'terminal' },
+      { label: 'Artifacts', path: '/artifacts', icon: 'database' },
     ],
   },
   {
@@ -37,10 +40,10 @@ const NAV_GROUPS: Array<{ title: string; items: NavItem[] }> = [
   {
     title: 'System',
     items: [
-      { label: 'Connections', path: '/connections', icon: 'hub' },
-      { label: 'Models', path: '/models', icon: 'extension' },
-      { label: 'Evaluations', path: '/evaluations', icon: 'insights' },
-      { label: 'Audit', path: '/audit', icon: 'policy' },
+      { label: 'Connections', path: '/connections', icon: 'cable' },
+      { label: 'Models', path: '/models', icon: 'model_training' },
+      { label: 'Evaluations', path: '/evaluations', icon: 'analytics' },
+      { label: 'Audit', path: '/audit', icon: 'history' },
       { label: 'Settings', path: '/settings', icon: 'settings' },
     ],
   },
@@ -77,6 +80,9 @@ const READINESS_POLL_MS = 30_000;
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const [readiness, setReadiness] = useState<KernelReadiness | 'checking'>('checking');
+  // Below md the sidebar leaves the flow and becomes a drawer. It starts
+  // closed, and the toggle is the only way back to navigation there.
+  const [navOpen, setNavOpen] = useState(false);
   const identityProblem = describeIdentityProblem(readRequestIdentity());
 
   useEffect(() => {
@@ -113,40 +119,69 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         Skip to main content
       </a>
 
+      {navOpen && (
+        <button
+          type="button"
+          className="app-scrim"
+          aria-label="Close navigation"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+
       <aside
         className="app-sidebar"
+        data-open={navOpen ? 'true' : 'false'}
         style={{
-          width: '240px',
-          backgroundColor: 'var(--color-surface-container-lowest)',
-          borderRight: '1px solid var(--color-outline)',
+          width: 'var(--layout-sidebar)',
+          // `surface-container`, a tone above the page background: the spec
+          // builds hierarchy from tonal layering, and the previous value
+          // (`surface-container-lowest`) sat *below* the page, flattening it.
+          backgroundColor: 'var(--color-surface-container)',
+          borderRight: '1px solid var(--color-outline-variant)',
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
-          padding: '16px 12px',
+          padding: 'var(--space-md) var(--space-sm)',
           flexShrink: 0,
         }}
       >
-        <div style={{ padding: '0 8px 20px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div
+          style={{
+            padding: `0 var(--space-sm) var(--space-lg) var(--space-sm)`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-sm)',
+          }}
+        >
           <span
-            className="material-symbols-outlined"
             aria-hidden="true"
-            style={{ color: 'var(--color-tertiary)', fontSize: '28px' }}
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--color-primary)',
+              color: 'var(--color-on-primary)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
           >
-            memory
+            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>
+              terminal
+            </span>
           </span>
-          <div className="app-sidebar-label">
+          <div>
+            {/* Sentence case in Space Grotesk at the h3 step, coloured
+                `primary` — the reference wordmark. It was previously white
+                uppercase at 16px, which reads as a different product. */}
             <div
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '16px',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                letterSpacing: '0.05em',
-              }}
+              className="type-h3"
+              style={{ color: 'var(--color-primary)', fontWeight: 700, letterSpacing: '-0.01em' }}
             >
-              VESTRACE
+              Vestrace
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
+            <div className="type-label" style={{ color: 'var(--color-on-surface-variant)' }}>
               EXECUTION KERNEL
             </div>
           </div>
@@ -154,19 +189,22 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
         <nav
           aria-label="Primary"
-          style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, overflowY: 'auto' }}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-lg)',
+            flex: 1,
+            overflowY: 'auto',
+          }}
         >
           {NAV_GROUPS.map((group) => (
-            <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
               <div
-                className="app-sidebar-label"
+                className="type-label"
                 style={{
-                  fontSize: '11px',
                   textTransform: 'uppercase',
-                  color: 'var(--text-secondary)',
-                  letterSpacing: '0.1em',
-                  padding: '0 8px',
-                  fontWeight: 600,
+                  color: 'var(--brand-muted)',
+                  padding: `0 var(--space-sm) var(--space-xs)`,
                 }}
               >
                 {group.title}
@@ -178,23 +216,32 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                   end={item.path === '/'}
                   className="app-nav-link"
                   title={item.label}
+                  // Selecting a destination closes the drawer; leaving it open
+                  // over the page the operator just asked for would hide it.
+                  onClick={() => setNavOpen(false)}
                   style={({ isActive }) => ({
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '10px',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? 600 : 400,
+                    gap: 'var(--space-sm)',
+                    padding: 'var(--space-sm) var(--space-md)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 'var(--text-body-size)',
+                    lineHeight: 'var(--text-body-line)',
+                    fontWeight: isActive ? 700 : 500,
                     textDecoration: 'none',
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    backgroundColor: isActive ? 'var(--color-surface-container-high)' : 'transparent',
+                    // The reference marks the active item with a right accent
+                    // and a tinted container, not a solid fill.
+                    color: isActive ? 'var(--color-primary)' : 'var(--color-on-surface-variant)',
+                    backgroundColor: isActive ? 'var(--color-primary-container)' : 'transparent',
+                    borderRight: isActive
+                      ? '2px solid var(--color-primary)'
+                      : '2px solid transparent',
                   })}
                 >
-                  <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '18px' }}>
+                  <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '20px' }}>
                     {item.icon}
                   </span>
-                  <span className="app-sidebar-label">{item.label}</span>
+                  <span>{item.label}</span>
                 </NavLink>
               ))}
             </div>
@@ -205,36 +252,63 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <header
           style={{
-            minHeight: '60px',
+            minHeight: 'var(--layout-topbar)',
             backgroundColor: 'var(--color-surface-container-low)',
-            borderBottom: '1px solid var(--color-outline)',
+            borderBottom: '1px solid var(--color-outline-variant)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '16px',
-            padding: '0 24px',
+            gap: 'var(--space-md)',
+            padding: `0 var(--space-md)`,
             flexShrink: 0,
           }}
         >
           <span
+            className="type-body-sm"
             style={{
-              fontSize: '14px',
-              color: 'var(--text-secondary)',
+              color: 'var(--color-on-surface-variant)',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
+              gap: 'var(--space-sm)',
               minWidth: 0,
             }}
           >
+            <button
+              type="button"
+              className="app-nav-toggle"
+              aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen((open) => !open)}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--color-outline-variant)',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--color-on-surface)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '36px',
+                height: '36px',
+                flexShrink: 0,
+              }}
+            >
+              <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '20px' }}>
+                {navOpen ? 'close' : 'menu'}
+              </span>
+            </button>
             <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '18px' }}>
               grid_view
             </span>
-            <span style={{ whiteSpace: 'nowrap' }}>Workspace:</span>
+            {/* The word is dropped on a phone; the identifier beside it is the
+                part that carries information. */}
+            <span className="workspace-caption" style={{ whiteSpace: 'nowrap' }}>
+              Workspace:
+            </span>
             <strong
+              className="type-label"
               style={{
-                color: 'var(--text-primary)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '13px',
+                color: 'var(--brand-white)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -297,7 +371,16 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        <main id="main-content" style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+        <main
+          id="main-content"
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            // 24px is the spec's dashboard margin; a phone keeps the 16px
+            // gutter so content is not squeezed into the middle third.
+            padding: 'var(--space-md)',
+          }}
+        >
           {identityProblem && (
             <div
               role="alert"

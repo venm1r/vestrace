@@ -47,6 +47,15 @@ pub enum RunEventPayload {
         checkpoint_id: RunCheckpointId,
         resume_cursor: ResumeCursor,
     },
+    /// An approval was granted, naming who granted it.
+    ///
+    /// Distinct from a `RunStatusChanged` back to `Running` on purpose: an
+    /// approval names its approver, and collapsing the two would erase that
+    /// from the canonical history. The status change is emitted as well, so a
+    /// reader reconstructing state does not need to interpret this event.
+    ApprovalGranted {
+        approver_id: crate::id::PrincipalId,
+    },
 }
 
 impl RunEventPayload {
@@ -59,6 +68,10 @@ impl RunEventPayload {
             Self::StepStatusChanged { .. } => "run.step_status_changed",
             Self::CurrentStepChanged { .. } => "run.current_step_changed",
             Self::CheckpointCreated { .. } => "run.checkpoint_created",
+            // Matches the legacy event's type string, so a reader of the
+            // canonical log does not have to know which writer produced a
+            // historical row.
+            Self::ApprovalGranted { .. } => "run.approval_granted",
         }
     }
 

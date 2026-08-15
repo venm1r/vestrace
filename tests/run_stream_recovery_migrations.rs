@@ -48,8 +48,8 @@ async fn seed_stream_projection_event_and_checkpoint(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version
-         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'recoverable', 'created', 1)",
+             id, workspace_id, principal_id, title, objective, status, run_version
+         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'recoverable', 'recoverable', 'created', 1)",
     )
     .bind(RUN_ID)
     .bind(WORKSPACE_ID)
@@ -60,14 +60,16 @@ async fn seed_stream_projection_event_and_checkpoint(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO run_events (
-             id, workspace_id, run_id, sequence, event_type, event_version,
-             actor, causation_id, correlation_id, payload, occurred_at, created_at
+             id, workspace_id, run_id, sequence, run_version, sequence_value,
+             event_type, event_version,
+             actor, causation_id, correlation_id, payload,
+             occurred_at, created_at, recorded_at
          ) VALUES (
-             $1::uuid, $2::uuid, $3::uuid, 1, 'run.created', 1,
+             $1::uuid, $2::uuid, $3::uuid, 1, 1, 1, 'run.created', 1,
              '{\"system\":{\"component\":\"migration-contract\"}}'::jsonb,
              $4::uuid, $5::uuid,
              '{\"created\":{\"principal_id\":\"61000000-0000-0000-0000-000000000002\",\"title\":\"recoverable\"}}'::jsonb,
-             now(), now()
+             now(), now(), now()
          )",
     )
     .bind(EVENT_ID)

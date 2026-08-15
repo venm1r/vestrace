@@ -85,6 +85,8 @@ fn bundle(manifest: &VestraceCapabilityManifest) -> QualificationBundle {
                 status: CaseStatus::Pass,
                 message: "release qualification passed".into(),
                 evidence: Some(format!("test://release/{requirement_id}")),
+                // A fixture standing in for a run that happened.
+                origin: vestrace_domain::conformance::CaseOrigin::Executed,
             })
             .collect(),
     );

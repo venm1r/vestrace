@@ -1,17 +1,19 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{ApplicationError, ProviderRecord, ProviderRepository, RequestContext};
 use vestrace_domain::{ProviderLocality, time::now};
 
 pub struct PgProviderRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgProviderRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -26,6 +28,11 @@ impl ProviderRepository for PgProviderRepository {
         name: &str,
         locality: ProviderLocality,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let locality_str = match locality {
             ProviderLocality::Local => "local",
             ProviderLocality::Remote => "remote",
@@ -41,16 +48,21 @@ impl ProviderRepository for PgProviderRepository {
         .bind(name)
         .bind(locality_str)
         .bind(now())
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(
         &self,
         context: &RequestContext,
     ) -> Result<Vec<ProviderRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let rows = sqlx::query(
             r#"
             SELECT id, workspace_id, name, locality, created_at
@@ -60,7 +72,7 @@ impl ProviderRepository for PgProviderRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -84,6 +96,7 @@ impl ProviderRepository for PgProviderRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+        scoped.commit().await.map_err(storage_error)?;
         Ok(providers)
     }
 }

@@ -88,6 +88,18 @@ fn scope_key(scope: &HealthScope) -> Result<String, ApplicationError> {
     serde_json::to_string(scope).map_err(storage_error)
 }
 
+/// Compare a payload timestamp against its indexed column.
+///
+/// The column is a `TIMESTAMPTZ`, which stores microseconds, while the payload
+/// keeps whatever precision the clock produced — `now()` is `Utc::now()` and
+/// carries nanoseconds. The column is an index of the payload value, not a
+/// second source of truth, so it is compared at the precision it can actually
+/// hold. Comparing at nanosecond precision rejected every record written with a
+/// real clock reading.
+fn same_stored_instant(payload: DateTime<Utc>, column: DateTime<Utc>) -> bool {
+    payload.timestamp_micros() == column.timestamp_micros()
+}
+
 async fn verify_insert<T, F>(find: F, expected: &T, message: &str) -> Result<(), ApplicationError>
 where
     T: Eq,
@@ -153,7 +165,7 @@ impl RecoveryRepository for PgRecoveryRepository {
             if incident.id().as_uuid() != row.id
                 || expected_status != row.status
                 || expected_scope != row.scope
-                || incident.opened_at() != row.opened_at
+                || !same_stored_instant(incident.opened_at(), row.opened_at)
             {
                 return Err(storage_error(
                     "incident indexed metadata does not match payload",
@@ -219,7 +231,7 @@ impl RecoveryRepository for PgRecoveryRepository {
                 || run.incident_id().map(|value| value.as_uuid()) != row.incident_id
                 || expected_result != row.result
                 || expected_scope != row.scope
-                || run.completed_at() != row.completed_at
+                || !same_stored_instant(run.completed_at(), row.completed_at)
             {
                 return Err(storage_error(
                     "revalidation run indexed metadata does not match payload",
@@ -277,7 +289,7 @@ impl RecoveryRepository for PgRecoveryRepository {
             if expected_key != row.scope_key
                 || expected_scope != row.scope
                 || expected_state != row.state
-                || state.updated_at() != row.updated_at
+                || !same_stored_instant(state.updated_at(), row.updated_at)
             {
                 return Err(storage_error(
                     "trust state indexed metadata does not match payload",
@@ -336,7 +348,7 @@ impl RecoveryRepository for PgRecoveryRepository {
             let expected_integrity = enum_name(point.integrity_status())?;
             if point.id().as_uuid() != row.id
                 || expected_integrity != row.integrity_status
-                || point.created_at() != row.created_at
+                || !same_stored_instant(point.created_at(), row.created_at)
             {
                 return Err(storage_error(
                     "recovery point indexed metadata does not match payload",

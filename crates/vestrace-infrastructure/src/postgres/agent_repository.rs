@@ -1,16 +1,18 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{AgentRecord, AgentRepository, ApplicationError, RequestContext};
 
 pub struct PgAgentRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgAgentRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -23,6 +25,11 @@ impl AgentRepository for PgAgentRepository {
         context: &RequestContext,
         agent: &AgentRecord,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         sqlx::query(
             r#"
             INSERT INTO agents (id, workspace_id, name, description, system_prompt, created_at)
@@ -35,13 +42,19 @@ impl AgentRepository for PgAgentRepository {
         .bind(&agent.description)
         .bind(&agent.system_prompt)
         .bind(agent.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(&self, context: &RequestContext) -> Result<Vec<AgentRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let rows = sqlx::query(
             r#"
             SELECT id, workspace_id, name, description, system_prompt, created_at
@@ -51,7 +64,7 @@ impl AgentRepository for PgAgentRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -71,6 +84,7 @@ impl AgentRepository for PgAgentRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+        scoped.commit().await.map_err(storage_error)?;
         Ok(agents)
     }
 
@@ -79,6 +93,11 @@ impl AgentRepository for PgAgentRepository {
         context: &RequestContext,
         id: vestrace_domain::id::AgentId,
     ) -> Result<Option<AgentRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let row = sqlx::query(
             r#"
             SELECT id, workspace_id, name, description, system_prompt, created_at
@@ -88,9 +107,14 @@ impl AgentRepository for PgAgentRepository {
         )
         .bind(context.workspace_id.as_uuid())
         .bind(id.as_uuid())
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        // Committed before decoding: the read is done, and holding the
+        // transaction open across the mapping keeps a pool connection
+        // checked out for no reason.
+        scoped.commit().await.map_err(storage_error)?;
 
         match row {
             Some(row) => Ok(Some(AgentRecord {

@@ -5,8 +5,9 @@ use vestrace_domain::{
     MemoryScope, ModelCostProfile, ModelProfile, ModelRouter, OutcomeKind, PrincipalId,
     ProviderLocality, RepresentationLevel, RetrievalCandidate, RoutingCandidate, RoutingDecision,
     RoutingStrategy, SkillDefinition, SkillImplementation, SkillKind, SkillRevision, StepExecution,
-    StepKind, StructuredMemory, TaskRequirements, WorkflowDefinition, WorkflowExecution,
-    WorkflowNode, WorkflowNodeKind, WorkflowRevision, WorkflowTransition, WorkspaceId,
+    StepKind, StructuredMemory, TaskRequirements, TimePerspective, WorkflowDefinition,
+    WorkflowExecution, WorkflowNode, WorkflowNodeKind, WorkflowRevision, WorkflowTransition,
+    WorkspaceId,
     cognitive::AgentModelRequirements,
     id::{
         AgentId, AgentRevisionId, ApprovalRecordId, AuditEventId, ContextPackId, DerivationId,
@@ -300,6 +301,11 @@ fn extract_and_activate_memory(
         confidence: Confidence::new(0.9).unwrap(),
         importance: vestrace_domain::Importance::new(0.8).unwrap(),
         created_at: at,
+        valid_from: None,
+        valid_until: None,
+        change_reason: None,
+        canonical_hash: None,
+        classification: None,
     };
 
     let derivation = Derivation {
@@ -309,13 +315,19 @@ fn extract_and_activate_memory(
             model: "vestrace-local-fixture".to_owned(),
             prompt_version: "v1".to_owned(),
         },
+        input_refs: Vec::new(),
+        output_ref: None,
+        execution_ref: None,
+        model_ref: None,
+        policy_version: None,
+        created_by: None,
         created_at: at,
     };
 
     let source =
         MemorySource::new_direct(source_id, memory_id, ws.workspace_id, source_event.id, at);
 
-    let memory = memory.activate(revision_id, at).unwrap();
+    let memory = memory.activate(&revision, at).unwrap();
 
     (memory, revision, source, derivation)
 }
@@ -336,12 +348,27 @@ fn build_context_pack(
         .zip(candidates.iter())
         .map(|(rev, cand)| ContextItem {
             memory_id: rev.memory_id,
-            revision_id: Some(rev.id),
+            revision_id: rev.id,
+            memory_status: cand.memory_status,
+            revision_number: cand.revision_number,
+            valid_from: cand.valid_from,
+            valid_until: cand.valid_until,
+            revision_created_at: cand.revision_created_at,
+            source_generation: cand.source_generation,
             representation: RepresentationLevel::Full,
             rendered_text: rev.content.clone(),
             accounted_tokens: 50,
-            source_ids: vec![format!("retrieval-{}", cand.channel)],
+            // The fixture used to leave this empty, which `ContextPack::new`
+            // now refuses: an acceptance test that packs text with no reference
+            // back to the revision it came from is asserting that
+            // unattributable context is acceptable. The candidate already
+            // carries both ids.
+            provenance_refs: vec![vestrace_domain::EvidenceRef::MemoryRevisionRef {
+                memory_id: cand.memory_id,
+                revision_id: cand.revision_id,
+            }],
             inclusion_explanation: cand.explanation.clone(),
+            source_classification: Some(format!("retrieval-{}", cand.channel)),
         })
         .collect();
 
@@ -356,12 +383,18 @@ fn build_context_pack(
         pack_id,
         run_id,
         ws.workspace_id,
+        ws.principal_id,
+        TimePerspective::Current,
         4096,
         50 * candidate_ids.len() as u32,
         candidate_ids,
         sections,
         degraded,
+        Vec::new(),
         warnings,
+        Vec::new(),
+        "v1".to_string(),
+        true,
         at,
     )
     .unwrap()
@@ -471,6 +504,7 @@ fn record_step_execution(
         completed_at: None,
         correlation_id: None,
         causation_id: None,
+        run_id: None,
     };
     workflow_exec
         .transition_to(ExecutionStatus::Running, at)
@@ -493,6 +527,7 @@ fn record_step_execution(
         error_message: None,
         started_at: at,
         completed_at: None,
+        run_id: None,
     };
     step.transition_to(ExecutionStatus::Running, at).unwrap();
     step.transition_to(ExecutionStatus::Succeeded, at).unwrap();
@@ -564,6 +599,11 @@ fn derive_outcome_memory(
         confidence: Confidence::new(0.85).unwrap(),
         importance: vestrace_domain::Importance::new(0.7).unwrap(),
         created_at: at,
+        valid_from: None,
+        valid_until: None,
+        change_reason: None,
+        canonical_hash: None,
+        classification: None,
     };
 
     let derivation = Derivation {
@@ -573,10 +613,16 @@ fn derive_outcome_memory(
             model: "vestrace-eval-fixture".to_owned(),
             prompt_version: "v1".to_owned(),
         },
+        input_refs: Vec::new(),
+        output_ref: None,
+        execution_ref: None,
+        model_ref: None,
+        policy_version: None,
+        created_by: None,
         created_at: at,
     };
 
-    let memory = memory.activate(revision_id, at).unwrap();
+    let memory = memory.activate(&revision, at).unwrap();
 
     (memory, revision, derivation)
 }
@@ -607,6 +653,11 @@ fn revise_stale_memory(
         confidence: Confidence::new(0.92).unwrap(),
         importance: vestrace_domain::Importance::new(0.85).unwrap(),
         created_at: at,
+        valid_from: None,
+        valid_until: None,
+        change_reason: Some("architecture reassessment".to_owned()),
+        canonical_hash: None,
+        classification: None,
     };
 
     let new_memory = vestrace_domain::Memory {
@@ -615,6 +666,7 @@ fn revise_stale_memory(
         kind: old_memory.kind,
         status: vestrace_domain::MemoryStatus::Active,
         active_revision_id: Some(new_revision_id),
+        state_revision: old_memory.state_revision + 1,
         created_at: old_memory.created_at,
         updated_at: at,
     };
@@ -701,11 +753,20 @@ fn v01_full_lifecycle_acceptance() {
     // Step 7: Retrieve current decisions and build bounded context
     let candidates = vec![RetrievalCandidate {
         memory_id: memory.id,
-        revision_id: Some(memory_rev.id),
+        revision_id: memory_rev.id,
+        kind: memory.kind,
+        memory_status: memory.status,
+        revision_number: memory_rev.revision_number,
+        content: memory_rev.content.clone(),
+        valid_from: memory_rev.valid_from,
+        valid_until: memory_rev.valid_until,
+        revision_created_at: memory_rev.created_at,
+        source_generation: memory.state_revision,
         score: 0.95,
         channel_rank: 1,
         channel: "semantic".to_owned(),
         explanation: "High semantic match for architecture query".to_owned(),
+        conflict_ids: Vec::new(),
     }];
 
     let context_pack =
@@ -766,19 +827,37 @@ fn v01_full_lifecycle_acceptance() {
     let new_candidates = vec![
         RetrievalCandidate {
             memory_id: memory.id,
-            revision_id: Some(memory_rev.id),
+            revision_id: memory_rev.id,
+            kind: memory.kind,
+            memory_status: memory.status,
+            revision_number: memory_rev.revision_number,
+            content: memory_rev.content.clone(),
+            valid_from: memory_rev.valid_from,
+            valid_until: memory_rev.valid_until,
+            revision_created_at: memory_rev.created_at,
+            source_generation: memory.state_revision,
             score: 0.80,
             channel_rank: 1,
             channel: "semantic".to_owned(),
             explanation: "Architecture fact match".to_owned(),
+            conflict_ids: Vec::new(),
         },
         RetrievalCandidate {
             memory_id: outcome_memory.id,
-            revision_id: Some(outcome_rev.id),
+            revision_id: outcome_rev.id,
+            kind: outcome_memory.kind,
+            memory_status: outcome_memory.status,
+            revision_number: outcome_rev.revision_number,
+            content: outcome_rev.content.clone(),
+            valid_from: outcome_rev.valid_from,
+            valid_until: outcome_rev.valid_until,
+            revision_created_at: outcome_rev.created_at,
+            source_generation: outcome_memory.state_revision,
             score: 0.88,
             channel_rank: 2,
             channel: "semantic".to_owned(),
             explanation: "Outcome memory match".to_owned(),
+            conflict_ids: Vec::new(),
         },
     ];
 
@@ -802,11 +881,20 @@ fn v01_full_lifecycle_acceptance() {
     // Step 14: Verify old knowledge is absent from current context
     let revised_candidates = vec![RetrievalCandidate {
         memory_id: revised_memory.id,
-        revision_id: Some(revised_rev.id),
+        revision_id: revised_rev.id,
+        kind: revised_memory.kind,
+        memory_status: revised_memory.status,
+        revision_number: revised_rev.revision_number,
+        content: revised_rev.content.clone(),
+        valid_from: revised_rev.valid_from,
+        valid_until: revised_rev.valid_until,
+        revision_created_at: revised_rev.created_at,
+        source_generation: revised_memory.state_revision,
         score: 0.93,
         channel_rank: 1,
         channel: "semantic".to_owned(),
-        explanation: "Revised architecture fact".to_owned(),
+        explanation: "Revised architecture fact match".to_owned(),
+        conflict_ids: Vec::new(),
     }];
 
     let revised_context =
@@ -965,8 +1053,25 @@ fn v01_security_hard_purge_requires_approval() {
         vestrace_domain::MemoryKind::Fact,
         at,
     );
-    let rev_id = MemoryRevisionId::new();
-    memory = memory.activate(rev_id, at).unwrap();
+    // The revision has to exist for real: `activate` verifies that it belongs
+    // to this memory and this workspace.
+    let revision = vestrace_domain::memory::MemoryRevision {
+        id: MemoryRevisionId::new(),
+        memory_id,
+        workspace_id: ws.workspace_id,
+        revision_number: 1,
+        content: "purge fixture".to_owned(),
+        structured: None,
+        confidence: vestrace_domain::Confidence::new(1.0).unwrap(),
+        importance: vestrace_domain::Importance::new(0.5).unwrap(),
+        created_at: at,
+        valid_from: None,
+        valid_until: None,
+        change_reason: None,
+        canonical_hash: None,
+        classification: None,
+    };
+    memory = memory.activate(&revision, at).unwrap();
 
     let purge_approval = ApprovalRecord::new(
         ApprovalRecordId::new(),
@@ -1022,7 +1127,16 @@ fn v01_degraded_embeddings_and_reranker_disabled() {
 
     let candidates = vec![RetrievalCandidate {
         memory_id: memory.id,
-        revision_id: Some(memory_rev.id),
+        revision_id: memory_rev.id,
+        kind: memory.kind,
+        content: memory_rev.content.clone(),
+        conflict_ids: Vec::new(),
+        memory_status: memory.status,
+        revision_number: memory_rev.revision_number,
+        valid_from: memory_rev.valid_from,
+        valid_until: memory_rev.valid_until,
+        revision_created_at: memory_rev.created_at,
+        source_generation: memory.state_revision,
         score: 0.70,
         channel_rank: 1,
         channel: "fts".to_owned(),

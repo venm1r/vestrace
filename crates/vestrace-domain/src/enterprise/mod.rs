@@ -4,6 +4,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+mod federation;
+mod sharing;
+
+pub use federation::*;
+pub use sharing::*;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspaceKek {
     pub id: KekId,

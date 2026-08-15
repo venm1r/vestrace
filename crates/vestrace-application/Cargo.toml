@@ -16,6 +16,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt", "process"] }
 tracing.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 vestrace-domain = { path = "../vestrace-domain" }
 
 [dev-dependencies]

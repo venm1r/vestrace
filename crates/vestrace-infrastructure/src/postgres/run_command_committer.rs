@@ -142,7 +142,7 @@ impl RunCommandCommitter for PgRunCommandCommitter {
             projection.updated_at,
         )
         .await?;
-        upsert_projection(transaction.connection(), projection).await?;
+        upsert_projection(transaction.connection(), context.principal_id, projection).await?;
 
         transaction.commit().await.map_err(storage_error)?;
         Ok(projection.version)
@@ -161,10 +161,7 @@ fn validate_batch(
             "run command event batch must not be empty".to_owned(),
         ));
     }
-    if projection.id != run_id
-        || projection.workspace_id != context.workspace_id
-        || projection.coordinator_snapshot_id.as_uuid() != context.principal_id.as_uuid()
-    {
+    if projection.id != run_id || projection.workspace_id != context.workspace_id {
         return Err(ApplicationError::Conflict(
             "run projection identity does not match the command context".to_owned(),
         ));
@@ -256,7 +253,7 @@ async fn load_events(
         "SELECT
              id, workspace_id, run_id, sequence, event_type, event_version,
              actor, causation_id, correlation_id, payload, occurred_at,
-             created_at AS recorded_at
+             recorded_at
          FROM run_events
          WHERE workspace_id = $1
            AND run_id = $2
@@ -298,9 +295,10 @@ async fn insert_events(
     for event in events {
         sqlx::query(
             "INSERT INTO run_events (
-                 id, workspace_id, run_id, sequence, event_type, event_version,
-                 actor, causation_id, correlation_id, payload, occurred_at, created_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                 id, workspace_id, run_id, sequence, run_version, sequence_value,
+                 event_type, event_version, actor, causation_id, correlation_id,
+                 payload, occurred_at, recorded_at
+             ) VALUES ($1, $2, $3, $4, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(event.event_id.as_uuid())
         .bind(event.workspace_id.as_uuid())
@@ -355,29 +353,43 @@ async fn advance_stream(
 
 async fn upsert_projection(
     connection: &mut PgConnection,
+    principal_id: vestrace_domain::PrincipalId,
     projection: &AgentRun,
 ) -> Result<(), ApplicationError> {
     sqlx::query(
+        // `finished_at` is required for terminal statuses by
+        // chk_agent_runs_terminal_has_finished_at, so a command that moves a run
+        // into a terminal state must carry the projection's finish time with it.
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version,
-             created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             id, workspace_id, principal_id, title, objective,
+             coordinator_snapshot_id, execution_mode, status, run_version,
+             root_run_id, created_at, updated_at, finished_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (workspace_id, id) DO UPDATE
-         SET principal_id = EXCLUDED.principal_id,
-             title = EXCLUDED.title,
+         SET title = EXCLUDED.title,
+             objective = EXCLUDED.objective,
+             coordinator_snapshot_id = EXCLUDED.coordinator_snapshot_id,
+             execution_mode = EXCLUDED.execution_mode,
              status = EXCLUDED.status,
              run_version = EXCLUDED.run_version,
+             root_run_id = EXCLUDED.root_run_id,
              created_at = EXCLUDED.created_at,
-             updated_at = EXCLUDED.updated_at",
+             updated_at = EXCLUDED.updated_at,
+             finished_at = EXCLUDED.finished_at",
     )
     .bind(projection.id.as_uuid())
     .bind(projection.workspace_id.as_uuid())
-    .bind(projection.coordinator_snapshot_id.as_uuid())
+    .bind(principal_id.as_uuid())
     .bind(&projection.objective)
+    .bind(&projection.objective)
+    .bind(projection.coordinator_snapshot_id.as_uuid())
+    .bind(projection.execution_mode.as_str())
     .bind(status_name(projection.status))
     .bind(version_to_database(projection.version)?)
+    .bind(projection.root_run_id.as_uuid())
     .bind(projection.created_at)
     .bind(projection.updated_at)
+    .bind(projection.finished_at)
     .execute(&mut *connection)
     .await
     .map_err(database_write_error)?;

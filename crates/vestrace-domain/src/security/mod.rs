@@ -1,3 +1,11 @@
+mod capability;
+mod delegation;
+mod scope;
+
+pub use capability::*;
+pub use delegation::*;
+pub use scope::*;
+
 use crate::id::AuditEventId;
 use crate::{
     DomainError,
@@ -28,8 +36,13 @@ pub enum Capability {
     ModelWrite,
     ProviderRead,
     ProviderWrite,
+    EvaluationRead,
+    EvaluationWrite,
+    LearningRead,
+    LearningWrite,
     AuditRead,
     ExportRead,
+    CapabilityDelegate,
     WorkspaceAdmin,
 }
 
@@ -54,8 +67,13 @@ impl fmt::Display for Capability {
             Self::ModelWrite => "model.write",
             Self::ProviderRead => "provider.read",
             Self::ProviderWrite => "provider.write",
+            Self::EvaluationRead => "evaluation.read",
+            Self::EvaluationWrite => "evaluation.write",
+            Self::LearningRead => "learning.read",
+            Self::LearningWrite => "learning.write",
             Self::AuditRead => "audit.read",
             Self::ExportRead => "export.read",
+            Self::CapabilityDelegate => "capability.delegate",
             Self::WorkspaceAdmin => "workspace.admin",
         };
         write!(f, "{}", name)
@@ -85,8 +103,13 @@ impl FromStr for Capability {
             "model.write" => Ok(Self::ModelWrite),
             "provider.read" => Ok(Self::ProviderRead),
             "provider.write" => Ok(Self::ProviderWrite),
+            "evaluation.read" => Ok(Self::EvaluationRead),
+            "evaluation.write" => Ok(Self::EvaluationWrite),
+            "learning.read" => Ok(Self::LearningRead),
+            "learning.write" => Ok(Self::LearningWrite),
             "audit.read" => Ok(Self::AuditRead),
             "export.read" => Ok(Self::ExportRead),
+            "capability.delegate" => Ok(Self::CapabilityDelegate),
             "workspace.admin" => Ok(Self::WorkspaceAdmin),
             _ => Err(DomainError::InvalidArgument(format!(
                 "unknown capability {}",
@@ -113,7 +136,9 @@ impl Default for Sensitivity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DataDestination {
     LocalModel,
@@ -229,6 +254,35 @@ impl ApprovalRecord {
         }
         true
     }
+
+    /// Whether this approval authorises the operation that hashes to
+    /// `operation_hash`.
+    ///
+    /// # Why validity alone was not enough
+    ///
+    /// `operation_hash` has been recorded at approval time since the type
+    /// existed, and **nothing ever compared it**. [`Self::is_valid`] checks
+    /// status and expiry and says nothing about *what* was approved, so an
+    /// approval obtained for one operation authorised any other — a caller could
+    /// get "yes" for a small transfer and present that approval for a large one,
+    /// which is the whole of what an approval is supposed to prevent.
+    ///
+    /// # Why a missing hash covers nothing
+    ///
+    /// An approval that recorded no operation hash is a blank cheque: there is
+    /// no operation it was about, so there is none it can be checked against.
+    /// Treating that as "covers everything" is the failure this method exists to
+    /// close, so it covers nothing instead. An approver who wants an approval to
+    /// be usable has to say what it is for.
+    pub fn covers(&self, operation_hash: &str, at: Timestamp) -> bool {
+        if !self.is_valid(at) {
+            return false;
+        }
+        match self.operation_hash.as_deref() {
+            Some(approved) => !approved.trim().is_empty() && approved == operation_hash,
+            None => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -310,8 +364,13 @@ mod tests {
             "model.write",
             "provider.read",
             "provider.write",
+            "evaluation.read",
+            "evaluation.write",
+            "learning.read",
+            "learning.write",
             "audit.read",
             "export.read",
+            "capability.delegate",
             "workspace.admin",
         ] {
             let cap: Capability = name.parse().unwrap();

@@ -69,6 +69,7 @@ async fn start_execution(
         completed_at: None,
         correlation_id: req.correlation_id,
         causation_id: req.causation_id,
+        run_id: None,
     };
 
     state
@@ -193,6 +194,7 @@ async fn record_step(
         error_message: None,
         started_at: now,
         completed_at: None,
+        run_id: None,
     };
 
     state

@@ -184,10 +184,10 @@ async fn seed_run_events(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version
+             id, workspace_id, principal_id, title, objective, status, run_version
          ) VALUES
-         ($1::uuid, $2::uuid, $3::uuid, 'run-a', 'created', 1),
-         ($4::uuid, $5::uuid, $6::uuid, 'run-b', 'created', 1)",
+         ($1::uuid, $2::uuid, $3::uuid, 'run-a', 'run-a', 'created', 1),
+         ($4::uuid, $5::uuid, $6::uuid, 'run-b', 'run-b', 'created', 1)",
     )
     .bind(RUN_A)
     .bind(WORKSPACE_A)
@@ -200,13 +200,18 @@ async fn seed_run_events(pool: &sqlx::PgPool) {
     .unwrap();
 
     sqlx::query(
+        // `run_version` and `sequence_value` are NOT NULL and constrained equal
+        // to `sequence` by migration 0020.
         "INSERT INTO run_events (
-             id, workspace_id, run_id, sequence, event_type, event_version,
+             id, workspace_id, run_id, sequence, run_version, sequence_value,
+             event_type, event_version,
              actor, causation_id, correlation_id, payload, occurred_at, created_at
          ) VALUES (
              '54000000-0000-0000-0000-000000000010',
              $1::uuid,
              $2::uuid,
+             1,
+             1,
              1,
              'run.created',
              1,
@@ -248,12 +253,16 @@ async fn restricted_runtime_role_enforces_run_event_boundaries(pool: sqlx::PgPoo
             &role,
             WORKSPACE_B,
             "INSERT INTO run_events (
-                 id, workspace_id, run_id, sequence, event_type, event_version,
-                 actor, causation_id, correlation_id, payload, occurred_at, created_at
+                 id, workspace_id, run_id, sequence, run_version, sequence_value,
+                 event_type, event_version,
+                 actor, causation_id, correlation_id, payload,
+                 occurred_at, created_at, recorded_at
              ) VALUES (
                  '54000000-0000-0000-0000-000000000020',
                  '54000000-0000-0000-0000-000000000001',
                  '54000000-0000-0000-0000-000000000005',
+                 2,
+                 2,
                  2,
                  'run.marked_ready',
                  1,
@@ -261,6 +270,7 @@ async fn restricted_runtime_role_enforces_run_event_boundaries(pool: sqlx::PgPoo
                  '54000000-0000-0000-0000-000000000021',
                  '54000000-0000-0000-0000-000000000022',
                  '{}'::jsonb,
+                 now(),
                  now(),
                  now()
              )",
@@ -273,12 +283,16 @@ async fn restricted_runtime_role_enforces_run_event_boundaries(pool: sqlx::PgPoo
             &role,
             WORKSPACE_A,
             "INSERT INTO run_events (
-                 id, workspace_id, run_id, sequence, event_type, event_version,
-                 actor, causation_id, correlation_id, payload, occurred_at, created_at
+                 id, workspace_id, run_id, sequence, run_version, sequence_value,
+                 event_type, event_version,
+                 actor, causation_id, correlation_id, payload,
+                 occurred_at, created_at, recorded_at
              ) VALUES (
                  '54000000-0000-0000-0000-000000000030',
                  '54000000-0000-0000-0000-000000000001',
                  '54000000-0000-0000-0000-000000000005',
+                 2,
+                 2,
                  2,
                  'run.marked_ready',
                  1,
@@ -286,6 +300,7 @@ async fn restricted_runtime_role_enforces_run_event_boundaries(pool: sqlx::PgPoo
                  '54000000-0000-0000-0000-000000000031',
                  '54000000-0000-0000-0000-000000000032',
                  '{}'::jsonb,
+                 now(),
                  now(),
                  now()
              )",

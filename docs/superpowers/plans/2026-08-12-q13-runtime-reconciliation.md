@@ -11,7 +11,8 @@ Make ambiguous external-effect recovery explicit, workspace-scoped, evidence-bea
 - [x] Preserve strongest-evidence selection and explicit reconciliation outcomes.
 - [x] Keep automatic dispatch/retry outside the recovery path.
 - [x] Document the boundary and explicit non-claims.
-- [ ] Add durable effect/reconciliation persistence and provider read-back adapters in a later gate.
+- [x] Durable effect/reconciliation persistence delivered by Q14 (`PgExternalEffectRepository`, migration `0127`).
+- [x] Provider read-back delivered as `HttpExternalEffectReadBackAdapter`, fail-closed on transport failure (R2).
 
 ## Verification
 

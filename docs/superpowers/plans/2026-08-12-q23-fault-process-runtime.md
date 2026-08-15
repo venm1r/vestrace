@@ -16,8 +16,13 @@ inheriting the parent process environment.
   lifecycle mismatches.
 - [x] Ensure timed-out/dropped child processes are killed.
 - [x] Document the runtime boundary and explicit non-claims.
-- [ ] Add provider sandbox adapters and Docker-backed qualification execution
-  in a later release-qualification block.
+- [x] Docker-backed qualification execution delivered as
+  `DockerFaultInjectionRuntime`, running `--rm --network none` and selected
+  through `FaultInjectionDriver::Container` (R3).
+- [ ] Provider sandbox adapters remain open:
+  `FaultInjectionEnvironment::ProviderSandbox` is declarable but still has no
+  adapter behind it. See
+  [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

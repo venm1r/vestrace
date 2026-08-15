@@ -12,7 +12,9 @@ deterministic fault-suite executor.
 - [x] Add `FaultInjectionRuntime` and configured executor adapter.
 - [x] Keep disabled injection fail-closed and validate returned point identity.
 - [x] Document the wiring boundary and explicit non-claims.
-- [ ] Implement an isolated process/provider fault driver and attach it to a complete release qualification runner later.
+- [x] Isolated process fault driver delivered by Q23 (`ProcessFaultInjectionRuntime`); attached to the release qualification path through Q22 and Q28.
+- [x] Container fault driver delivered as `DockerFaultInjectionRuntime`, selected through `FaultInjectionDriver` (R3).
+- [ ] A provider-specific sandbox driver behind `FaultInjectionEnvironment::ProviderSandbox` remains open; see [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

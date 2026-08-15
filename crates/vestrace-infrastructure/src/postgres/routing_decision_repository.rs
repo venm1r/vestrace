@@ -1,18 +1,20 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{
     ApplicationError, RequestContext, RoutingDecisionRecord, RoutingDecisionRepository,
 };
 
 pub struct PgRoutingDecisionRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgRoutingDecisionRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -22,9 +24,14 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
 impl RoutingDecisionRepository for PgRoutingDecisionRepository {
     async fn record(
         &self,
-        _context: &RequestContext,
+        context: &RequestContext,
         decision: &RoutingDecisionRecord,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         sqlx::query(
             r#"
             INSERT INTO routing_decisions (id, workspace_id, selected_model_id, intent, rationale, created_at)
@@ -37,16 +44,21 @@ impl RoutingDecisionRepository for PgRoutingDecisionRepository {
         .bind(&decision.intent)
         .bind(&decision.rationale)
         .bind(decision.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(
         &self,
         context: &RequestContext,
     ) -> Result<Vec<RoutingDecisionRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let rows = sqlx::query(
             r#"
             SELECT id, workspace_id, selected_model_id, intent, rationale, created_at
@@ -57,7 +69,7 @@ impl RoutingDecisionRepository for PgRoutingDecisionRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -79,6 +91,7 @@ impl RoutingDecisionRepository for PgRoutingDecisionRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+        scoped.commit().await.map_err(storage_error)?;
         Ok(decisions)
     }
 }

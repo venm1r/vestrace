@@ -279,6 +279,36 @@ impl Incident {
         self.revalidation_state
     }
 
+    /// The findings this incident was opened from.
+    ///
+    /// Stored since the type was written and unreadable until now, which is the
+    /// same defect the export plan had: a field that exists, is validated on the
+    /// way in, and can never be looked at. REC-001 requires a finding and an
+    /// incident to stay distinct concepts, and that cannot be checked by
+    /// anything that cannot see the link between them.
+    pub fn triggering_findings(&self) -> &[HealthFindingId] {
+        &self.triggering_findings
+    }
+
+    pub fn affected_resources(&self) -> &[String] {
+        &self.affected_resources
+    }
+
+    /// How the incident was disposed of, and by whom. Written by `close` and,
+    /// until now, readable by nobody — so "recovery must not rewrite history"
+    /// was a requirement about a record that could not be inspected.
+    pub fn disposition(&self) -> Option<&str> {
+        self.disposition.as_deref()
+    }
+
+    pub fn closed_by(&self) -> Option<PrincipalId> {
+        self.closed_by
+    }
+
+    pub fn closed_at(&self) -> Option<Timestamp> {
+        self.closed_at
+    }
+
     pub fn triggering_evidence(&self) -> &[String] {
         &self.triggering_evidence
     }
@@ -730,6 +760,31 @@ impl RecoveryPoint {
         self.integrity_status == IntegrityStatus::Valid
     }
 
+    /// The state this point refers to, where in the sequence it sits, and what
+    /// it is consistent across.
+    ///
+    /// REC-007 requires a recovery point to reference a *provably consistent*
+    /// position. All three of the fields that say which position it is were
+    /// unreadable, so the only observable thing about a recovery point was
+    /// whether it claimed to be valid.
+    pub fn state_ref(&self) -> &str {
+        &self.state_ref
+    }
+
+    pub fn sequence_position(&self) -> u64 {
+        self.sequence_position
+    }
+
+    pub fn consistency_scope(&self) -> &str {
+        &self.consistency_scope
+    }
+
+    /// Where this point came from — which is what makes it evidence rather than
+    /// an assertion.
+    pub fn recovery_provenance(&self) -> &str {
+        &self.provenance
+    }
+
     pub fn integrity_status(&self) -> IntegrityStatus {
         self.integrity_status
     }
@@ -787,6 +842,14 @@ impl RevalidationCheck {
 
     pub fn passed(&self) -> bool {
         self.passed
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
     }
 }
 
@@ -856,6 +919,21 @@ impl RevalidationRun {
 
     pub fn evidence_refs(&self) -> &[String] {
         &self.evidence_refs
+    }
+
+    /// The checks the run performed.
+    ///
+    /// REC-012 requires a revalidation run to preserve its scope, level,
+    /// checks, evidence and result. Four of the five were readable; `checks`
+    /// was validated as non-empty on construction and then invisible, so the
+    /// requirement was unverifiable in the one place it is about.
+    pub fn checks(&self) -> &[RevalidationCheck] {
+        &self.checks
+    }
+
+    /// The state the run measured against — what "revalidated" was relative to.
+    pub fn baseline_state_ref(&self) -> &str {
+        &self.baseline_state_ref
     }
 
     pub fn incident_id(&self) -> Option<IncidentId> {
@@ -976,6 +1054,35 @@ impl SecretRef {
         })
     }
 
+    /// Rebuild a reference that already exists in storage, keeping its
+    /// identity.
+    ///
+    /// [`Self::new`] mints a fresh id, which is right when a secret is first
+    /// created and wrong when one is read back: the id is what a lease names,
+    /// and a repository that minted a new one on every read would hand out
+    /// leases that resolve to nothing. Validation is identical to `new` — a
+    /// stored row is not trusted to be well-formed just because it is stored.
+    pub fn rehydrate(
+        id: crate::SecretRefId,
+        opaque_uri: impl Into<String>,
+        provider: impl Into<String>,
+        workspace_id: WorkspaceId,
+        purpose: impl Into<String>,
+        metadata: BTreeMap<String, String>,
+        version: Option<String>,
+    ) -> Result<Self, DomainError> {
+        let mut reference = Self::new(
+            opaque_uri,
+            provider,
+            workspace_id,
+            purpose,
+            metadata,
+            version,
+        )?;
+        reference.id = id;
+        Ok(reference)
+    }
+
     pub fn id(&self) -> crate::SecretRefId {
         self.id
     }
@@ -1010,6 +1117,14 @@ impl SecretRef {
             authorization_ref: request.authorization_ref.clone(),
             issued_at: request.issued_at,
         })
+    }
+
+    pub fn opaque_uri(&self) -> &str {
+        &self.opaque_uri
+    }
+
+    pub fn metadata(&self) -> &BTreeMap<String, String> {
+        &self.metadata
     }
 }
 
@@ -1046,6 +1161,10 @@ impl SecretResolutionRequest {
     pub fn authorization_ref(&self) -> &str {
         &self.authorization_ref
     }
+
+    pub fn issued_at(&self) -> Timestamp {
+        self.issued_at
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1062,6 +1181,10 @@ impl SecretLease {
 
     pub fn authorization_ref(&self) -> &str {
         &self.authorization_ref
+    }
+
+    pub fn issued_at(&self) -> Timestamp {
+        self.issued_at
     }
 }
 
@@ -1343,6 +1466,30 @@ impl SignerTrustRule {
             && self.key_scope == signature.key_ref().scope()
             && self.algorithm == signature.algorithm()
     }
+
+    pub fn signer_identity(&self) -> &str {
+        &self.signer_identity
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    pub fn key_version(&self) -> &str {
+        &self.key_version
+    }
+
+    pub fn key_scope(&self) -> &str {
+        &self.key_scope
+    }
+
+    pub fn algorithm(&self) -> &SignatureAlgorithm {
+        &self.algorithm
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1500,6 +1647,14 @@ impl DataClassification {
     pub fn provenance(&self) -> &str {
         &self.provenance
     }
+
+    pub fn jurisdiction_tags(&self) -> &[String] {
+        &self.jurisdiction_tags
+    }
+
+    pub fn handling_requirements(&self) -> &[String] {
+        &self.handling_requirements
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1554,6 +1709,18 @@ impl ClassificationLineage {
 
     pub fn policy_version(&self) -> &str {
         &self.classification_policy_version
+    }
+
+    pub fn source_classifications(&self) -> &[DataClassification] {
+        &self.source_classifications
+    }
+
+    pub fn classification_policy_version(&self) -> &str {
+        &self.classification_policy_version
+    }
+
+    pub fn derivation_ref(&self) -> &str {
+        &self.derivation_ref
     }
 }
 
@@ -1619,6 +1786,14 @@ impl DataPolicy {
             return DataPolicyDecision::denied(&self.version, "required capability is absent");
         }
         DataPolicyDecision::allowed(&self.version)
+    }
+
+    pub fn allowed_destinations(&self) -> &BTreeSet<DataDestination> {
+        &self.allowed_destinations
+    }
+
+    pub fn required_capability(&self) -> Option<&Capability> {
+        self.required_capability.as_ref()
     }
 }
 
@@ -1729,6 +1904,34 @@ impl DeclassificationDecision {
         next.provenance = format!("{};declassified:{}", next.provenance, self.id);
         Ok(next)
     }
+
+    pub fn previous_classification(&self) -> &crate::Sensitivity {
+        &self.previous_classification
+    }
+
+    pub fn new_classification(&self) -> &crate::Sensitivity {
+        &self.new_classification
+    }
+
+    pub fn transformation(&self) -> &str {
+        &self.transformation
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
+
+    pub fn actor_id(&self) -> PrincipalId {
+        self.actor_id
+    }
+
+    pub fn approver_id(&self) -> PrincipalId {
+        self.approver_id
+    }
+
+    pub fn decided_at(&self) -> Timestamp {
+        self.decided_at
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1816,6 +2019,18 @@ impl RetentionPolicy {
     pub fn policy_version(&self) -> &str {
         &self.policy_version
     }
+
+    pub fn minimum_retention(&self) -> Option<Duration> {
+        self.minimum_retention
+    }
+
+    pub fn maximum_retention(&self) -> Option<Duration> {
+        self.maximum_retention
+    }
+
+    pub fn trigger(&self) -> RetentionTrigger {
+        self.trigger
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1860,6 +2075,18 @@ impl DataHold {
 
     pub fn is_active(&self, at: Timestamp) -> bool {
         at >= self.created_at && self.expires_at.is_none_or(|expires| at <= expires)
+    }
+
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+
+    pub fn expires_at(&self) -> Option<Timestamp> {
+        self.expires_at
+    }
+
+    pub fn policy_ref(&self) -> &str {
+        &self.policy_ref
     }
 }
 
@@ -1922,6 +2149,26 @@ impl DeletionRequest {
     pub fn semantics(&self) -> DeletionSemantics {
         self.semantics
     }
+
+    pub fn requester(&self) -> PrincipalId {
+        self.requester
+    }
+
+    pub fn selector(&self) -> &str {
+        &self.selector
+    }
+
+    pub fn plan_ref(&self) -> &str {
+        &self.plan_ref
+    }
+
+    pub fn execution_ref(&self) -> &str {
+        &self.execution_ref
+    }
+
+    pub fn requested_at(&self) -> Timestamp {
+        self.requested_at
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1969,6 +2216,18 @@ impl DeletionPlan {
     pub fn target_refs(&self) -> &[String] {
         &self.target_refs
     }
+
+    pub fn dependency_refs(&self) -> &[String] {
+        &self.dependency_refs
+    }
+
+    pub fn hold_ids(&self) -> &[crate::DataHoldId] {
+        &self.hold_ids
+    }
+
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2003,6 +2262,26 @@ impl DeletionVerification {
 
     pub fn remaining_copies(&self) -> &[String] {
         &self.remaining_copies
+    }
+
+    pub fn request_id(&self) -> crate::DeletionRequestId {
+        self.request_id
+    }
+
+    pub fn semantics(&self) -> DeletionSemantics {
+        self.semantics
+    }
+
+    pub fn checked_refs(&self) -> &[String] {
+        &self.checked_refs
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
+
+    pub fn verified_at(&self) -> Timestamp {
+        self.verified_at
     }
 }
 
@@ -2112,6 +2391,19 @@ impl DataExportPlan {
         })
     }
 
+    /// The exact revisions this export carries.
+    ///
+    /// A reader needs them to check that an export named a subset rather than a
+    /// selector that could widen later; they had no accessor, so the field was
+    /// stored and unreadable.
+    pub fn object_revisions(&self) -> &[String] {
+        &self.object_revisions
+    }
+
+    pub fn exact_scope(&self) -> &str {
+        &self.exact_scope
+    }
+
     pub fn authorize(
         &self,
         policy: &DataPolicy,
@@ -2140,6 +2432,54 @@ impl DataExportPlan {
             policy_version: policy.version().to_owned(),
         })
     }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub fn purpose(&self) -> &str {
+        &self.purpose
+    }
+
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+
+    pub fn classification(&self) -> &DataClassification {
+        &self.classification
+    }
+
+    pub fn redaction_refs(&self) -> &[String] {
+        &self.redaction_refs
+    }
+
+    pub fn format_schema(&self) -> &str {
+        &self.format_schema
+    }
+
+    pub fn encryption_key_ref(&self) -> Option<&str> {
+        self.encryption_key_ref.as_deref()
+    }
+
+    pub fn signing_key_ref(&self) -> Option<&str> {
+        self.signing_key_ref.as_deref()
+    }
+
+    pub fn expires_at(&self) -> Option<Timestamp> {
+        self.expires_at
+    }
+
+    pub fn policy_version(&self) -> &str {
+        &self.policy_version
+    }
+
+    pub fn required_capability(&self) -> &Capability {
+        &self.required_capability
+    }
+
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2147,6 +2487,23 @@ pub struct AuthorizedDataExport {
     plan: DataExportPlan,
     authorized_at: Timestamp,
     policy_version: String,
+}
+
+impl AuthorizedDataExport {
+    /// The plan this export was authorized to carry out.
+    pub fn plan(&self) -> &DataExportPlan {
+        &self.plan
+    }
+
+    pub fn authorized_at(&self) -> Timestamp {
+        self.authorized_at
+    }
+
+    /// The policy version that permitted it — which is what makes the
+    /// authorization attributable to a decision rather than to a moment.
+    pub fn policy_version(&self) -> &str {
+        &self.policy_version
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2211,6 +2568,34 @@ impl ExportBundle {
     pub fn authority_transferred(&self) -> bool {
         self.authority_transferred
     }
+
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    pub fn object_revisions(&self) -> &[String] {
+        &self.object_revisions
+    }
+
+    pub fn provenance_refs(&self) -> &[String] {
+        &self.provenance_refs
+    }
+
+    pub fn classification(&self) -> &DataClassification {
+        &self.classification
+    }
+
+    pub fn object_hashes(&self) -> &BTreeMap<String, String> {
+        &self.object_hashes
+    }
+
+    pub fn encryption_metadata(&self) -> Option<&str> {
+        self.encryption_metadata.as_deref()
+    }
+
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2224,6 +2609,54 @@ pub struct AuditIntegrityEntry {
     previous_digest: String,
     entry_digest: String,
     recorded_at: Timestamp,
+}
+
+impl AuditIntegrityEntry {
+    /// Everything an audit entry records, readable.
+    ///
+    /// The entry existed with nine private fields and no `impl` block at all:
+    /// a hash-chained audit record whose digests, actor, action and position in
+    /// the chain could be written and never read. Verification of the chain
+    /// lived entirely inside `AuditIntegrityChain`, so nothing outside this file
+    /// could check the chain, reconstruct it, or say what an entry was about.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub fn principal_id(&self) -> PrincipalId {
+        self.principal_id
+    }
+
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+
+    pub fn resource_ref(&self) -> &str {
+        &self.resource_ref
+    }
+
+    /// The digest of what happened.
+    pub fn content_digest(&self) -> &str {
+        &self.content_digest
+    }
+
+    /// The digest of the entry before this one — the link that makes the chain
+    /// a chain rather than a list.
+    pub fn previous_digest(&self) -> &str {
+        &self.previous_digest
+    }
+
+    pub fn entry_digest(&self) -> &str {
+        &self.entry_digest
+    }
+
+    pub fn recorded_at(&self) -> Timestamp {
+        self.recorded_at
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -2739,6 +3172,10 @@ impl QualificationBundle {
     pub fn known_limitations(&self) -> &[String] {
         &self.known_limitations
     }
+
+    pub fn suite_version(&self) -> &str {
+        &self.suite_version
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2777,6 +3214,24 @@ impl QualificationBaseline {
 
     pub fn target_digest(&self) -> &str {
         &self.target_digest
+    }
+
+    pub fn profile(&self) -> QualificationProfile {
+        self.profile
+    }
+
+    pub fn published_at(&self) -> Timestamp {
+        self.published_at
+    }
+
+    /// Why the baseline stopped qualifying anything.
+    ///
+    /// Required on the way in by `mark_stale` and `invalidate`, and unreadable
+    /// until now — so a withdrawn qualification recorded its reason and could
+    /// not be asked for it. The same shape as the recovery types' unreadable
+    /// evidence, found the same way: by trying to write a case about it.
+    pub fn invalidation_reason(&self) -> Option<&str> {
+        self.invalidation_reason.as_deref()
     }
 
     pub fn matches_bundle(&self, bundle: &QualificationBundle) -> bool {

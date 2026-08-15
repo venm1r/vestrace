@@ -9,5 +9,10 @@ RUN VITE_VESTRACE_WORKSPACE_ID=10000000-0000-0000-0000-000000000001 \
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# The nginx entrypoint expands templates into /etc/nginx/conf.d at start-up, so
+# the token is supplied at run time rather than baked into the image layers.
+# The filter keeps envsubst away from nginx's own `$host`, `$remote_addr` and
+# friends, which are not environment variables.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV NGINX_ENVSUBST_FILTER="VESTRACE_"
 EXPOSE 3000

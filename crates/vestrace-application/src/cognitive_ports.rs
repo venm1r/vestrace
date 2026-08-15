@@ -4,7 +4,11 @@ use async_trait::async_trait;
 
 use crate::{ApplicationError, RequestContext};
 use vestrace_domain::{
-    id::{ModelId, WorkflowId, WorkflowRevisionId, WorkspaceId},
+    EvaluationFact, LearnedProjection, LearningProposal,
+    id::{
+        LearningProjectionId, LearningProposalId, ModelId, WorkflowId, WorkflowRevisionId,
+        WorkspaceId,
+    },
     time::Timestamp,
 };
 
@@ -74,6 +78,10 @@ pub struct EvaluationRecord {
     pub created_at: Timestamp,
 }
 
+/// Typed L1 evaluation evidence. The legacy `EvaluationRecord` remains
+/// available for compatibility with the existing evaluation CRUD surface.
+pub type EvaluationFactRecord = EvaluationFact;
+
 #[async_trait]
 pub trait EvaluationRepository: Send + Sync {
     async fn create(
@@ -92,6 +100,117 @@ pub trait EvaluationRepository: Send + Sync {
         context: &RequestContext,
         id: vestrace_domain::id::EvaluationId,
     ) -> Result<Option<EvaluationRecord>, ApplicationError>;
+
+    async fn create_fact(
+        &self,
+        _context: &RequestContext,
+        _fact: &EvaluationFactRecord,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "typed evaluation fact storage is not configured".into(),
+        ))
+    }
+
+    async fn list_facts(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<Vec<EvaluationFactRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "typed evaluation fact storage is not configured".into(),
+        ))
+    }
+
+    async fn find_fact(
+        &self,
+        _context: &RequestContext,
+        _id: vestrace_domain::id::EvaluationId,
+    ) -> Result<Option<EvaluationFactRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "typed evaluation fact storage is not configured".into(),
+        ))
+    }
 }
 
 pub type SharedEvaluationRepository = Arc<dyn EvaluationRepository>;
+
+pub type LearnedProjectionRecord = LearnedProjection;
+pub type LearningProposalRecord = LearningProposal;
+
+#[async_trait]
+pub trait LearningRepository: Send + Sync {
+    async fn create_projection(
+        &self,
+        _context: &RequestContext,
+        _projection: &LearnedProjectionRecord,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learned projection storage is not configured".into(),
+        ))
+    }
+
+    async fn list_projections(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<Vec<LearnedProjectionRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learned projection storage is not configured".into(),
+        ))
+    }
+
+    async fn find_projection(
+        &self,
+        _context: &RequestContext,
+        _id: LearningProjectionId,
+    ) -> Result<Option<LearnedProjectionRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learned projection storage is not configured".into(),
+        ))
+    }
+
+    async fn create_proposal(
+        &self,
+        _context: &RequestContext,
+        _proposal: &LearningProposalRecord,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learning proposal storage is not configured".into(),
+        ))
+    }
+
+    async fn list_proposals(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<Vec<LearningProposalRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learning proposal storage is not configured".into(),
+        ))
+    }
+
+    async fn find_proposal(
+        &self,
+        _context: &RequestContext,
+        _id: LearningProposalId,
+    ) -> Result<Option<LearningProposalRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learning proposal storage is not configured".into(),
+        ))
+    }
+
+    async fn submit_proposal(
+        &self,
+        _context: &RequestContext,
+        _id: LearningProposalId,
+        _at: Timestamp,
+    ) -> Result<Option<LearningProposalRecord>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "learning proposal storage is not configured".into(),
+        ))
+    }
+}
+
+pub type SharedLearningRepository = Arc<dyn LearningRepository>;
+
+pub struct UnavailableLearningRepository;
+
+#[async_trait]
+impl LearningRepository for UnavailableLearningRepository {}

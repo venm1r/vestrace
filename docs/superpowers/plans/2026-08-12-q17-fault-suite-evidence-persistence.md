@@ -14,7 +14,7 @@ later qualification runner.
 - [x] Add migration `0129_external_effect_fault_suite_evidence.sql`.
 - [x] Add `PgFaultSuiteEvidenceRepository` with indexed-payload integrity checks.
 - [x] Document evidence semantics and explicit non-claims.
-- [ ] Wire production fault injection and qualification-runner consumption in later gates.
+- [x] Production fault injection delivered by Q21/Q23; qualification-runner consumption by Q18 (`ExternalEffectFaultQualificationService`) and Q22 (bundle assembly).
 
 ## Safety boundary
 

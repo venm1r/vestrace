@@ -1,15 +1,26 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
-use vestrace_application::{ApplicationError, IdempotencyRecord, IdempotencyRepository};
+use sqlx::Row;
+use vestrace_application::{
+    ApplicationError, IdempotencyRecord, IdempotencyRepository, RequestContext,
+};
 use vestrace_domain::{WorkspaceId, time::Timestamp};
 
+use super::PgStore;
+
+/// Idempotency keys, scoped like everything else.
+///
+/// This ran on a bare pool while `idempotency_keys` carried a workspace
+/// isolation policy that was enabled and never forced — so the policy was inert
+/// and the only thing keeping one workspace's replayed responses out of
+/// another's was the `WHERE workspace_id = $1` in each statement. Forcing the
+/// policy and giving the port a scope are two halves of one change.
 pub struct PgIdempotencyRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgIdempotencyRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
 
@@ -21,9 +32,15 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
 impl IdempotencyRepository for PgIdempotencyRepository {
     async fn find_by_key(
         &self,
-        workspace_id: WorkspaceId,
+        context: &RequestContext,
         key: &str,
     ) -> Result<Option<IdempotencyRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let row = sqlx::query(
             r#"
             SELECT idempotency_key, workspace_id, request_hash, response_payload, status, created_at, expires_at
@@ -31,16 +48,27 @@ impl IdempotencyRepository for PgIdempotencyRepository {
             WHERE workspace_id = $1 AND idempotency_key = $2
             "#,
         )
-        .bind(workspace_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
         .bind(key)
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
 
+        scoped.commit().await.map_err(storage_error)?;
         row.map(parse_record).transpose()
     }
 
-    async fn save(&self, record: &IdempotencyRecord) -> Result<(), ApplicationError> {
+    async fn save(
+        &self,
+        context: &RequestContext,
+        record: &IdempotencyRecord,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         sqlx::query(
             r#"
             INSERT INTO idempotency_keys (idempotency_key, workspace_id, request_hash, response_payload, status, created_at, expires_at)
@@ -55,11 +83,11 @@ impl IdempotencyRepository for PgIdempotencyRepository {
         .bind(&record.status)
         .bind(record.created_at)
         .bind(record.expires_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Conflict(e.to_string()))?;
 
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 }
 

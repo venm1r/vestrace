@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use vestrace_application::{ApplicationError, RequestContext};
 use vestrace_application::{
-    RunCheckpoint, RunRecoveryOperations, StartupRecoveryCandidate, StartupRecoveryOutcome,
-    StartupRecoveryService,
+    RunCheckpoint, RunRecoveryOperations, StartupRecoveryCandidate, StartupRecoveryCandidateSource,
+    StartupRecoveryOutcome, StartupRecoveryService,
 };
 use vestrace_domain::run::{AgentRun, NewAgentRun, RunExecutionMode, RunState, RunVersion};
 use vestrace_domain::{
@@ -68,6 +68,85 @@ impl RunRecoveryOperations for MockRecoveryOperations {
         )
         .map_err(ApplicationError::from)
     }
+}
+
+#[derive(Default)]
+struct MockCandidateSource {
+    candidates: Mutex<Vec<StartupRecoveryCandidate>>,
+    discovery_error: Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl StartupRecoveryCandidateSource for MockCandidateSource {
+    async fn find_startup_recovery_candidates(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<Vec<StartupRecoveryCandidate>, ApplicationError> {
+        if let Some(message) = self.discovery_error.lock().unwrap().clone() {
+            return Err(ApplicationError::Storage(message));
+        }
+        Ok(self.candidates.lock().unwrap().clone())
+    }
+}
+
+#[tokio::test]
+async fn startup_recovery_processes_durably_discovered_candidates() {
+    let operations = Arc::new(MockRecoveryOperations::default());
+    let stale = AgentRunId::new();
+    let unknown = AgentRunId::new();
+    let source = Arc::new(MockCandidateSource::default());
+    *source.candidates.lock().unwrap() = vec![
+        StartupRecoveryCandidate::new(stale, RecoveryTarget::StaleLease),
+        StartupRecoveryCandidate::new(unknown, RecoveryTarget::UnknownOutcome),
+    ];
+    let service = StartupRecoveryService::with_candidate_source(operations.clone(), source);
+    let context = RequestContext::new(WorkspaceId::new(), vestrace_domain::PrincipalId::new());
+
+    let report = service.run_discovered(&context).await.unwrap();
+
+    assert_eq!(operations.rebuilt.lock().unwrap().as_slice(), &[stale]);
+    assert_eq!(report.records().len(), 2);
+    assert_eq!(
+        report.records()[0].outcome,
+        StartupRecoveryOutcome::RetryReady
+    );
+    assert_eq!(
+        report.records()[1].outcome,
+        StartupRecoveryOutcome::ReconciliationRequired
+    );
+}
+
+#[tokio::test]
+async fn startup_recovery_discovery_failure_does_not_become_an_empty_run() {
+    let operations = Arc::new(MockRecoveryOperations::default());
+    let source = Arc::new(MockCandidateSource::default());
+    *source.discovery_error.lock().unwrap() = Some("candidate query failed".into());
+    let service = StartupRecoveryService::with_candidate_source(operations.clone(), source);
+    let context = RequestContext::new(WorkspaceId::new(), vestrace_domain::PrincipalId::new());
+
+    let error = service.run_discovered(&context).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        ApplicationError::Storage(message) if message == "candidate query failed"
+    ));
+    assert!(operations.rebuilt.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn startup_recovery_without_a_candidate_source_fails_closed() {
+    let operations = Arc::new(MockRecoveryOperations::default());
+    let service = StartupRecoveryService::new(operations.clone());
+    let context = RequestContext::new(WorkspaceId::new(), vestrace_domain::PrincipalId::new());
+
+    let error = service.run_discovered(&context).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        ApplicationError::InvalidConfiguration(message)
+            if message.contains("startup recovery candidate source")
+    ));
+    assert!(operations.rebuilt.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

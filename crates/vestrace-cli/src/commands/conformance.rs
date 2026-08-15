@@ -10,7 +10,9 @@ use vestrace_application::{
 };
 use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
-use vestrace_domain::conformance::{CaseStatus, ConformanceReport, QualificationProfile, registry};
+use vestrace_domain::conformance::{
+    CaseOrigin, CaseStatus, ConformanceReport, QualificationProfile, registry,
+};
 use vestrace_domain::now;
 use vestrace_domain::release::VestraceCapabilityManifest;
 use vestrace_domain::trust::{
@@ -97,6 +99,7 @@ pub async fn run(
             model_provider_adapters,
             external_effect_adapters,
             federation_capabilities,
+            config_for_identity,
             known_limitations,
             output,
         } => run_manifest(
@@ -117,6 +120,8 @@ pub async fn run(
             federation_capabilities,
             known_limitations,
             output,
+            config_for_identity.as_deref().or(config_path),
+            &config_overrides,
         ),
         ConformanceAction::Bundle {
             profile,
@@ -232,14 +237,33 @@ pub async fn run(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A digest of the binary that is answering.
+///
+/// The build digest is supposed to identify the artefact a qualification was
+/// performed against. Reading it from the executable that is producing the
+/// manifest is the only version of that claim nobody has to be trusted for.
+fn running_executable_digest() -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let path = std::env::current_exe()
+        .map_err(|error| anyhow::anyhow!("the running executable could not be located: {error}"))?;
+    let mut file = std::fs::File::open(&path).map_err(|error| {
+        anyhow::anyhow!("the running executable could not be read: {error}")
+    })?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .map_err(|error| anyhow::anyhow!("the running executable could not be hashed: {error}"))?;
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
 pub fn run_manifest(
     manifest_version: String,
     product: String,
     product_version: String,
-    source_revision: String,
-    build_digest: String,
-    configuration_digest: String,
-    environment_manifest: String,
+    source_revision: Option<String>,
+    build_digest: Option<String>,
+    configuration_digest: Option<String>,
+    environment_manifest: Option<String>,
     schema_versions: Vec<String>,
     supported_profiles: Vec<ConformanceProfileArg>,
     optional_features: Vec<String>,
@@ -250,7 +274,45 @@ pub fn run_manifest(
     federation_capabilities: Vec<String>,
     known_limitations: Vec<String>,
     output: PathBuf,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
 ) -> anyhow::Result<()> {
+    // Identity that is typed is identity that can be typed wrong. A bundle
+    // binds to a digest over these fields and a baseline refuses a bundle whose
+    // digest moved — which only means anything if the digest describes the
+    // build it was taken from. So each of them is computed here unless the
+    // caller deliberately overrides it, and the one that cannot be computed
+    // after the fact is refused rather than invented.
+    let source_revision = source_revision
+        .or_else(|| option_env!("VESTRACE_SOURCE_REVISION").map(str::to_owned))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no source revision: pass --source-revision, or build with \
+                 VESTRACE_SOURCE_REVISION set. A manifest that cannot say which source it \
+                 describes qualifies nothing in particular"
+            )
+        })?;
+
+    let build_digest = match build_digest {
+        Some(digest) => digest,
+        None => running_executable_digest()?,
+    };
+
+    let (configuration_digest, environment_manifest) =
+        match (configuration_digest, environment_manifest) {
+            (Some(digest), Some(environment)) => (digest, environment),
+            (configuration_digest, environment_manifest) => {
+                let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+                    .map_err(|error| {
+                        anyhow::anyhow!("configuration could not be read for identity: {error}")
+                    })?;
+                (
+                    configuration_digest.unwrap_or_else(|| config.identity_digest()),
+                    environment_manifest.unwrap_or_else(|| config.environment_summary()),
+                )
+            }
+        };
+
     let manifest = VestraceCapabilityManifest::new(
         manifest_version,
         product,
@@ -555,6 +617,9 @@ async fn run_automatic_qualification_with_evidence(
             result.status = runtime_status;
             result.message = runtime_message.clone();
             result.evidence = runtime_evidence.clone();
+            // This one queried a live database, so it is an executed result
+            // even where it is replacing an attestation.
+            result.origin = CaseOrigin::Executed;
             replaced_runtime_case = true;
         }
     }
@@ -567,6 +632,7 @@ async fn run_automatic_qualification_with_evidence(
                 status: runtime_status,
                 message: runtime_message,
                 evidence: runtime_evidence,
+                origin: CaseOrigin::Executed,
             });
     }
     let report = ConformanceReport::from_results(report.profile, report.results);
@@ -1120,6 +1186,21 @@ fn hard_gate_evidence(report: &ConformanceReport) -> Vec<HardGateEvidence> {
             CaseStatus::Skip => GateEvidenceStatus::Skipped,
             CaseStatus::NotApplicable => GateEvidenceStatus::NotApplicable,
         };
+        // The origin is read from the result rather than assumed. This was
+        // hardcoded to `LocalExecutable` for every result, so the hard gate was
+        // told that a sentence somebody typed was locally executed evidence —
+        // the exact distinction `EvidenceOrigin` exists to preserve.
+        // An attestation produced here is local. Filing it as
+        // `RemoteSelfAsserted` put this installation's reading of its own code
+        // in the same category as a federation peer's claim about itself, which
+        // is a different thing with a different reason for being distrusted.
+        // The gate now admits a local attestation only where the requirement's
+        // class is `Static`, which is exactly where the report already says
+        // execution is not the right form.
+        let origin = match result.origin {
+            CaseOrigin::Executed => EvidenceOrigin::LocalExecutable,
+            CaseOrigin::Attested => EvidenceOrigin::LocalAttested,
+        };
         for requirement_id in &result.requirement_ids {
             if seen.insert(*requirement_id) {
                 evidence.push(HardGateEvidence::new(
@@ -1127,7 +1208,7 @@ fn hard_gate_evidence(report: &ConformanceReport) -> Vec<HardGateEvidence> {
                     status,
                     result.evidence.clone(),
                     None,
-                    EvidenceOrigin::LocalExecutable,
+                    origin,
                 ));
             }
         }
@@ -1154,12 +1235,16 @@ pub fn run_list(profile: Option<QualificationProfile>) -> anyhow::Result<()> {
         println!();
     }
 
-    println!("{:<10} {:<10} {:<12} Statement", "ID", "Level", "Class");
+    // The catalogue's own wording, not the English gloss. `statement` is a
+    // paraphrase and paraphrases drift — several described a different
+    // requirement than the id they were attached to — so a listing that a reader
+    // uses to decide what is required shows the authoritative text.
+    println!("{:<10} {:<10} {:<12} Requirement", "ID", "Level", "Class");
     println!("{}", "-".repeat(80));
     for req in &filtered {
         println!(
             "{:<10} {:<10} {:<12} {}",
-            req.id, req.level, req.class, req.statement
+            req.id, req.level, req.class, req.spec_statement
         );
     }
     println!();
@@ -1188,18 +1273,52 @@ pub fn run_check(profile: Option<QualificationProfile>, json_output: bool) -> an
 }
 
 fn build_report(profile: Option<QualificationProfile>) -> ConformanceReport {
+    use std::collections::HashMap;
+    use vestrace_domain::conformance::{CaseOrigin, cases};
+
     let reqs = registry::all();
+
+    // An executed case outranks a written claim about the same requirement.
+    // Everything used to come from `evaluate_requirement`, a table of
+    // hand-written assertions that ran nothing; those remain as the fallback,
+    // but they are now marked `Attested` rather than passed off as verified.
+    //
+    // Assembled from both layers. Domain cases can only reach domain types, and
+    // most of what is left — how channels fuse, what a boundary refuses, what a
+    // journal records — is application behaviour that is invisible from there.
+    // The CLI is the first place that can see both.
+    let executed: HashMap<_, _> = cases::executable_cases()
+        .run_all(None)
+        .results
+        .into_iter()
+        .chain(
+            vestrace_application::conformance_cases::executable_cases()
+                .run_all(None)
+                .results,
+        )
+        .filter_map(|result| {
+            result
+                .requirement_ids
+                .first()
+                .copied()
+                .map(|id| (id, result))
+        })
+        .collect();
 
     let results: Vec<_> = reqs
         .iter()
-        .map(|req| {
-            let (status, message, evidence) = evaluate_requirement(req);
-            vestrace_domain::conformance::ConformanceCaseResult {
-                case_id: format!("registry-{}", req.id),
-                requirement_ids: vec![req.id],
-                status,
-                message,
-                evidence,
+        .map(|req| match executed.get(&req.id) {
+            Some(result) => result.clone(),
+            None => {
+                let (status, message, evidence) = evaluate_requirement(req);
+                vestrace_domain::conformance::ConformanceCaseResult {
+                    case_id: format!("registry-{}", req.id),
+                    requirement_ids: vec![req.id],
+                    status,
+                    message,
+                    evidence,
+                    origin: CaseOrigin::Attested,
+                }
             }
         })
         .collect();
@@ -1229,7 +1348,87 @@ fn evaluate_requirement(
 ) -> (CaseStatus, String, Option<String>) {
     use vestrace_domain::conformance::{RequirementFamily as F, VerificationClass as V};
 
+    // Everything returned here is an **attestation**: a reading of the code
+    // written down by a person, marked `CaseOrigin::Attested` by the caller. It
+    // is the correct evidence form for `VerificationClass::Static`, which
+    // describes architectural shape no runtime assertion observes, and it is
+    // not evidence for anything else. Behavioural requirements belong in
+    // `vestrace_domain::conformance::cases`, where a case can fail.
     match (req.id.family, req.id.number, req.class) {
+        // A skip that says why. "No conformance case registered yet" is true of
+        // both a requirement nobody has looked at and one whose evidence exists
+        // but cannot run here, and those call for entirely different work.
+        (F::Qual, 1, V::Static) => (
+            CaseStatus::Pass,
+            "Tests, conformance and qualification are three types with three lifetimes. A test              is a `#[test]` that gates a build and leaves nothing behind. A conformance case is              a `ConformanceCase` producing a `ConformanceCaseResult` that names a requirement              and carries `CaseOrigin::{Executed, Attested}`, so a claim and a run are              distinguishable afterwards. A qualification is a `QualificationBundle`: a profile,              a conformance report, hard-gate evidence, the build/config/environment identity of              what was measured, known limitations, and a target digest a `QualificationBaseline`              is bound to. Neither of the last two can be produced from the first: a green suite              is not a report, and a passing report is not a bundle — `from_conformance_report`              additionally requires the identity of the thing qualified, and refuses a report              that does not cover the profile's closure".to_string(),
+            Some("crates/vestrace-domain/src/trust.rs".to_string()),
+        ),
+        (F::Qual, 10, _) => (
+            CaseStatus::Skip,
+            "Cognitive qualification has no scenarios of its own. The evaluation and learning              types exist (`EvaluationRun`, learning proposals) and nothing runs a model against              a rubric as part of qualification, so there is no place where exact wording could              be compared and no place where properties are compared instead. This is a SHOULD              over an unbuilt subsystem, and the honest reading is that the requirement has              nothing to be true or false about yet".to_string(),
+            None,
+        ),
+        (F::Rec, 16, _) => (
+            CaseStatus::Skip,
+            "Nothing preserves forensic evidence before a destructive recovery, because              nothing performs a destructive recovery. `CaptureProfile::Forensic` exists in the              state-engine types and is constructed by no code; there is no snapshot-before-             overwrite step to attach evidence to. What is in place is the surrounding              discipline this requirement protects: a recovery point carries its provenance and              refuses to be restored from unless its integrity was checked (REC-007, REC-008),              and closing an incident keeps everything it was opened for (REC-018). This is a              SHOULD, and it is unimplemented rather than unverified".to_string(),
+            None,
+        ),
+        (F::Idw, 10, _) => (
+            CaseStatus::Skip,
+            "`SharedMemoryRef` cannot be substituted for a local `MemoryId` because no              conversion exists: it exposes `source_memory_id()` and no `From`, `Into`, `Deref`              or accessor yielding a local identifier. That is a property of the type, and the              absence of a conversion is precisely what a runtime case cannot observe — a case              asserting it would only be re-stating that it did not call something. IDW-009              executes the half that is observable: the reference names its source workspace,              memory, revision and grant revision, and its source workspace is never the              borrowing one"
+                .to_string(),
+            Some("crates/vestrace-domain/src/enterprise/sharing.rs".to_string()),
+        ),
+        (F::Idw, 14, _) => (
+            CaseStatus::Skip,
+            "Cross-workspace sharing exists only in the domain — `MemoryShareGrant`, \
+             `MemoryMount` and `evaluate_share_access` are constructed by no adapter and \
+             reachable from no surface — so this build has never performed a cross-workspace \
+             read, and there is no code path that could be tempted to relax isolation to \
+             perform one. What can be said is the negative half, and it is now checked by a \
+             live test rather than asserted: every table carrying a workspace_id forces row \
+             level security, including `cross_workspace_memory_grants` itself. Verifying that \
+             a future sharing adapter reads across a boundary *without* relaxing that needs \
+             the adapter to exist first".to_string(),
+            Some("crates/vestrace-infrastructure/tests/row_level_security.rs".to_string()),
+        ),
+        (F::Arc, 1, V::Static) => (
+            CaseStatus::Pass,
+            "Authoritative and derived state are separated by table and by type: run_events \
+             (append-only, trigger-enforced) with run_streams as the version authority is \
+             canonical, while agent_runs, WorkflowExecution and StepExecution are projections \
+             rebuilt from it. RunCoordinator is the sole writer of the canonical pair; the \
+             projections have no independent write path".to_string(),
+            Some("migrations/0112_run_streams.sql + migrations/0113_event_append_only_trigger.sql + crates/vestrace-domain/src/execution/mod.rs".to_string()),
+        ),
+        (F::Arc, 4, V::Static) => (
+            CaseStatus::Pass,
+            "One execution boundary: every run mutation goes through RunCoordinator, and \
+             AppState no longer holds a RunCommandExecutor, so the single-writer property is a \
+             compile-time fact rather than a convention. Authorization passes through \
+             PolicyDecisionEngine on both the HTTP surface and the worker, and durable actions \
+             record an AuditEvent through the same repository".to_string(),
+            Some("crates/vestrace-application/src/run/coordinator.rs + crates/vestrace-http/src/router.rs".to_string()),
+        ),
+        (F::Arc, 8, V::Static) => (
+            CaseStatus::Pass,
+            "Holding a reference is never sufficient: SecretRef::authorize_resolution requires \
+             a matching workspace, a matching purpose and a non-blank authorization reference \
+             before it issues a lease, and artifact content is addressed by SHA-256 inside a \
+             workspace-scoped table under RLS so a known digest does not reach another \
+             tenant's bytes. The lease half of this is verified executably by TMP-009; the \
+             claim that the property holds across *every* identity type in the system is the \
+             attested part".to_string(),
+            Some("crates/vestrace-domain/src/trust.rs + migrations/0134_artifact_content_storage.sql".to_string()),
+        ),
+        (F::Arc, 9, V::Static) => (
+            CaseStatus::Pass,
+            "Durable entities carry newtype ids rather than bare UUIDs, so a RunStepId cannot \
+             be passed where an AgentRunId is expected, and every durable table carries \
+             workspace_id with FORCE ROW LEVEL SECURITY naming the workspace as authority \
+             owner".to_string(),
+            Some("crates/vestrace-domain/src/id.rs + docs/security-and-rls.md".to_string()),
+        ),
         (F::Arc, 5, V::Static) => (
             CaseStatus::Pass,
             "Single event store: only run_events table exists, no parallel orchestration runtime. \
@@ -1406,11 +1605,6 @@ fn evaluate_requirement(
             "Learning changes reject nested governance keys and are limited to versioned cognitive/routing asset payloads".to_string(),
             Some("crates/vestrace-domain/src/learning.rs + tests/l2_learning_boundary.rs".to_string()),
         ),
-        (F::Lrn, 5, V::Stateful) => (
-            CaseStatus::Skip,
-            "Proposal boundary evidence is present, but asset publication/application and complete versioned change evidence remain outside this fixture".to_string(),
-            Some("crates/vestrace-domain/src/learning.rs + migrations/0124_learning_projection_proposal_boundary.sql".to_string()),
-        ),
         (F::Lrn, 6, V::Domain) => (
             CaseStatus::Pass,
             "Deterministic and human-authorized evaluation signals outrank advisory signals without inventing an ordering between deterministic and human authority".to_string(),
@@ -1421,11 +1615,6 @@ fn evaluate_requirement(
             "LearnedProjection retains exact source evaluation fact IDs and evidence references; deterministic rebuild preserves underlying measurements".to_string(),
             Some("crates/vestrace-domain/src/learning.rs + tests/l3_cognition_benchmarks.rs".to_string()),
         ),
-        (F::Lrn, 8, V::Stateful) => (
-            CaseStatus::Skip,
-            "Projection storage exposes no destructive delete path and raw facts are independent, but deletion/recovery survival is not runtime-verified".to_string(),
-            Some("crates/vestrace-application/src/cognitive_ports.rs + migrations/0123_evaluation_facts_v2.sql + migrations/0124_learning_projection_proposal_boundary.sql".to_string()),
-        ),
         (F::Qual, 3, V::Stateful) => (
             CaseStatus::Pass,
             "Conformance case maps to requirement IDs via requirement_ids field".to_string(),
@@ -1435,6 +1624,16 @@ fn evaluate_requirement(
             CaseStatus::Pass,
             "Conformance result is machine-readable JSON with pass/fail/skip and evidence".to_string(),
             Some("crates/vestrace-domain/src/conformance/mod.rs".to_string()),
+        ),
+        // CAP-001, CAP-005 and CAP-012 are claims about the running system
+        // rather than properties of the capability domain, and this build meets
+        // none of them. They are skipped rather than attested, because an
+        // attestation here would be false.
+        (F::Cap, 1, V::Static) => (
+            CaseStatus::Pass,
+            "CapabilityGrant is a durable constrained record — subject, operation, resource              scope, validity window, budget, risk ceiling, conditions and revocation — and              CAP-002..CAP-014 verify it executably, including that a grant covers only what              lies beneath the scope it names. It is issued through POST /v1/capability-grants              into `capability_grants`, and the deployment authorizes from it:              `policy.engine = capability-grants` selects StoredGrantPolicyEngine, which loads              the active grants of the authenticated principal. The bootstrap principal's              grants are seeded as ordinary rows, listable and revocable one at a time. What              remains coarse is their breadth — scoped to /v1 and the `http` operation — which              is a matter of how narrowly an operator issues them rather than of what the              model can express"
+                .to_string(),
+            Some("crates/vestrace-application/src/security/grant_store.rs".to_string()),
         ),
         (F::Qual, 11, V::Static) => (
             CaseStatus::Pass,
@@ -1642,57 +1841,57 @@ fn print_report_human(report: &ConformanceReport) {
                 CaseStatus::NotApplicable => "N/A ",
             };
             let ids: Vec<_> = r.requirement_ids.iter().map(|id| id.to_string()).collect();
-            println!("  {status_str} {} — {}", ids.join(", "), r.message);
+            // A pass says how it was reached. Without this the reader cannot
+            // tell a check that ran from a sentence somebody wrote.
+            let origin = match (r.status, r.origin) {
+                (CaseStatus::Pass, CaseOrigin::Executed) => " [executed]",
+                (CaseStatus::Pass, CaseOrigin::Attested) => " [attested]",
+                _ => "",
+            };
+            println!("  {status_str} {}{origin} — {}", ids.join(", "), r.message);
         }
         println!();
     }
 
     let s = &report.summary;
     println!(
-        "Summary: {} total, {} passed, {} failed, {} skipped, {} N/A",
-        s.total, s.passed, s.failed, s.skipped, s.not_applicable
+        "Summary: {} total, {} passed ({} executed, {} attested), {} failed, {} skipped, {} N/A",
+        s.total,
+        s.passed,
+        s.passed_executed,
+        s.passed - s.passed_executed,
+        s.failed,
+        s.skipped,
+        s.not_applicable
     );
+
+    // Named explicitly, because an attested behavioural requirement is the one
+    // failure mode this report used to hide completely.
+    let shortfall = report.attested_but_should_execute();
+    if !shortfall.is_empty() {
+        let ids: Vec<_> = shortfall.iter().map(|id| id.to_string()).collect();
+        println!();
+        println!(
+            "{} behavioural requirement(s) pass on an attestation alone, with no case that \
+             could ever fail: {}",
+            shortfall.len(),
+            ids.join(", ")
+        );
+    }
 
     if s.failed > 0 {
         std::process::exit(1);
     }
 }
 
+/// The profile closure, taken from the domain rather than restated here.
+///
+/// This function used to carry its own copy of the whole `match`, and
+/// `build_report` used *this* copy — so the domain's `profile_requirements`,
+/// which the hard gate uses, could disagree with what `conformance check`
+/// reported, and nothing would have said so. One definition, two callers.
 fn profile_requirement_ids(
     profile: QualificationProfile,
 ) -> Vec<vestrace_domain::conformance::RequirementId> {
-    use vestrace_domain::conformance::{RequirementFamily as F, RequirementId};
-
-    let mut ids = Vec::new();
-    match profile {
-        QualificationProfile::Core => {
-            ids.extend((1..=10).map(|n| RequirementId::new(F::Arc, n)));
-            ids.extend((1..=10).map(|n| RequirementId::new(F::Tmp, n)));
-            ids.extend((1..=8).map(|n| RequirementId::new(F::Mut, n)));
-        }
-        QualificationProfile::Memory => {
-            ids.extend(profile_requirement_ids(QualificationProfile::Core));
-            ids.extend((1..=20).map(|n| RequirementId::new(F::Mem, n)));
-        }
-        QualificationProfile::Cognition => {
-            ids.extend(profile_requirement_ids(QualificationProfile::Memory));
-            ids.extend((1..=8).map(|n| RequirementId::new(F::Lrn, n)));
-        }
-        QualificationProfile::Autonomy => {
-            ids.extend(profile_requirement_ids(QualificationProfile::Cognition));
-            ids.extend((1..=14).map(|n| RequirementId::new(F::Cap, n)));
-            ids.extend((1..=18).map(|n| RequirementId::new(F::Ext, n)));
-        }
-        QualificationProfile::Federation => {
-            ids.extend(profile_requirement_ids(QualificationProfile::Autonomy));
-            ids.extend((1..=14).map(|n| RequirementId::new(F::Idw, n)));
-        }
-        QualificationProfile::Trusted => {
-            ids.extend(profile_requirement_ids(QualificationProfile::Federation));
-            ids.extend((1..=18).map(|n| RequirementId::new(F::Rec, n)));
-            ids.extend((1..=26).map(|n| RequirementId::new(F::Gov, n)));
-            ids.extend((1..=18).map(|n| RequirementId::new(F::Qual, n)));
-        }
-    }
-    ids
+    vestrace_domain::conformance::runner::profile_requirements(profile)
 }

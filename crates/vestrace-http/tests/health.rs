@@ -302,11 +302,7 @@ impl vestrace_application::RetrievalJournal for StubRetrievalJournal {
     async fn record_run(
         &self,
         _: &vestrace_application::RequestContext,
-        _: vestrace_domain::id::RetrievalRunId,
-        _: &str,
-        _: &str,
-        _: usize,
-        _: i32,
+        _: &vestrace_application::retrieval::RetrievalRunRecord,
     ) -> Result<(), vestrace_application::ApplicationError> {
         Ok(())
     }
@@ -328,7 +324,6 @@ fn router(repository: Arc<FakeHealthRepository>) -> axum::Router {
     build_router(AppState::new(
         repository,
         Arc::new(EmptyRunUseCases),
-        Arc::new(StubRunCommandExecutor),
         Arc::new(StubMemoryUseCases),
         std::sync::Arc::new(vestrace_application::RetrievalService::new(
             std::sync::Arc::new(StubTextRetriever),

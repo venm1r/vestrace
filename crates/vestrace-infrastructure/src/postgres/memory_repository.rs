@@ -1,18 +1,21 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
-use vestrace_application::{ApplicationError, MemoryRepository};
+use sqlx::Row;
+use vestrace_application::{ApplicationError, MemoryRepository, RequestContext};
 use vestrace_domain::{
-    Confidence, Importance, Memory, MemoryKind, MemoryRevision, MemoryStatus, StructuredMemory,
+    Confidence, Importance, Memory, MemoryKind, MemoryRevision, MemorySource, MemoryStatus,
+    StructuredMemory,
     id::{MemoryId, MemoryRevisionId, WorkspaceId},
 };
 
+use super::PgStore;
+
 pub struct PgMemoryRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgMemoryRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
 
@@ -53,35 +56,186 @@ fn status_from_str(value: &str) -> Result<MemoryStatus, ApplicationError> {
 
 #[async_trait]
 impl MemoryRepository for PgMemoryRepository {
-    async fn save_memory(&self, memory: &Memory) -> Result<(), ApplicationError> {
-        let status_str = match memory.status {
-            MemoryStatus::Candidate => "candidate",
-            MemoryStatus::Active => "active",
-            MemoryStatus::Superseded => "superseded",
-            MemoryStatus::Rejected => "rejected",
-            MemoryStatus::Expired => "expired",
-            MemoryStatus::Deleted => "deleted",
-        };
+    async fn save_memory_with_revision(
+        &self,
+        context: &RequestContext,
+        memory: &Memory,
+        revision: &MemoryRevision,
+        source: &MemorySource,
+    ) -> Result<(), ApplicationError> {
+        for workspace in [
+            memory.workspace_id,
+            revision.workspace_id,
+            source.workspace_id,
+        ] {
+            if workspace != context.workspace_id {
+                return Err(ApplicationError::Policy(
+                    "a memory, its revision and its source must all belong to the caller's \
+                     workspace"
+                        .into(),
+                ));
+            }
+        }
+        if revision.memory_id != memory.id || source.memory_id != memory.id {
+            return Err(ApplicationError::Policy(
+                "a memory's first revision and source must belong to that memory".into(),
+            ));
+        }
+        revision
+            .validate_temporal_range()
+            .map_err(ApplicationError::from)?;
 
-        let kind_str = match memory.kind {
-            MemoryKind::Fact => "fact",
-            MemoryKind::Preference => "preference",
-            MemoryKind::Constraint => "constraint",
-            MemoryKind::Decision => "decision",
-            MemoryKind::Task => "task",
-            MemoryKind::Procedure => "procedure",
-            MemoryKind::Observation => "observation",
-            MemoryKind::Outcome => "outcome",
-            MemoryKind::Summary => "summary",
-        };
+        // One transaction for all three.
+        //
+        // `tr_active_memory_has_source` is `DEFERRABLE INITIALLY DEFERRED`, so
+        // it evaluates at commit. Written separately, the memory commits alone
+        // and the deferred check runs against a database that has no source
+        // yet — which is why creating a memory had never succeeded. Inside one
+        // transaction the order stops mattering, which is what deferring the
+        // trigger was for.
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
 
         sqlx::query(
             r#"
-            INSERT INTO memories (id, workspace_id, kind, status, active_revision_id, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO memories
+                (id, workspace_id, kind, status, active_revision_id, state_revision, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,
                 active_revision_id = EXCLUDED.active_revision_id,
+                state_revision = EXCLUDED.state_revision,
+                updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(memory.id.as_uuid())
+        .bind(memory.workspace_id.as_uuid())
+        .bind(super::memory_encoding::kind_str(memory.kind))
+        .bind(super::memory_encoding::status_str(memory.status))
+        .bind(memory.active_revision_id.map(|r| r.as_uuid()))
+        .bind(memory.state_revision as i32)
+        .bind(memory.created_at)
+        .bind(memory.updated_at)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO memory_revisions
+                (id, memory_id, workspace_id, revision_number, content, structured,
+                 confidence, importance, created_at, valid_from, valid_until,
+                 change_reason, canonical_hash, classification)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            "#,
+        )
+        .bind(revision.id.as_uuid())
+        .bind(revision.memory_id.as_uuid())
+        .bind(revision.workspace_id.as_uuid())
+        .bind(revision.revision_number as i32)
+        .bind(&revision.content)
+        .bind(
+            revision
+                .structured
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or_default()),
+        )
+        .bind(revision.confidence.value())
+        .bind(revision.importance.value())
+        .bind(revision.created_at)
+        .bind(revision.valid_from)
+        .bind(revision.valid_until)
+        .bind(&revision.change_reason)
+        .bind(&revision.canonical_hash)
+        .bind(&revision.classification)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        let evidence_ref_json = source
+            .evidence_ref
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO memory_sources (id, memory_id, workspace_id, event_id, role, derivation_id, created_at, evidence_ref)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(source.id.as_uuid())
+        .bind(source.memory_id.as_uuid())
+        .bind(source.workspace_id.as_uuid())
+        .bind(source.event_id.as_uuid())
+        .bind(super::memory_encoding::evidence_role_str(source.role))
+        .bind(source.derivation_id.map(|d| d.as_uuid()))
+        .bind(source.created_at)
+        .bind(evidence_ref_json)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        // The search index is a projection of the active revision, so it moves
+        // in this transaction rather than after it. `search_documents` is the
+        // only table the text channel reads, and nothing had ever written it —
+        // every retrieval returned nothing, successfully.
+        sqlx::query(
+            r#"
+            INSERT INTO search_documents (id, memory_id, workspace_id, title, content, created_at, updated_at)
+            VALUES ($1, $2, $3, '', $4, $5, $5)
+            ON CONFLICT (workspace_id, memory_id) DO UPDATE SET
+                content = EXCLUDED.content,
+                updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(memory.id.as_uuid())
+        .bind(memory.workspace_id.as_uuid())
+        .bind(&revision.content)
+        .bind(revision.created_at)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        // Both deferred checks run here, with the revision and the source
+        // present.
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn save_memory(
+        &self,
+        context: &RequestContext,
+        memory: &Memory,
+    ) -> Result<(), ApplicationError> {
+        if memory.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "a memory cannot be written into another workspace".into(),
+            ));
+        }
+
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
+        let status_str = super::memory_encoding::status_str(memory.status);
+        let kind_str = super::memory_encoding::kind_str(memory.kind);
+
+        sqlx::query(
+            r#"
+            INSERT INTO memories
+                (id, workspace_id, kind, status, active_revision_id, state_revision, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (id) DO UPDATE SET
+                status = EXCLUDED.status,
+                active_revision_id = EXCLUDED.active_revision_id,
+                state_revision = EXCLUDED.state_revision,
                 updated_at = EXCLUDED.updated_at
             "#,
         )
@@ -90,20 +244,44 @@ impl MemoryRepository for PgMemoryRepository {
         .bind(kind_str)
         .bind(status_str)
         .bind(memory.active_revision_id.map(|r| r.as_uuid()))
+        .bind(memory.state_revision as i32)
         .bind(memory.created_at)
         .bind(memory.updated_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
-        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
+        .map_err(storage_error)?;
 
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
-    async fn save_revision(&self, revision: &MemoryRevision) -> Result<(), ApplicationError> {
+    async fn save_revision(
+        &self,
+        context: &RequestContext,
+        revision: &MemoryRevision,
+    ) -> Result<(), ApplicationError> {
+        if revision.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "a memory revision cannot be written into another workspace".into(),
+            ));
+        }
+
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
+        revision
+            .validate_temporal_range()
+            .map_err(ApplicationError::from)?;
+
         sqlx::query(
             r#"
-            INSERT INTO memory_revisions (id, memory_id, workspace_id, revision_number, content, structured, confidence, importance, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO memory_revisions
+                (id, memory_id, workspace_id, revision_number, content, structured,
+                 confidence, importance, created_at, valid_from, valid_until,
+                 change_reason, canonical_hash, classification)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(revision.id.as_uuid())
@@ -111,48 +289,85 @@ impl MemoryRepository for PgMemoryRepository {
         .bind(revision.workspace_id.as_uuid())
         .bind(revision.revision_number as i32)
         .bind(&revision.content)
-        .bind(revision.structured.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default()))
+        .bind(
+            revision
+                .structured
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or_default()),
+        )
         .bind(revision.confidence.value())
         .bind(revision.importance.value())
         .bind(revision.created_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn find_memory_by_id(&self, id: MemoryId) -> Result<Option<Memory>, ApplicationError> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, workspace_id, kind, status, active_revision_id, created_at, updated_at
-            FROM memories
-            WHERE id = $1
-            "#,
-        )
-        .bind(id.as_uuid())
-        .fetch_optional(&self.pool)
+        .bind(revision.valid_from)
+        .bind(revision.valid_until)
+        .bind(&revision.change_reason)
+        .bind(&revision.canonical_hash)
+        .bind(&revision.classification)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
 
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn find_memory_by_id(
+        &self,
+        context: &RequestContext,
+        id: MemoryId,
+    ) -> Result<Option<Memory>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
+        // The workspace predicate is new. This selected on `id` alone, so a
+        // memory id from any tenant returned that tenant's memory.
+        let row = sqlx::query(
+            r#"
+            SELECT id, workspace_id, kind, status, active_revision_id, state_revision,
+                   created_at, updated_at
+            FROM memories
+            WHERE workspace_id = $1 AND id = $2
+            "#,
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(id.as_uuid())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        scoped.commit().await.map_err(storage_error)?;
         row.map(parse_memory_row).transpose()
     }
 
     async fn find_revision_by_id(
         &self,
+        context: &RequestContext,
         id: MemoryRevisionId,
     ) -> Result<Option<MemoryRevision>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let row = sqlx::query(
             r#"
-            SELECT id, memory_id, workspace_id, revision_number, content, structured, confidence, importance, created_at
+            SELECT id, memory_id, workspace_id, revision_number, content, structured,
+                   confidence, importance, created_at, valid_from, valid_until,
+                   change_reason, canonical_hash, classification
             FROM memory_revisions
-            WHERE id = $1
+            WHERE workspace_id = $1 AND id = $2
             "#,
         )
+        .bind(context.workspace_id.as_uuid())
         .bind(id.as_uuid())
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        scoped.commit().await.map_err(storage_error)?;
 
         row.map(parse_revision_row).transpose()
     }
@@ -178,6 +393,7 @@ fn parse_memory_row(row: sqlx::postgres::PgRow) -> Result<Memory, ApplicationErr
         kind: kind_from_str(&kind_str)?,
         status: status_from_str(&status_str)?,
         active_revision_id: active_revision_id.map(MemoryRevisionId::from_uuid),
+        state_revision: row.try_get::<i32, _>("state_revision").unwrap_or(0) as u32,
         created_at,
         updated_at,
     })
@@ -215,5 +431,10 @@ fn parse_revision_row(row: sqlx::postgres::PgRow) -> Result<MemoryRevision, Appl
         importance: Importance::new(importance_f32)
             .map_err(|e| ApplicationError::Storage(e.to_string()))?,
         created_at,
+        valid_from: row.try_get("valid_from").ok(),
+        valid_until: row.try_get("valid_until").ok(),
+        change_reason: row.try_get("change_reason").ok(),
+        canonical_hash: row.try_get("canonical_hash").ok(),
+        classification: row.try_get("classification").ok(),
     })
 }

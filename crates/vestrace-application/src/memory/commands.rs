@@ -39,6 +39,7 @@ pub struct ReviseMemoryCommand {
     pub confidence: Confidence,
     pub importance: Importance,
     pub source_event_id: EventId,
+    pub change_reason: Option<String>,
     pub idempotency_key: String,
 }
 
@@ -50,4 +51,86 @@ pub struct LinkKnowledgeCommand {
     pub relation_type: RelationType,
     pub confidence: Confidence,
     pub idempotency_key: String,
+}
+
+/// What a request means, for the purpose of deciding whether it has already
+/// been made.
+///
+/// # Why this is not "hash the command"
+///
+/// It was. `compute_hash(&cmd)` serialised the whole command, **including the
+/// identifier the HTTP layer generates per request** — `EventId::new()`,
+/// `MemoryId::new()`, `RelationId::new()`. Two byte-identical requests with the
+/// same idempotency key therefore produced two different hashes, and the second
+/// was rejected with `idempotency key reused with different request`. A replay
+/// could not succeed: the check could only ever pass through to a new write or
+/// fail as a conflict.
+///
+/// The fingerprint covers what the caller actually asked for. A server-minted
+/// identifier is excluded because it is not part of the request, and the
+/// idempotency key is excluded because it is the thing being looked up rather
+/// than part of what was asked.
+///
+/// Adding a field to a command now forces a decision about whether it belongs
+/// here, which is the point: a silently unhashed field would make two different
+/// requests look like a replay of one another, and that is the failure mode
+/// worth being noisy about.
+pub trait IdempotentRequest {
+    fn fingerprint(&self) -> serde_json::Value;
+}
+
+impl IdempotentRequest for RecordEventCommand {
+    fn fingerprint(&self) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": self.session_id,
+            "event_type": self.event_type,
+            "actor": self.actor,
+            "subject": self.subject,
+            "payload": self.payload,
+        })
+    }
+}
+
+impl IdempotentRequest for RememberMemoryCommand {
+    fn fingerprint(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": self.kind,
+            "content": self.content,
+            "structured": self.structured,
+            "confidence": self.confidence,
+            "importance": self.importance,
+            "source_event_id": self.source_event_id,
+            "evidence_role": self.evidence_role,
+            "policy": self.policy,
+        })
+    }
+}
+
+impl IdempotentRequest for ReviseMemoryCommand {
+    fn fingerprint(&self) -> serde_json::Value {
+        serde_json::json!({
+            // The memory and the revision it expects are part of the request:
+            // the same content against a different expected revision is a
+            // different ask, not a replay.
+            "memory_id": self.memory_id,
+            "expected_revision": self.expected_revision,
+            "content": self.content,
+            "structured": self.structured,
+            "confidence": self.confidence,
+            "importance": self.importance,
+            "source_event_id": self.source_event_id,
+            "change_reason": self.change_reason,
+        })
+    }
+}
+
+impl IdempotentRequest for LinkKnowledgeCommand {
+    fn fingerprint(&self) -> serde_json::Value {
+        serde_json::json!({
+            "source_memory_id": self.source_memory_id,
+            "target_memory_id": self.target_memory_id,
+            "relation_type": self.relation_type,
+            "confidence": self.confidence,
+        })
+    }
 }

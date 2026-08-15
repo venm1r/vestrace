@@ -192,11 +192,7 @@ impl vestrace_application::RetrievalJournal for StubRetrievalJournal {
     async fn record_run(
         &self,
         _: &vestrace_application::RequestContext,
-        _: vestrace_domain::id::RetrievalRunId,
-        _: &str,
-        _: &str,
-        _: usize,
-        _: i32,
+        _: &vestrace_application::retrieval::RetrievalRunRecord,
     ) -> Result<(), vestrace_application::ApplicationError> {
         Ok(())
     }
@@ -364,7 +360,6 @@ fn request_span_contains_only_sanitized_bounded_metadata() {
             build_router(AppState::new(
                 Arc::new(HealthyRepository),
                 Arc::new(EmptyRunUseCases),
-                Arc::new(StubRunCommandExecutor),
                 Arc::new(StubMemoryUseCases),
                 std::sync::Arc::new(vestrace_application::RetrievalService::new(
                     std::sync::Arc::new(StubTextRetriever),

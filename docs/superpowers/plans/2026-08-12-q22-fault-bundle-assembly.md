@@ -13,7 +13,9 @@ exact-target external-effect fault evidence as `QUAL-008`.
 - [x] Map the fault result into hard-gate evidence and a conformance case.
 - [x] Persist both passed and failed bundles through `QualificationRepository`.
 - [x] Document the implemented boundary and explicit non-claims.
-- [ ] Add a real isolated process/provider fault driver in a later block.
+- [x] Real isolated process fault driver delivered by Q23 (`ProcessFaultInjectionRuntime`).
+- [x] Container fault driver delivered as `DockerFaultInjectionRuntime` (R3).
+- [ ] A provider-specific sandbox driver remains open; see [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

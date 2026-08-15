@@ -406,3 +406,68 @@ fn public_envelopes_and_state_round_trip_through_json() {
     );
     assert_eq!(replay(Vec::<LegacyRunEventEnvelope>::new()).unwrap(), None);
 }
+
+/// Approving a waiting run is a distinct governed act, not an un-pause.
+///
+/// Reusing `Resumed` would make the two indistinguishable in the canonical
+/// history and would lose the approver — the fact the approval exists to record.
+#[test]
+fn approval_is_its_own_event_carrying_the_approver() {
+    let approver = PrincipalId::new();
+
+    let event = LegacyRunEvent::ApprovalGranted {
+        approver_id: approver,
+    };
+
+    assert_eq!(event.event_type(), "run.approval_granted");
+    assert_ne!(event.event_type(), LegacyRunEvent::Resumed.event_type());
+}
+
+#[test]
+fn a_run_waiting_for_approval_leaves_it_through_an_approval() {
+    let fixture = Fixture::new();
+    let (running, _events) = fixture.running();
+
+    let wait = fixture.command(
+        running.version,
+        RunCommand::WaitForApproval {
+            approval_id: ApprovalRecordId::new(),
+        },
+    );
+    let (waiting, _) = fixture.execute(Some(running), wait);
+    assert_eq!(waiting.status, RunStatus::WaitingForApproval);
+
+    let approver = PrincipalId::new();
+    let approve = fixture.command(
+        waiting.version,
+        RunCommand::Approve {
+            approver_id: approver,
+        },
+    );
+    let (approved, event) = fixture.execute(Some(waiting), approve);
+
+    assert_eq!(approved.status, RunStatus::Running);
+    assert_eq!(approved.wait, None);
+    assert_eq!(
+        event.payload,
+        LegacyRunEvent::ApprovalGranted {
+            approver_id: approver
+        }
+    );
+}
+
+/// An approval only means something where an approval was actually pending.
+#[test]
+fn approval_is_rejected_when_no_approval_is_pending() {
+    let fixture = Fixture::new();
+    let (running, _events) = fixture.running();
+
+    let approve = fixture.command(
+        running.version,
+        RunCommand::Approve {
+            approver_id: PrincipalId::new(),
+        },
+    );
+
+    assert!(vestrace_domain::run::decide(Some(&running), &approve).is_err());
+}

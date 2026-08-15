@@ -20,6 +20,21 @@ function shortChecksum(checksum: string | undefined): string {
   return checksum.length > 24 ? `${checksum.slice(0, 24)}…` : checksum;
 }
 
+/** Exact byte counts below a kibibyte: for a provenance record the precise
+ *  size is the useful number, and "0.1 KB" is not one. */
+function formatSize(bytes: number | undefined): string {
+  if (bytes === undefined || Number.isNaN(bytes)) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
+
 export const ArtifactsPage: React.FC = () => {
   const { data: artifacts, error, loading, reload } = useApiResource(vestraceClient.listArtifacts);
   const { notice, notify, dismiss } = useNotice();
@@ -35,7 +50,7 @@ export const ArtifactsPage: React.FC = () => {
           <ActionButton
             icon="download"
             disabled={items.length === 0}
-            onClick={() => notify('info', 'Artifact export is not implemented in the P0 foundation.')}
+            onClick={() => notify('info', 'Artifact export is not implemented in this build.')}
           >
             Export Selected
           </ActionButton>
@@ -59,9 +74,10 @@ export const ArtifactsPage: React.FC = () => {
               <thead>
                 <tr style={tableHeadRowStyle}>
                   <Th>Artifact Name</Th>
-                  <Th style={{ padding: '12px 16px' }}>Kind</Th>
-                  <Th style={{ padding: '12px 16px' }}>Size</Th>
-                  <Th style={{ padding: '12px 16px' }}>Checksum (SHA-256)</Th>
+                  <Th style={{ padding: 'var(--space-sm) var(--space-md)' }}>Media Type</Th>
+                  <Th style={{ padding: 'var(--space-sm) var(--space-md)' }}>Rev</Th>
+                  <Th style={{ padding: 'var(--space-sm) var(--space-md)' }}>Size</Th>
+                  <Th style={{ padding: 'var(--space-sm) var(--space-md)' }}>Checksum (SHA-256)</Th>
                   <Th style={{ textAlign: 'right' }}>Actions</Th>
                 </tr>
               </thead>
@@ -88,29 +104,37 @@ export const ArtifactsPage: React.FC = () => {
                         {artifact.name}
                       </div>
                     </td>
-                    <td style={{ padding: '16px' }}>
+                    <td style={{ padding: 'var(--space-md)' }}>
                       <span
+                        className="type-label"
                         style={{
-                          padding: '4px 8px',
+                          padding: 'var(--space-xs) var(--space-sm)',
                           background: 'var(--color-surface-container-high)',
-                          borderRadius: '4px',
-                          fontSize: '12px',
+                          borderRadius: 'var(--radius-sm)',
+                          whiteSpace: 'nowrap',
                         }}
                       >
-                        {artifact.kind}
+                        {artifact.media_type}
                       </span>
                     </td>
-                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{artifact.size}</td>
                     <td
-                      style={{
-                        padding: '16px',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '12px',
-                        color: 'var(--text-secondary)',
-                      }}
-                      title={artifact.checksum}
+                      className="type-code"
+                      style={{ padding: 'var(--space-md)', color: 'var(--text-secondary)' }}
                     >
-                      {shortChecksum(artifact.checksum)}
+                      {artifact.revision_number}
+                    </td>
+                    <td className="type-code" style={{ padding: 'var(--space-md)', whiteSpace: 'nowrap' }}>
+                      {formatSize(artifact.size_bytes)}
+                    </td>
+                    <td
+                      className="type-code"
+                      style={{ padding: 'var(--space-md)', color: 'var(--text-secondary)' }}
+                      // The full digest on hover: the cell is truncated to keep
+                      // the row readable, but a provenance check needs all 64
+                      // characters.
+                      title={artifact.content_sha256}
+                    >
+                      {shortChecksum(artifact.content_sha256)}
                     </td>
                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                       <ActionButton
@@ -119,7 +143,7 @@ export const ArtifactsPage: React.FC = () => {
                         onClick={() =>
                           notify(
                             'info',
-                            `Artifact download is not implemented in the P0 foundation (${artifact.name}).`,
+                            `Artifact download is not implemented in this build (${artifact.name}).`,
                           )
                         }
                       >

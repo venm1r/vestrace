@@ -36,10 +36,10 @@ async fn seed_owner(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version
+             id, workspace_id, principal_id, title, objective, status, run_version
          ) VALUES
-         ($1::uuid, $2::uuid, $3::uuid, 'loaded', 'created', 1),
-         ($4::uuid, $2::uuid, $3::uuid, 'empty', 'created', 1)",
+         ($1::uuid, $2::uuid, $3::uuid, 'loaded', 'loaded', 'created', 1),
+         ($4::uuid, $2::uuid, $3::uuid, 'empty', 'empty', 'created', 1)",
     )
     .bind(RUN_ID)
     .bind(WORKSPACE_ID)
@@ -95,12 +95,17 @@ async fn load_stream_returns_full_envelopes_in_sequence_order(pool: sqlx::PgPool
         ),
     ] {
         sqlx::query(
+            // `run_version` and `sequence_value` are NOT NULL and constrained
+            // equal to `sequence` by migration 0020.
             "INSERT INTO run_events (
-                 id, workspace_id, run_id, sequence, event_type, event_version,
-                 actor, causation_id, correlation_id, payload, occurred_at, created_at
+                 id, workspace_id, run_id, sequence, run_version, sequence_value,
+                 event_type, event_version,
+                 actor, causation_id, correlation_id, payload,
+                 occurred_at, created_at, recorded_at
              ) VALUES (
-                 $1::uuid, $2::uuid, $3::uuid, $4, $5, 1,
-                 $6, $7::uuid, $8::uuid, $9, $10::timestamptz, $11::timestamptz
+                 $1::uuid, $2::uuid, $3::uuid, $4, $4, $4, $5, 1,
+                 $6, $7::uuid, $8::uuid, $9,
+                 $10::timestamptz, $11::timestamptz, $11::timestamptz
              )",
         )
         .bind(event_id)

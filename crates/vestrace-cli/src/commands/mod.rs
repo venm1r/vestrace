@@ -1,7 +1,10 @@
+pub mod conformance;
 pub mod doctor;
 pub mod mcp;
 pub mod migrate;
+pub mod operator;
 pub mod rebuild;
+pub mod recovery;
 pub mod schema;
 pub mod server;
 pub mod worker;

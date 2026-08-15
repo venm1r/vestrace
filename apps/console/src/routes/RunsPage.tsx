@@ -69,7 +69,7 @@ export const RunsPage: React.FC = () => {
     <PageShell>
       <PageHeader
         title="Run Records"
-        description="Persisted run records available in the P0 foundation."
+        description="Persisted run records available in this build."
         actions={
           <ActionButton onClick={createRun} disabled={creating} icon="add">
             {creating ? 'Creating...' : 'Create Run'}

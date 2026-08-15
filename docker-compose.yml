@@ -21,6 +21,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Set by whoever builds a release; a local build says so rather than
+        # claiming a revision it does not know.
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,6 +34,80 @@ services:
       VESTRACE_HTTP__BIND: 0.0.0.0:8080
       VESTRACE_OBSERVABILITY__LOG_FILTER: info
       VESTRACE_OBSERVABILITY__FORMAT: text
+      # Every run/lease query is workspace-scoped; this is the workspace
+      # dev-seed creates below.
+      VESTRACE_WORKSPACES: 10000000-0000-0000-0000-000000000001
+      VESTRACE_RECOVERY__ENABLED: "true"
+      # Authorization reads durable capability grants. The capabilities listed
+      # below are seeded as grants for the bootstrap principal at startup,
+      # scoped to /v1 and to the `http` operation, which the hierarchical rule
+      # expands to every path and method beneath them.
+      #
+      # That is as broad as the static list it replaces, and different in the
+      # ways that matter: each grant belongs to a subject, is listable through
+      # `GET /v1/capability-grants`, and can be revoked one at a time without a
+      # restart. Narrow them before this is a deployment anybody relies on.
+      VESTRACE_POLICY__ENGINE: capability-grants
+      VESTRACE_POLICY__VERSION: local-dev-console-v1
+      # `critical` is required for run approval, which is now implemented and
+      # records the approver through its own canonical event. It was previously
+      # held at `high` only because approval was an unimplemented stub.
+      VESTRACE_POLICY__RISK_CEILING: critical
+      # memory.purge is omitted: destructive and not needed to use the console.
+      VESTRACE_POLICY__CAPABILITIES: >-
+        memory.read,memory.write,event.read,event.write,context.retrieve,
+        agent.read,agent.write,skill.read,skill.write,
+        workflow.read,workflow.write,execution.read,execution.write,
+        model.read,model.write,provider.read,provider.write,
+        evaluation.read,evaluation.write,learning.read,learning.write,audit.read,export.read,
+        workspace.admin
+      # Bootstrap credential. Seeded into `access_tokens` at startup as an
+      # ordinary row, so it is listable, attributable and revocable like any
+      # other. Minting the first credential otherwise requires authenticating,
+      # which requires a credential.
+      #
+      # Anything that can read this process's environment can authenticate as
+      # the principal below. Mint per-user credentials through
+      # `POST /v1/access-tokens` and revoke this one. Local development value
+      # only; generate your own with
+      #   python -c "import secrets;print('vst_'+secrets.token_bytes(32).hex())"
+      VESTRACE_AUTH__ADMIN_TOKEN: ${VESTRACE_ADMIN_TOKEN:-vst_21d7341d3a4009860168e3cccae642b55123de308fe3c714098b133f75caf863}
+      VESTRACE_AUTH__ADMIN_WORKSPACE: 10000000-0000-0000-0000-000000000001
+      VESTRACE_AUTH__ADMIN_PRINCIPAL: 10000000-0000-0000-0000-000000000002
+      # Master key for envelope-encrypted secret storage: 32 bytes, base64.
+      #
+      # Local-file custody — anything that can read this process's environment
+      # can read the key, so it protects the database and nothing else. It does
+      # not pass production crypto qualification, by design. A real deployment
+      # replaces this with a KMS-backed adapter and must generate its own key
+      # (`openssl rand -base64 32`); this fixed value is public.
+      # The embedding model that gives retrieval a vector channel. Local, so
+      # the vector index does not depend on an external provider being up, and
+      # separate from the completion model because the two have different widths
+      # and different failure modes.
+      #
+      # host.docker.internal reaches the host from inside the container; the
+      # space name pins which geometry these vectors belong to, and changing the
+      # model without changing the space is refused rather than silently mixing
+      # two of them.
+      VESTRACE_EMBEDDING__ENABLED: "true"
+      VESTRACE_EMBEDDING__BASE_URL: http://host.docker.internal:12345/v1
+      VESTRACE_EMBEDDING__MODEL_NAME: text-embedding-nomic-embed-text-v1.5
+      VESTRACE_EMBEDDING__SPACE_NAME: nomic-768
+      VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
+      VESTRACE_SECRETS__KEY_VERSION: local-dev-v1
+      # An external effect adapter. The destination is configuration and never a
+      # request field: a surface that let a caller name the URL would be an
+      # outbound proxy for everything this process can reach.
+      #
+      # The read-back URL is not optional. An adapter that cannot be asked what
+      # happened leaves an unknown outcome unknown forever, and the adapter
+      # contract refuses to let one claim reconciliation it cannot perform — so
+      # a webhook without it fails at startup rather than after the first
+      # timeout.
+      VESTRACE_EFFECTS__WEBHOOK__NAME: ${VESTRACE_EFFECT_NAME:-local-webhook}
+      VESTRACE_EFFECTS__WEBHOOK__DISPATCH_URL: ${VESTRACE_EFFECT_DISPATCH_URL:-http://host.docker.internal:18081/webhook}
+      VESTRACE_EFFECTS__WEBHOOK__READ_BACK_URL: ${VESTRACE_EFFECT_READ_BACK_URL:-http://host.docker.internal:18081/effects}
     ports:
       - "127.0.0.1:${VESTRACE_HTTP_PORT:-8080}:8080"
     healthcheck:
@@ -38,12 +116,18 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    # Docker Desktop maps this automatically, but naming it keeps the container
+    # working on engines that do not.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["server"]
 
   vestrace-worker:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,7 +136,89 @@ services:
       VESTRACE_DATABASE__MAX_CONNECTIONS: 5
       VESTRACE_OBSERVABILITY__LOG_FILTER: info
       VESTRACE_OBSERVABILITY__FORMAT: text
+      # The worker polls the workspaces it is told to serve; without this it
+      # would run but claim no run work.
+      VESTRACE_WORKSPACES: 10000000-0000-0000-0000-000000000001
+      VESTRACE_RECOVERY__ENABLED: "true"
+      # The worker authorizes every work item it leases against the same grant
+      # store the server issues into, so one revocation stops both. It needs
+      # `execution.write`, which is what `work_item_authorization_request` asks
+      # for; the worker seeds nothing itself, so that grant has to exist.
+      VESTRACE_POLICY__ENGINE: capability-grants
+      VESTRACE_POLICY__VERSION: local-dev-worker-v1
+      VESTRACE_POLICY__RISK_CEILING: critical
+      VESTRACE_POLICY__CAPABILITIES: execution.read,execution.write
+      # Model execution for agent-assigned steps. Disabled by default: with it
+      # off, such a step now *fails* rather than reporting success without
+      # having run — which is what the previous build did.
+      #
+      # To enable, set VESTRACE_MODEL__ENABLED=true and store the provider key
+      # through the API, which encrypts it:
+      #   curl -X POST -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" \
+      #        -H 'content-type: application/json' \
+      #        -d '{"name":"openai","purpose":"provider-api-key","value":"sk-..."}' \
+      #        http://localhost:8080/v1/secrets
+      # The key is never read from this file: it is a per-workspace secret
+      # resolved at invocation time, so rotating it needs no restart.
+      VESTRACE_MODEL__ENABLED: ${VESTRACE_MODEL_ENABLED:-false}
+      VESTRACE_MODEL__BASE_URL: ${VESTRACE_MODEL_BASE_URL:-https://api.openai.com/v1}
+      VESTRACE_MODEL__MODEL_NAME: ${VESTRACE_MODEL_NAME:-gpt-4o-mini}
+      VESTRACE_MODEL__SECRET_NAME: ${VESTRACE_MODEL_SECRET_NAME:-openai}
+      VESTRACE_MODEL__MAX_TOKENS: ${VESTRACE_MODEL_MAX_TOKENS:-2048}
+      # The worker needs the same master key as the server to resolve that
+      # secret. Same custody caveat as above.
+      VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
+      VESTRACE_SECRETS__KEY_VERSION: local-dev-v1
+      # The worker drains the outbox, and embedding a written memory is what it
+      # drains `memory.created` and `memory.revised` into — so the embedding
+      # settings belong here, and must name the same space as the server. Two
+      # processes writing different geometries into one space is exactly what
+      # the space check refuses, and it refuses it here too.
+      VESTRACE_EMBEDDING__ENABLED: "true"
+      VESTRACE_EMBEDDING__BASE_URL: ${VESTRACE_EMBEDDING_BASE_URL:-http://host.docker.internal:12345/v1}
+      # Parameterised so a deployment can point the drain at a model that does
+      # not exist and watch the delivery path fail honestly, which is the only
+      # way to exercise dead-lettering without waiting for a real outage.
+      VESTRACE_EMBEDDING__MODEL_NAME: ${VESTRACE_EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
+      VESTRACE_EMBEDDING__SPACE_NAME: nomic-768
+      # The worker reconciles unknown effect outcomes, so it needs the same
+      # read-back destination the server dispatches to. An effect that timed out
+      # can only be settled by asking the far side, and nothing else asks.
+      VESTRACE_EFFECTS__WEBHOOK__NAME: ${VESTRACE_EFFECT_NAME:-local-webhook}
+      VESTRACE_EFFECTS__WEBHOOK__DISPATCH_URL: ${VESTRACE_EFFECT_DISPATCH_URL:-http://host.docker.internal:18081/webhook}
+      VESTRACE_EFFECTS__WEBHOOK__READ_BACK_URL: ${VESTRACE_EFFECT_READ_BACK_URL:-http://host.docker.internal:18081/effects}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["worker"]
+
+  console:
+    build:
+      context: ./apps/console
+      dockerfile: Dockerfile
+    depends_on:
+      vestrace-server:
+        condition: service_healthy
+    environment:
+      # Must match the server's token. nginx attaches it to proxied requests so
+      # the browser never receives it.
+      # Same host variable the server reads. These two named *different* host
+      # variables, so overriding either one alone gave the console a token the
+      # server did not accept, and every proxied request came back 401.
+      VESTRACE_ADMIN_TOKEN: ${VESTRACE_ADMIN_TOKEN:-vst_21d7341d3a4009860168e3cccae642b55123de308fe3c714098b133f75caf863}
+    ports:
+      - "127.0.0.1:${VESTRACE_CONSOLE_PORT:-3000}:3000"
+
+  dev-seed:
+    image: pgvector/pgvector:pg17-bookworm
+    depends_on:
+      vestrace-server:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: bootstrap-local-development-only
+    entrypoint: ["psql", "-h", "postgres", "-U", "vestrace_bootstrap", "-d", "vestrace", "-v", "ON_ERROR_STOP=1", "-c"]
+    command:
+      - "INSERT INTO workspaces (id, slug) VALUES ('10000000-0000-0000-0000-000000000001', 'dev') ON CONFLICT (id) DO NOTHING; INSERT INTO principals (id, workspace_id, identifier) VALUES ('10000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'dev-operator') ON CONFLICT (id) DO NOTHING;"
+    restart: "no"
 
 volumes:
   postgres-data:

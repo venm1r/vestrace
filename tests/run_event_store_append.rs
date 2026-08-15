@@ -41,8 +41,8 @@ async fn seed_owner(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version
-         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'append', 'created', 1)",
+             id, workspace_id, principal_id, title, objective, status, run_version
+         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'append', 'append', 'created', 1)",
     )
     .bind(RUN_ID)
     .bind(WORKSPACE_ID)

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::sync::Arc;
+use vestrace_domain::retrieval::{HydratedRevision, RevisionRef};
 use vestrace_domain::{RetrievalCandidate, WorkspaceId, id::RetrievalRunId};
 
 use super::NormalizedRetrievalRequest;
@@ -41,17 +42,129 @@ pub trait StructuredRetriever: Send + Sync {
     ) -> Result<Vec<RetrievalCandidate>, ApplicationError>;
 }
 
+/// What happened to one retrieval channel.
+///
+/// Every configured channel gets an entry, including the ones that failed. A
+/// journal listing only successes cannot answer "was the vector channel
+/// consulted?", because the two reasons it might be absent — not configured,
+/// and failed — are exactly the two an investigation needs to tell apart.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ChannelOutcome {
+    Succeeded { candidates: usize },
+    Failed { reason: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ChannelRecord {
+    pub channel: String,
+    #[serde(flatten)]
+    pub outcome: ChannelOutcome,
+}
+
+impl ChannelRecord {
+    pub fn succeeded(channel: impl Into<String>, candidates: usize) -> Self {
+        Self {
+            channel: channel.into(),
+            outcome: ChannelOutcome::Succeeded { candidates },
+        }
+    }
+
+    pub fn failed(channel: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            channel: channel.into(),
+            outcome: ChannelOutcome::Failed {
+                reason: reason.into(),
+            },
+        }
+    }
+
+    pub fn is_degraded(&self) -> bool {
+        matches!(self.outcome, ChannelOutcome::Failed { .. })
+    }
+}
+
+/// One journal entry for one retrieval.
+///
+/// A record rather than a positional argument list. The previous signature took
+/// six parameters and was already `#[allow(clippy::too_many_arguments)]`; every
+/// field the journal was missing would have made it worse, which is part of why
+/// the parameters and channels were never added.
+#[derive(Clone, Debug)]
+pub struct RetrievalRunRecord {
+    pub run_id: RetrievalRunId,
+    pub query: String,
+    pub intent: String,
+    /// The normalized parameters that produced this result. Two retrievals with
+    /// the same query and intent can legitimately differ because these did, and
+    /// without them the journal cannot be replayed.
+    pub parameters: serde_json::Value,
+    /// Every configured channel and its outcome.
+    pub channels: Vec<ChannelRecord>,
+    pub candidate_count: usize,
+    pub execution_time_ms: i32,
+}
+
+impl RetrievalRunRecord {
+    /// Build the entry from the request that produced it.
+    pub fn from_request(
+        run_id: RetrievalRunId,
+        request: &NormalizedRetrievalRequest,
+        channels: Vec<ChannelRecord>,
+        candidate_count: usize,
+        execution_time_ms: i32,
+    ) -> Self {
+        Self {
+            run_id,
+            query: request.query.clone(),
+            // Serialised, not `Debug`-formatted. `format!("{:?}").to_lowercase()`
+            // produced "semanticrecall", which matches neither the variant name
+            // nor the "semantic_recall" the API accepts — so a journal entry
+            // could not be correlated with the request that produced it without
+            // knowing about the mangling.
+            intent: serde_json::to_value(&request.intent)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", request.intent)),
+            parameters: serde_json::json!({
+                "time_perspective": format!("{:?}", request.time_perspective),
+                "allowed_statuses": request
+                    .allowed_statuses
+                    .iter()
+                    .map(|status| format!("{status:?}"))
+                    .collect::<Vec<_>>(),
+                "allowed_kinds": request
+                    .allowed_kinds
+                    .iter()
+                    .map(|kind| format!("{kind:?}"))
+                    .collect::<Vec<_>>(),
+                "channel_limit": request.channel_limit,
+                "token_budget": request.token_budget,
+                "include_explanation": request.include_explanation,
+            }),
+            channels,
+            candidate_count,
+            execution_time_ms,
+        }
+    }
+
+    /// The channels that failed, in the order they were attempted.
+    pub fn degraded_channels(&self) -> Vec<String> {
+        self.channels
+            .iter()
+            .filter(|record| record.is_degraded())
+            .map(|record| record.channel.clone())
+            .collect()
+    }
+}
+
 #[async_trait]
 #[allow(clippy::too_many_arguments)]
 pub trait RetrievalJournal: Send + Sync {
     async fn record_run(
         &self,
         context: &RequestContext,
-        run_id: RetrievalRunId,
-        query: &str,
-        intent: &str,
-        candidate_count: usize,
-        execution_time_ms: i32,
+        record: &RetrievalRunRecord,
     ) -> Result<(), ApplicationError>;
 
     async fn record_context_pack(
@@ -65,6 +178,29 @@ pub trait RetrievalJournal: Send + Sync {
         items: &serde_json::Value,
     ) -> Result<(), ApplicationError>;
 }
+
+/// Resolves revision references into the content they name.
+///
+/// Separate from the retrievers on purpose. A retriever *finds* candidates; a
+/// hydrator *resolves* a reference. Collapsing the two is what let content
+/// reach a caller because the search happened to carry it along, with nothing
+/// checking that the text was the text of the revision the reference named.
+#[async_trait]
+pub trait RevisionHydrator: Send + Sync {
+    /// Resolve each reference to the exact revision it names.
+    ///
+    /// Implementations must select on the revision id, never on "the current
+    /// revision of this memory". A reference that resolves to nothing must be
+    /// absent from the result rather than substituted, so the caller can report
+    /// it as missing.
+    async fn hydrate(
+        &self,
+        context: &RequestContext,
+        references: &[RevisionRef],
+    ) -> Result<Vec<HydratedRevision>, ApplicationError>;
+}
+
+pub type SharedRevisionHydrator = Arc<dyn RevisionHydrator>;
 
 pub type SharedTextRetriever = Arc<dyn TextRetriever>;
 pub type SharedVectorRetriever = Arc<dyn VectorRetriever>;

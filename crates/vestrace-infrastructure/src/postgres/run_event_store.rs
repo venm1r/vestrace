@@ -204,7 +204,7 @@ async fn load_events(
         "SELECT
              id, workspace_id, run_id, sequence, event_type, event_version,
              actor, causation_id, correlation_id, payload, occurred_at,
-             created_at AS recorded_at
+             recorded_at
          FROM run_events
          WHERE workspace_id = $1
            AND run_id = $2
@@ -267,9 +267,10 @@ async fn insert_events(
     for event in events {
         sqlx::query(
             "INSERT INTO run_events (
-                 id, workspace_id, run_id, sequence, event_type, event_version,
-                 actor, causation_id, correlation_id, payload, occurred_at, created_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                 id, workspace_id, run_id, sequence, run_version, sequence_value,
+                 event_type, event_version, actor, causation_id, correlation_id,
+                 payload, occurred_at, recorded_at
+             ) VALUES ($1, $2, $3, $4, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(event.event_id.as_uuid())
         .bind(event.workspace_id.as_uuid())

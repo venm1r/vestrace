@@ -25,12 +25,16 @@ rust-version = "1.85"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+async-stream = "0.3"
 axum = "0.8"
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 config = { version = "0.15", default-features = false, features = ["toml"] }
 http = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ring = "0.17"
 schemars = { version = "1", features = ["chrono04", "uuid1"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
@@ -44,10 +48,12 @@ tower-http = { version = "0.6", features = ["trace", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v7", "serde"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 tokio.workspace = true

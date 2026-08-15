@@ -363,26 +363,44 @@ impl RunRecoveryStore for PgRunRecoveryStore {
         }
 
         sqlx::query(
+            // `objective` is NOT NULL. Like `PgRunRepository`, the projection
+            // writes the objective into both columns; `title` is the legacy
+            // compatibility name for the same text.
+            // `finished_at` is required for terminal statuses by
+            // chk_agent_runs_terminal_has_finished_at, so the projection must
+            // carry it through rather than rebuilding a run without it.
+            // A rebuilt projection must be indistinguishable from the one the
+            // command committer writes, so it sets the same columns.
             "INSERT INTO agent_runs (
-                 id, workspace_id, principal_id, title, status, run_version,
-                 created_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 id, workspace_id, principal_id, title, objective,
+                 coordinator_snapshot_id, execution_mode, status, run_version,
+                 root_run_id, created_at, updated_at, finished_at
+             ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (workspace_id, id) DO UPDATE
              SET principal_id = EXCLUDED.principal_id,
                  title = EXCLUDED.title,
+                 objective = EXCLUDED.objective,
+                 coordinator_snapshot_id = EXCLUDED.coordinator_snapshot_id,
+                 execution_mode = EXCLUDED.execution_mode,
                  status = EXCLUDED.status,
                  run_version = EXCLUDED.run_version,
+                 root_run_id = EXCLUDED.root_run_id,
                  created_at = EXCLUDED.created_at,
-                 updated_at = EXCLUDED.updated_at",
+                 updated_at = EXCLUDED.updated_at,
+                 finished_at = EXCLUDED.finished_at",
         )
         .bind(projection.id.as_uuid())
         .bind(projection.workspace_id.as_uuid())
         .bind(projection.coordinator_snapshot_id.as_uuid())
         .bind(&projection.objective)
+        .bind(projection.coordinator_snapshot_id.as_uuid())
+        .bind(projection.execution_mode.as_str())
         .bind(status_name(projection.status))
         .bind(version_to_database(projection.version)?)
+        .bind(projection.root_run_id.as_uuid())
         .bind(projection.created_at)
         .bind(projection.updated_at)
+        .bind(projection.finished_at)
         .execute(transaction.connection())
         .await
         .map_err(storage_error)?;

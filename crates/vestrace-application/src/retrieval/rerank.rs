@@ -88,11 +88,20 @@ mod tests {
     fn candidate(memory_id: MemoryId, score: f32, channel: &str) -> RetrievalCandidate {
         RetrievalCandidate {
             memory_id,
-            revision_id: None,
+            revision_id: vestrace_domain::id::MemoryRevisionId::new(),
+            kind: vestrace_domain::MemoryKind::Fact,
+            memory_status: vestrace_domain::MemoryStatus::Active,
+            revision_number: 1,
+            content: String::new(),
+            valid_from: None,
+            valid_until: None,
+            revision_created_at: vestrace_domain::now(),
+            source_generation: 1,
             score,
             channel_rank: 0,
             channel: channel.to_owned(),
             explanation: String::new(),
+            conflict_ids: Vec::new(),
         }
     }
 

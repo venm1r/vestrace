@@ -36,6 +36,13 @@ pub enum ProviderError {
     RateLimited,
     #[error("Service unavailable: {0}")]
     Unavailable(String),
+    /// The provider refused the credential.
+    ///
+    /// Separate from [`Self::InvalidResponse`] because it is the one provider
+    /// failure an operator can act on directly, and calling it an unusable
+    /// response sends them to read adapter code instead of rotating a key.
+    #[error("Credential rejected: {0}")]
+    CredentialRejected(String),
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
 }
@@ -52,3 +59,21 @@ pub trait TextGenerationProvider: Send + Sync {
 pub trait EmbeddingProvider: Send + Sync {
     async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError>;
 }
+
+/// Builds a provider for a specific workspace.
+///
+/// A factory rather than a single shared provider, because the credential is a
+/// per-workspace secret. One process-wide client would mean one workspace's key
+/// being used to bill another's work.
+///
+/// Resolving per call also means a rotated key takes effect without a restart,
+/// and the plaintext key is not held for the process's lifetime.
+#[async_trait]
+pub trait TextGenerationProviderFactory: Send + Sync {
+    async fn provider_for(
+        &self,
+        context: &crate::RequestContext,
+    ) -> Result<std::sync::Arc<dyn TextGenerationProvider>, crate::ApplicationError>;
+}
+
+pub type SharedTextGenerationProviderFactory = std::sync::Arc<dyn TextGenerationProviderFactory>;

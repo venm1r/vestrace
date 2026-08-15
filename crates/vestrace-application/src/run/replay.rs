@@ -197,6 +197,12 @@ fn apply_event(projection: &mut RunProjection, event: &RunEvent) -> Result<(), A
         } => {
             projection.checkpoint_id = Some(*checkpoint_id);
         }
+        RunEventPayload::ApprovalGranted { .. } => {
+            // Carries no state a projection derives: the run's return to
+            // `Running` is expressed by the accompanying status change, and
+            // this event exists to record *who* approved. Replay must not
+            // reject it, and must not double-apply the transition.
+        }
     }
     Ok(())
 }

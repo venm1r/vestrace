@@ -6,8 +6,9 @@ use axum::{
 };
 use tower::ServiceExt;
 use vestrace_application::{
-    ApplicationError, CreateRunCommand, HealthRepository, NullExecutionHistoryRepository,
-    RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
+    ApplicationError, CreateRunCommand, DenyAllPolicyEngine, HealthRepository,
+    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunCommandExecutor,
+    RunCommandResult, RunUseCases,
 };
 use vestrace_domain::{
     PrincipalId, WorkspaceId,
@@ -77,38 +78,72 @@ impl RunUseCases for FakeRunUseCases {
 }
 
 #[async_trait::async_trait]
-impl RunCommandExecutor for FakeRunCommands {
-    async fn execute(
+impl vestrace_application::run::RunOrchestrator for FakeRunCommands {
+    async fn create_run(
         &self,
-        _context: &RequestContext,
-        command: RunCommandEnvelope,
-    ) -> Result<RunCommandResult, ApplicationError> {
-        let (principal_id, title) = match command.command {
-            RunCommand::Create {
-                principal_id,
-                title,
-            } => (principal_id, title),
-            other => panic!("unexpected run command: {other:?}"),
-        };
+        context: &RequestContext,
+        command: vestrace_application::run::CreateRun,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
         let run = AgentRun::create(
             NewAgentRun {
-                id: command.run_id,
-                workspace_id: command.workspace_id,
-                objective: title,
-                coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(principal_id.as_uuid()),
-                execution_mode: RunExecutionMode::Autopilot,
-                parent: None,
+                id: AgentRunId::new(),
+                workspace_id: context.workspace_id,
+                objective: command.objective,
+                coordinator_snapshot_id: command.coordinator_snapshot_id,
+                execution_mode: command.execution_mode,
+                parent: command.parent,
                 budget_snapshot_id: None,
                 resource_usage_snapshot_id: None,
             },
-            command.issued_at,
+            now(),
         )
         .unwrap();
         self.runs.runs.lock().unwrap().push(run.clone());
-        Ok(RunCommandResult {
+        Ok(vestrace_application::run::RunSnapshot {
             run,
-            events: Vec::new(),
+            steps: Vec::new(),
+            checkpoint: None,
         })
+    }
+
+    async fn add_steps(
+        &self,
+        _context: &RequestContext,
+        _command: vestrace_application::run::AddRunSteps,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
+        unreachable!("these tests do not exercise step creation")
+    }
+
+    async fn pause_run(
+        &self,
+        _context: &RequestContext,
+        _command: vestrace_application::run::PauseRun,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
+        unreachable!("these tests do not exercise pause")
+    }
+
+    async fn resume_run(
+        &self,
+        _context: &RequestContext,
+        _command: vestrace_application::run::ResumeRun,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
+        unreachable!("these tests do not exercise resume")
+    }
+
+    async fn cancel_run(
+        &self,
+        _context: &RequestContext,
+        _command: vestrace_application::run::CancelRun,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
+        unreachable!("these tests do not exercise cancel")
+    }
+
+    async fn approve_run(
+        &self,
+        _context: &RequestContext,
+        _command: vestrace_application::run::ApproveRun,
+    ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
+        unreachable!("these tests do not exercise approval")
     }
 }
 
@@ -182,11 +217,7 @@ impl vestrace_application::RetrievalJournal for StubRetrievalJournal {
     async fn record_run(
         &self,
         _: &vestrace_application::RequestContext,
-        _: vestrace_domain::id::RetrievalRunId,
-        _: &str,
-        _: &str,
-        _: usize,
-        _: i32,
+        _: &vestrace_application::retrieval::RetrievalRunRecord,
     ) -> Result<(), vestrace_application::ApplicationError> {
         Ok(())
     }
@@ -343,29 +374,82 @@ impl vestrace_application::ModelExecutionRepository for StubModelExecutionReposi
 }
 
 fn app(run_use_cases: Arc<FakeRunUseCases>) -> axum::Router {
+    app_with_policy(run_use_cases, Arc::new(TestAllowPolicy))
+}
+
+fn default_app(run_use_cases: Arc<FakeRunUseCases>) -> axum::Router {
+    app_with_policy(run_use_cases, Arc::new(DenyAllPolicyEngine))
+}
+
+fn app_with_policy(
+    run_use_cases: Arc<FakeRunUseCases>,
+    policy: Arc<dyn PolicyDecisionEngine>,
+) -> axum::Router {
     let run_commands = Arc::new(FakeRunCommands {
         runs: run_use_cases.clone(),
     });
-    build_router(AppState::new(
-        Arc::new(HealthyRepository),
-        run_use_cases,
-        run_commands,
-        Arc::new(StubMemoryUseCases),
-        std::sync::Arc::new(vestrace_application::RetrievalService::new(
-            std::sync::Arc::new(StubTextRetriever),
-            std::sync::Arc::new(StubRetrievalJournal),
-        )),
-        std::sync::Arc::new(StubProviderRepository),
-        std::sync::Arc::new(StubModelRepository),
-        std::sync::Arc::new(StubAgentRepository),
-        std::sync::Arc::new(StubSkillRepository),
-        std::sync::Arc::new(StubRoutingDecisionRepository),
-        std::sync::Arc::new(StubModelExecutionRepository),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(vestrace_http::MetricsRegistry::new()),
-    ))
+    build_router(
+        AppState::new(
+            Arc::new(HealthyRepository),
+            run_use_cases,
+            Arc::new(StubMemoryUseCases),
+            std::sync::Arc::new(vestrace_application::RetrievalService::new(
+                std::sync::Arc::new(StubTextRetriever),
+                std::sync::Arc::new(StubRetrievalJournal),
+            )),
+            std::sync::Arc::new(StubProviderRepository),
+            std::sync::Arc::new(StubModelRepository),
+            std::sync::Arc::new(StubAgentRepository),
+            std::sync::Arc::new(StubSkillRepository),
+            std::sync::Arc::new(StubRoutingDecisionRepository),
+            std::sync::Arc::new(StubModelExecutionRepository),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(vestrace_http::MetricsRegistry::new()),
+        )
+        .with_policy(policy)
+        .with_run_orchestrator(run_commands),
+    )
+}
+
+struct TestAllowPolicy;
+
+#[async_trait::async_trait]
+impl PolicyDecisionEngine for TestAllowPolicy {
+    async fn decide(
+        &self,
+        context: &RequestContext,
+        request: vestrace_domain::AuthorizationRequest,
+    ) -> Result<vestrace_domain::PolicyDecision, ApplicationError> {
+        let at = now();
+        let grant = vestrace_domain::CapabilityGrant::issue(
+            vestrace_domain::CapabilityGrantSpec {
+                id: vestrace_domain::id::CapabilityGrantId::new(),
+                workspace_id: context.workspace_id,
+                subject_id: context.principal_id,
+                issuer_id: context.principal_id,
+                capability: request.capability.clone(),
+                operation: request.operation.clone(),
+                resource_scope: request.resource_scope.clone(),
+                valid_from: at,
+                valid_until: None,
+                budget: None,
+                risk_ceiling: vestrace_domain::RiskCategory::Critical,
+                conditions: request.conditions.clone(),
+            },
+            at,
+        )?;
+        Ok(vestrace_domain::evaluate_capability_grants(
+            vestrace_domain::id::PolicyDecisionId::new(),
+            context.workspace_id,
+            context.principal_id,
+            "test-allow-v1",
+            &request,
+            &[grant],
+            at,
+        )?)
+    }
 }
 
 fn identity_request(method: &str, uri: &str, body: Body) -> Request<Body> {
@@ -422,6 +506,22 @@ async fn create_run_returns_201_and_the_persisted_contract() {
     assert!(body.get("id").is_some());
     assert!(body.get("created_at").is_some());
     assert!(body.get("updated_at").is_some());
+}
+
+#[tokio::test]
+async fn default_policy_denies_before_run_command_executor() {
+    let run_use_cases = Arc::new(FakeRunUseCases::default());
+    let response = default_app(run_use_cases.clone())
+        .oneshot(identity_request(
+            "POST",
+            "/v1/runs",
+            Body::from(serde_json::json!({"title": "Must be denied"}).to_string()),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(run_use_cases.runs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

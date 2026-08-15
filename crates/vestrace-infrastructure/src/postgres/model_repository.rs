@@ -1,16 +1,18 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{ApplicationError, ModelRecord, ModelRepository, RequestContext};
 
 pub struct PgModelRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgModelRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -23,6 +25,11 @@ impl ModelRepository for PgModelRepository {
         context: &RequestContext,
         model: &ModelRecord,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         sqlx::query(
             r#"
             INSERT INTO models (id, provider_id, workspace_id, model_name, context_window, input_cost_per_mtoken, output_cost_per_mtoken, created_at)
@@ -37,13 +44,19 @@ impl ModelRepository for PgModelRepository {
         .bind(model.input_cost_per_mtoken)
         .bind(model.output_cost_per_mtoken)
         .bind(model.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(&self, context: &RequestContext) -> Result<Vec<ModelRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let rows = sqlx::query(
             r#"
             SELECT id, provider_id, workspace_id, model_name, context_window, input_cost_per_mtoken, output_cost_per_mtoken, created_at
@@ -53,7 +66,7 @@ impl ModelRepository for PgModelRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -84,6 +97,7 @@ impl ModelRepository for PgModelRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+        scoped.commit().await.map_err(storage_error)?;
         Ok(models)
     }
 
@@ -92,6 +106,11 @@ impl ModelRepository for PgModelRepository {
         context: &RequestContext,
         id: vestrace_domain::id::ModelId,
     ) -> Result<Option<ModelRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let row = sqlx::query(
             r#"
             SELECT id, provider_id, workspace_id, model_name, context_window, input_cost_per_mtoken, output_cost_per_mtoken, created_at
@@ -101,9 +120,14 @@ impl ModelRepository for PgModelRepository {
         )
         .bind(context.workspace_id.as_uuid())
         .bind(id.as_uuid())
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        // Committed before decoding: the read is done, and holding the
+        // transaction open across the mapping keeps a pool connection
+        // checked out for no reason.
+        scoped.commit().await.map_err(storage_error)?;
 
         match row {
             Some(row) => Ok(Some(ModelRecord {

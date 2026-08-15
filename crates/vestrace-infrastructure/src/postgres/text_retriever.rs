@@ -1,22 +1,131 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{
     ApplicationError, NormalizedRetrievalRequest, RequestContext, TextRetriever,
 };
-use vestrace_domain::{RetrievalCandidate, id::MemoryId as DomainMemoryId};
+use vestrace_domain::{
+    MemoryKind, MemoryStatus, RetrievalCandidate, TimePerspective, id::MemoryId as DomainMemoryId,
+};
 
+use super::PgStore;
+
+/// The text retrieval channel.
+///
+/// # Why this holds a store and not a pool
+///
+/// This adapter was already correct: it opened a transaction and set
+/// `vestrace.workspace_id` on it by hand, which is what `begin_scoped` does. It
+/// was also the only place doing it by hand, and a second way to establish the
+/// scope is a second place for it to drift — the principal id was not set, for
+/// instance, which no policy reads today and one might.
 pub struct PgTextRetriever {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgTextRetriever {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
+}
+
+fn memory_kind_from_str(value: &str) -> Result<MemoryKind, ApplicationError> {
+    match value {
+        "fact" => Ok(MemoryKind::Fact),
+        "preference" => Ok(MemoryKind::Preference),
+        "constraint" => Ok(MemoryKind::Constraint),
+        "decision" => Ok(MemoryKind::Decision),
+        "task" => Ok(MemoryKind::Task),
+        "procedure" => Ok(MemoryKind::Procedure),
+        "observation" => Ok(MemoryKind::Observation),
+        "outcome" => Ok(MemoryKind::Outcome),
+        "summary" => Ok(MemoryKind::Summary),
+        _ => Err(ApplicationError::Storage(format!(
+            "stored memory kind '{value}' is not supported"
+        ))),
+    }
+}
+
+fn memory_status_from_str(value: &str) -> Result<MemoryStatus, ApplicationError> {
+    match value {
+        "candidate" => Ok(MemoryStatus::Candidate),
+        "active" => Ok(MemoryStatus::Active),
+        "superseded" => Ok(MemoryStatus::Superseded),
+        "rejected" => Ok(MemoryStatus::Rejected),
+        "expired" => Ok(MemoryStatus::Expired),
+        "deleted" => Ok(MemoryStatus::Deleted),
+        _ => Err(ApplicationError::Storage(format!(
+            "stored memory status '{value}' is not supported"
+        ))),
+    }
+}
+
+struct TemporalQueryPlan {
+    revision_join: &'static str,
+    rank_expression: &'static str,
+    /// The predicate that decides whether a row is a candidate at all.
+    ///
+    /// It is always the same text the rank is computed over. Ranking one
+    /// expression and filtering another lets a row be admitted on a match its
+    /// score knows nothing about, which is how a channel starts returning
+    /// results it cannot explain.
+    match_expression: &'static str,
+    order_by: &'static str,
+    as_of: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+fn temporal_query_plan(perspective: TimePerspective) -> TemporalQueryPlan {
+    match perspective {
+        TimePerspective::Current => TemporalQueryPlan {
+            revision_join: r#"INNER JOIN memory_revisions mr
+                    ON mr.id = m.active_revision_id
+                   AND mr.memory_id = m.id
+                   AND mr.workspace_id = m.workspace_id"#,
+            rank_expression: "ts_rank(sd.fts_vector, plainto_tsquery('english', $2))",
+            match_expression: "sd.fts_vector @@ plainto_tsquery('english', $2)",
+            order_by: "rank DESC, mr.revision_number DESC",
+            as_of: None,
+        },
+        TimePerspective::AsOf(at) => TemporalQueryPlan {
+            revision_join: r#"INNER JOIN LATERAL (
+                    SELECT historical_mr.id, historical_mr.revision_number,
+                           historical_mr.content, historical_mr.valid_from,
+                           historical_mr.valid_until, historical_mr.created_at
+                    FROM memory_revisions historical_mr
+                    WHERE historical_mr.memory_id = m.id
+                      AND historical_mr.workspace_id = m.workspace_id
+                      AND (historical_mr.valid_from IS NULL OR historical_mr.valid_from <= $6)
+                      AND (historical_mr.valid_until IS NULL OR $6 < historical_mr.valid_until)
+                    ORDER BY historical_mr.revision_number DESC, historical_mr.created_at DESC
+                    LIMIT 1
+                ) mr ON TRUE"#,
+            rank_expression: "ts_rank(to_tsvector('english', mr.content), plainto_tsquery('english', $2))",
+            match_expression: "to_tsvector('english', mr.content) @@ plainto_tsquery('english', $2)",
+            order_by: "rank DESC, mr.revision_number DESC",
+            as_of: Some(at),
+        },
+        TimePerspective::Timeline => TemporalQueryPlan {
+            revision_join: r#"INNER JOIN memory_revisions mr
+                    ON mr.memory_id = m.id
+                   AND mr.workspace_id = m.workspace_id"#,
+            rank_expression: "ts_rank(to_tsvector('english', mr.content), plainto_tsquery('english', $2))",
+            match_expression: "to_tsvector('english', mr.content) @@ plainto_tsquery('english', $2)",
+            order_by: "mr.created_at ASC, mr.revision_number ASC, rank DESC",
+            as_of: None,
+        },
+        TimePerspective::AllHistory => TemporalQueryPlan {
+            revision_join: r#"INNER JOIN memory_revisions mr
+                    ON mr.memory_id = m.id
+                   AND mr.workspace_id = m.workspace_id"#,
+            rank_expression: "ts_rank(to_tsvector('english', mr.content), plainto_tsquery('english', $2))",
+            match_expression: "to_tsvector('english', mr.content) @@ plainto_tsquery('english', $2)",
+            order_by: "mr.created_at DESC, mr.revision_number DESC, rank DESC",
+            as_of: None,
+        },
+    }
 }
 
 #[async_trait]
@@ -26,82 +135,172 @@ impl TextRetriever for PgTextRetriever {
         context: &RequestContext,
         request: &NormalizedRetrievalRequest,
     ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
-        let mut tx = self.pool.begin().await.map_err(storage_error)?;
-
-        sqlx::query("SELECT set_config('vestrace.workspace_id', $1, true)")
-            .bind(context.workspace_id.to_string())
-            .execute(&mut *tx)
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
             .await
             .map_err(storage_error)?;
 
-        let rows = sqlx::query(
+        let TemporalQueryPlan {
+            revision_join,
+            rank_expression,
+            match_expression,
+            order_by,
+            as_of,
+        } = temporal_query_plan(request.time_perspective);
+
+        // `{match_expression}` is the line that makes this a search.
+        //
+        // Without it the query text reached only `ts_rank` in the SELECT list,
+        // so every active memory in the workspace was a candidate for every
+        // query, scored zero when it did not match. Three memories and a
+        // `LIMIT` hid it: a search for a word present in none of them returned
+        // all three, with exactly the scores a search for a word present in one
+        // of them returned. `search_documents.fts_vector` — the column that
+        // exists for this and is indexed for it — was never read.
+        let query = format!(
             r#"
-            SELECT sd.memory_id, sd.content,
-                   ts_rank(sd.fts_vector, plainto_tsquery('english', $2)) AS rank
+            SELECT sd.memory_id, m.kind AS memory_kind, m.status AS memory_status,
+                   m.state_revision AS source_generation, mr.id AS revision_id,
+                   mr.revision_number, mr.content, mr.valid_from, mr.valid_until,
+                   mr.created_at AS revision_created_at,
+                   {rank_expression} AS rank
             FROM search_documents sd
             INNER JOIN memories m ON m.id = sd.memory_id
-            WHERE m.status = ANY($3)
-              AND ($4::text[] IS NULL OR m.kind = ANY($4))
-            ORDER BY rank DESC
+            {revision_join}
+            WHERE sd.workspace_id = $1
+              AND m.workspace_id = $1
+              AND m.status = ANY($3)
+              AND (cardinality($4::text[]) = 0 OR m.kind = ANY($4))
+              AND {match_expression}
+            ORDER BY {order_by}
             LIMIT $5
             "#,
-        )
-        .bind(&request.query)
-        .bind(
-            request
-                .allowed_statuses
-                .iter()
-                .map(|s| match s {
-                    vestrace_domain::MemoryStatus::Active => "active",
-                    vestrace_domain::MemoryStatus::Candidate => "candidate",
-                    vestrace_domain::MemoryStatus::Superseded => "superseded",
-                    vestrace_domain::MemoryStatus::Rejected => "rejected",
-                    vestrace_domain::MemoryStatus::Expired => "expired",
-                    vestrace_domain::MemoryStatus::Deleted => "deleted",
-                })
-                .collect::<Vec<&str>>(),
-        )
-        .bind(
-            request
-                .allowed_kinds
-                .iter()
-                .map(|k| match k {
-                    vestrace_domain::MemoryKind::Fact => "fact",
-                    vestrace_domain::MemoryKind::Preference => "preference",
-                    vestrace_domain::MemoryKind::Constraint => "constraint",
-                    vestrace_domain::MemoryKind::Decision => "decision",
-                    vestrace_domain::MemoryKind::Task => "task",
-                    vestrace_domain::MemoryKind::Procedure => "procedure",
-                    vestrace_domain::MemoryKind::Observation => "observation",
-                    vestrace_domain::MemoryKind::Outcome => "outcome",
-                    vestrace_domain::MemoryKind::Summary => "summary",
-                })
-                .collect::<Vec<&str>>(),
-        )
-        .bind(i64::from(request.channel_limit))
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(storage_error)?;
+        );
 
-        tx.commit().await.map_err(storage_error)?;
+        let mut query = sqlx::query(&query)
+            .bind(context.workspace_id.as_uuid())
+            .bind(&request.query)
+            .bind(
+                request
+                    .allowed_statuses
+                    .iter()
+                    .map(|s| match s {
+                        vestrace_domain::MemoryStatus::Active => "active",
+                        vestrace_domain::MemoryStatus::Candidate => "candidate",
+                        vestrace_domain::MemoryStatus::Superseded => "superseded",
+                        vestrace_domain::MemoryStatus::Rejected => "rejected",
+                        vestrace_domain::MemoryStatus::Expired => "expired",
+                        vestrace_domain::MemoryStatus::Deleted => "deleted",
+                    })
+                    .collect::<Vec<&str>>(),
+            )
+            .bind(
+                request
+                    .allowed_kinds
+                    .iter()
+                    .map(|k| match k {
+                        vestrace_domain::MemoryKind::Fact => "fact",
+                        vestrace_domain::MemoryKind::Preference => "preference",
+                        vestrace_domain::MemoryKind::Constraint => "constraint",
+                        vestrace_domain::MemoryKind::Decision => "decision",
+                        vestrace_domain::MemoryKind::Task => "task",
+                        vestrace_domain::MemoryKind::Procedure => "procedure",
+                        vestrace_domain::MemoryKind::Observation => "observation",
+                        vestrace_domain::MemoryKind::Outcome => "outcome",
+                        vestrace_domain::MemoryKind::Summary => "summary",
+                    })
+                    .collect::<Vec<&str>>(),
+            )
+            .bind(i64::from(request.channel_limit));
+
+        if let Some(at) = as_of {
+            query = query.bind(at);
+        }
+
+        let rows = query
+            .fetch_all(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+
+        scoped.commit().await.map_err(storage_error)?;
 
         let candidates = rows
             .into_iter()
             .enumerate()
             .map(|(idx, row)| {
                 let memory_id: uuid::Uuid = row.try_get("memory_id").map_err(storage_error)?;
+                let kind: String = row.try_get("memory_kind").map_err(storage_error)?;
+                let status: String = row.try_get("memory_status").map_err(storage_error)?;
+                let source_generation: i32 =
+                    row.try_get("source_generation").map_err(storage_error)?;
                 let rank: f32 = row.try_get("rank").map_err(storage_error)?;
+                let revision_id: uuid::Uuid = row.try_get("revision_id").map_err(storage_error)?;
+                let revision_number: i32 = row.try_get("revision_number").map_err(storage_error)?;
+                let content: String = row.try_get("content").map_err(storage_error)?;
+                let valid_from = row.try_get("valid_from").map_err(storage_error)?;
+                let valid_until = row.try_get("valid_until").map_err(storage_error)?;
+                let revision_created_at =
+                    row.try_get("revision_created_at").map_err(storage_error)?;
+
                 Ok::<_, ApplicationError>(RetrievalCandidate {
                     memory_id: DomainMemoryId::from_uuid(memory_id),
-                    revision_id: None,
+                    revision_id: vestrace_domain::id::MemoryRevisionId::from_uuid(revision_id),
+                    kind: memory_kind_from_str(&kind)?,
+                    memory_status: memory_status_from_str(&status)?,
+                    revision_number: u32::try_from(revision_number)
+                        .map_err(|e| ApplicationError::Storage(e.to_string()))?,
+                    content,
+                    valid_from,
+                    valid_until,
+                    revision_created_at,
+                    source_generation: u32::try_from(source_generation)
+                        .map_err(|e| ApplicationError::Storage(e.to_string()))?,
                     score: rank,
                     channel_rank: (idx + 1) as u32,
                     channel: "text".to_owned(),
                     explanation: "FTS match".to_owned(),
+                    conflict_ids: Vec::new(),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(candidates)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::temporal_query_plan;
+    use chrono::{TimeZone, Utc};
+    use vestrace_domain::TimePerspective;
+
+    #[test]
+    fn current_plan_joins_only_the_active_revision() {
+        let plan = temporal_query_plan(TimePerspective::Current);
+
+        assert!(plan.revision_join.contains("m.active_revision_id"));
+        assert!(plan.rank_expression.contains("sd.fts_vector"));
+        assert!(plan.as_of.is_none());
+    }
+
+    #[test]
+    fn as_of_plan_uses_a_validity_window_and_historical_content() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let plan = temporal_query_plan(TimePerspective::AsOf(at));
+
+        assert!(plan.revision_join.contains("valid_from"));
+        assert!(plan.revision_join.contains("valid_until"));
+        assert!(plan.rank_expression.contains("mr.content"));
+        assert_eq!(plan.as_of, Some(at));
+    }
+
+    #[test]
+    fn timeline_and_history_have_explicit_revision_ordering() {
+        let timeline = temporal_query_plan(TimePerspective::Timeline);
+        let history = temporal_query_plan(TimePerspective::AllHistory);
+
+        assert!(timeline.order_by.starts_with("mr.created_at ASC"));
+        assert!(history.order_by.starts_with("mr.created_at DESC"));
     }
 }

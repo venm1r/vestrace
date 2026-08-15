@@ -221,6 +221,48 @@ async fn health_check_rejects_migration_checksum_mismatch(pool: sqlx::PgPool) {
     assert!(!error.to_string().contains("_sqlx_migrations"));
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn deployment_qualification_reports_runtime_role_and_compatible_migrations(
+    pool: sqlx::PgPool,
+) {
+    let expected_role: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let store = PgStore::from_pool(pool);
+
+    let evidence = store.deployment_qualification_evidence().await.unwrap();
+
+    assert!(evidence.migration_history_compatible);
+    assert_eq!(evidence.runtime_role, expected_role);
+    assert!(!evidence.runtime_role.trim().is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn deployment_qualification_reports_incompatible_migrations_without_mutating_them(
+    pool: sqlx::PgPool,
+) {
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') \
+         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let store = PgStore::from_pool(pool.clone());
+
+    let evidence = store.deployment_qualification_evidence().await.unwrap();
+    let checksum: Vec<u8> = sqlx::query_scalar(
+        "SELECT checksum FROM _sqlx_migrations WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(!evidence.migration_history_compatible);
+    assert_eq!(checksum, vec![0]);
+}
+
 async fn assert_health_is_opaquely_unavailable(pool: sqlx::PgPool) {
     let store = PgStore::from_pool(pool);
     let error = HealthRepository::check(&store).await.unwrap_err();

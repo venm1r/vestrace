@@ -31,7 +31,7 @@ export const WorkflowsPage: React.FC = () => {
           <ActionButton
             icon="add"
             onClick={() =>
-              notify('info', 'Workflow authoring from the console is not implemented in the P0 foundation.')
+              notify('info', 'Workflow authoring from the console is not implemented in this build.')
             }
           >
             Create Workflow

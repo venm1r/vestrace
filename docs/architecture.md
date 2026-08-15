@@ -1,208 +1,155 @@
-# Vestrace System Architecture
+# Vestrace Architecture
 
-Vestrace is an evidence-first knowledge and execution platform implemented as a Rust Edition 2024 workspace. The current runtime delivers event-sourced run records with deterministic replay and checkpoint recovery, health checks, workspace isolation through RLS, memory lifecycle services, and truthful failure for unavailable product surfaces.
+## Documentation status
 
-## Workspace structure
+This file is the architecture entry point for the frozen v0.2 documentation baseline integrated into `main`, plus explicitly accepted post-v0.2 architecture extensions.
 
-The repository contains seven workspace crates plus a root integration-test package:
+Vestrace has deliberately separate documentation layers:
 
-```text
-Cargo.toml
-crates/
-  vestrace-domain/          # Pure domain types and invariants
-  vestrace-application/     # Use cases and ports
-  vestrace-infrastructure/  # PostgreSQL and provider adapters
-  vestrace-http/            # Axum transport adapter
-  vestrace-cli/             # Service and operational CLI
-  vestrace-mcp/             # MCP tool server for agent-facing access
-  vestrace-rig-spike/       # Experimental provider integration spike
-tests/                      # Root integration test suite
-migrations/                 # Ordered forward-only SQLx migrations
-```
+1. **Target architecture (normative)** — what Vestrace is designed to become and the invariants future implementation must satisfy.
+2. **Current implementation snapshot** — what was actually wired in the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
+3. **Transition planning** — the evidence/migration/PR contracts for moving from that inspected baseline toward the target.
+4. **Post-v0.2 architecture extensions** — accepted system-level decisions that preserve the frozen v0.2 laws but are not silently inserted into the existing implementation roadmap.
 
-`vestrace-rig-spike` participates in workspace compilation and tests, but it is experimental and is not part of the supported runtime contract.
+Do not infer current runtime availability from target architecture or planning documents.
 
-## Layer dependencies
+## Canonical product definition
 
-```mermaid
-graph TD
-    CLI[vestrace-cli] --> HTTP[vestrace-http]
-    CLI --> INFRA[vestrace-infrastructure]
-    HTTP --> APP[vestrace-application]
-    INFRA --> APP
-    APP --> DOMAIN[vestrace-domain]
-```
+> **Vestrace is a memory-first platform for persistent cognition shared across agents and executions.**
 
-The intended dependency direction is inward:
+> **Memory Engine is the substrate. Persistent Cognition is the capability.**
 
-- domain code does not depend on Axum, SQLx, HTTP, or infrastructure;
-- application code defines use cases and ports without SQLx types;
-- infrastructure implements application ports;
-- HTTP translates transport requests into application calls;
-- CLI performs composition and process startup.
+## Normative architecture
 
-## Current layer responsibilities
+Start with:
 
-### Domain
+- [`specs/vestrace-architecture-contract-v0.2.md`](specs/vestrace-architecture-contract-v0.2.md) — frozen top-level Architecture Contract;
+- [`specs/README.md`](specs/README.md) — normative documentation hierarchy and accepted extensions;
+- [`adr/README.md`](adr/README.md) — accepted architecture decisions.
 
-`vestrace-domain` contains identifiers, value objects, entities, and invariants. The repository includes domain types for capabilities, memory, providers, agents, workflows, and other future areas. Their presence does not imply that those features are available through the supported runtime.
-
-### Application
-
-`vestrace-application` exposes ports and services for the run-record vertical slice and memory lifecycle. The wired services are:
-
-- `RunCommandService` — event-sourced command executor: loads the event stream, replays state, runs the domain decision function, builds event envelopes, reduces them to compute the resulting state, projects to `AgentRun`, and atomically commits events + projection via `RunCommandCommitter`.
-- `RunService` — read-side use cases: create/list/get run projections.
-- `RunRecoveryService` — checkpoint creation, validation, state restoration from checkpoints + tail events, and projection rebuild.
-- `MemoryService` — event recording with idempotency and outbox (`event.recorded`), memory creation with first revision, provenance link, idempotency and outbox (`memory.created`), memory revision with optimistic concurrency, idempotency and outbox (`memory.revised`), and knowledge-relation linking with idempotency and outbox (`memory.relation.linked`).
-- `HardPurgeMemoryService` — authorized hard purge that deletes memory content, revisions, sources, relations, and writes a minimal audit row. Requires `PurgeAuthorizationPort` (deterministic test adapter provided).
-- `ContextPackBuilder` — token-bounded context pack construction with section ordering, compression ladder (Full → Summary → Atomic → Reference), and conservative byte-based token counting.
-- `RetrievalService` — orchestration: normalizes request, runs text retriever channel, fuses via RRF, reranks with deterministic components, builds context pack with token budget, and journals results. Gracefully degrades when channels fail.
-- `RedactionService` — regex-based redaction with sensitivity-aware destination filtering. Recursively redacts JSON values.
-- `PolicyEngine` — capability-based authorization: `AllowAllPolicyEngine` (local trusted), `CapabilitySetPolicyEngine` (capability set), `WorkspaceScopedPolicyEngine` (workspace + capability).
-
-The memory, jobs, and provider ports are defined and partially wired (see Infrastructure below). A type or service in this crate is not considered production-ready without a wired runtime path and acceptance coverage.
-
-### Infrastructure
-
-`vestrace-infrastructure` provides PostgreSQL pooling, transaction-scoped workspace/principal context, repository adapters, migration execution, migration-history verification, and provider clients.
-
-Wired adapters:
-
-- `PgRunRepository` — run projection CRUD against `agent_runs`.
-- `PgRunEventStore` — append-only event stream with optimistic concurrency via `FOR UPDATE` and sequence validation.
-- `PgRunCommandCommitter` — atomic event append + projection upsert in one transaction; re-replays stored + new events to verify projection integrity before commit.
-- `PgRunRecoveryStore` — checkpoint and event access for run state recovery.
-- `PgEventRepository` — event persistence with read path (`find_by_id`). Events are append-only (trigger prevents UPDATE/DELETE).
-- `PgMemoryRepository` — memory and revision persistence with read paths (`find_memory_by_id`, `find_revision_by_id`). Active memories require at least one source (deferred constraint trigger).
-- `PgProvenanceRepository` — provenance source persistence.
-- `PgRelationRepository` — knowledge relation persistence.
-- `PgJobRepository` — job enqueue, lease (`FOR UPDATE SKIP LOCKED`), and completion.
-- `PgOutboxRepository` — outbox message persistence, claim with `SKIP LOCKED`, and mark processed.
-- `PgIdempotencyRepository` — idempotency key lookup and save with request hash verification.
-- `PgPurgeRepository` — privileged purge transaction that deletes memory content, revisions, sources, relations, and writes a minimal audit row.
-- `PgTextRetriever` — PostgreSQL FTS retrieval using `search_documents` with `ts_rank` scoring, workspace/status/kind filtering.
-- `PgRetrievalJournal` — persists retrieval runs and context packs to `retrieval_runs` and `context_packs` tables.
-- `PgAuditRepository` — persists audit events to `audit_events` table.
-- `OpenAiCompatibleClient` — text generation and embedding provider.
-- `PgStore` implements `HealthRepository` by verifying migration compatibility.
-
-Not yet wired: `MemoryExtractor` (only a deterministic test double in application), `Worker` job handler registration (the loop runs and leases/completes jobs but has no typed handlers), `PurgeAuthorizationPort` (only a deterministic test adapter exists).
-
-The ordered `migrations/` directory embedded by SQLx is the migration source of truth. Documentation must not maintain a maximum migration number.
-
-### HTTP
-
-`vestrace-http` exposes:
+The frozen v0.2 baseline covers twelve completed architecture blocks:
 
 ```text
-GET  /health/live
-GET  /health/ready
-POST /v1/runs
-GET  /v1/runs
-GET  /v1/runs/{id}
-POST /v1/events
-POST /v1/memories
-GET  /v1/memories/{id}
-POST /v1/retrieval/search
+[✓] 1. Persistent Cognition Core
+[✓] 2. Temporal & Concurrency
+[✓] 3. Mutation & Reconciliation
+[✓] 4. Retrieval / ContextPack 2.0
+[✓] 5. Execution Feedback & Learning
+[✓] 6. Capability Governance
+[✓] 7. Identity / Workspace / Federation
+[✓] 8. Health / Integrity / Repair
+[✓] 9. External Effects
+[✓] 10. Incident / Recovery / Revalidation
+[✓] 11. Crypto / Data Governance
+[✓] 12. Qualification / Conformance
 ```
 
-`POST /v1/runs` is the canonical write path: it constructs a `RunCommandEnvelope` and dispatches through `RunCommandExecutor`, not the legacy `RunUseCases::create_run` method.
+## Post-v0.2 system architecture: Brain–Face–Organ
 
-Unsupported REST and AG-UI surfaces return explicit `501 Not Implemented` responses:
+ADR-0011 accepts a system-level decomposition for the future persistent autonomous-agent product.
 
 ```text
-POST /v1/runs/{id}/approve     → 501
-GET  /v1/artifacts             → 501
-GET  /v1/agents                → 501
-GET  /v1/workflows             → 501
-GET  /v1/triggers              → 501
-GET  /v1/connections           → 501
-GET  /v1/models                → 501
-GET  /v1/evaluations           → 501
-GET  /v1/audit                 → 501
-GET  /v1/metrics/summary       → 501
-GET  /v1/system/health         → 501
-GET  /v1/profile               → 501
-GET  /ag-ui/endpoints          → 501
-POST /ag-ui/endpoints          → 501
-GET  /ag-ui/events/stream      → 501
-POST /ag-ui/run                → 501
+                         USER
+                          │
+                          ▼
+                       FACE
+              Desktop / CLI / Host Broker
+                          │
+                  System Interconnect
+                          │
+                          ▼
+                       BRAIN
+             Vestrace + Prime-like Runtime
+                          │
+                  System Interconnect
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+       Coding          Browser         Compute
+       Organ            Organ           Organ
 ```
 
-`POST /v1/events` records an append-only event with idempotency. `POST /v1/memories` creates a memory with first revision and provenance link. `GET /v1/memories/{id}` retrieves a memory by ID. `POST /v1/retrieval/search` performs hybrid retrieval (text FTS channel → RRF → deterministic rerank) and optionally builds a token-bounded context pack when `token_budget` is provided.
+The formal meanings are:
 
-The HTTP crate depends on application ports and must not import SQLx or infrastructure adapters.
+- **Brain** — persistent agent identity and cognition. Vestrace owns durable cognition, authority, `AgentRun`, effects, trust, recovery and qualification state; the Prime-like runtime owns active reasoning, planning, working context, model routing, goals and subagent coordination without becoming a second durable state engine.
+- **Face** — replaceable user and host boundary. A thin Desktop/CLI/mobile/web client may be paired with a local Host Broker for explicitly permitted host files, processes, applications, shell, browser integrations, devices and settings.
+- **Organ** — replaceable execution capability such as a Docker container, VM, sandbox, browser worker, GPU worker or remote execution endpoint. An Organ is logical and need not map one-to-one to a container.
+- **System Interconnect** — authenticated transport for commands, events, observations, capabilities, approvals, leases, artifacts, receipts, heartbeats and telemetry. It owns no canonical cognition or authority.
+- **Models** — replaceable cognitive compute resources, not the persistent identity of the agent.
 
-A request-context middleware validates or generates `x-request-id` and `x-correlation-id` headers (UUIDv7), normalizes them on the request, opens a tracing span, and echoes them back on the response. Run handlers require `x-workspace-id` and `x-principal-id` headers.
+Key additional laws:
 
-### CLI
+1. Face and Organ endpoints may further restrict Brain authority but never amplify it.
+2. Effective host authority is the intersection of Brain capability/policy, Face-local policy and host OS rights.
+3. Effective Organ authority is the intersection of Brain capability/policy, Organ-local policy and sandbox/OS rights.
+4. Organ or Host output is observation/evidence before it may become durable cognition.
+5. Face, Organ, model and worker replacement must not replace agent identity.
+6. Reconnect/restart/recreate must not silently imply effect success or restored trust.
 
-Implemented commands:
+See:
 
-- `server` — connect to PostgreSQL, apply and verify embedded migrations, then serve HTTP;
-- `migrate` — connect to PostgreSQL, apply embedded migrations, and verify exact migration compatibility;
-- `worker` — connect to PostgreSQL, apply migrations, and run a job-processing loop with `FOR UPDATE SKIP LOCKED` leasing and graceful shutdown on Ctrl-C;
-- `mcp` — connect to PostgreSQL, apply migrations, and start an MCP server exposing `search_memories` and `get_memory` tools.
+- [`specs/vestrace-brain-face-organ-system-model.md`](specs/vestrace-brain-face-organ-system-model.md)
+- [`adr/0011-brain-face-organ-system-decomposition.md`](adr/0011-brain-face-organ-system-decomposition.md)
 
-Explicitly unavailable commands return a non-zero exit status:
+This extension does **not** claim that the Brain runtime, Face/Host Broker, or Organ layer is implemented, and it does not silently expand the frozen 36-PR v0.2→v1.0 roadmap.
 
-- `doctor`;
-- `rebuild`.
+## Specialized frozen v0.2 normative documents
 
-No unavailable command may report successful initialization or successful work.
+- [`specs/vestrace-domain-model-v0.2.md`](specs/vestrace-domain-model-v0.2.md)
+- [`specs/vestrace-normative-invariants-v0.2.md`](specs/vestrace-normative-invariants-v0.2.md)
+- [`specs/vestrace-trust-authority-model-v0.2.md`](specs/vestrace-trust-authority-model-v0.2.md)
+- [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md)
+- [`specs/vestrace-execution-external-effects-contract-v0.2.md`](specs/vestrace-execution-external-effects-contract-v0.2.md)
+- [`specs/vestrace-health-repair-incident-contract-v0.2.md`](specs/vestrace-health-repair-incident-contract-v0.2.md)
+- [`specs/vestrace-crypto-data-governance-contract-v0.2.md`](specs/vestrace-crypto-data-governance-contract-v0.2.md)
+- [`specs/vestrace-qualification-conformance-spec-v0.2.md`](specs/vestrace-qualification-conformance-spec-v0.2.md)
+- [`specs/vestrace-version-roadmap-v0.2-to-v1.0.md`](specs/vestrace-version-roadmap-v0.2-to-v1.0.md)
 
-## Database readiness
+ADR-0010 clarifies the boundary between roadmap milestone labels and formal qualification-profile claims.
 
-Process liveness and database readiness are distinct:
+## Current implementation
 
-- `/health/live` reports that the HTTP process is running;
-- `/health/ready` verifies database access and exact migration compatibility.
+See [`current-implementation.md`](current-implementation.md) for the inspected wired snapshot.
 
-Compatibility compares every applied `_sqlx_migrations` entry with the embedded migration set by version, success state, and checksum. Missing, extra, failed, or modified migrations make the service not ready.
+The inspected source foundation is a Rust Edition 2024 modular workspace with domain/application/infrastructure/HTTP/CLI/MCP layers and a PostgreSQL-backed run/memory/retrieval foundation. The presence of future-facing domain types or placeholder endpoints does not imply target feature completion.
 
-## Runtime boundary
+## Transition planning
 
-The current runtime does not provide:
+See [`plans/README.md`](plans/README.md) and [`plans/v0.2-to-v1.0-pr-specification-index.md`](plans/v0.2-to-v1.0-pr-specification-index.md).
 
-- approval execution with production authorization (deterministic test adapter only);
-- capability-policy enforcement in HTTP middleware (PolicyEngine port exists, not wired to routes);
-- artifact content-addressed storage;
-- real AG-UI execution or streaming;
-- vector/structured/exact retrieval channels (ports defined, not wired);
-- memory extractor backed by an LLM (only a deterministic test double exists).
+The frozen transition package includes all 36 planned future implementation PRs, dependency ordering, migration/backfill contracts, conformance cases, release evidence gates and review rules.
 
-The following are implemented and wired:
+The Brain–Face–Organ extension requires a separate future transition plan before implementation. It is not silently inserted into those 36 PRs.
 
-- event-sourced run command execution with deterministic replay and optimistic concurrency;
-- run checkpoint creation, validation, and state restoration;
-- run projection rebuild from event stream;
-- **run worker lifecycle — `AdvanceRun` (Created→Preparing→Running, step dispatch, finalization), `ResumeRun` (Paused→Running), `ExecuteStep` (Pending→Succeeded) handlers with work-queue leasing, lease heartbeats, and dead-letter routing;**
-- **HTTP run lifecycle endpoints — `POST /v1/runs` (create), `GET /v1/runs` (list), `GET /v1/runs/{id}` (detail), `POST /v1/runs/{id}/pause`, `POST /v1/runs/{id}/resume`, `POST /v1/runs/{id}/cancel` with `If-Match` optimistic concurrency;**
-- memory event recording with idempotency and outbox, memory creation with provenance, idempotency and outbox, memory revision with optimistic concurrency, idempotency and outbox, and knowledge-relation linking with idempotency and outbox;
-- memory read paths (find event by id, find memory by id, find revision by id);
-- append-only event enforcement (database trigger prevents UPDATE/DELETE);
-- active-source invariant (deferred constraint trigger requires Active memories to have at least one source);
-- idempotency key verification with request hash (duplicate keys with same request return cached response, different request returns conflict);
-- authorized hard purge with audit trail (deterministic test authorizer provided);
-- job enqueue, leasing via `FOR UPDATE SKIP LOCKED`, and completion;
-- outbox message persistence, claiming, and marking processed;
-- worker process with graceful shutdown;
-- retrieval domain types: `RetrievalIntent` (11 variants), `TimePerspective`, `RetrievalCandidate` with channel/rank/explanation, `ScoreComponents`, `ContextItem` with representation levels, `ContextSection`, `ContextPack` with sections/degraded/warnings;
-- retrieval request normalization with intent-based default kind selection and channel limit clamping;
-- Reciprocal Rank Fusion (RRF) with deduplication and rank-based scoring;
-- deterministic reranker with score components (importance, confidence, recency, provenance, redundancy penalty);
-- context pack builder with token budget enforcement, section ordering, compression ladder, and conservative byte-based token counting;
-- retriever ports (`TextRetriever`, `VectorRetriever`, `ExactRetriever`, `StructuredRetriever`, `RetrievalJournal`);
-- `RetrievalService` orchestration: normalize → text channel → RRF → rerank → context pack → journal, with degraded mode on channel failure;
-- `PgTextRetriever` PostgreSQL FTS adapter with `ts_rank` scoring and workspace/status/kind filtering;
-- `PgRetrievalJournal` adapter for persisting retrieval runs and context packs;
-- HTTP endpoints for event recording, memory creation/read, and retrieval search with optional context pack building;
-- security domain types: `Capability` (21 variants), `Sensitivity` (4 levels with Ord), `ApprovalKind`/`ApprovalStatus`/`ApprovalRecord` with lifecycle state machine, `DataDestination`, `AuditEvent`;
-- `PolicyEngine` port with `AllowAllPolicyEngine`, `CapabilitySetPolicyEngine`, `WorkspaceScopedPolicyEngine` implementations;
-- `RedactionService` with regex-based redaction, sensitivity-aware destination filtering, and recursive JSON redaction;
-- `AuditRepository` port with `PgAuditRepository` adapter;
-- HTTP auth middleware (local trusted mode with Bearer token extraction);
-- MCP server crate (`vestrace-mcp`) with `search_memories` and `get_memory` tools;
-- CLI `mcp` command that connects to PostgreSQL and starts the MCP server;
-- OpenAI-compatible text generation and embedding provider adapters (wired but not consumed by any runtime path).
+## Architectural laws
+
+The highest-level invariants are:
+
+1. authoritative/canonical state is distinct from derived projections;
+2. derived state cannot automatically rewrite higher-authority state;
+3. Vestrace has one execution/state boundary, not competing runtimes;
+4. history is corrected by new facts/revisions/compensation, not silently rewritten;
+5. capabilities plus policy determine runtime authority; roles are templates;
+6. ambiguity is first-class (`UNKNOWN` is not silently failure/success/trust);
+7. repair only auto-modifies state deterministically reconstructible from a more authoritative layer;
+8. recovery does not restore trust without revalidation evidence;
+9. secrets are not ordinary memory;
+10. v1.0 is defined by the `TRUSTED` qualification contract, not feature count;
+11. milestone labels do not imply named profile qualification without evidence closure;
+12. persistent agent identity and cognition live in the Brain, not in a Face, Organ, model, or transient worker;
+13. connected endpoints may only preserve or reduce delegated authority, never amplify it;
+14. observations from execution are not automatically durable beliefs.
+
+## Baseline state
+
+The v0.2 documentation consistency pass, source-based gap analysis and 36-PR transition planning package are complete and integrated into `main`.
+
+The Brain–Face–Organ model is an accepted post-v0.2 target architecture extension pending its own implementation transition plan.
+
+Going forward:
+
+- target documentation does not itself change runtime behavior;
+- implementation work belongs on dedicated implementation branches;
+- architecture changes after a frozen baseline require deliberate spec/ADR amendment;
+- post-baseline extensions must not silently alter frozen qualification or roadmap claims;
+- material changes to implementation code require a gap delta before the transition plans are treated as current without review.

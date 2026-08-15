@@ -14,21 +14,14 @@ pub trait MemoryExtractor: Send + Sync {
     async fn extract(&self, event: &Event) -> Result<Vec<ExtractedCandidate>, ApplicationError>;
 }
 
-pub struct DeterministicExtractor;
-
-#[async_trait]
-impl MemoryExtractor for DeterministicExtractor {
-    async fn extract(&self, event: &Event) -> Result<Vec<ExtractedCandidate>, ApplicationError> {
-        // Deterministic extraction logic for test suite
-        if event.event_type.starts_with("fact.") {
-            Ok(vec![ExtractedCandidate {
-                kind: MemoryKind::Fact,
-                content: format!("Extracted fact from event {}", event.id),
-                confidence: 0.9,
-                importance: 0.8,
-            }])
-        } else {
-            Ok(vec![])
-        }
-    }
-}
+// `DeterministicExtractor` used to live here. Its whole body produced the
+// literal string "Extracted fact from event {id}" for any event whose type
+// began with `fact.`, and its own comment said "for test suite" while it sat in
+// the library beside the trait it implements.
+//
+// It was called by nothing, and it was the obvious thing to reach for when
+// giving `event.recorded` a consumer — which would have filled a workspace with
+// placeholder memories that look exactly like real ones. A stub named as though
+// it were an implementation is worse than an empty extension point, so the
+// extension point is what remains: [`MemoryExtractor`] and
+// [`ExtractedCandidate`], with no implementation until there is a real one.

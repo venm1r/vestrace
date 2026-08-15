@@ -11,7 +11,8 @@ Persist immutable external-effect intent, receipt, and reconciliation evidence s
 - [x] Add migration `0127_external_effect_reconciliation_records.sql`.
 - [x] Add `PgExternalEffectRepository` with payload/index integrity checks.
 - [x] Document the persistence boundary and explicit non-claims.
-- [ ] Wire durable candidate discovery/read-back adapters and startup orchestration in later gates.
+- [x] Durable **external-effect** candidate discovery delivered by Q16 (`ExternalEffectRecoveryService`); the `StartupRecoveryService` contract was delivered by Q12, but run-candidate discovery was not.
+- [x] Provider read-back (R2) and production startup wiring (R1) delivered; see [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Verification
 

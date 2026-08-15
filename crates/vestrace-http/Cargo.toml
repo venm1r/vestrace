@@ -6,9 +6,18 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-stream.workspace = true
 axum.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["time"] }
+serde_urlencoded = "0.7"
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The effect surface digests request arguments rather than storing them: a
+# record carrying the body verbatim is one more place a credential can be
+# written and then read by everyone who can read a trace.
+sha2.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 vestrace-application = { path = "../vestrace-application" }

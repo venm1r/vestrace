@@ -42,10 +42,10 @@ async fn seed_run_owners(pool: &sqlx::PgPool) {
 
     sqlx::query(
         "INSERT INTO agent_runs (
-             id, workspace_id, principal_id, title, status, run_version
+             id, workspace_id, principal_id, title, objective, status, run_version
          ) VALUES
-         ($1::uuid, $2::uuid, $3::uuid, 'run-a', 'created', 1),
-         ($4::uuid, $5::uuid, $6::uuid, 'run-b', 'created', 1)",
+         ($1::uuid, $2::uuid, $3::uuid, 'run-a', 'run-a', 'created', 1),
+         ($4::uuid, $5::uuid, $6::uuid, 'run-b', 'run-b', 'created', 1)",
     )
     .bind(RUN_A)
     .bind(WORKSPACE_A)
@@ -60,12 +60,14 @@ async fn seed_run_owners(pool: &sqlx::PgPool) {
 
 fn insert_event_sql() -> &'static str {
     "INSERT INTO run_events (
-         id, workspace_id, run_id, sequence, event_type, event_version,
-         actor, causation_id, correlation_id, payload, occurred_at, created_at
+         id, workspace_id, run_id, sequence, run_version, sequence_value,
+         event_type, event_version,
+         actor, causation_id, correlation_id, payload,
+         occurred_at, created_at, recorded_at
      ) VALUES (
-         $1::uuid, $2::uuid, $3::uuid, $4, $5, $6,
+         $1::uuid, $2::uuid, $3::uuid, $4, $4, $4, $5, $6,
          '{\"system\":{\"component\":\"migration-test\"}}'::jsonb,
-         $7::uuid, $8::uuid, '{}'::jsonb, now(), now()
+         $7::uuid, $8::uuid, '{}'::jsonb, now(), now(), now()
      )"
 }
 
@@ -208,12 +210,16 @@ async fn run_events_reject_a_run_owned_by_another_workspace(pool: sqlx::PgPool) 
 async fn run_event_migration_backfills_legacy_rows_deterministically(pool: sqlx::PgPool) {
     seed_run_owners(&pool).await;
 
+    // A genuinely legacy row predates every column later migrations backfill,
+    // including the run_version/sequence_value pair migration 0020 introduced.
     for column in [
         "event_version",
         "actor",
         "causation_id",
         "correlation_id",
         "occurred_at",
+        "run_version",
+        "sequence_value",
     ] {
         sqlx::query(&format!(
             "ALTER TABLE run_events ALTER COLUMN {column} DROP NOT NULL"

@@ -51,9 +51,9 @@ export const ModelsPage: React.FC = () => {
         description="Registered model profiles, their provider binding, context windows, and per-million-token pricing."
         actions={
           <ActionButton
-            icon="extension"
+            icon="model_training"
             onClick={() =>
-              notify('info', 'Model registration from the console is not implemented in the P0 foundation.')
+              notify('info', 'Model registration from the console is not implemented in this build.')
             }
           >
             Register Model

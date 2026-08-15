@@ -1,3 +1,14 @@
+/* Design tokens for the Vestrace console.
+ *
+ * The authority for every value here is
+ * `stitch_vestrace_neon_design_system/execution_kernel/DESIGN.md`. Where its
+ * token block and its prose disagree — the block sets `primary: #b5c8e4`, the
+ * prose calls #2563EB "the primary engine color" — the token block wins,
+ * because that is what the reference screens actually render and what the
+ * operator chose. #2563EB survives only as `--brand-blue`, which nothing in the
+ * component layer should reach for directly.
+ */
+
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 /* `display=block` keeps ligature names ("home", "smart_toy") from rendering as
    literal words while the icon font is still loading. */
@@ -6,6 +17,7 @@
 :root {
   color-scheme: dark;
 
+  /* ---- Brand ---------------------------------------------------------- */
   --brand-navy: #0a1e33;
   --brand-blue: #2563eb;
   --brand-cyan: #22d3ee;
@@ -13,60 +25,148 @@
   --brand-ink: #0f172a;
   --brand-muted: #7c8aa0;
 
+  /* ---- Surfaces ------------------------------------------------------- */
+  --color-background: #0b1326;
+  --color-on-background: #dae2fd;
   --color-surface: #0b1326;
+  --color-surface-dim: #0b1326;
+  --color-surface-bright: #31394d;
   --color-surface-container-lowest: #060e20;
   --color-surface-container-low: #131b2e;
   --color-surface-container: #171f33;
   --color-surface-container-high: #222a3d;
   --color-surface-container-highest: #2d3449;
+  --color-surface-variant: #2d3449;
+  --color-surface-tint: #b5c8e4;
 
   --color-on-surface: #dae2fd;
   --color-on-surface-variant: #c4c6cd;
-  --color-outline: #44474d;
+  --color-inverse-surface: #dae2fd;
+  --color-inverse-on-surface: #283044;
 
-  --color-primary: #2563eb;
-  --color-primary-bright: #3b82f6;
-  --color-secondary: #0053db;
+  /* Two distinct border weights: `outline` for emphasis, `outline-variant`
+     for the low-contrast container edges the spec calls for in dark mode. */
+  --color-outline: #8e9197;
+  --color-outline-variant: #44474d;
+
+  /* ---- Primary -------------------------------------------------------- */
+  --color-primary: #b5c8e4;
+  --color-on-primary: #1f3147;
+  --color-primary-container: #0a1e33;
+  --color-on-primary-container: #7486a0;
+  --color-inverse-primary: #4e6078;
+  --color-primary-fixed: #d2e4ff;
+  --color-primary-fixed-dim: #b5c8e4;
+  --color-on-primary-fixed: #081c31;
+  --color-on-primary-fixed-variant: #36485f;
+
+  /* ---- Secondary ------------------------------------------------------ */
+  --color-secondary: #b4c5ff;
+  --color-on-secondary: #002a78;
+  --color-secondary-container: #0053db;
+  --color-on-secondary-container: #cdd7ff;
+  --color-secondary-fixed: #dbe1ff;
+  --color-secondary-fixed-dim: #b4c5ff;
+  --color-on-secondary-fixed: #00174b;
+  --color-on-secondary-fixed-variant: #003ea8;
+
+  /* ---- Tertiary ------------------------------------------------------- */
   --color-tertiary: #2fd9f4;
+  --color-on-tertiary: #00363e;
+  --color-tertiary-container: #002127;
+  --color-on-tertiary-container: #0092a6;
+  --color-tertiary-fixed: #a2eeff;
+  --color-tertiary-fixed-dim: #2fd9f4;
+  --color-on-tertiary-fixed: #001f25;
+  --color-on-tertiary-fixed-variant: #004e5a;
+
+  /* ---- Semantics ------------------------------------------------------ */
   --color-error: #ff4d4f;
+  --color-on-error: #690005;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
   --color-success: #00e676;
   --color-warning: #ffb800;
+  --color-critical: #b026ff;
 
+  /* ---- Typography ----------------------------------------------------- */
   --font-display: 'Space Grotesk', system-ui, sans-serif;
   --font-sans: 'Geist', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  /* Aliases consumed by the design-system primitives (Surface, Button) and by
-     the shell/memory components. They are defined here so every component
-     resolves against a single palette. */
+  --text-display-size: 64px;
+  --text-display-line: 72px;
+  --text-h1-size: 48px;
+  --text-h1-line: 56px;
+  --text-h2-size: 32px;
+  --text-h2-line: 40px;
+  --text-h3-size: 24px;
+  --text-h3-line: 32px;
+  --text-body-lg-size: 18px;
+  --text-body-lg-line: 28px;
+  --text-body-size: 16px;
+  --text-body-line: 24px;
+  --text-body-sm-size: 14px;
+  --text-body-sm-line: 20px;
+  --text-label-size: 13px;
+  --text-label-line: 16px;
+  --text-code-size: 14px;
+  --text-code-line: 20px;
+
+  /* ---- Radius --------------------------------------------------------- */
+  /* The spec's scale exactly. There is no 6px step: the previous `--radius-md`
+     was 6px, which appears nowhere in the design system. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-round: 9999px;
+
+  /* ---- Spacing -------------------------------------------------------- */
+  /* On the 8px baseline the spec mandates. The previous scale carried a 12px
+     step that put every element using it off the grid. */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-gutter: 16px;
+  --space-margin: 24px;
+
+  /* ---- Layout --------------------------------------------------------- */
+  --layout-sidebar: 240px;
+  --layout-inspector: 380px;
+  --layout-topbar: 64px;
+  /* Tailwind's md, which is where the reference screens hide the sidebar. */
+  --breakpoint-md: 768px;
+
+  --focus-ring: var(--color-tertiary);
+
+  /* ---- Compatibility aliases ------------------------------------------ */
+  /* Kept so existing components keep resolving while they migrate onto the
+     named tokens above. New code should use the tokens, not these. */
   --bg-level-0: var(--color-surface-container-lowest);
   --bg-level-1: var(--color-surface-container-low);
   --bg-level-2: var(--color-surface-container);
   --bg-level-3: var(--color-surface-container-high);
   --bg-level-4: var(--color-surface-container-highest);
 
-  --border-color: var(--color-outline);
+  --border-color: var(--color-outline-variant);
   --text-primary: var(--brand-white);
   --text-secondary: var(--color-on-surface-variant);
 
   --semantic-success: var(--color-success);
   --semantic-warning: var(--color-warning);
   --semantic-error: var(--color-error);
-  --semantic-critical: #ff1744;
+  --semantic-critical: var(--color-critical);
 
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 12px;
-  --radius-round: 999px;
-
-  --focus-ring: var(--color-tertiary);
+  --space-1: var(--space-xs);
+  --space-2: var(--space-sm);
+  --space-3: var(--space-md);
+  --space-4: var(--space-md);
+  --space-5: var(--space-lg);
+  --space-6: var(--space-xl);
 }
 
 *,
@@ -83,11 +183,11 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--color-surface);
-  color: var(--color-on-surface);
+  background-color: var(--color-background);
+  color: var(--color-on-background);
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -114,28 +214,77 @@ a {
   outline-offset: 2px;
 }
 
-.material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
-  font-weight: normal;
-  font-style: normal;
-  font-size: 20px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-  -webkit-font-smoothing: antialiased;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-  user-select: none;
-  flex-shrink: 0;
+/* ---- Typography helpers ---------------------------------------------- */
+/* The scale as classes, so a component states which step it is using instead
+   of repeating a pixel size. */
+.type-h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-h1-size);
+  line-height: var(--text-h1-line);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.type-h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-h2-size);
+  line-height: var(--text-h2-line);
+  font-weight: 600;
+}
+
+.type-h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-h3-size);
+  line-height: var(--text-h3-line);
+  font-weight: 600;
+}
+
+.type-body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+.type-body-sm {
+  font-family: var(--font-sans);
+  font-size: var(--text-body-sm-size);
+  line-height: var(--text-body-sm-line);
+}
+
+/* "System" text: identifiers, statuses, and every terminal-style label. */
+.type-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-label-size);
+  line-height: var(--text-label-line);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.type-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  line-height: var(--text-code-line);
+}
+
+/* Headings shrink on small screens; the display scale is sized for desktop
+   and would otherwise wrap a two-word title across three lines. */
+@media (max-width: 767px) {
+  .type-h1 {
+    font-size: var(--text-h2-size);
+    line-height: var(--text-h2-line);
+  }
+
+  .type-h2 {
+    font-size: var(--text-h3-size);
+    line-height: var(--text-h3-line);
+  }
 }
 
 /* Wide content (tables) scrolls inside its own container so the page body
    never scrolls horizontally. */
 .table-scroll {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-scroll table {
@@ -154,7 +303,7 @@ a {
   z-index: 1100;
   padding: 10px 16px;
   background: var(--color-primary);
-  color: #ffffff;
+  color: var(--color-on-primary);
   border-radius: 0 0 var(--radius-md) 0;
   text-decoration: none;
 }
@@ -163,22 +312,71 @@ a {
   left: 0;
 }
 
-/* Sidebar collapses to an icon rail on narrow viewports so the main content
-   keeps a usable width. */
-@media (max-width: 900px) {
+/* ---- Responsive layout ------------------------------------------------ */
+/* Below md the sidebar leaves the flow and slides over the content, as the
+   reference screens do (`hidden md:flex`). Unlike the reference, which shows a
+   hamburger that opens nothing, it is reachable: hiding navigation with no way
+   back to it would make the console unusable on a phone. */
+@media (max-width: 767px) {
   .app-sidebar {
-    width: 64px !important;
-    padding-left: 8px !important;
-    padding-right: 8px !important;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 160ms ease-out;
+    box-shadow: 0 0 24px rgb(0 0 0 / 45%);
   }
 
-  .app-sidebar .app-sidebar-label {
+  .app-sidebar[data-open='true'] {
+    transform: translateX(0);
+  }
+
+  .app-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgb(0 0 0 / 55%);
+    border: 0;
+    padding: 0;
+  }
+}
+
+/* The drawer trigger and its scrim only exist below md. */
+@media (min-width: 768px) {
+  .app-nav-toggle,
+  .app-scrim {
     display: none !important;
   }
+}
 
-  .app-sidebar .app-nav-link {
-    justify-content: center;
+/* Responsive card strips: one column on a phone, two on a tablet, four on a
+   desktop — the reference's `grid-cols-1 md:grid-cols-2 lg:grid-cols-4`. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-gutter);
+}
+
+@media (min-width: 768px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+@media (min-width: 1024px) {
+  .metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* A row of controls that stacks rather than overflowing on narrow screens. */
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -187,5 +385,20 @@ a {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* The workspace caption is a label for an identifier that speaks for itself;
+   on a phone the identifier keeps the room. */
+@media (max-width: 640px) {
+  .workspace-caption {
+    display: none;
+  }
+}
+
+/* The dashboard margin grows once there is room for it. */
+@media (min-width: 768px) {
+  #main-content {
+    padding: var(--space-margin) !important;
   }
 }

@@ -12,7 +12,7 @@ hard-gate evidence while preserving failed results and fail-closed read errors.
 - [x] Map passed/failed evidence to `QUAL-008` `Pass`/`Fail` without promotion.
 - [x] Preserve target and repository failure boundaries.
 - [x] Document the adapter boundary and explicit non-claims.
-- [ ] Assemble this evidence into a complete qualification bundle and release gate later.
+- [x] Assembled into a qualification bundle by Q22 and into the release gate by Q25 (release approval) and Q28 (v1.0 release evidence).
 
 ## Verification
 

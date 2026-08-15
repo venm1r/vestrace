@@ -6,11 +6,14 @@ use axum::{
 };
 use tower::ServiceExt;
 use vestrace_application::{
-    ApplicationError, CreateRunCommand, HealthRepository, NullExecutionHistoryRepository,
-    RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
+    ApplicationError, CreateRunCommand, GrantPolicyEngine, HealthRepository,
+    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunCommandExecutor,
+    RunCommandResult, RunUseCases,
 };
 use vestrace_domain::{
-    id::AgentRunId,
+    Capability, CapabilityGrant, CapabilityGrantSpec, RiskCategory,
+    id::{AgentRunId, CapabilityGrantId, PrincipalId, WorkspaceId},
+    now,
     run::{AgentRun, RunCommandEnvelope},
 };
 use vestrace_http::{AppState, build_router};
@@ -138,11 +141,7 @@ impl vestrace_application::RetrievalJournal for StubRetrievalJournal {
     async fn record_run(
         &self,
         _: &vestrace_application::RequestContext,
-        _: vestrace_domain::id::RetrievalRunId,
-        _: &str,
-        _: &str,
-        _: usize,
-        _: i32,
+        _: &vestrace_application::retrieval::RetrievalRunRecord,
     ) -> Result<(), vestrace_application::ApplicationError> {
         Ok(())
     }
@@ -299,26 +298,72 @@ impl vestrace_application::ModelExecutionRepository for StubModelExecutionReposi
 }
 
 fn app() -> axum::Router {
-    build_router(AppState::new(
-        Arc::new(HealthyRepository),
-        Arc::new(EmptyRunUseCases),
-        Arc::new(UnusedRunCommands),
-        Arc::new(StubMemoryUseCases),
-        std::sync::Arc::new(vestrace_application::RetrievalService::new(
-            std::sync::Arc::new(StubTextRetriever),
-            std::sync::Arc::new(StubRetrievalJournal),
-        )),
-        std::sync::Arc::new(StubProviderRepository),
-        std::sync::Arc::new(StubModelRepository),
-        std::sync::Arc::new(StubAgentRepository),
-        std::sync::Arc::new(StubSkillRepository),
-        std::sync::Arc::new(StubRoutingDecisionRepository),
-        std::sync::Arc::new(StubModelExecutionRepository),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(NullExecutionHistoryRepository::new()),
-        std::sync::Arc::new(vestrace_http::MetricsRegistry::new()),
-    ))
+    build_router(
+        AppState::new(
+            Arc::new(HealthyRepository),
+            Arc::new(EmptyRunUseCases),
+            Arc::new(StubMemoryUseCases),
+            std::sync::Arc::new(vestrace_application::RetrievalService::new(
+                std::sync::Arc::new(StubTextRetriever),
+                std::sync::Arc::new(StubRetrievalJournal),
+            )),
+            std::sync::Arc::new(StubProviderRepository),
+            std::sync::Arc::new(StubModelRepository),
+            std::sync::Arc::new(StubAgentRepository),
+            std::sync::Arc::new(StubSkillRepository),
+            std::sync::Arc::new(StubRoutingDecisionRepository),
+            std::sync::Arc::new(StubModelExecutionRepository),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(NullExecutionHistoryRepository::new()),
+            std::sync::Arc::new(vestrace_http::MetricsRegistry::new()),
+        )
+        .with_policy(test_policy()),
+    )
+}
+
+fn test_policy() -> Arc<dyn PolicyDecisionEngine> {
+    let workspace_id =
+        WorkspaceId::from_uuid("00000000-0000-0000-0000-000000000001".parse().unwrap());
+    let principal_id =
+        PrincipalId::from_uuid("00000000-0000-0000-0000-000000000002".parse().unwrap());
+    let at = now();
+    let grants = [
+        (
+            Capability::ExecutionRead,
+            "http.get",
+            "/v1/runs",
+            RiskCategory::Low,
+        ),
+        (
+            Capability::ExecutionWrite,
+            "http.post",
+            "/ag-ui/run",
+            RiskCategory::High,
+        ),
+    ]
+    .into_iter()
+    .map(|(capability, operation, resource_scope, risk_ceiling)| {
+        CapabilityGrant::issue(
+            CapabilityGrantSpec {
+                id: CapabilityGrantId::new(),
+                workspace_id,
+                subject_id: principal_id,
+                issuer_id: principal_id,
+                capability,
+                operation: operation.to_owned(),
+                resource_scope: resource_scope.to_owned(),
+                valid_from: at,
+                valid_until: None,
+                budget: None,
+                risk_ceiling,
+                conditions: Vec::new(),
+            },
+            at,
+        )
+        .unwrap()
+    });
+    Arc::new(GrantPolicyEngine::new("router-contract-v1", grants).unwrap())
 }
 
 #[tokio::test]
@@ -349,13 +394,19 @@ async fn v1_is_applied_exactly_once() {
 }
 
 #[tokio::test]
-async fn ag_ui_is_explicitly_unavailable() {
+/// AG-UI is implemented, but a deployment that supplies no run orchestrator has
+/// nothing to create a run with. It must say so with 501 rather than accept the
+/// instruction and drop it.
+async fn ag_ui_run_reports_unavailable_when_no_orchestrator_is_configured() {
     let response = app()
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/ag-ui/run")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .header("x-workspace-id", "00000000-0000-0000-0000-000000000001")
+                .header("x-principal-id", "00000000-0000-0000-0000-000000000002")
+                .body(Body::from(r#"{"message":"do the thing"}"#))
                 .unwrap(),
         )
         .await
@@ -378,5 +429,88 @@ async fn metrics_returns_prometheus_format() {
     assert!(
         body.contains("# TYPE vestrace_http_requests_total counter"),
         "metrics should contain Prometheus counter type, got: {body}"
+    );
+}
+
+/// The 501 message must describe the build, not a retired phase name. "P0
+/// foundation" was an earlier stabilization phase; the current roadmap names
+/// phases C/L/G/H/E/T on the way to v1.0, so citing P0 tells an operator to look
+/// for something that no longer exists.
+#[test]
+fn unimplemented_surfaces_do_not_cite_a_retired_phase_name() {
+    const API_ERROR_SOURCE: &str = include_str!("../src/api/error.rs");
+
+    assert!(
+        !API_ERROR_SOURCE.contains("P0 foundation"),
+        "the not-implemented message still cites the retired P0 phase"
+    );
+    assert!(
+        API_ERROR_SOURCE.contains("is not implemented in this build"),
+        "the not-implemented message should describe the build"
+    );
+}
+
+/// A route with no capability mapping bypasses the authorization middleware
+/// entirely, so every governed surface must map to one. Settings change how the
+/// runtime behaves, which is workspace administration.
+#[test]
+fn settings_routes_require_workspace_administration() {
+    use axum::http::Method;
+
+    assert_eq!(
+        vestrace_http::http_capability_for_test(&Method::GET, "/v1/settings"),
+        Some(vestrace_domain::Capability::WorkspaceAdmin)
+    );
+    assert_eq!(
+        vestrace_http::http_capability_for_test(&Method::PUT, "/v1/settings"),
+        Some(vestrace_domain::Capability::WorkspaceAdmin)
+    );
+}
+
+/// Destroying a memory takes its own capability.
+///
+/// `DELETE /v1/memories/{id}` is the only irreversible operation on the
+/// surface. Mapping it to `memory.write` would have meant every client that can
+/// record a memory could also destroy one, and the local development
+/// configuration — which grants `memory.write` and deliberately omits
+/// `memory.purge` — would have been granting it all along.
+#[test]
+fn purging_a_memory_is_not_a_write() {
+    use axum::http::Method;
+    use vestrace_domain::Capability;
+    use vestrace_http::http_capability_for_test as capability;
+
+    assert_eq!(
+        capability(&Method::DELETE, "/v1/memories/01a00000-0000-7000-8000-000000000000"),
+        Some(Capability::MemoryPurge)
+    );
+    assert_eq!(
+        capability(&Method::POST, "/v1/memories"),
+        Some(Capability::MemoryWrite)
+    );
+    assert_eq!(
+        capability(&Method::GET, "/v1/memories/01a00000-0000-7000-8000-000000000000"),
+        Some(Capability::MemoryRead)
+    );
+}
+
+/// Answering a finding is an administrative act.
+///
+/// `FindingDisposition` carries an actor, a policy version and an audit
+/// reference precisely so a silence has an author. Routing it anywhere weaker
+/// than workspace administration would let whoever can read the health surface
+/// also decide that an error-severity finding should stop being reported.
+#[test]
+fn dispositioning_a_finding_takes_workspace_administration() {
+    use axum::http::Method;
+    use vestrace_domain::Capability;
+    use vestrace_http::http_capability_for_test as capability;
+
+    assert_eq!(
+        capability(
+            &Method::POST,
+            "/v1/system/health/findings/01a00000-0000-7000-8000-000000000000/disposition"
+        ),
+        Some(Capability::WorkspaceAdmin)
     );
 }

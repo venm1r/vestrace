@@ -96,6 +96,9 @@ impl ExternalEffectQualificationBundleService {
                 _ => unreachable!(),
             },
             evidence: fault_evidence_ref,
+            // The fault suite is a run: this status came from executing it,
+            // not from a claim that it would pass.
+            origin: vestrace_domain::conformance::CaseOrigin::Executed,
         });
         let report = ConformanceReport::from_results(report.profile, results);
         let bundle = QualificationBundle::from_conformance_report_for_manifest(

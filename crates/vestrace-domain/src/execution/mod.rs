@@ -5,14 +5,20 @@ pub use status::ExecutionStatus;
 use crate::{
     DomainError,
     id::{
-        AgentId, ExecutionArtifactId, ExecutionOutcomeId, ModelExecutionAttemptId, StepExecutionId,
-        ToolInvocationId, WorkflowExecutionId, WorkflowId, WorkflowNodeId, WorkflowRevisionId,
-        WorkspaceId,
+        AgentId, AgentRunId, ExecutionArtifactId, ExecutionOutcomeId, ModelExecutionAttemptId,
+        StepExecutionId, ToolInvocationId, WorkflowExecutionId, WorkflowId, WorkflowNodeId,
+        WorkflowRevisionId, WorkspaceId,
     },
     time::Timestamp,
 };
 use serde::{Deserialize, Serialize};
 
+/// Typed execution history projection.
+///
+/// `WorkflowExecution` is NOT an authoritative execution owner.
+/// The single authoritative execution state is `AgentRun` (ARC-005).
+/// This record is a typed history/projection derived from Run events
+/// and must not evolve into a competing event-sourced runtime.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkflowExecution {
     pub id: WorkflowExecutionId,
@@ -26,6 +32,7 @@ pub struct WorkflowExecution {
     pub completed_at: Option<Timestamp>,
     pub correlation_id: Option<String>,
     pub causation_id: Option<String>,
+    pub run_id: Option<AgentRunId>,
 }
 
 impl WorkflowExecution {
@@ -74,6 +81,10 @@ impl From<&crate::cognitive::WorkflowNodeKind> for StepKind {
     }
 }
 
+/// Typed step execution history projection.
+///
+/// Like `WorkflowExecution`, this is NOT authoritative execution state.
+/// It is a typed projection subordinate to `AgentRun` (ARC-005).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepExecution {
     pub id: StepExecutionId,
@@ -92,6 +103,7 @@ pub struct StepExecution {
     pub error_message: Option<String>,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
+    pub run_id: Option<AgentRunId>,
 }
 
 impl StepExecution {
@@ -194,6 +206,7 @@ mod tests {
             completed_at: None,
             correlation_id: None,
             causation_id: None,
+            run_id: None,
         }
     }
 
@@ -215,6 +228,7 @@ mod tests {
             error_message: None,
             started_at: crate::time::now(),
             completed_at: None,
+            run_id: None,
         }
     }
 

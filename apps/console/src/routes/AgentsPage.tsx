@@ -26,7 +26,7 @@ export const AgentsPage: React.FC = () => {
           <ActionButton
             icon="smart_toy"
             onClick={() =>
-              notify('info', 'Agent registration from the console is not implemented in the P0 foundation.')
+              notify('info', 'Agent registration from the console is not implemented in this build.')
             }
           >
             Register Agent

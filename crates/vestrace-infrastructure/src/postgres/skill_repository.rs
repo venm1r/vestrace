@@ -1,16 +1,18 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{ApplicationError, RequestContext, SkillRecord, SkillRepository};
 
 pub struct PgSkillRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgSkillRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -23,6 +25,11 @@ impl SkillRepository for PgSkillRepository {
         context: &RequestContext,
         skill: &SkillRecord,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         sqlx::query(
             r#"
             INSERT INTO skills (id, workspace_id, name, instructions, created_at)
@@ -34,13 +41,19 @@ impl SkillRepository for PgSkillRepository {
         .bind(&skill.name)
         .bind(&skill.instructions)
         .bind(skill.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(&self, context: &RequestContext) -> Result<Vec<SkillRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let rows = sqlx::query(
             r#"
             SELECT id, workspace_id, name, instructions, created_at
@@ -50,7 +63,7 @@ impl SkillRepository for PgSkillRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -69,6 +82,7 @@ impl SkillRepository for PgSkillRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+        scoped.commit().await.map_err(storage_error)?;
         Ok(skills)
     }
 }

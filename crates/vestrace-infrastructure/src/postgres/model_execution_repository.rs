@@ -1,18 +1,20 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use vestrace_application::{
     ApplicationError, ModelExecutionRecord, ModelExecutionRepository, RequestContext,
 };
 
 pub struct PgModelExecutionRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgModelExecutionRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
 }
+
+use super::PgStore;
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -22,9 +24,14 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
 impl ModelExecutionRepository for PgModelExecutionRepository {
     async fn record(
         &self,
-        _context: &RequestContext,
+        context: &RequestContext,
         execution: &ModelExecutionRecord,
     ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         sqlx::query(
             r#"
             INSERT INTO model_executions (id, workspace_id, model_id, prompt_tokens, completion_tokens, latency_ms, status, created_at)
@@ -39,16 +46,22 @@ impl ModelExecutionRepository for PgModelExecutionRepository {
         .bind(execution.latency_ms as i32)
         .bind(&execution.status)
         .bind(execution.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
-        Ok(())
+
+        scoped.commit().await.map_err(storage_error)
     }
 
     async fn list(
         &self,
         context: &RequestContext,
     ) -> Result<Vec<ModelExecutionRecord>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
         let rows = sqlx::query(
             r#"
             SELECT id, workspace_id, model_id, prompt_tokens, completion_tokens, latency_ms, status, created_at
@@ -59,7 +72,7 @@ impl ModelExecutionRepository for PgModelExecutionRepository {
             "#,
         )
         .bind(context.workspace_id.as_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
 
@@ -88,6 +101,8 @@ impl ModelExecutionRepository for PgModelExecutionRepository {
                 created_at: row.try_get("created_at").map_err(storage_error)?,
             });
         }
+
+        scoped.commit().await.map_err(storage_error)?;
         Ok(executions)
     }
 }

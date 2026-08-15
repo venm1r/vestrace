@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vestrace_application::{
-    AgentRepository, ApplicationError, EvaluationRepository, ExecutionHistoryRepository,
-    MemoryUseCases, ModelRepository, RequestContext, RetrievalRequest, RetrievalService,
+    AgentRepository, ApplicationError, AuthorizationBoundary, DenyAllPolicyEngine,
+    EvaluationRepository, ExecutionHistoryRepository, MemoryUseCases, ModelRepository,
+    RequestContext, RetrievalRequest, RetrievalService, SharedPolicyDecisionEngine,
     SkillRepository, WorkflowRepository,
 };
-use vestrace_domain::{PrincipalId, WorkspaceId};
+use vestrace_domain::{
+    AuthorizationRequest, Capability, PrincipalId, ResourceKind, ResourceScope, RiskCategory,
+    WorkspaceId,
+};
 
 pub struct McpServer {
     memory_use_cases: Arc<dyn MemoryUseCases>,
@@ -16,6 +20,7 @@ pub struct McpServer {
     workflow_repository: Arc<dyn WorkflowRepository>,
     evaluation_repository: Arc<dyn EvaluationRepository>,
     execution_history_repository: Arc<dyn ExecutionHistoryRepository>,
+    authorization_boundary: AuthorizationBoundary,
 }
 
 impl McpServer {
@@ -30,6 +35,31 @@ impl McpServer {
         evaluation_repository: Arc<dyn EvaluationRepository>,
         execution_history_repository: Arc<dyn ExecutionHistoryRepository>,
     ) -> Self {
+        Self::new_with_policy(
+            memory_use_cases,
+            retrieval_service,
+            model_repository,
+            agent_repository,
+            skill_repository,
+            workflow_repository,
+            evaluation_repository,
+            execution_history_repository,
+            Arc::new(DenyAllPolicyEngine),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_policy(
+        memory_use_cases: Arc<dyn MemoryUseCases>,
+        retrieval_service: Arc<RetrievalService>,
+        model_repository: Arc<dyn ModelRepository>,
+        agent_repository: Arc<dyn AgentRepository>,
+        skill_repository: Arc<dyn SkillRepository>,
+        workflow_repository: Arc<dyn WorkflowRepository>,
+        evaluation_repository: Arc<dyn EvaluationRepository>,
+        execution_history_repository: Arc<dyn ExecutionHistoryRepository>,
+        policy_engine: SharedPolicyDecisionEngine,
+    ) -> Self {
         Self {
             memory_use_cases,
             retrieval_service,
@@ -39,6 +69,7 @@ impl McpServer {
             workflow_repository,
             evaluation_repository,
             execution_history_repository,
+            authorization_boundary: AuthorizationBoundary::new(policy_engine),
         }
     }
 
@@ -50,6 +81,12 @@ impl McpServer {
         arguments: &serde_json::Value,
     ) -> Result<McpToolResult, ApplicationError> {
         let ctx = RequestContext::new(workspace_id, principal_id);
+
+        let authorization_request = mcp_authorization_request(tool, arguments)
+            .ok_or_else(|| ApplicationError::Policy("unknown MCP tool denied".to_owned()))?;
+        self.authorization_boundary
+            .require(&ctx, authorization_request)
+            .await?;
 
         match tool {
             "search_memories" => {
@@ -278,6 +315,7 @@ impl McpServer {
                     completed_at: None,
                     correlation_id: None,
                     causation_id: None,
+                    run_id: None,
                 };
 
                 self.execution_history_repository
@@ -356,6 +394,7 @@ impl McpServer {
                     error_message: None,
                     started_at: now,
                     completed_at: None,
+                    run_id: None,
                 };
 
                 self.execution_history_repository
@@ -650,6 +689,68 @@ impl McpServer {
     }
 }
 
+fn mcp_authorization_request(
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> Option<AuthorizationRequest> {
+    // The resource key names the argument to read the id out of; the kind names
+    // what that id *is*. They were the same thing until the scope vocabulary was
+    // made explicit, and the scope was built as `{key}:{value}` — so a memory
+    // reached through MCP was `memory_id:0198…` while the same memory reached
+    // through the purge was `memory://0198…`. A grant written for one authorised
+    // nothing in the other, and neither `memory_id:` nor `workspace` could be
+    // contained by any grant that did not spell them identically.
+    let (capability, resource) = match tool {
+        "search_memories" => (Capability::ContextRetrieve, None),
+        "get_memory" => (Capability::MemoryRead, Some(("memory_id", ResourceKind::Memory))),
+        "vestrace_models_list" => (Capability::ModelRead, None),
+        "vestrace_agent_get" => (Capability::AgentRead, Some(("agent_id", ResourceKind::Agent))),
+        "vestrace_skill_get" => (Capability::SkillRead, Some(("skill_id", ResourceKind::Skill))),
+        "vestrace_workflow_get" | "vestrace_workflow_context" => (
+            Capability::WorkflowRead,
+            Some(("workflow_id", ResourceKind::Workflow)),
+        ),
+        "vestrace_execution_start" => (
+            Capability::ExecutionWrite,
+            Some(("workflow_id", ResourceKind::Workflow)),
+        ),
+        "vestrace_step_record" | "vestrace_execution_complete" => (
+            Capability::ExecutionWrite,
+            Some(("execution_id", ResourceKind::Execution)),
+        ),
+        "vestrace_model_evaluation_record" => (Capability::EvaluationWrite, None),
+        _ => return None,
+    };
+
+    let resource_scope = resource
+        .and_then(|(key, kind)| {
+            arguments
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| ResourceScope::one(kind, value.trim()))
+        })
+        // A tool that is not about one resource is about the workspace, and
+        // says so in the same vocabulary rather than in a bare word.
+        .unwrap_or_else(ResourceScope::workspace)
+        .to_string();
+
+    let risk = match tool {
+        "vestrace_execution_start" | "vestrace_step_record" | "vestrace_execution_complete" => {
+            RiskCategory::High
+        }
+        "vestrace_model_evaluation_record" => RiskCategory::Medium,
+        _ => RiskCategory::Low,
+    };
+
+    Some(AuthorizationRequest::new(
+        capability,
+        format!("mcp.{tool}"),
+        resource_scope,
+        risk,
+    ))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct McpToolDefinition {
     pub name: String,
@@ -669,9 +770,13 @@ mod tests {
     use async_trait::async_trait;
     use vestrace_application::{AgentRecord, SkillRecord};
     use vestrace_application::{
-        ApplicationError, EvaluationRecord, NormalizedRetrievalRequest,
+        ApplicationError, DenyAllPolicyEngine, EvaluationRecord, NormalizedRetrievalRequest,
         NullExecutionHistoryRepository, RequestContext, TextRetriever, WorkflowDefinitionRecord,
         WorkflowRevisionRecord,
+    };
+    use vestrace_domain::id::{CapabilityGrantId, PolicyDecisionId};
+    use vestrace_domain::{
+        CapabilityGrant, CapabilityGrantSpec, PolicyDecision, evaluate_capability_grants,
     };
 
     struct StubMemory;
@@ -732,11 +837,7 @@ mod tests {
         async fn record_run(
             &self,
             _: &RequestContext,
-            _: vestrace_domain::id::RetrievalRunId,
-            _: &str,
-            _: &str,
-            _: usize,
-            _: i32,
+            _: &vestrace_application::retrieval::RetrievalRunRecord,
         ) -> Result<(), ApplicationError> {
             Ok(())
         }
@@ -882,7 +983,7 @@ mod tests {
     }
 
     fn make_server() -> McpServer {
-        McpServer::new(
+        McpServer::new_with_policy(
             Arc::new(StubMemory),
             Arc::new(RetrievalService::new(
                 Arc::new(StubTextRetriever),
@@ -894,6 +995,64 @@ mod tests {
             Arc::new(StubWorkflowRepo),
             Arc::new(StubEvaluationRepo),
             Arc::new(NullExecutionHistoryRepository::new()),
+            Arc::new(TestAllowPolicy),
+        )
+    }
+
+    struct TestAllowPolicy;
+
+    #[async_trait]
+    impl vestrace_application::PolicyDecisionEngine for TestAllowPolicy {
+        async fn decide(
+            &self,
+            context: &RequestContext,
+            request: vestrace_domain::AuthorizationRequest,
+        ) -> Result<PolicyDecision, ApplicationError> {
+            let at = vestrace_domain::now();
+            let grant = CapabilityGrant::issue(
+                CapabilityGrantSpec {
+                    id: CapabilityGrantId::new(),
+                    workspace_id: context.workspace_id,
+                    subject_id: context.principal_id,
+                    issuer_id: context.principal_id,
+                    capability: request.capability.clone(),
+                    operation: request.operation.clone(),
+                    resource_scope: request.resource_scope.clone(),
+                    valid_from: at,
+                    valid_until: None,
+                    budget: None,
+                    risk_ceiling: vestrace_domain::RiskCategory::Critical,
+                    conditions: request.conditions.clone(),
+                },
+                at,
+            )?;
+
+            Ok(evaluate_capability_grants(
+                PolicyDecisionId::new(),
+                context.workspace_id,
+                context.principal_id,
+                "test-allow-v1",
+                &request,
+                &[grant],
+                at,
+            )?)
+        }
+    }
+
+    fn make_denying_server() -> McpServer {
+        McpServer::new_with_policy(
+            Arc::new(StubMemory),
+            Arc::new(RetrievalService::new(
+                Arc::new(StubTextRetriever),
+                Arc::new(StubJournal),
+            )),
+            Arc::new(StubModelRepo),
+            Arc::new(StubAgentRepo),
+            Arc::new(StubSkillRepo),
+            Arc::new(StubWorkflowRepo),
+            Arc::new(StubEvaluationRepo),
+            Arc::new(NullExecutionHistoryRepository::new()),
+            Arc::new(DenyAllPolicyEngine),
         )
     }
 
@@ -909,7 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_tool_returns_error() {
         let server = make_server();
-        let result = server
+        let error = server
             .handle_tool_call(
                 WorkspaceId::new(),
                 PrincipalId::new(),
@@ -917,8 +1076,46 @@ mod tests {
                 &serde_json::json!({}),
             )
             .await
-            .unwrap();
-        assert!(result.is_error);
+            .unwrap_err();
+        assert!(
+            matches!(error, ApplicationError::Policy(message) if message.contains("unknown MCP tool"))
+        );
+    }
+
+    #[tokio::test]
+    async fn denied_tool_call_stops_before_dispatch() {
+        let server = make_denying_server();
+        let error = server
+            .handle_tool_call(
+                WorkspaceId::new(),
+                PrincipalId::new(),
+                "vestrace_models_list",
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ApplicationError::Policy(message) if message.contains("DefaultDeny"))
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_is_denied_before_unknown_tool_fallback() {
+        let server = make_denying_server();
+        let error = server
+            .handle_tool_call(
+                WorkspaceId::new(),
+                PrincipalId::new(),
+                "unregistered_tool",
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ApplicationError::Policy(message) if message.contains("unknown MCP tool"))
+        );
     }
 
     #[tokio::test]

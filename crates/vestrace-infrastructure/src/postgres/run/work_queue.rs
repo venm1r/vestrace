@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
 use vestrace_application::run::ports::{LeaseWorkRequest, WorkItem, WorkItemKind, WorkQueuePort};
 use vestrace_application::{ApplicationError, RequestContext};
 use vestrace_domain::id::{AgentRunId, WorkItemId};
@@ -8,15 +8,25 @@ use vestrace_domain::time::Timestamp;
 
 use super::super::PgStore;
 
+/// The run work queue.
+///
+/// # Why this holds a store and not a pool
+///
+/// Unlike most of the adapters converted in these batches, every statement here
+/// already carried `workspace_id = $n`. What it lacked was the connection: the
+/// queries went through a bare pool, so no `vestrace.workspace_id` was ever set
+/// and the policy on `run_work_items` had nothing to compare against. The
+/// predicate was doing all of the work alone, correctly, with no second line of
+/// defence if a future query forgot it.
 #[derive(Clone)]
 pub struct PgWorkQueuePort {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgWorkQueuePort {
     pub fn new(store: &PgStore) -> Self {
         Self {
-            pool: store.pool().clone(),
+            store: store.clone(),
         }
     }
 }
@@ -84,14 +94,28 @@ impl WorkQueuePort for PgWorkQueuePort {
         let now = request.now;
         let lease_until = request.lease_until;
 
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
         let row: Option<WorkItemRow> = sqlx::query_as::<_, WorkItemRow>(
             r#"
             WITH next_item AS (
                 SELECT id
                 FROM run_work_items
                 WHERE workspace_id = $1
-                  AND status = 'ready'
                   AND available_at <= $2
+                  AND (
+                        status = 'ready'
+                        -- An item whose lease has expired is reclaimable. Without
+                        -- this a worker that stopped between leasing and
+                        -- completing an item stranded it permanently, because
+                        -- nothing ever moved it back to 'ready' — which defeats
+                        -- the purpose of the lease having an expiry at all.
+                        OR (status = 'leased' AND lease_until IS NOT NULL AND lease_until <= $2)
+                      )
                 ORDER BY priority DESC, available_at, created_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -114,9 +138,18 @@ impl WorkQueuePort for PgWorkQueuePort {
         .bind(now)
         .bind(&worker_id)
         .bind(lease_until)
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        // `FOR UPDATE SKIP LOCKED` holds its row lock until this commit, which
+        // is what keeps two workers from leasing the same item. It used to be
+        // released by the implicit commit of a single autocommit statement; the
+        // window is the same length here, just explicit.
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         match row {
             Some(row) => Ok(Some(WorkItem::try_from(row)?)),
@@ -133,6 +166,12 @@ impl WorkQueuePort for PgWorkQueuePort {
         let id = item.id.as_uuid();
         let workspace_id = context.workspace_id.as_uuid();
 
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
         let result = sqlx::query(
             r#"
             UPDATE run_work_items
@@ -148,9 +187,14 @@ impl WorkQueuePort for PgWorkQueuePort {
         .bind(id)
         .bind(workspace_id)
         .bind(at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(ApplicationError::Conflict(
@@ -171,6 +215,12 @@ impl WorkQueuePort for PgWorkQueuePort {
         let workspace_id = context.workspace_id.as_uuid();
         let error_json =
             serde_json::to_value(&error).map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         let result = sqlx::query(
             r#"
@@ -194,9 +244,14 @@ impl WorkQueuePort for PgWorkQueuePort {
         .bind(item.attempt as i32)
         .bind(available_at)
         .bind(error_json)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(ApplicationError::Conflict(
@@ -215,6 +270,12 @@ impl WorkQueuePort for PgWorkQueuePort {
         let run_id = run_id.as_uuid();
         let workspace_id = context.workspace_id.as_uuid();
 
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
         let result = sqlx::query(
             r#"
             UPDATE run_work_items
@@ -230,9 +291,14 @@ impl WorkQueuePort for PgWorkQueuePort {
         .bind(run_id)
         .bind(workspace_id)
         .bind(at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         Ok(result.rows_affected())
     }
@@ -248,6 +314,12 @@ impl WorkQueuePort for PgWorkQueuePort {
         let workspace_id = context.workspace_id.as_uuid();
         let error_json =
             serde_json::to_value(&error).map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         let result = sqlx::query(
             r#"
@@ -267,9 +339,14 @@ impl WorkQueuePort for PgWorkQueuePort {
         .bind(&item.idempotency_key)
         .bind(error_json)
         .bind(at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(ApplicationError::Conflict("work item not found".into()));

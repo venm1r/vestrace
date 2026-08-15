@@ -20,7 +20,9 @@ fn help_lists_all_supported_subcommands() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    for subcommand in ["server", "worker", "mcp", "migrate", "doctor", "rebuild"] {
+    for subcommand in [
+        "server", "worker", "mcp", "migrate", "doctor", "plan", "repair", "rebuild",
+    ] {
         assert!(
             stdout.contains(subcommand),
             "missing {subcommand} in:\n{stdout}"

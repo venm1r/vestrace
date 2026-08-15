@@ -107,13 +107,53 @@ impl StartupRecoveryReport {
     }
 }
 
+/// Durable discovery of runs that were interrupted before the current process
+/// started. Implementations are workspace-scoped: they see only the workspace
+/// carried by the supplied context.
+#[async_trait]
+pub trait StartupRecoveryCandidateSource: Send + Sync {
+    async fn find_startup_recovery_candidates(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Vec<StartupRecoveryCandidate>, ApplicationError>;
+}
+
 pub struct StartupRecoveryService {
     operations: Arc<dyn RunRecoveryOperations>,
+    candidates: Option<Arc<dyn StartupRecoveryCandidateSource>>,
 }
 
 impl StartupRecoveryService {
     pub fn new(operations: Arc<dyn RunRecoveryOperations>) -> Self {
-        Self { operations }
+        Self {
+            operations,
+            candidates: None,
+        }
+    }
+
+    pub fn with_candidate_source(
+        operations: Arc<dyn RunRecoveryOperations>,
+        candidates: Arc<dyn StartupRecoveryCandidateSource>,
+    ) -> Self {
+        Self {
+            operations,
+            candidates: Some(candidates),
+        }
+    }
+
+    /// Discover interrupted runs durably and recover them. An unconfigured
+    /// source or a failing query is an error, never an empty recovery run.
+    pub async fn run_discovered(
+        &self,
+        context: &RequestContext,
+    ) -> Result<StartupRecoveryReport, ApplicationError> {
+        let source = self.candidates.as_ref().ok_or_else(|| {
+            ApplicationError::InvalidConfiguration(
+                "startup recovery candidate source is not configured".to_owned(),
+            )
+        })?;
+        let candidates = source.find_startup_recovery_candidates(context).await?;
+        self.run(context, candidates).await
     }
 
     pub async fn run(

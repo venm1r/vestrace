@@ -1,21 +1,42 @@
 use async_trait::async_trait;
-use sqlx::PgPool;
-use vestrace_application::{ApplicationError, RelationRepository};
+use vestrace_application::{ApplicationError, RelationRepository, RequestContext};
 use vestrace_domain::KnowledgeRelation;
 
+use super::PgStore;
+
 pub struct PgRelationRepository {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PgRelationRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
     }
+}
+
+fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
+    ApplicationError::Storage(error.to_string())
 }
 
 #[async_trait]
 impl RelationRepository for PgRelationRepository {
-    async fn save_relation(&self, relation: &KnowledgeRelation) -> Result<(), ApplicationError> {
+    async fn save_relation(
+        &self,
+        context: &RequestContext,
+        relation: &KnowledgeRelation,
+    ) -> Result<(), ApplicationError> {
+        if relation.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "a knowledge relation cannot be written into another workspace".into(),
+            ));
+        }
+
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
         let type_str = match relation.relation_type {
             vestrace_domain::RelationType::Supports => "supports",
             vestrace_domain::RelationType::Contradicts => "contradicts",
@@ -38,10 +59,10 @@ impl RelationRepository for PgRelationRepository {
         .bind(type_str)
         .bind(relation.confidence.value())
         .bind(relation.created_at)
-        .execute(&self.pool)
+        .execute(scoped.connection())
         .await
-        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
+        .map_err(storage_error)?;
 
-        Ok(())
+        scoped.commit().await.map_err(storage_error)
     }
 }

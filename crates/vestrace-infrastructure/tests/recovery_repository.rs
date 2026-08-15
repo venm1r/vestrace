@@ -122,8 +122,25 @@ async fn recovery_repository_rejects_conflicting_reuse_of_immutable_ids(pool: Pg
     let conflicting: Incident = serde_json::from_value(payload).unwrap();
 
     repository.insert_incident(&first).await.unwrap();
-    assert!(matches!(
-        repository.insert_incident(&conflicting).await,
-        Err(ApplicationError::Conflict(_))
-    ));
+    let outcome = repository.insert_incident(&conflicting).await;
+    assert!(
+        matches!(outcome, Err(ApplicationError::Conflict(_))),
+        "unexpected outcome: {outcome:?}"
+    );
+}
+
+/// `now()` carries nanoseconds; a PostgreSQL `TIMESTAMPTZ` column carries
+/// microseconds. The indexed column is a truncated index of the payload value,
+/// so read-back must compare it at the column's precision instead of rejecting
+/// every record written with a real clock reading.
+#[sqlx::test(migrations = "../../migrations")]
+async fn recovery_records_survive_sub_microsecond_timestamps(pool: PgPool) {
+    let repository = PgRecoveryRepository::new(PgStore::from_pool(pool));
+    let at = now() + Duration::nanoseconds(1);
+    let incident = incident(HealthScope::workspace(WorkspaceId::new()), at);
+
+    repository.insert_incident(&incident).await.unwrap();
+
+    let found = repository.find_incident(incident.id()).await.unwrap();
+    assert_eq!(found, Some(incident));
 }

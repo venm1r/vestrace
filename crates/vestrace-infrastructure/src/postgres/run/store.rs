@@ -14,15 +14,22 @@ use vestrace_domain::time::Timestamp;
 
 use super::super::PgStore;
 
+/// The durable run store.
+///
+/// Holds the `PgStore` rather than a bare pool so every statement runs inside a
+/// workspace-scoped transaction. It previously used the pool directly, which
+/// meant `vestrace.workspace_id` was never set: under `FORCE ROW LEVEL
+/// SECURITY` the policies then match nothing and every read and write is
+/// refused. It failed closed rather than leaking, but it could not work at all.
 #[derive(Clone)]
 pub struct PostgresRunStore {
-    pool: PgPool,
+    store: PgStore,
 }
 
 impl PostgresRunStore {
     pub fn new(store: &PgStore) -> Self {
         Self {
-            pool: store.pool().clone(),
+            store: store.clone(),
         }
     }
 }
@@ -178,36 +185,58 @@ impl TryFrom<RunStepRow> for RunStep {
     }
 }
 
+/// Mirrors `run_checkpoints` as migrations 0112 and 0131 left it: keyed by
+/// `(workspace_id, run_id, sequence)` with no `id` column, and no
+/// `active_plan_revision_id`.
 #[derive(Debug, FromRow)]
 struct RunCheckpointRow {
-    id: uuid::Uuid,
     workspace_id: uuid::Uuid,
     run_id: uuid::Uuid,
-    run_version: i64,
-    active_plan_revision_id: Option<uuid::Uuid>,
-    payload: serde_json::Value,
+    sequence: i64,
+    state: serde_json::Value,
     created_at: Timestamp,
+}
+
+/// A stable id for a checkpoint that the table no longer stores one for.
+///
+/// Derived from `(run_id, sequence)`, which is the checkpoint's actual
+/// identity after migration 0112. A random id would make two reads of the same
+/// checkpoint compare unequal, which replay and recovery both rely on.
+fn checkpoint_identity(run_id: uuid::Uuid, sequence: i64) -> uuid::Uuid {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(run_id.as_bytes());
+    hasher.update(sequence.to_be_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Uuid::from_bytes(bytes)
 }
 
 impl TryFrom<RunCheckpointRow> for RunCheckpoint {
     type Error = ApplicationError;
 
     fn try_from(row: RunCheckpointRow) -> Result<Self, Self::Error> {
-        let run_version =
-            u64::try_from(row.run_version).map_err(|e| ApplicationError::Storage(e.to_string()))?;
+        let sequence =
+            u64::try_from(row.sequence).map_err(|e| ApplicationError::Storage(e.to_string()))?;
         let version =
-            RunVersion::new(run_version).map_err(|e| ApplicationError::Storage(e.to_string()))?;
+            RunVersion::new(sequence).map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
-        let payload: vestrace_domain::run::RunCheckpointPayload =
-            serde_json::from_value(row.payload)
-                .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+        let payload: vestrace_domain::run::RunCheckpointPayload = serde_json::from_value(row.state)
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         Ok(Self {
-            id: RunCheckpointId::from_uuid(row.id),
+            // The table no longer has an `id` column: a checkpoint is
+            // identified by `(workspace_id, run_id, sequence)`. The domain type
+            // still carries an id, so it is derived from the sequence rather
+            // than invented at random, which would make two reads of the same
+            // checkpoint compare unequal.
+            id: RunCheckpointId::from_uuid(checkpoint_identity(row.run_id, row.sequence)),
             workspace_id: WorkspaceId::from_uuid(row.workspace_id),
             run_id: AgentRunId::from_uuid(row.run_id),
             run_version: version,
-            active_plan_revision_id: row.active_plan_revision_id.map(PlanRevisionId::from_uuid),
+            // Dropped by migration 0131; nothing stores it any more.
+            active_plan_revision_id: None,
             resume_cursor: vestrace_domain::run::ResumeCursor::from_version(version),
             payload,
             created_at: row.created_at,
@@ -225,6 +254,12 @@ impl RunStorePort for PostgresRunStore {
         let ws = context.workspace_id.as_uuid();
         let rid = run_id.as_uuid();
 
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
         let run_row: Option<AgentRunRow> = sqlx::query_as::<_, AgentRunRow>(
             r#"
             SELECT id, workspace_id, objective, coordinator_snapshot_id,
@@ -238,11 +273,15 @@ impl RunStorePort for PostgresRunStore {
         )
         .bind(ws)
         .bind(rid)
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         let Some(run_row) = run_row else {
+            scoped
+                .commit()
+                .await
+                .map_err(|e| ApplicationError::Storage(e.to_string()))?;
             return Ok(None);
         };
 
@@ -259,7 +298,7 @@ impl RunStorePort for PostgresRunStore {
             "#,
         )
         .bind(rid)
-        .fetch_all(&self.pool)
+        .fetch_all(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -270,18 +309,22 @@ impl RunStorePort for PostgresRunStore {
 
         let checkpoint_row: Option<RunCheckpointRow> = sqlx::query_as::<_, RunCheckpointRow>(
             r#"
-            SELECT id, workspace_id, run_id, run_version, active_plan_revision_id,
-                   payload, created_at
+            SELECT workspace_id, run_id, sequence, state, created_at
             FROM run_checkpoints
             WHERE run_id = $1
-            ORDER BY run_version DESC
+            ORDER BY sequence DESC
             LIMIT 1
             "#,
         )
         .bind(rid)
-        .fetch_optional(&self.pool)
+        .fetch_optional(scoped.connection())
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+
+        scoped
+            .commit()
+            .await
+            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
         let checkpoint = checkpoint_row.map(RunCheckpoint::try_from).transpose()?;
 
@@ -298,11 +341,12 @@ impl RunStorePort for PostgresRunStore {
         commit: CommitRun,
     ) -> Result<RunSnapshot, ApplicationError> {
         let ws = context.workspace_id.as_uuid();
-        let mut tx = self
-            .pool
-            .begin()
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+        let tx = scoped.connection();
 
         let run = &commit.run;
         let run_id = run.id.as_uuid();
@@ -311,17 +355,29 @@ impl RunStorePort for PostgresRunStore {
         let parent_run_id = run.parent.map(|p| p.parent_run_id.as_uuid());
         let parent_step_id = run.parent.map(|p| p.parent_step_id.as_uuid());
 
+        // `principal_id` and `title` are NOT NULL in `agent_runs` and were both
+        // absent from this statement, so this store could never insert a run
+        // against the real schema. The coordinator path was not merely unwired
+        // — it was broken, and no test caught it because the coordinator's own
+        // tests use an in-memory store rather than PostgreSQL.
+        //
+        // `principal_id` comes from the request context: the durable `AgentRun`
+        // carries no principal, and the run belongs to whoever asked for it.
+        // `title` takes the objective, which is what the read path already
+        // reports as the title.
         sqlx::query(
             r#"
             INSERT INTO agent_runs
-                (id, workspace_id, objective, coordinator_snapshot_id, execution_mode,
+                (id, workspace_id, principal_id, title, objective,
+                 coordinator_snapshot_id, execution_mode,
                  status, run_version, parent_run_id, parent_step_id, root_run_id,
                  created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+            VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
             "#,
         )
         .bind(run_id)
         .bind(ws)
+        .bind(context.principal_id.as_uuid())
         .bind(&run.objective)
         .bind(run.coordinator_snapshot_id.as_uuid())
         .bind(run.execution_mode.as_str())
@@ -335,21 +391,36 @@ impl RunStorePort for PostgresRunStore {
         .await
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
-        append_event(&mut tx, ws, &commit.event).await?;
+        // Migration 0112 states that `run_streams` is authoritative and that
+        // `agent_runs` and `run_checkpoints` are derived from it. This store
+        // never advanced the stream, so its version stayed at the 0 the
+        // `agent_runs_seed_run_stream` trigger seeds, while `agent_runs`
+        // advanced — and `PgRunRecoveryStore` reads the run's version from the
+        // stream, so recovery would have acted on a version of 0.
+        //
+        // `DO UPDATE`, not `DO NOTHING`: the trigger has already inserted the
+        // row by the time this runs, so `DO NOTHING` would leave it at 0.
+        //
+        // The version tracked is the appended event's, because the stream is a
+        // record of events and not of the projection built from them.
+        advance_stream(tx, ws, run_id, commit.event.run_version, now).await?;
+
+        append_event(tx, ws, &commit.event).await?;
 
         for step in &commit.new_steps {
-            insert_step(&mut tx, ws, step).await?;
+            insert_step(tx, ws, step).await?;
         }
 
         if let Some(checkpoint) = &commit.checkpoint {
-            insert_checkpoint(&mut tx, ws, checkpoint).await?;
+            insert_checkpoint(tx, ws, checkpoint).await?;
         }
 
         for item in &commit.work_items {
-            insert_work_item(&mut tx, ws, item).await?;
+            insert_work_item(tx, ws, item).await?;
         }
 
-        tx.commit()
+        scoped
+            .commit()
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -373,11 +444,12 @@ impl RunStorePort for PostgresRunStore {
         let new_version = run.version;
         let now = run.updated_at;
 
-        let mut tx = self
-            .pool
-            .begin()
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+        let tx = scoped.connection();
 
         let result_json = run
             .result
@@ -425,7 +497,7 @@ impl RunStorePort for PostgresRunStore {
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
-            drop(tx);
+            drop(scoped);
             return Err(ApplicationError::Conflict(format!(
                 "revision_conflict: expected version {}, found {:?}",
                 expected_version.value(),
@@ -433,21 +505,26 @@ impl RunStorePort for PostgresRunStore {
             )));
         }
 
-        append_event(&mut tx, ws, &commit.event).await?;
+        // Keeps the authoritative stream level with the event just appended;
+        // see the note in `create`.
+        advance_stream(tx, ws, run_id, commit.event.run_version, now).await?;
+
+        append_event(tx, ws, &commit.event).await?;
 
         for step in &commit.new_steps {
-            insert_step(&mut tx, ws, step).await?;
+            insert_step(tx, ws, step).await?;
         }
 
         if let Some(checkpoint) = &commit.checkpoint {
-            insert_checkpoint(&mut tx, ws, checkpoint).await?;
+            insert_checkpoint(tx, ws, checkpoint).await?;
         }
 
         for item in &commit.work_items {
-            insert_work_item(&mut tx, ws, item).await?;
+            insert_work_item(tx, ws, item).await?;
         }
 
-        tx.commit()
+        scoped
+            .commit()
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -457,8 +534,46 @@ impl RunStorePort for PostgresRunStore {
     }
 }
 
+/// Schema version stamped on every canonical run event.
+///
+/// Matches the legacy writer's `event_version()`, so a reader cannot tell the
+/// two writers apart by this column and a historical row stays interpretable.
+const CANONICAL_RUN_EVENT_VERSION: i16 = 1;
+
+/// Move `run_streams.current_version` to the version of the event being
+/// appended.
+///
+/// The row normally exists already — `agent_runs_seed_run_stream` inserts it at
+/// version 0 — but it is upserted so a run whose projection predates the
+/// trigger still gets a stream rather than silently having none.
+async fn advance_stream(
+    connection: &mut sqlx::PgConnection,
+    workspace_id: uuid::Uuid,
+    run_id: uuid::Uuid,
+    version: RunVersion,
+    at: Timestamp,
+) -> Result<(), ApplicationError> {
+    sqlx::query(
+        r#"
+        INSERT INTO run_streams (workspace_id, run_id, current_version, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $4)
+        ON CONFLICT (workspace_id, run_id)
+        DO UPDATE SET current_version = EXCLUDED.current_version,
+                      updated_at = EXCLUDED.updated_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(run_id)
+    .bind(version.value() as i64)
+    .bind(at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+    Ok(())
+}
+
 async fn append_event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: &mut sqlx::PgConnection,
     workspace_id: uuid::Uuid,
     event: &RunEvent,
 ) -> Result<(), ApplicationError> {
@@ -467,13 +582,27 @@ async fn append_event(
     let actor_json =
         serde_json::to_value(&event.actor).map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
+    // `event_version` and `causation_id` are NOT NULL with no default, and
+    // neither was supplied here, so this statement could never insert against
+    // the real schema. The legacy committer wrote both, which is why only this
+    // path was broken.
+    //
+    // `causation_id` falls back to the event's own id when the event was not
+    // caused by another: the column cannot be null, and pointing an uncaused
+    // event at itself says "this is where the chain starts" rather than
+    // inventing a link to an unrelated event.
+    let causation_id = event
+        .causation_event_id
+        .map(|id| id.as_uuid())
+        .unwrap_or_else(|| event.id.as_uuid());
+
     sqlx::query(
         r#"
         INSERT INTO run_events
             (id, workspace_id, run_id, sequence, run_version, sequence_value,
-             event_type, payload_kind, payload, actor,
-             correlation_id, causation_event_id, occurred_at, recorded_at)
-        VALUES ($1, $2, $3, $4, $5, $5, $6, $6, $7, $8, $9, $10, $11, $11)
+             event_type, event_version, payload_kind, payload, actor,
+             correlation_id, causation_id, occurred_at, recorded_at)
+        VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $6, $8, $9, $10, $11, $12, $12)
         "#,
     )
     .bind(event.id.as_uuid())
@@ -482,12 +611,13 @@ async fn append_event(
     .bind(event.sequence.value() as i64)
     .bind(event.run_version.value() as i64)
     .bind(event.payload.event_type())
+    .bind(CANONICAL_RUN_EVENT_VERSION)
     .bind(&payload_json)
     .bind(&actor_json)
     .bind(event.correlation_id.as_uuid())
-    .bind(event.causation_event_id.map(|e| e.as_uuid()))
+    .bind(causation_id)
     .bind(event.occurred_at)
-    .execute(&mut **tx)
+    .execute(&mut *connection)
     .await
     .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -495,7 +625,7 @@ async fn append_event(
 }
 
 async fn insert_step(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: &mut sqlx::PgConnection,
     _workspace_id: uuid::Uuid,
     step: &RunStep,
 ) -> Result<(), ApplicationError> {
@@ -510,13 +640,35 @@ async fn insert_step(
         .as_ref()
         .map(|e| serde_json::to_value(e).unwrap_or(serde_json::Value::Null));
 
+    // `step_number` is NOT NULL with no default and unique per run, and was
+    // absent here. It is derived in the statement rather than in Rust so two
+    // concurrent inserts inside one transaction cannot pick the same number.
+    //
+    // An upsert, not a plain insert: `CommitRun::new_steps` carries steps to
+    // *persist*, which includes ones that already exist with a changed status —
+    // `ExecuteStepHandler` puts the running and then the finished step there.
+    // A plain insert therefore failed with a duplicate key the moment a step
+    // was executed, and the run could never progress past its first step.
+    //
+    // `step_number`, `run_id` and `created_at` are deliberately not updated:
+    // a step's position and origin do not change, only its progress does.
     sqlx::query(
         r#"
         INSERT INTO run_steps
-            (id, workspace_id, run_id, plan_step_reference, assigned_actor,
+            (id, workspace_id, run_id, step_number, plan_step_reference, assigned_actor,
              input_references, status, attempt, output_references, error,
              created_at, started_at, finished_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3,
+                (SELECT COALESCE(MAX(step_number), 0) + 1 FROM run_steps WHERE run_id = $3),
+                $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+            status = EXCLUDED.status,
+            attempt = EXCLUDED.attempt,
+            output_references = EXCLUDED.output_references,
+            error = EXCLUDED.error,
+            started_at = EXCLUDED.started_at,
+            finished_at = EXCLUDED.finished_at,
+            updated_at = NOW()
         "#,
     )
     .bind(step.id.as_uuid())
@@ -532,7 +684,7 @@ async fn insert_step(
     .bind(step.created_at)
     .bind(step.started_at)
     .bind(step.finished_at)
-    .execute(&mut **tx)
+    .execute(&mut *connection)
     .await
     .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -540,28 +692,42 @@ async fn insert_step(
 }
 
 async fn insert_checkpoint(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: &mut sqlx::PgConnection,
     workspace_id: uuid::Uuid,
     checkpoint: &RunCheckpoint,
 ) -> Result<(), ApplicationError> {
     let payload_json = serde_json::to_value(&checkpoint.payload)
         .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
+    // Migration 0112 renamed `run_version` to `sequence` and `state_snapshot`
+    // to `state`, dropped `id`, and added a mandatory `state_hash`; migration
+    // 0131 dropped `resume_cursor`, `payload` and `payload_version`. This
+    // statement still named the pre-0112 columns and could never execute.
+    //
+    // `state_hash` pins the stored state, so a checkpoint that was altered in
+    // place can be detected rather than resumed from.
+    let state_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(payload_json.to_string().as_bytes());
+        format!("{:x}", hasher.finalize())
+    };
+
     sqlx::query(
         r#"
         INSERT INTO run_checkpoints
-            (id, workspace_id, run_id, run_version, resume_cursor,
-             payload, payload_version, created_at)
-        VALUES ($1, $2, $3, $4, $4, $5, 'v1', $6)
+            (workspace_id, run_id, sequence, state, state_hash, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (workspace_id, run_id, sequence) DO NOTHING
         "#,
     )
-    .bind(checkpoint.id.as_uuid())
     .bind(workspace_id)
     .bind(checkpoint.run_id.as_uuid())
     .bind(checkpoint.run_version.value() as i64)
     .bind(&payload_json)
+    .bind(&state_hash)
     .bind(checkpoint.created_at)
-    .execute(&mut **tx)
+    .execute(&mut *connection)
     .await
     .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
@@ -569,7 +735,7 @@ async fn insert_checkpoint(
 }
 
 async fn insert_work_item(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: &mut sqlx::PgConnection,
     workspace_id: uuid::Uuid,
     item: &vestrace_application::run::ports::WorkItem,
 ) -> Result<(), ApplicationError> {
@@ -598,7 +764,7 @@ async fn insert_work_item(
     .bind(item.available_at)
     .bind(item.attempt as i32)
     .bind(&item.idempotency_key)
-    .execute(&mut **tx)
+    .execute(&mut *connection)
     .await
     .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 

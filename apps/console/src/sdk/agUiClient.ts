@@ -59,7 +59,7 @@ export const agUiClient = {
     }),
 
   /**
-   * Opens the AG-UI event stream. The gateway answers 501 in the P0 foundation;
+   * Opens the AG-UI event stream. The gateway answers 501 in this build;
    * the connection is closed on the first error instead of letting the browser
    * reconnect forever, and the failure is reported to the caller rather than
    * being replaced with fabricated data.

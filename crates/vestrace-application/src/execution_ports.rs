@@ -6,9 +6,9 @@ use crate::{ApplicationError, RequestContext};
 use vestrace_domain::{
     ArtifactKind, ExecutionStatus, OutcomeKind, StepKind,
     id::{
-        AgentId, ExecutionArtifactId, ExecutionOutcomeId, ModelExecutionAttemptId, StepExecutionId,
-        ToolInvocationId, WorkflowExecutionId, WorkflowId, WorkflowNodeId, WorkflowRevisionId,
-        WorkspaceId,
+        AgentId, AgentRunId, ExecutionArtifactId, ExecutionOutcomeId, ModelExecutionAttemptId,
+        StepExecutionId, ToolInvocationId, WorkflowExecutionId, WorkflowId, WorkflowNodeId,
+        WorkflowRevisionId, WorkspaceId,
     },
     time::Timestamp,
 };
@@ -26,6 +26,7 @@ pub struct WorkflowExecutionRecord {
     pub completed_at: Option<Timestamp>,
     pub correlation_id: Option<String>,
     pub causation_id: Option<String>,
+    pub run_id: Option<AgentRunId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,6 +47,7 @@ pub struct StepExecutionRecord {
     pub error_message: Option<String>,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
+    pub run_id: Option<AgentRunId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

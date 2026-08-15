@@ -39,17 +39,22 @@ export const HomePage: React.FC = () => {
   const cards: Array<[string, string]> = metrics
     ? [
         ['Live Runs', String(metrics.live_runs)],
-        ['Active Agents', String(metrics.active_agents)],
-        ['Average Latency', metrics.avg_latency],
-        ['Budget', `${metrics.budget_spent} / ${metrics.budget_limit}`],
+        ['Runs Today', String(metrics.runs_today)],
+        ['Registered Agents', String(metrics.registered_agents)],
+        [
+          'Run Budget Ceiling',
+          metrics.run_budget_cap_micros === null
+            ? 'no cap set'
+            : (metrics.run_budget_cap_micros / 1_000_000).toFixed(2),
+        ],
       ]
     : [];
 
   return (
     <PageShell>
       <PageHeader
-        title="Vestrace P0 Foundation"
-        description="Persisted run records are available. Agent execution, metrics, approvals, and orchestration remain outside P0."
+        title="Vestrace Execution Kernel"
+        description="Persisted run records are available. Agent execution, metrics, approvals, and orchestration are not implemented yet."
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />

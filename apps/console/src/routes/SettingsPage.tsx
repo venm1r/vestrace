@@ -1,40 +1,56 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import {
+  UpdateWorkspaceSettingsPayload,
+  WorkspaceSettings,
+  vestraceClient,
+} from '../sdk/client';
+import { useApiResource } from '../sdk/useApiResource';
 import {
   ActionButton,
   NoticeBanner,
   PageHeader,
   PageShell,
   Panel,
+  ResourceState,
   StatusMessage,
+  describeError,
   useNotice,
 } from '../shell/PageState';
 
-type TabId = 'kernel' | 'security' | 'database' | 'telemetry';
+type TabId = 'kernel' | 'telemetry' | 'environment';
 
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'kernel', label: 'Kernel Constraints', icon: 'memory' },
-  { id: 'security', label: 'Security & RLS', icon: 'shield' },
-  { id: 'database', label: 'Database & Pools', icon: 'database' },
-  { id: 'telemetry', label: 'Telemetry & Logs', icon: 'monitoring' },
+  { id: 'telemetry', label: 'Telemetry', icon: 'monitoring' },
+  { id: 'environment', label: 'Environment', icon: 'shield' },
 ];
 
-interface KernelSettings {
+const LOG_LEVELS = ['error', 'warn', 'info', 'debug', 'trace'] as const;
+
+/** The API stores a budget cap in micro-units; operators think in whole units. */
+const MICROS_PER_UNIT = 1_000_000;
+
+interface EditableSettings {
   maxConcurrentRuns: number;
-  budgetCapUsd: number;
-  rlsEnforced: boolean;
-  mfaEnforced: boolean;
-  dbPoolSize: number;
+  budgetCapUnits: number;
   logLevel: string;
 }
 
-const DEFAULT_SETTINGS: KernelSettings = {
-  maxConcurrentRuns: 10,
-  budgetCapUsd: 10,
-  rlsEnforced: true,
-  mfaEnforced: true,
-  dbPoolSize: 25,
-  logLevel: 'INFO',
-};
+function toEditable(settings: WorkspaceSettings): EditableSettings {
+  return {
+    maxConcurrentRuns: settings.max_concurrent_runs,
+    budgetCapUnits: settings.run_budget_cap_micros / MICROS_PER_UNIT,
+    logLevel: settings.log_level,
+  };
+}
+
+function toPayload(draft: EditableSettings): UpdateWorkspaceSettingsPayload {
+  return {
+    max_concurrent_runs: draft.maxConcurrentRuns,
+    run_budget_cap_micros: Math.round(draft.budgetCapUnits * MICROS_PER_UNIT),
+    log_level: draft.logLevel,
+  };
+}
 
 const cardStyle: React.CSSProperties = {
   background: 'var(--color-surface-container-low)',
@@ -51,324 +67,355 @@ const fieldStyle: React.CSSProperties = {
   padding: '8px 12px',
 };
 
-const Row: React.FC<{ label: string; hint: string; control: React.ReactNode; htmlFor?: string }> = ({
+const headingStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-display)',
+  fontSize: '18px',
+  fontWeight: 600,
+  color: 'var(--text-primary)',
+  marginTop: 0,
+  marginBottom: '16px',
+};
+
+const Row: React.FC<{
+  label: string;
+  hint: string;
+  control: React.ReactNode;
+  htmlFor?: string;
+}> = ({ label, hint, control, htmlFor }) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: '24px',
+      flexWrap: 'wrap',
+    }}
+  >
+    <div style={{ minWidth: '260px', flex: 1 }}>
+      <label htmlFor={htmlFor} style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: 500 }}>
+        {label}
+      </label>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '4px 0 0' }}>{hint}</p>
+    </div>
+    <div>{control}</div>
+  </div>
+);
+
+/**
+ * A value the runtime reports about its environment. It is shown, never edited:
+ * these are determined by the database and process configuration, so a control
+ * here would be a control that changes nothing.
+ */
+const ObservedRow: React.FC<{ label: string; value: string; hint: string }> = ({
   label,
+  value,
   hint,
-  control,
-  htmlFor,
 }) => (
   <div
     style={{
       display: 'flex',
+      alignItems: 'flex-start',
       justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: '16px',
+      gap: '24px',
       flexWrap: 'wrap',
     }}
   >
-    <div style={{ minWidth: '240px', flex: 1 }}>
-      <label htmlFor={htmlFor} style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'block' }}>
-        {label}
-      </label>
-      <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{hint}</div>
+    <div style={{ minWidth: '260px', flex: 1 }}>
+      <span style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: 500 }}>{label}</span>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '4px 0 0' }}>{hint}</p>
     </div>
-    {control}
+    <span
+      style={{
+        color: 'var(--text-secondary)',
+        fontFamily: 'var(--font-mono, monospace)',
+        fontSize: '13px',
+        padding: '8px 12px',
+      }}
+    >
+      {value}
+    </span>
   </div>
-);
-
-const Toggle: React.FC<{
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  onLabel: string;
-  offLabel: string;
-  describes: string;
-}> = ({ checked, onChange, onLabel, offLabel, describes }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    aria-label={describes}
-    onClick={() => onChange(!checked)}
-    style={{
-      background: checked ? 'var(--color-success)' : 'var(--color-surface-container-high)',
-      color: checked ? '#04140a' : 'var(--text-secondary)',
-      border: '1px solid var(--color-outline)',
-      borderRadius: '12px',
-      padding: '6px 16px',
-      fontSize: '13px',
-      fontWeight: 700,
-      cursor: 'pointer',
-      minWidth: '110px',
-    }}
-  >
-    {checked ? onLabel : offLabel}
-  </button>
 );
 
 export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('kernel');
-  const [settings, setSettings] = useState<KernelSettings>(DEFAULT_SETTINGS);
+  const { data, error, loading, reload } = useApiResource(vestraceClient.getSettings);
+  const { data: health } = useApiResource(vestraceClient.getSystemHealth);
+  const [persisted, setPersisted] = useState<WorkspaceSettings | null>(null);
+  const [draft, setDraft] = useState<EditableSettings | null>(null);
+  const [saving, setSaving] = useState(false);
   const { notice, notify, dismiss } = useNotice();
 
-  const update = <K extends keyof KernelSettings>(key: K, value: KernelSettings[K]) =>
-    setSettings((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    if (data) {
+      setPersisted(data);
+      setDraft(toEditable(data));
+    }
+  }, [data]);
 
-  const dirty = (Object.keys(DEFAULT_SETTINGS) as Array<keyof KernelSettings>).some(
-    (key) => settings[key] !== DEFAULT_SETTINGS[key],
-  );
+  const update = <K extends keyof EditableSettings>(key: K, value: EditableSettings[K]) =>
+    setDraft((current) => (current ? { ...current, [key]: value } : current));
+
+  const dirty =
+    persisted !== null &&
+    draft !== null &&
+    (draft.maxConcurrentRuns !== persisted.max_concurrent_runs ||
+      Math.round(draft.budgetCapUnits * MICROS_PER_UNIT) !== persisted.run_budget_cap_micros ||
+      draft.logLevel !== persisted.log_level);
+
+  const save = async () => {
+    if (!persisted || !draft || saving) return;
+    setSaving(true);
+    try {
+      const updated = await vestraceClient.updateSettings(toPayload(draft), persisted.version);
+      setPersisted(updated);
+      setDraft(toEditable(updated));
+      notify('success', `Settings saved as revision ${updated.version}.`);
+    } catch (reason: unknown) {
+      const described = describeError(reason, 'settings');
+      notify('error', `${described.title}: ${described.detail}`);
+      // A conflict means someone else advanced the revision; re-read so the
+      // operator edits against the current one rather than retrying blindly.
+      reload();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const discard = () => {
+    if (persisted) setDraft(toEditable(persisted));
+  };
 
   return (
     <PageShell>
       <PageHeader
         title="Kernel Settings & Policy Rules"
-        description="Row-Level Security, envelope encryption, execution constraints, and telemetry."
+        description="Execution constraints and telemetry for this workspace, plus the environment facts the runtime reports."
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />
 
-      <Panel>
-        <StatusMessage
-          tone="warning"
-          title="Settings are not persisted in the P0 foundation"
-          detail="The HTTP adapter exposes no settings endpoint, so edits made here stay in this browser tab and are discarded on reload. The controls show the intended configuration surface."
-        />
-      </Panel>
+      {/* Settings always resolve to a value: an unconfigured workspace reads as
+          defaults, so this surface is never legitimately empty. */}
+      <ResourceState
+        resourceName="settings"
+        loading={loading}
+        error={error}
+        isEmpty={false}
+        emptyMessage=""
+        onRetry={reload}
+      />
 
-      <div
-        role="tablist"
-        aria-label="Settings sections"
-        style={{
-          display: 'flex',
-          gap: '8px',
-          borderBottom: '1px solid var(--color-outline)',
-          paddingBottom: '12px',
-          flexWrap: 'wrap',
-        }}
-      >
-        {TABS.map((tab) => {
-          const selected = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`settings-tab-${tab.id}`}
-              aria-selected={selected}
-              aria-controls={`settings-panel-${tab.id}`}
-              onClick={() => setActiveTab(tab.id)}
+      {draft && persisted && (
+        <>
+          <div
+            role="tablist"
+            aria-label="Settings sections"
+            style={{
+              display: 'flex',
+              gap: '8px',
+              borderBottom: '1px solid var(--color-outline)',
+              paddingBottom: '12px',
+              flexWrap: 'wrap',
+            }}
+          >
+            {TABS.map((tab) => {
+              const selected = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  id={`settings-tab-${tab.id}`}
+                  aria-selected={selected}
+                  aria-controls={`settings-panel-${tab.id}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    background: selected ? 'var(--color-surface-container-high)' : 'transparent',
+                    color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    fontWeight: selected ? 600 : 400,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    aria-hidden="true"
+                    style={{ fontSize: '18px' }}
+                  >
+                    {tab.icon}
+                  </span>
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {activeTab === 'kernel' && (
+            <div
+              role="tabpanel"
+              id="settings-panel-kernel"
+              aria-labelledby="settings-tab-kernel"
+              style={cardStyle}
+            >
+              <h2 style={headingStyle}>Execution limits</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <Row
+                  htmlFor="max-concurrent-runs"
+                  label="Max concurrent agent runs"
+                  hint="Upper bound on runs the workspace may execute at once. Between 1 and 10000."
+                  control={
+                    <input
+                      id="max-concurrent-runs"
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={draft.maxConcurrentRuns}
+                      onChange={(event) =>
+                        update('maxConcurrentRuns', Number(event.target.value))
+                      }
+                      style={{ ...fieldStyle, width: '120px' }}
+                    />
+                  }
+                />
+                <Row
+                  htmlFor="budget-cap"
+                  label="Run budget ceiling"
+                  hint="Per-run spend ceiling in whole currency units. Zero means no cap is expressed."
+                  control={
+                    <input
+                      id="budget-cap"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draft.budgetCapUnits}
+                      onChange={(event) => update('budgetCapUnits', Number(event.target.value))}
+                      style={{ ...fieldStyle, width: '120px' }}
+                    />
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'telemetry' && (
+            <div
+              role="tabpanel"
+              id="settings-panel-telemetry"
+              aria-labelledby="settings-tab-telemetry"
+              style={cardStyle}
+            >
+              <h2 style={headingStyle}>Telemetry</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <Row
+                  htmlFor="log-level"
+                  label="Workspace log level"
+                  hint="Stored with the workspace. The running process also has its own filter, shown under Environment."
+                  control={
+                    <select
+                      id="log-level"
+                      value={draft.logLevel}
+                      onChange={(event) => update('logLevel', event.target.value)}
+                      style={{ ...fieldStyle, width: '140px' }}
+                    >
+                      {LOG_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {level.toUpperCase()}
+                        </option>
+                      ))}
+                    </select>
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'environment' && (
+            <div
+              role="tabpanel"
+              id="settings-panel-environment"
+              aria-labelledby="settings-tab-environment"
+              style={cardStyle}
+            >
+              <h2 style={headingStyle}>Environment</h2>
+              <Panel>
+                <StatusMessage
+                  tone="info"
+                  title="Reported by the runtime, not configurable here"
+                  detail="These are properties of the database and the running process. They are shown so an operator can confirm them, and are deliberately not presented as controls."
+                />
+              </Panel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                <ObservedRow
+                  label="Database role"
+                  value={health ? health.database_role : '—'}
+                  hint="The role the runtime connects as, reported by the database itself."
+                />
+                <ObservedRow
+                  label="Role bypasses row-level security"
+                  value={
+                    health ? (health.database_role_bypasses_rls ? 'yes' : 'no') : '—'
+                  }
+                  hint="Must be no. A role that bypasses RLS can read across every workspace."
+                />
+                <ObservedRow
+                  label="Role is superuser"
+                  value={health ? (health.database_role_is_superuser ? 'yes' : 'no') : '—'}
+                  hint="Must be no. The runtime role is deliberately unprivileged."
+                />
+                <ObservedRow
+                  label="Migration history"
+                  value={
+                    health ? (health.migration_history_compatible ? 'compatible' : 'incompatible') : '—'
+                  }
+                  hint="Whether the applied migrations match the ones this build expects."
+                />
+                <ObservedRow
+                  label="Diagnostic checks"
+                  value={health ? (health.healthy ? 'all passed' : `${health.findings.length} finding(s)`) : '—'}
+                  hint="Result of the same checks the doctor command runs."
+                />
+                <ObservedRow
+                  label="Operator authentication"
+                  value="not implemented"
+                  hint="This build has no authentication or MFA. Identity comes from request headers."
+                />
+              </div>
+            </div>
+          )}
+
+          <Panel>
+            <div
               style={{
-                background: selected ? 'var(--color-surface-container-high)' : 'transparent',
-                color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                fontWeight: selected ? 600 : 400,
-                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                justifyContent: 'space-between',
+                gap: '16px',
+                flexWrap: 'wrap',
               }}
             >
-              <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '18px' }}>
-                {tab.icon}
+              <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                Saved revision {persisted.version}
+                {dirty ? ' · unsaved changes' : ''}
               </span>
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeTab === 'kernel' && (
-        <div role="tabpanel" id="settings-panel-kernel" aria-labelledby="settings-tab-kernel" style={cardStyle}>
-          <h2
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '18px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              marginTop: 0,
-              marginBottom: '16px',
-            }}
-          >
-            Execution limits and autonomy controls
-          </h2>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <Row
-              htmlFor="max-concurrent-runs"
-              label="Max concurrent agent runs"
-              hint="Limit concurrent worker task execution threads per workspace"
-              control={
-                <input
-                  id="max-concurrent-runs"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={settings.maxConcurrentRuns}
-                  onChange={(event) => update('maxConcurrentRuns', Number(event.target.value))}
-                  style={{ ...fieldStyle, width: '96px', textAlign: 'center' }}
-                />
-              }
-            />
-
-            <Row
-              htmlFor="budget-cap"
-              label="Default task budget cap (USD)"
-              hint="Maximum budget allowed for unapproved automated runs"
-              control={
-                <input
-                  id="budget-cap"
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={settings.budgetCapUsd}
-                  onChange={(event) => update('budgetCapUsd', Number(event.target.value))}
-                  style={{ ...fieldStyle, width: '110px', textAlign: 'center' }}
-                />
-              }
-            />
-          </div>
-        </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <ActionButton variant="quiet" icon="undo" onClick={discard} disabled={!dirty || saving}>
+                  Discard
+                </ActionButton>
+                <ActionButton icon="save" onClick={save} disabled={!dirty || saving}>
+                  {saving ? 'Saving…' : 'Save Settings'}
+                </ActionButton>
+              </div>
+            </div>
+          </Panel>
+        </>
       )}
-
-      {activeTab === 'security' && (
-        <div role="tabpanel" id="settings-panel-security" aria-labelledby="settings-tab-security" style={cardStyle}>
-          <h2
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '18px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              marginTop: 0,
-              marginBottom: '16px',
-            }}
-          >
-            Row-Level Security and envelope encryption
-          </h2>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <Row
-              label="Enforce strict PostgreSQL RLS"
-              hint="Require the vestrace.workspace_id session variable on all database operations"
-              control={
-                <Toggle
-                  checked={settings.rlsEnforced}
-                  onChange={(next) => update('rlsEnforced', next)}
-                  onLabel="ENABLED"
-                  offLabel="DISABLED"
-                  describes="Enforce strict PostgreSQL RLS"
-                />
-              }
-            />
-
-            <Row
-              label="Require MFA for operator actions"
-              hint="Challenge high-risk policy approvals with multi-factor authentication"
-              control={
-                <Toggle
-                  checked={settings.mfaEnforced}
-                  onChange={(next) => update('mfaEnforced', next)}
-                  onLabel="ENFORCED"
-                  offLabel="OPTIONAL"
-                  describes="Require MFA for operator actions"
-                />
-              }
-            />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'database' && (
-        <div role="tabpanel" id="settings-panel-database" aria-labelledby="settings-tab-database" style={cardStyle}>
-          <h2
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '18px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              marginTop: 0,
-              marginBottom: '16px',
-            }}
-          >
-            PostgreSQL primary connection pool
-          </h2>
-
-          <Row
-            htmlFor="db-pool-size"
-            label="Max pool connections"
-            hint="Maximum active connections in the sqlx connection pool"
-            control={
-              <input
-                id="db-pool-size"
-                type="number"
-                min={1}
-                max={500}
-                value={settings.dbPoolSize}
-                onChange={(event) => update('dbPoolSize', Number(event.target.value))}
-                style={{ ...fieldStyle, width: '96px', textAlign: 'center' }}
-              />
-            }
-          />
-        </div>
-      )}
-
-      {activeTab === 'telemetry' && (
-        <div role="tabpanel" id="settings-panel-telemetry" aria-labelledby="settings-tab-telemetry" style={cardStyle}>
-          <h2
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '18px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              marginTop: 0,
-              marginBottom: '16px',
-            }}
-          >
-            Tracing subsystem
-          </h2>
-
-          <Row
-            htmlFor="log-level"
-            label="Tracing verbosity level"
-            hint="Rust tracing log level filter"
-            control={
-              <select
-                id="log-level"
-                value={settings.logLevel}
-                onChange={(event) => update('logLevel', event.target.value)}
-                style={{ ...fieldStyle, padding: '8px 16px', fontSize: '14px' }}
-              >
-                {['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'].map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            }
-          />
-        </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-        <ActionButton
-          variant="quiet"
-          disabled={!dirty}
-          onClick={() => {
-            setSettings(DEFAULT_SETTINGS);
-            notify('info', 'Local edits were reverted to the defaults shown by the console.');
-          }}
-        >
-          Reset
-        </ActionButton>
-        <ActionButton
-          disabled
-          title="No settings endpoint exists in the P0 foundation"
-          onClick={() => undefined}
-        >
-          Save Settings
-        </ActionButton>
-      </div>
     </PageShell>
   );
 };

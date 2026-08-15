@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use secrecy::ExposeSecret;
 use sqlx::{Row, postgres::PgPoolOptions};
+use vestrace_application::RuntimeQualificationEvidence;
 
 use crate::{DatabaseConfig, InfrastructureError};
 
@@ -68,5 +69,47 @@ impl PgStore {
         }
 
         Ok(true)
+    }
+
+    pub async fn deployment_qualification_evidence(
+        &self,
+    ) -> Result<RuntimeQualificationEvidence, InfrastructureError> {
+        let role = sqlx::query(
+            "SELECT current_user::text AS runtime_role,
+                    runtime_role_record.rolsuper AS is_superuser,
+                    runtime_role_record.rolbypassrls AS bypasses_rls,
+                    COALESCE(
+                        pg_has_role(current_user, bootstrap_role.rolname, 'MEMBER'),
+                        false
+                    ) AS inherits_bootstrap
+             FROM pg_roles AS runtime_role_record
+             LEFT JOIN pg_roles AS bootstrap_role
+               ON bootstrap_role.rolname = 'vestrace_bootstrap'
+             WHERE runtime_role_record.rolname = current_user",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(RuntimeQualificationEvidence {
+            migration_history_compatible: self.migrations_are_compatible().await?,
+            runtime_role: role.try_get("runtime_role")?,
+            is_superuser: role.try_get("is_superuser")?,
+            bypasses_rls: role.try_get("bypasses_rls")?,
+            inherits_bootstrap: role.try_get("inherits_bootstrap")?,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl vestrace_application::RuntimeEvidenceProvider for PgStore {
+    async fn runtime_evidence(
+        &self,
+    ) -> Result<
+        vestrace_application::RuntimeQualificationEvidence,
+        vestrace_application::ApplicationError,
+    > {
+        self.deployment_qualification_evidence()
+            .await
+            .map_err(|error| vestrace_application::ApplicationError::Storage(error.to_string()))
     }
 }

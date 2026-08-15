@@ -63,6 +63,39 @@ impl CryptoAdapterQualificationTarget {
             scope,
         })
     }
+
+
+    /// The key custody arrangement being qualified, in full.
+    ///
+    /// A crypto qualification that cannot say which provider, key, version and
+    /// algorithm it examined is an assertion about nothing in particular.
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn custody(&self) -> CryptoCustody {
+        self.custody
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    pub fn key_version(&self) -> &str {
+        &self.key_version
+    }
+
+    pub fn algorithm_suite(&self) -> &str {
+        &self.algorithm_suite
+    }
+
+    pub fn purpose(&self) -> KeyPurpose {
+        self.purpose
+    }
+
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +126,20 @@ impl CryptoAdapterQualificationEvidence {
             passed_checks: passed_checks.into_iter().collect(),
             evidence_refs,
         }
+    }
+
+
+    pub fn observed_key(&self) -> &KeyReference {
+        &self.observed_key
+    }
+
+    /// Which checks actually passed, rather than only whether all of them did.
+    pub fn passed_checks(&self) -> &HashSet<CryptoQualificationCheck> {
+        &self.passed_checks
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
     }
 }
 

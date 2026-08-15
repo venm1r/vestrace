@@ -41,10 +41,27 @@ pub fn reciprocal_rank_fusion(
         })
         .collect();
 
+    // Score descending, then memory id ascending.
+    //
+    // The tie-break is not cosmetic. `best` is a `HashMap`, whose iteration
+    // order is randomised per process, and sorting on score alone leaves ties
+    // in whatever order iteration produced. Two runs of the same server over
+    // the same data could therefore rank tied candidates differently — and a
+    // test inside one process would never show it, because the hasher seed is
+    // fixed for that process's lifetime.
+    //
+    // Ties are not rare here: reciprocal rank fusion assigns identical
+    // contributions to identical ranks, so any two candidates appearing at
+    // mirrored positions across channels tie exactly.
+    //
+    // With this the order is a total function of the data, which is what
+    // "deterministic and auditable" requires: the same inputs justify the same
+    // ranking, and a ranking can be re-derived from a journal.
     fused.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.memory_id.as_uuid().cmp(&b.memory_id.as_uuid()))
     });
 
     for (idx, candidate) in fused.iter_mut().enumerate() {
@@ -61,11 +78,20 @@ mod tests {
     fn candidate(memory_id: MemoryId, score: f32, channel: &str, rank: u32) -> RetrievalCandidate {
         RetrievalCandidate {
             memory_id,
-            revision_id: None,
+            revision_id: vestrace_domain::id::MemoryRevisionId::new(),
+            kind: vestrace_domain::MemoryKind::Fact,
+            memory_status: vestrace_domain::MemoryStatus::Active,
+            revision_number: 1,
+            content: String::new(),
+            valid_from: None,
+            valid_until: None,
+            revision_created_at: vestrace_domain::now(),
+            source_generation: 1,
             score,
             channel_rank: rank,
             channel: channel.to_owned(),
             explanation: String::new(),
+            conflict_ids: Vec::new(),
         }
     }
 

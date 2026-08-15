@@ -17,8 +17,9 @@ Trusted qualification closure, with fail-closed intermediate states.
 - [x] Preserve `Untrusted`, `Revalidating`, and `DegradedTrust` outcomes
   without promotion shortcuts.
 - [x] Document the implemented boundary and explicit non-claims.
-- [ ] Add capability-level restoration policy and release approval in the next
-  closure block.
+- [x] Capability-level restoration policy delivered by Q26
+  (`crates/vestrace-application/src/capability_restoration.rs`) and release
+  approval by Q25 (`crates/vestrace-application/src/release_approval.rs`).
 
 ## Verification
 

@@ -56,6 +56,10 @@ pub enum RunCommand {
     WaitForDependency {
         dependency_run_id: AgentRunId,
     },
+    /// Grant a pending approval. Valid only while the run waits for one.
+    Approve {
+        approver_id: PrincipalId,
+    },
     Resume,
     Succeed {
         summary: Option<String>,

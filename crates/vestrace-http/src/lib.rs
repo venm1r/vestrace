@@ -7,4 +7,4 @@ mod metrics;
 mod router;
 
 pub use metrics::MetricsRegistry;
-pub use router::{AppState, build_router};
+pub use router::{AppState, build_router, http_capability_for_test};

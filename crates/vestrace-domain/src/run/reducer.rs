@@ -114,6 +114,10 @@ fn apply_existing(
                 correlation_id: crate::id::CorrelationId::from_uuid(dependency_run_id.as_uuid()),
             });
         }
+        LegacyRunEvent::ApprovalGranted { .. } if state.status == RunStatus::WaitingForApproval => {
+            state.status = RunStatus::Running;
+            state.wait = None;
+        }
         LegacyRunEvent::Resumed if state.status.is_waiting() || state.status.can_resume() => {
             state.status = RunStatus::Running;
             state.wait = None;
@@ -194,6 +198,19 @@ fn apply_existing(
                 event.occurred_at,
             );
         }
+        // Deliberately unguarded, unlike every arm above.
+        //
+        // A reconciliation settles long after the dispatch, and often after the
+        // run has finished — that late answer is the whole reason the event
+        // exists. Guarding it on `Running` would make the one case it is for
+        // the one case it rejects, and replay of a real stream would fail with
+        // `InvalidTransition` on a fact that is simply true.
+        //
+        // It changes no state: it is an observation, not a transition. Whether a
+        // `NotApplied` effect should reopen a succeeded run is a policy question
+        // nobody has answered, and answering it here by silently mutating status
+        // would be the wrong way to ask.
+        LegacyRunEvent::ExternalEffectSettled { .. } => {}
         _ => {
             return Err(RunReduceError::InvalidTransition {
                 status: state.status,

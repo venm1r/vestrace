@@ -5,8 +5,14 @@ use async_trait::async_trait;
 use vestrace_domain::id::WorkerId;
 use vestrace_domain::run::{RunFailure, RunStatus};
 use vestrace_domain::time::Timestamp;
+use vestrace_domain::{
+    AuthorizationRequest, Capability, ResourceKind, ResourceScope, RiskCategory,
+};
 
-use crate::{ApplicationError, RequestContext};
+use crate::{
+    ApplicationError, AuthorizationBoundary, DenyAllPolicyEngine, RequestContext,
+    SharedPolicyDecisionEngine,
+};
 
 use super::ports::{
     AcquireRunLease, LeaseWorkRequest, RunClockPort, RunLease, RunLeasePort, RunSnapshot,
@@ -93,6 +99,7 @@ pub struct RunWorker {
     queue_port: Arc<dyn WorkQueuePort>,
     clock: Arc<dyn RunClockPort>,
     registry: RunWorkHandlerRegistry,
+    authorization_boundary: AuthorizationBoundary,
 }
 
 impl RunWorker {
@@ -104,6 +111,26 @@ impl RunWorker {
         clock: Arc<dyn RunClockPort>,
         registry: RunWorkHandlerRegistry,
     ) -> Result<Self, ApplicationError> {
+        Self::new_with_policy(
+            config,
+            store,
+            lease_port,
+            queue_port,
+            clock,
+            registry,
+            Arc::new(DenyAllPolicyEngine),
+        )
+    }
+
+    pub fn new_with_policy(
+        config: RunWorkerConfig,
+        store: Arc<dyn RunStorePort>,
+        lease_port: Arc<dyn RunLeasePort>,
+        queue_port: Arc<dyn WorkQueuePort>,
+        clock: Arc<dyn RunClockPort>,
+        registry: RunWorkHandlerRegistry,
+        policy_engine: SharedPolicyDecisionEngine,
+    ) -> Result<Self, ApplicationError> {
         config.validate()?;
         Ok(Self {
             config,
@@ -112,6 +139,7 @@ impl RunWorker {
             queue_port,
             clock,
             registry,
+            authorization_boundary: AuthorizationBoundary::new(policy_engine),
         })
     }
 
@@ -136,6 +164,30 @@ impl RunWorker {
         let Some(item) = item else {
             return Ok(false);
         };
+
+        match self
+            .authorization_boundary
+            .require(context, work_item_authorization_request(&item))
+            .await
+        {
+            Ok(_) => {}
+            Err(ApplicationError::Policy(message)) => {
+                self.queue_port
+                    .dead_letter(
+                        context,
+                        &item,
+                        RunFailure {
+                            code: "authorization_denied".into(),
+                            message,
+                            retryable: false,
+                        },
+                        now,
+                    )
+                    .await?;
+                return Ok(true);
+            }
+            Err(error) => return Err(error),
+        }
 
         self.process_item(context, item).await?;
         Ok(true)
@@ -327,6 +379,24 @@ impl RunWorker {
         }
         Ok(())
     }
+}
+
+/// What the worker asks permission for, in the vocabulary grants are written
+/// in.
+///
+/// This asked about `run:{id}` until the scope vocabulary was made explicit.
+/// The boundary rule that decides whether a grant contains a request looks for
+/// `/`, so `run:` did not contain `run:{id}` and **no grant covering more than
+/// one named run could be written** — an operator who wanted "may work any run
+/// in this workspace" had to enumerate them, or grant something broader
+/// elsewhere. `run://{id}` is inside `run://`, which is the grant they meant.
+fn work_item_authorization_request(item: &WorkItem) -> AuthorizationRequest {
+    AuthorizationRequest::new(
+        Capability::ExecutionWrite,
+        format!("worker.run.{:?}", item.kind.discriminant()).to_ascii_lowercase(),
+        ResourceScope::one(ResourceKind::Run, item.run_id).to_string(),
+        RiskCategory::Low,
+    )
 }
 
 fn retry_delay(attempt: u32) -> chrono::Duration {

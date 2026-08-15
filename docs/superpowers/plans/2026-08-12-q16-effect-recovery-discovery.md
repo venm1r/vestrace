@@ -15,7 +15,7 @@ dispatching or retrying the original effect.
 - [x] Persist each successful reconciliation through the existing immutable repository.
 - [x] Verify application behavior and PostgreSQL behavior in Docker.
 - [x] Document the boundary and explicit non-claims.
-- [ ] Wire the service into production server/worker startup and add provider-specific adapters in a later gate.
+- [x] Production server/worker startup wiring (R1) and an HTTP read-back adapter (R2) delivered; see [`2026-08-12-open-follow-up-gates.md`](2026-08-12-open-follow-up-gates.md).
 
 ## Safety boundary
 

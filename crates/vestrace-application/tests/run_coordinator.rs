@@ -261,6 +261,7 @@ async fn create_run_succeeds() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Summarize changes".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -293,6 +294,7 @@ async fn transition_run_from_created_to_preparing() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -307,6 +309,7 @@ async fn transition_run_from_created_to_preparing() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 target: RunStatus::Preparing,
@@ -332,6 +335,7 @@ async fn transition_run_version_conflict_rejected() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -347,6 +351,7 @@ async fn transition_run_version_conflict_rejected() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: wrong_version,
                 target: RunStatus::Preparing,
@@ -370,6 +375,7 @@ async fn add_steps_to_run() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -385,6 +391,7 @@ async fn add_steps_to_run() {
         .add_steps(
             &ctx,
             AddRunSteps {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 steps: vec![NewRunStepDto {
@@ -414,6 +421,7 @@ async fn transition_step_succeeds() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -429,6 +437,7 @@ async fn transition_step_succeeds() {
         .add_steps(
             &ctx,
             AddRunSteps {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 steps: vec![NewRunStepDto {
@@ -473,6 +482,7 @@ async fn create_checkpoint_succeeds() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -521,6 +531,7 @@ async fn pause_and_resume_run() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -535,6 +546,7 @@ async fn pause_and_resume_run() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 target: RunStatus::Preparing,
@@ -551,6 +563,7 @@ async fn pause_and_resume_run() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: RunVersion::new(2).unwrap(),
                 target: RunStatus::Running,
@@ -567,6 +580,7 @@ async fn pause_and_resume_run() {
         .pause_run(
             &ctx,
             PauseRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: running.run.version,
                 actor: RunActorRef::System,
@@ -582,6 +596,7 @@ async fn pause_and_resume_run() {
         .resume_run(
             &ctx,
             ResumeRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: paused.run.version,
                 actor: RunActorRef::System,
@@ -603,6 +618,7 @@ async fn cancel_run_cancels_work_items() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Test".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -617,6 +633,7 @@ async fn cancel_run_cancels_work_items() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 target: RunStatus::Preparing,
@@ -633,6 +650,7 @@ async fn cancel_run_cancels_work_items() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: RunVersion::new(2).unwrap(),
                 target: RunStatus::Running,
@@ -651,6 +669,7 @@ async fn cancel_run_cancels_work_items() {
         .cancel_run(
             &ctx,
             CancelRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: running.run.version,
                 reason: Some("user requested".into()),
@@ -675,6 +694,7 @@ async fn full_lifecycle_create_to_succeeded() {
         .create_run(
             &ctx,
             CreateRun {
+                correlation_id: None,
                 objective: "Summarize PR".into(),
                 coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
                 execution_mode: RunExecutionMode::Autopilot,
@@ -689,6 +709,7 @@ async fn full_lifecycle_create_to_succeeded() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: snapshot.run.version,
                 target: RunStatus::Preparing,
@@ -705,6 +726,7 @@ async fn full_lifecycle_create_to_succeeded() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: RunVersion::new(2).unwrap(),
                 target: RunStatus::Running,
@@ -721,6 +743,7 @@ async fn full_lifecycle_create_to_succeeded() {
         .transition_run(
             &ctx,
             TransitionRun {
+                correlation_id: None,
                 run_id: snapshot.run.id,
                 expected_version: RunVersion::new(3).unwrap(),
                 target: RunStatus::Succeeded,

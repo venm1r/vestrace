@@ -136,11 +136,7 @@ impl vestrace_application::RetrievalJournal for StubRetrievalJournal {
     async fn record_run(
         &self,
         _: &vestrace_application::RequestContext,
-        _: vestrace_domain::id::RetrievalRunId,
-        _: &str,
-        _: &str,
-        _: usize,
-        _: i32,
+        _: &vestrace_application::retrieval::RetrievalRunRecord,
     ) -> Result<(), vestrace_application::ApplicationError> {
         Ok(())
     }
@@ -296,12 +292,19 @@ impl vestrace_application::ModelExecutionRepository for StubModelExecutionReposi
     }
 }
 
+/// The run write path is the durable coordinator, and a deployment that
+/// supplies none must report the surface unavailable rather than accept a write
+/// it cannot durably record.
+///
+/// This replaces an earlier contract asserting that `AppState` carries a
+/// `RunCommandExecutor`. That executor wrote `agent_runs` and `run_events`
+/// without `run_steps` or `run_work_items`, so runs created through it were
+/// invisible to the worker; it has been removed rather than kept alongside.
 #[test]
-fn app_state_requires_a_canonical_run_command_executor() {
+fn app_state_reports_run_orchestration_unavailable_until_one_is_supplied() {
     let state = AppState::new(
         Arc::new(Healthy),
         Arc::new(Reads),
-        Arc::new(Commands),
         Arc::new(StubMemoryUseCases),
         std::sync::Arc::new(vestrace_application::RetrievalService::new(
             std::sync::Arc::new(StubTextRetriever),
@@ -319,5 +322,8 @@ fn app_state_requires_a_canonical_run_command_executor() {
         std::sync::Arc::new(vestrace_http::MetricsRegistry::new()),
     );
 
-    let _: &dyn RunCommandExecutor = state.run_command_executor();
+    assert!(
+        state.run_orchestrator().is_err(),
+        "an unconfigured deployment must not appear able to create runs"
+    );
 }

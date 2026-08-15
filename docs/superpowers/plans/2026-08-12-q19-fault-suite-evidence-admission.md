@@ -12,7 +12,7 @@ passed.
 - [x] Add `ExternalEffectFaultEvidenceAdmissionService`.
 - [x] Preserve repository failures instead of converting unavailable evidence into a pass.
 - [x] Document the admission boundary and explicit non-claims.
-- [ ] Attach admitted evidence to the complete qualification runner and release gate later.
+- [x] Admitted evidence attached by Q20 (`QUAL-008` gate mapping), Q22 (`QualificationRepository` bundle persistence), and Q28 (v1.0 release-evidence composition).
 
 ## Verification
 

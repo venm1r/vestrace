@@ -656,3 +656,238 @@ async fn tenant_scoped_uniqueness_role_capability_tuples(pool: sqlx::PgPool) {
 
     assert_sqlstate(duplicate, "23505");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cognitive_mutation_schema(pool: sqlx::PgPool) {
+    let state_revision: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'conflicts'
+           AND column_name = 'state_revision'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(state_revision, vec!["state_revision"]);
+
+    let policies: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename
+         FROM pg_policies
+         WHERE schemaname = 'public'
+           AND policyname LIKE '%workspace_isolation'
+           AND tablename IN (
+               'claims',
+               'claim_evidence_links',
+               'claim_assessments',
+               'conflicts',
+               'cognitive_mutations',
+               'reconciliation_records'
+           )
+         ORDER BY tablename",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        policies,
+        vec![
+            "claim_assessments",
+            "claim_evidence_links",
+            "claims",
+            "cognitive_mutations",
+            "conflicts",
+            "reconciliation_records",
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn migrations_expose_temporal_and_state_revision_columns(pool: sqlx::PgPool) {
+    let event_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'events'
+           AND column_name IN ('occurred_at', 'recorded_at')
+         ORDER BY column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(event_columns, vec!["occurred_at", "recorded_at"]);
+
+    let memory_state_revision: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'memories'
+               AND column_name = 'state_revision'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(memory_state_revision);
+
+    let revision_temporal_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'memory_revisions'
+           AND column_name IN ('valid_from', 'valid_until', 'classification')
+         ORDER BY column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        revision_temporal_columns,
+        vec!["classification", "valid_from", "valid_until"]
+    );
+
+    let temporal_index: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND indexname = 'idx_memory_revisions_temporal_lookup'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(temporal_index);
+
+    // Ordered in Rust rather than in SQL: the server collation decides where an
+    // underscore sorts, so `ORDER BY column_name` is not portable across
+    // databases. The assertion is about which columns exist, not their order.
+    let mut evaluation_fact_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'evaluation_facts'
+           AND column_name IN (
+               'target', 'evaluator', 'metric', 'result', 'evidence_refs',
+               'authority', 'policy_version'
+           )",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    evaluation_fact_columns.sort();
+
+    assert_eq!(
+        evaluation_fact_columns,
+        vec![
+            "authority",
+            "evaluator",
+            "evidence_refs",
+            "metric",
+            "policy_version",
+            "result",
+            "target",
+        ]
+    );
+
+    let evaluation_fact_index: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND indexname = 'idx_evaluation_facts_workspace_created'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(evaluation_fact_index);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn learning_schema_keeps_projections_and_proposals_separate(pool: sqlx::PgPool) {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name IN ('evaluation_facts', 'learned_projections', 'learning_proposals')
+         ORDER BY table_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        tables,
+        vec![
+            "evaluation_facts",
+            "learned_projections",
+            "learning_proposals",
+        ]
+    );
+
+    let projection_authority_constraint: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conname = 'learned_projections_advisory_only'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(projection_authority_constraint);
+
+    let policies: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename
+         FROM pg_policies
+         WHERE schemaname = 'public'
+           AND policyname LIKE '%workspace_isolation'
+           AND tablename IN ('learned_projections', 'learning_proposals')
+         ORDER BY tablename",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(policies, vec!["learned_projections", "learning_proposals"]);
+
+    let proposal_index: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND indexname = 'idx_learning_proposals_workspace_created'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(proposal_index);
+
+    let forced_rls: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT c.relname, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname IN ('learned_projections', 'learning_proposals')
+         ORDER BY c.relname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        forced_rls,
+        vec![
+            ("learned_projections".to_owned(), true),
+            ("learning_proposals".to_owned(), true),
+        ]
+    );
+}

@@ -168,22 +168,33 @@ enum ConformanceAction {
     Manifest {
         #[arg(long, default_value = "manifest-v1")]
         manifest_version: String,
-        #[arg(long)]
+        #[arg(long, default_value = "vestrace")]
         product: String,
-        #[arg(long)]
+        #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         product_version: String,
+        /// The revision this binary was built from. Compiled in when the build
+        /// sets `VESTRACE_SOURCE_REVISION`; the manifest refuses to be written
+        /// without one, because a qualification that cannot say what it
+        /// qualified is a certificate for nothing in particular.
         #[arg(long)]
-        source_revision: String,
+        source_revision: Option<String>,
+        /// Defaults to a digest of the running executable.
         #[arg(long)]
-        build_digest: String,
+        build_digest: Option<String>,
+        /// Defaults to a digest of the effective configuration.
         #[arg(long)]
-        configuration_digest: String,
+        configuration_digest: Option<String>,
+        /// Defaults to a summary of what this deployment runs against.
         #[arg(long)]
-        environment_manifest: String,
+        environment_manifest: Option<String>,
         #[arg(long = "schema-version", required = true)]
         schema_versions: Vec<String>,
         #[arg(long = "profile", value_enum, required = true)]
         supported_profiles: Vec<ConformanceProfileArg>,
+        /// Where to read the configuration whose digest is taken. Defaults to
+        /// the same resolution every other command uses.
+        #[arg(long)]
+        config_for_identity: Option<PathBuf>,
         #[arg(long = "feature")]
         optional_features: Vec<String>,
         #[arg(long = "storage-backend")]

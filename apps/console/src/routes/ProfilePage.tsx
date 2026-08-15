@@ -172,7 +172,7 @@ export const ProfilePage: React.FC = () => {
               <ActionButton
                 icon="add"
                 style={{ padding: '8px 16px', fontSize: '13px' }}
-                onClick={() => notify('info', 'API key creation is not implemented in the P0 foundation.')}
+                onClick={() => notify('info', 'API key creation is not implemented in this build.')}
               >
                 Create API Key
               </ActionButton>
@@ -211,7 +211,7 @@ export const ProfilePage: React.FC = () => {
                       onClick={() =>
                         notify(
                           'info',
-                          `API key revocation is not implemented in the P0 foundation (${key.name}).`,
+                          `API key revocation is not implemented in this build (${key.name}).`,
                         )
                       }
                     >

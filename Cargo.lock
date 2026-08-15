@@ -83,6 +83,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2489,6 +2511,7 @@ dependencies = [
  "tracing",
  "uuid",
  "vestrace-domain",
+ "zeroize",
 ]
 
 [[package]]
@@ -2496,10 +2519,15 @@ name = "vestrace-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "base64",
  "clap",
+ "ring",
  "secrecy",
+ "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "tracing",
@@ -2520,18 +2548,25 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
 name = "vestrace-http"
 version = "0.0.0"
 dependencies = [
+ "async-stream",
  "async-trait",
  "axum",
+ "chrono",
+ "futures-util",
  "serde",
  "serde_json",
+ "serde_urlencoded",
+ "sha2",
  "tokio",
  "tower",
  "tracing",
@@ -2546,12 +2581,15 @@ name = "vestrace-infrastructure"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "config",
  "reqwest",
+ "ring",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "temp-env",
  "tempfile",
@@ -2560,6 +2598,7 @@ dependencies = [
  "uuid",
  "vestrace-application",
  "vestrace-domain",
+ "zeroize",
 ]
 
 [[package]]
@@ -2568,6 +2607,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",
@@ -3027,6 +3067,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"

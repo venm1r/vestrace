@@ -3,9 +3,13 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow};
 use secrecy::ExposeSecret;
 use sqlx::Row;
-use vestrace_application::{DoctorService, RequestContext};
+use vestrace_application::retrieval::EmbeddingBackfillService;
+use vestrace_application::{
+    HealthInspectionService, InspectedFinding, InvariantObserver, RequestContext,
+    standard_invariants,
+};
 use vestrace_domain::{PrincipalId, WorkspaceId};
-use vestrace_infrastructure::{AppConfig, PgDiagnosticsRepository, PgStore};
+use vestrace_infrastructure::{AppConfig, PgEmbeddingStore, PgInvariantObserver, PgStore};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum RebuildTarget {
@@ -24,102 +28,198 @@ pub async fn run(config: &AppConfig, target: &RebuildTarget) -> anyhow::Result<(
         .context("database is unavailable")?;
     println!("OK");
 
-    let pool = store.pool().clone();
-
-    match target {
-        RebuildTarget::SearchDocuments | RebuildTarget::All => {
-            print!("Rebuilding search documents ... ");
-            let count = rebuild_search_documents(&pool).await?;
-            println!("done ({count} documents rebuilt)");
-        }
-        _ => {}
+    // This command is the remediation two diagnostics print, so it has to run.
+    // It did not: the insert named `memories.content_text` and
+    // `search_documents.search_tsv`, and neither column exists — a memory's
+    // content lives on its active revision, and the index column is
+    // `fts_vector`, generated. `vestrace rebuild search-documents` failed on
+    // the first statement in every deployment.
+    //
+    // Scoping is per configured workspace for the same reason the doctor's is:
+    // `memories` and `search_documents` are forced under row level security, so
+    // an unscoped sweep sees nothing at all.
+    if config.workspaces.is_empty() {
+        return Err(anyhow!(
+            "rebuild: no workspaces are configured; set `workspaces` so there \
+             is something to rebuild"
+        ));
     }
 
-    match target {
-        RebuildTarget::Embeddings | RebuildTarget::All => {
-            print!("Rebuilding embeddings ... ");
-            let count = rebuild_embeddings(&pool).await?;
-            println!("done ({count} embeddings rebuilt)");
+    let principal_id = PrincipalId::new();
+
+    for workspace in &config.workspaces {
+        let workspace_id = WorkspaceId::from_uuid(*workspace);
+        let ctx = RequestContext::new(workspace_id, principal_id);
+
+        match target {
+            RebuildTarget::SearchDocuments | RebuildTarget::All => {
+                print!("Rebuilding search documents for workspace {workspace} ... ");
+                let count = rebuild_search_documents(&store, &ctx).await?;
+                println!("done ({count} documents rebuilt)");
+            }
+            _ => {}
         }
-        _ => {}
+
+        match target {
+            RebuildTarget::Embeddings | RebuildTarget::All => {
+                print!("Rebuilding embeddings for workspace {workspace} ... ");
+                let count = rebuild_embeddings(config, &store, &ctx).await?;
+                println!("done ({count} embeddings rebuilt)");
+            }
+            _ => {}
+        }
     }
 
     println!();
     println!("Running post-rebuild verification ... ");
 
-    let repo = Arc::new(PgDiagnosticsRepository::new(pool));
-    let doctor = DoctorService::new(repo);
+    let observer = Arc::new(PgInvariantObserver::new(store));
+    let inspection = HealthInspectionService::new(standard_invariants());
 
-    let workspace_id = WorkspaceId::new();
-    let principal_id = PrincipalId::new();
-    let ctx = RequestContext::new(workspace_id, principal_id);
+    let mut error_count = 0usize;
+    let mut warning_count = 0usize;
 
-    let report = doctor
-        .run_checks(&ctx)
-        .await
-        .context("post-rebuild verification failed")?;
+    for workspace in &config.workspaces {
+        let ctx = RequestContext::new(WorkspaceId::from_uuid(*workspace), principal_id);
+        let observations = observer
+            .observe(&ctx)
+            .await
+            .context("post-rebuild verification failed")?;
+        let findings = inspection
+            .inspect(observations, vestrace_domain::time::now())
+            .context("an observation could not be resolved against the registry")?;
 
-    if report.is_clean() {
-        println!("Verification: all checks passed");
-        Ok(())
-    } else if report.has_errors() {
-        for finding in report.errors() {
-            println!("[ERROR] {}: {}", finding.code, finding.message);
+        for entry in &findings {
+            let label = if entry.is_error() { "ERROR" } else { "WARN " };
+            println!(
+                "[{label}] {}@{}: {}",
+                entry.finding.invariant_id(),
+                entry.finding.invariant_version(),
+                entry.detail
+            );
         }
+        error_count += findings.iter().filter(|entry| entry.is_error()).count();
+        warning_count += findings
+            .iter()
+            .filter(|entry| !InspectedFinding::is_error(entry))
+            .count();
+    }
+
+    if error_count > 0 {
         Err(anyhow!("verification found errors after rebuild"))
-    } else {
-        for finding in report.warnings() {
-            println!("[WARN]  {}: {}", finding.code, finding.message);
-        }
+    } else if warning_count > 0 {
         println!("Verification: warnings found, no errors");
+        Ok(())
+    } else {
+        println!("Verification: all checks passed");
         Ok(())
     }
 }
 
-async fn rebuild_search_documents(pool: &sqlx::PgPool) -> Result<i64, anyhow::Error> {
-    let row = sqlx::query(
+/// Rebuild the text index from each active memory's active revision.
+///
+/// `fts_vector` is generated by the schema, so it is deliberately not written
+/// here — computing it in this command would let the rebuilt rows disagree with
+/// the ones the write path produces.
+async fn rebuild_search_documents(
+    store: &PgStore,
+    context: &RequestContext,
+) -> Result<i64, anyhow::Error> {
+    let mut scoped = store
+        .begin_scoped(context)
+        .await
+        .context("workspace scope could not be established")?;
+
+    let rows = sqlx::query(
         r#"
-        INSERT INTO search_documents (id, memory_id, workspace_id, content, search_tsv, projection_version)
+        INSERT INTO search_documents (id, memory_id, workspace_id, title, content, created_at, updated_at)
         SELECT
             gen_random_uuid(),
             m.id,
             m.workspace_id,
-            m.content_text,
-            to_tsvector('english', m.content_text),
-            1
+            '',
+            r.content,
+            r.created_at,
+            r.created_at
         FROM memories m
-        LEFT JOIN search_documents sd ON sd.memory_id = m.id
-        WHERE m.status = 'active' AND sd.id IS NULL
-        ON CONFLICT DO NOTHING
+        JOIN memory_revisions r ON r.id = m.active_revision_id
+        WHERE m.workspace_id = $1 AND m.status = 'active'
+        ON CONFLICT (workspace_id, memory_id) DO UPDATE SET
+            content = EXCLUDED.content,
+            updated_at = EXCLUDED.updated_at
         RETURNING 1
         "#,
     )
-    .fetch_all(pool)
+    .bind(context.workspace_id.as_uuid())
+    .fetch_all(scoped.connection())
     .await?;
 
-    Ok(row.len() as i64)
+    scoped
+        .commit()
+        .await
+        .context("search document rebuild could not be committed")?;
+
+    Ok(rows.len() as i64)
 }
 
-async fn rebuild_embeddings(pool: &sqlx::PgPool) -> Result<i64, anyhow::Error> {
-    let row = sqlx::query(
-        r#"
-        SELECT count(*) AS missing_count
-        FROM memories m
-        LEFT JOIN search_documents sd ON sd.memory_id = m.id
-        WHERE m.status = 'active' AND sd.id IS NULL
-        "#,
-    )
-    .fetch_one(pool)
-    .await?;
+/// Fill in the embeddings that are missing.
+///
+/// # Why this is a command rather than part of the write path
+///
+/// Producing an embedding is a network call to a model. Doing it inside the
+/// transaction that writes a memory would make creating a memory fail whenever
+/// the model is unreachable — trading a capability the system has for an index
+/// it would like.
+///
+/// So the gap is filled here, and it is a *stated* gap:
+/// is a registered invariant, so a workspace whose index is behind says so in
+///  rather than returning quietly incomplete search results.
+/// That is the lesson from , which nothing wrote for months
+/// while every retrieval succeeded and returned nothing.
+async fn rebuild_embeddings(
+    config: &AppConfig,
+    store: &PgStore,
+    context: &RequestContext,
+) -> Result<usize, anyhow::Error> {
+    let Some(provider) = crate::commands::server::build_embedding_provider(&config.embedding)?
+    else {
+        // Nothing configured is not a failure. It is the deployment saying it
+        // has no vector channel, which the retrieval journal also records.
+        println!();
+        println!(
+            "  no embedding model is configured; set [embedding] enabled, base_url and              model_name to give retrieval a vector channel"
+        );
+        return Ok(0);
+    };
 
-    let missing: i64 = row.get("missing_count");
-    if missing > 0 {
-        return Err(anyhow!(
-            "{missing} memories still missing search documents — rebuild search-documents first"
-        ));
+    let backfill = EmbeddingBackfillService::new(
+        provider,
+        Arc::new(PgEmbeddingStore::new(store.clone())),
+        config.embedding.space_name.clone(),
+    );
+
+    let mut embedded = 0usize;
+    // Batched, because a workspace with a large backlog should make progress
+    // visible rather than hold one transaction open across thousands of network
+    // calls.
+    loop {
+        let report = backfill
+            .run(context, 32)
+            .await
+            .context("embedding backfill failed")?;
+        embedded += report.embedded;
+        if report.embedded == 0 {
+            if report.still_missing > 0 {
+                return Err(anyhow!(
+                    "{} memories still have no embedding and the last batch produced none",
+                    report.still_missing
+                ));
+            }
+            break;
+        }
     }
 
-    Ok(0)
+    Ok(embedded)
 }
 
 fn redact_url(url: &str) -> String {

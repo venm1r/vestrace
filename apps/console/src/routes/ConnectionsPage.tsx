@@ -24,8 +24,8 @@ export const ConnectionsPage: React.FC = () => {
         description="Credential brokers, PostgreSQL pools, vector databases, and LLM provider gateways."
         actions={
           <ActionButton
-            icon="hub"
-            onClick={() => notify('info', 'Connection creation is not implemented in the P0 foundation.')}
+            icon="cable"
+            onClick={() => notify('info', 'Connection creation is not implemented in this build.')}
           >
             Add Connection
           </ActionButton>
@@ -118,7 +118,7 @@ export const ConnectionsPage: React.FC = () => {
                 onClick={() =>
                   notify(
                     'info',
-                    `Connection tests are not implemented in the P0 foundation (${connection.name}).`,
+                    `Connection tests are not implemented in this build (${connection.name}).`,
                   )
                 }
               >

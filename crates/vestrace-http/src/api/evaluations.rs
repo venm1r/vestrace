@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::AppState;
+use vestrace_domain::{
+    EvaluationAuthority, EvaluationFact, EvaluationMetric, EvaluationResult, EvaluationTarget,
+    EvaluatorRef, EvidenceRef,
+};
 
 use super::{ApiError, context::request_context};
 
@@ -17,6 +21,11 @@ pub fn evaluation_routes() -> axum::Router<AppState> {
             post(create_evaluation).get(list_evaluations),
         )
         .route("/evaluations/{id}", get(get_evaluation))
+        .route(
+            "/evaluation-facts",
+            post(create_evaluation_fact).get(list_evaluation_facts),
+        )
+        .route("/evaluation-facts/{id}", get(get_evaluation_fact))
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +40,22 @@ pub struct CreateEvaluationRequest {
 #[derive(Debug, Serialize)]
 pub struct CreateEvaluationResponse {
     pub evaluation_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateEvaluationFactRequest {
+    pub target: EvaluationTarget,
+    pub evaluator: EvaluatorRef,
+    pub metric: EvaluationMetric,
+    pub result: EvaluationResult,
+    pub evidence_refs: Vec<EvidenceRef>,
+    pub authority: EvaluationAuthority,
+    pub policy_version: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateEvaluationFactResponse {
+    pub evaluation_fact_id: Uuid,
 }
 
 async fn create_evaluation(
@@ -123,4 +148,71 @@ async fn get_evaluation(
         }))),
         None => Err(ApiError::not_found("evaluation not found")),
     }
+}
+
+async fn create_evaluation_fact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateEvaluationFactRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = request_context(&headers)?;
+    let fact_id = vestrace_domain::id::EvaluationId::new();
+    let fact = EvaluationFact::new(
+        fact_id,
+        ctx.workspace_id,
+        req.target,
+        req.evaluator,
+        req.metric,
+        req.result,
+        req.evidence_refs,
+        req.authority,
+        req.policy_version,
+        vestrace_domain::time::now(),
+    )
+    .map_err(|error| {
+        ApiError::from_application(vestrace_application::ApplicationError::Domain(error))
+    })?;
+
+    state
+        .evaluation_repository()
+        .create_fact(&ctx, &fact)
+        .await
+        .map_err(ApiError::from_application)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateEvaluationFactResponse {
+            evaluation_fact_id: fact_id.as_uuid(),
+        }),
+    ))
+}
+
+async fn list_evaluation_facts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = request_context(&headers)?;
+    let facts = state
+        .evaluation_repository()
+        .list_facts(&ctx)
+        .await
+        .map_err(ApiError::from_application)?;
+    Ok(Json(facts))
+}
+
+async fn get_evaluation_fact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = request_context(&headers)?;
+    let fact_id = vestrace_domain::id::EvaluationId::from_uuid(id);
+    let fact = state
+        .evaluation_repository()
+        .find_fact(&ctx, fact_id)
+        .await
+        .map_err(ApiError::from_application)?;
+
+    fact.map(Json)
+        .ok_or_else(|| ApiError::not_found("evaluation fact"))
 }

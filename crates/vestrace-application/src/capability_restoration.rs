@@ -73,6 +73,24 @@ impl RestorationEvidence {
             evidence_refs,
         }
     }
+
+
+    /// What the restoration rests on.
+    ///
+    /// Stored and unreadable until the sweep that made recorded facts readable:
+    /// a decision to give capabilities back after a trust incident, whose
+    /// grounds could not be inspected by the thing acting on it.
+    pub fn qualification_passed(&self) -> bool {
+        self.qualification_passed
+    }
+
+    pub fn revalidation_passed(&self) -> bool {
+        self.revalidation_passed
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

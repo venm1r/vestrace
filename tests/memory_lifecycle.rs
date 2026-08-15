@@ -1,8 +1,33 @@
 use vestrace_domain::{
-    Confidence, Memory, MemoryKind, MemoryStatus, MemoryWritePolicy,
-    id::{MemoryId, WorkspaceId},
+    Confidence, Importance, Memory, MemoryKind, MemoryStatus, MemoryWritePolicy,
+    id::{MemoryId, MemoryRevisionId, WorkspaceId},
+    memory::MemoryRevision,
     now,
 };
+
+/// A revision that genuinely belongs to the given memory.
+fn memory_revision(
+    memory_id: MemoryId,
+    workspace_id: WorkspaceId,
+    revision_number: u32,
+) -> MemoryRevision {
+    MemoryRevision {
+        id: MemoryRevisionId::new(),
+        memory_id,
+        workspace_id,
+        revision_number,
+        content: "content".to_string(),
+        structured: None,
+        confidence: Confidence::new(1.0).unwrap(),
+        importance: Importance::new(0.5).unwrap(),
+        created_at: now(),
+        valid_from: None,
+        valid_until: None,
+        change_reason: None,
+        canonical_hash: None,
+        classification: None,
+    }
+}
 
 #[test]
 fn test_memory_lifecycle_state_transitions() {
@@ -13,16 +38,20 @@ fn test_memory_lifecycle_state_transitions() {
     let memory = Memory::new(mem_id, ws_id, MemoryKind::Fact, at);
     assert_eq!(memory.status, MemoryStatus::Candidate);
 
-    let rev_id = vestrace_domain::id::MemoryRevisionId::new();
-    let memory = memory.activate(rev_id, at).unwrap();
+    // `activate` takes the revision rather than its id so it can verify that
+    // the revision belongs to this memory and this workspace.
+    let revision = memory_revision(mem_id, ws_id, 1);
+    let rev_id = revision.id;
+    let memory = memory.activate(&revision, at).unwrap();
     assert_eq!(memory.status, MemoryStatus::Active);
     assert_eq!(memory.active_revision_id, Some(rev_id));
+    assert_eq!(memory.state_revision, 1);
 
     let memory = memory.supersede(at).unwrap();
     assert_eq!(memory.status, MemoryStatus::Superseded);
 
     // Superseded memory cannot be activated again
-    assert!(memory.activate(rev_id, at).is_err());
+    assert!(memory.activate(&revision, at).is_err());
 }
 
 #[test]

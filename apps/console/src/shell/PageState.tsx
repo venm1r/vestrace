@@ -1,5 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { ApiRequestError } from '../sdk/client';
+import { Button, type ButtonVariant } from '../design-system/primitives/Button';
+import { Surface } from '../design-system/primitives/Surface';
 
 export type Tone = 'info' | 'warning' | 'error' | 'success';
 
@@ -29,87 +31,67 @@ export const PageHeader: React.FC<PageHeaderProps> = ({ title, description, acti
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
-      gap: '16px',
+      gap: 'var(--space-md)',
       flexWrap: 'wrap',
     }}
   >
-    <div style={{ minWidth: '260px', flex: 1 }}>
-      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+    <div style={{ minWidth: '240px', flex: 1 }}>
+      <h1 className="type-h2" style={{ color: 'var(--brand-white)', margin: 0 }}>
         {title}
       </h1>
-      <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginTop: '4px', marginBottom: 0 }}>
+      <p
+        className="type-body-sm"
+        style={{ color: 'var(--color-on-surface-variant)', marginTop: 'var(--space-xs)', marginBottom: 0 }}
+      >
         {description}
       </p>
     </div>
-    {actions}
+    {/* Actions wrap under the title rather than squeezing it on narrow
+        screens; `control-row` keeps them on the 8px grid when they do. */}
+    {actions && <div className="control-row">{actions}</div>}
   </div>
 );
 
 export interface ActionButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: string;
+  /** `quiet` is retained as an alias for the primitive's `secondary`, so the
+   *  existing call sites keep reading naturally. */
   variant?: 'primary' | 'quiet' | 'danger';
 }
 
-const ACTION_STYLES: Record<NonNullable<ActionButtonProps['variant']>, React.CSSProperties> = {
-  primary: { background: 'var(--color-primary)', color: '#ffffff', border: '1px solid transparent' },
-  quiet: {
-    background: 'var(--color-surface-container-high)',
-    color: 'var(--text-primary)',
-    border: '1px solid var(--color-outline)',
-  },
-  danger: { background: 'transparent', color: 'var(--color-error)', border: '1px solid var(--color-error)' },
+const VARIANT_ALIAS: Record<NonNullable<ActionButtonProps['variant']>, ButtonVariant> = {
+  primary: 'primary',
+  quiet: 'secondary',
+  danger: 'danger',
 };
 
+/** The page-level action button.
+ *
+ * A thin alias over the design-system `Button` rather than a second
+ * implementation. Until now the console carried two button components with
+ * different radii, padding and typography, and the twelve route pages used the
+ * one that was *not* part of the design system.
+ */
 export const ActionButton: React.FC<ActionButtonProps> = ({
-  icon,
   variant = 'primary',
   children,
-  style,
-  disabled,
   ...props
 }) => (
-  <button
-    type="button"
-    disabled={disabled}
-    style={{
-      ...ACTION_STYLES[variant],
-      borderRadius: '8px',
-      padding: '10px 18px',
-      fontSize: '14px',
-      fontWeight: 600,
-      cursor: disabled ? 'not-allowed' : 'pointer',
-      opacity: disabled ? 0.45 : 1,
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '8px',
-      ...style,
-    }}
-    {...props}
-  >
-    {icon && (
-      <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '18px' }}>
-        {icon}
-      </span>
-    )}
+  <Button variant={VARIANT_ALIAS[variant]} {...props}>
     {children}
-  </button>
+  </Button>
 );
 
+/** A page-level container. An alias over `Surface`, for the same reason as
+ *  `ActionButton`: one vocabulary, not two. Flush because panels here wrap
+ *  tables and lists that manage their own padding. */
 export const Panel: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({
   children,
   style,
 }) => (
-  <div
-    style={{
-      background: 'var(--color-surface-container-low)',
-      border: '1px solid var(--color-outline)',
-      borderRadius: '12px',
-      overflow: 'hidden',
-      ...style,
-    }}
-  >
+  <Surface level={1} flush style={style}>
     {children}
-  </div>
+  </Surface>
 );
 
 export interface StatusMessageProps {
@@ -158,7 +140,7 @@ export interface DescribedError {
 }
 
 /**
- * Distinguishes a deliberately unimplemented P0 surface, a rejected identity and
+ * Distinguishes a reserved-but-unimplemented surface, a rejected identity and
  * a genuine backend failure, which the console previously reported identically.
  */
 export function describeError(error: unknown, resourceName: string): DescribedError {
@@ -168,7 +150,7 @@ export function describeError(error: unknown, resourceName: string): DescribedEr
         tone: 'info',
         // Phrased without the resource name so it reads correctly for both
         // "artifacts" and "the metrics summary".
-        title: 'Not available in the P0 foundation',
+        title: 'Not available in this build',
         detail: error.body.message,
         retryable: false,
       };
@@ -327,23 +309,31 @@ export const NoticeBanner: React.FC<{ notice: Notice | null; onDismiss: () => vo
 };
 
 export const PageShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>{children}</div>
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>{children}</div>
 );
 
 export const Th: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({
   children,
   style,
 }) => (
-  <th scope="col" style={{ padding: '12px 24px', fontWeight: 600, ...style }}>
+  <th
+    scope="col"
+    style={{ padding: 'var(--space-sm) var(--space-lg)', fontWeight: 500, ...style }}
+  >
     {children}
   </th>
 );
 
+/** Column headers are "system" text, so they take the monospace label step
+ *  rather than a shrunken body size. */
 export const tableHeadRowStyle: React.CSSProperties = {
   background: 'var(--color-surface-container)',
-  borderBottom: '1px solid var(--color-outline)',
-  color: 'var(--text-secondary)',
-  fontSize: '12px',
+  borderBottom: '1px solid var(--color-outline-variant)',
+  color: 'var(--color-on-surface-variant)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--text-label-size)',
+  lineHeight: 'var(--text-label-line)',
+  letterSpacing: '0.05em',
   textTransform: 'uppercase',
 };
 
@@ -351,9 +341,10 @@ export const tableStyle: React.CSSProperties = {
   width: '100%',
   borderCollapse: 'collapse',
   textAlign: 'left',
-  fontSize: '14px',
+  fontSize: 'var(--text-body-sm-size)',
+  lineHeight: 'var(--text-body-sm-line)',
 };
 
 export const rowStyle: React.CSSProperties = {
-  borderBottom: '1px solid var(--color-surface-container-high)',
+  borderBottom: '1px solid var(--color-outline-variant)',
 };

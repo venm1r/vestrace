@@ -10,12 +10,18 @@ use vestrace_application::run::ports::{
 use vestrace_application::run::{
     RunWorkHandler, RunWorkHandlerRegistry, RunWorkOutcome, RunWorker, RunWorkerConfig,
 };
-use vestrace_application::{ApplicationError, RequestContext};
+use vestrace_application::{
+    ApplicationError, DenyAllPolicyEngine, PolicyDecisionEngine, RequestContext,
+};
 use vestrace_domain::id::{
-    AgentRunId, AgentRuntimeSnapshotId, PrincipalId, WorkItemId, WorkerId, WorkspaceId,
+    AgentRunId, AgentRuntimeSnapshotId, CapabilityGrantId, PolicyDecisionId, PrincipalId,
+    WorkItemId, WorkerId, WorkspaceId,
 };
 use vestrace_domain::run::{RunExecutionMode, RunFailure, RunStatus, RunVersion};
 use vestrace_domain::time::Timestamp;
+use vestrace_domain::{
+    CapabilityGrant, CapabilityGrantSpec, PolicyDecision, evaluate_capability_grants,
+};
 
 struct MockClock {
     now: Mutex<Timestamp>,
@@ -106,6 +112,7 @@ impl RunStorePort for MockRunStore {
 struct MockLeasePort {
     acquire_lease: Mutex<Option<RunLease>>,
     acquire_error: Mutex<Option<ApplicationError>>,
+    acquire_count: AtomicU32,
     release_count: AtomicU32,
 }
 
@@ -114,6 +121,7 @@ impl MockLeasePort {
         Self {
             acquire_lease: Mutex::new(None),
             acquire_error: Mutex::new(None),
+            acquire_count: AtomicU32::new(0),
             release_count: AtomicU32::new(0),
         }
     }
@@ -134,6 +142,7 @@ impl RunLeasePort for MockLeasePort {
         _context: &RequestContext,
         _request: AcquireRunLease,
     ) -> Result<RunLease, ApplicationError> {
+        self.acquire_count.fetch_add(1, Ordering::SeqCst);
         if let Some(err) = self.acquire_error.lock().unwrap().take() {
             return Err(err);
         }
@@ -372,7 +381,7 @@ fn make_worker(
     clock: Arc<MockClock>,
     registry: RunWorkHandlerRegistry,
 ) -> RunWorker {
-    RunWorker::new(
+    RunWorker::new_with_policy(
         RunWorkerConfig {
             worker_id: WorkerId::new(),
             poll_interval: Duration::from_millis(10),
@@ -385,6 +394,72 @@ fn make_worker(
         queue_port,
         clock,
         registry,
+        Arc::new(TestAllowPolicy),
+    )
+    .unwrap()
+}
+
+struct TestAllowPolicy;
+
+#[async_trait]
+impl PolicyDecisionEngine for TestAllowPolicy {
+    async fn decide(
+        &self,
+        context: &RequestContext,
+        request: vestrace_domain::AuthorizationRequest,
+    ) -> Result<PolicyDecision, ApplicationError> {
+        let at = vestrace_domain::now();
+        let grant = CapabilityGrant::issue(
+            CapabilityGrantSpec {
+                id: CapabilityGrantId::new(),
+                workspace_id: context.workspace_id,
+                subject_id: context.principal_id,
+                issuer_id: context.principal_id,
+                capability: request.capability.clone(),
+                operation: request.operation.clone(),
+                resource_scope: request.resource_scope.clone(),
+                valid_from: at - chrono::Duration::minutes(1),
+                valid_until: None,
+                budget: None,
+                risk_ceiling: vestrace_domain::RiskCategory::Critical,
+                conditions: request.conditions.clone(),
+            },
+            at,
+        )?;
+
+        Ok(evaluate_capability_grants(
+            PolicyDecisionId::new(),
+            context.workspace_id,
+            context.principal_id,
+            "test-allow-v1",
+            &request,
+            &[grant],
+            at,
+        )?)
+    }
+}
+
+fn make_denying_worker(
+    store: Arc<MockRunStore>,
+    lease_port: Arc<MockLeasePort>,
+    queue_port: Arc<MockWorkQueue>,
+    clock: Arc<MockClock>,
+    registry: RunWorkHandlerRegistry,
+) -> RunWorker {
+    RunWorker::new_with_policy(
+        RunWorkerConfig {
+            worker_id: WorkerId::new(),
+            poll_interval: Duration::from_millis(10),
+            lease_ttl: Duration::from_secs(30),
+            heartbeat_interval: Duration::from_secs(10),
+            max_concurrency: 1,
+        },
+        store,
+        lease_port,
+        queue_port,
+        clock,
+        registry,
+        Arc::new(DenyAllPolicyEngine),
     )
     .unwrap()
 }
@@ -427,6 +502,41 @@ async fn handler_runs_only_after_leases_acquired() {
 
     assert_eq!(handler_ref.invoke_count(), 1);
     assert_eq!(lease_port.release_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn denied_work_item_is_dead_lettered_before_handler() {
+    let snapshot = make_test_run(RunStatus::Running, RunVersion::INITIAL);
+    let run_id = snapshot.run.id;
+    let store = Arc::new(MockRunStore::new(snapshot));
+    let lease_port = Arc::new(MockLeasePort::new());
+    let queue_port = Arc::new(MockWorkQueue::new());
+    let clock = Arc::new(MockClock::new(chrono::Utc::now()));
+
+    let handler = Arc::new(MockHandler::new(
+        WorkItemKindDiscriminant::AdvanceRun,
+        RunWorkOutcome::Completed,
+    ));
+    let handler_ref = handler.clone();
+    let mut registry = RunWorkHandlerRegistry::new();
+    registry.register(handler);
+
+    let item = make_test_work_item(run_id, RunVersion::INITIAL);
+    let item_id = item.id;
+    queue_port.set_leased_item(item);
+
+    let worker = make_denying_worker(
+        store,
+        lease_port.clone(),
+        queue_port.clone(),
+        clock,
+        registry,
+    );
+    worker.run_once(&make_test_context()).await.unwrap();
+
+    assert_eq!(handler_ref.invoke_count(), 0);
+    assert_eq!(lease_port.acquire_count.load(Ordering::SeqCst), 0);
+    assert!(queue_port.was_dead_lettered(item_id));
 }
 
 #[tokio::test]

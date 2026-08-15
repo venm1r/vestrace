@@ -25,7 +25,7 @@ export const TriggersPage: React.FC = () => {
         actions={
           <ActionButton
             icon="bolt"
-            onClick={() => notify('info', 'Trigger creation is not implemented in the P0 foundation.')}
+            onClick={() => notify('info', 'Trigger creation is not implemented in this build.')}
           >
             Add Trigger
           </ActionButton>

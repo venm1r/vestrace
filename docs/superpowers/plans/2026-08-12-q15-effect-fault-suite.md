@@ -11,7 +11,7 @@ Provide a deterministic application harness boundary for effect fault points wit
 - [x] Add `ExternalEffectFaultSuiteService` and typed report.
 - [x] Preserve domain fault-suite decision semantics and fail closed on mismatches/errors.
 - [x] Document the harness boundary and explicit non-claims.
-- [ ] Wire production fault injection and persist qualification evidence in a later gate.
+- [x] Production fault injection delivered by Q21 (`FaultInjectionRuntime`) and Q23 (`ProcessFaultInjectionRuntime`); qualification evidence persisted by Q17 (`PgFaultSuiteEvidenceRepository`, migration `0129`).
 
 ## Verification
 

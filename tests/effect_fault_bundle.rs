@@ -53,6 +53,8 @@ fn report(profile: QualificationProfile) -> ConformanceReport {
             status: CaseStatus::Pass,
             message: "base conformance passed".into(),
             evidence: Some(format!("test://bundle/{requirement_id}")),
+            // A fixture standing in for a run that happened.
+            origin: vestrace_domain::conformance::CaseOrigin::Executed,
         })
         .collect();
     ConformanceReport::from_results(Some(profile), results)
@@ -304,6 +306,8 @@ async fn bundle_assembly_rejects_duplicate_qual008_result_before_loading_evidenc
             status: CaseStatus::Pass,
             message: "duplicate".into(),
             evidence: Some("test://duplicate".into()),
+            // A fixture standing in for a run that happened.
+            origin: vestrace_domain::conformance::CaseOrigin::Executed,
         }],
     );
 

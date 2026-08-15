@@ -1,0 +1,55 @@
+{
+  "schema_version": "vestrace.g5.federation-fixture.v1",
+  "profile": "FEDERATION",
+  "release_gate": "v0.4 Govern",
+  "status": "evidence_fixture_only",
+  "cases": [
+    {
+      "id": "G5-001",
+      "status": "covered",
+      "requirements": ["IDW-006", "IDW-007"],
+      "test": "g5_active_relationship_validates_exact_remote_identity_and_policy_version",
+      "note": "Remote identity and the locally selected federation policy version are exact inputs to the trust decision."
+    },
+    {
+      "id": "G5-002",
+      "status": "covered",
+      "requirements": ["IDW-007", "QUAL-017"],
+      "test": "g5_suspended_revoked_and_expired_relationships_fail_closed",
+      "note": "Suspended, revoked and expired relationships do not produce an active trust decision."
+    },
+    {
+      "id": "G5-003",
+      "status": "covered",
+      "requirements": ["IDW-006", "IDW-008", "GOV-020"],
+      "test": "g5_federation_trust_alone_never_authorizes_local_memory_access",
+      "note": "Trust is an interaction/identity result; local grant, mount and target policy remain mandatory."
+    },
+    {
+      "id": "G5-004",
+      "status": "covered",
+      "requirements": ["IDW-004", "IDW-007", "IDW-013"],
+      "test": "g5_federated_memory_access_requires_both_trust_and_g4_local_share",
+      "note": "Federated memory access delegates the local decision to the G4 source-grant/target-mount intersection."
+    },
+    {
+      "id": "G5-005",
+      "status": "covered",
+      "requirements": ["IDW-001", "IDW-007", "IDW-013"],
+      "test": "g5_remote_identity_must_bind_to_the_shared_source_workspace",
+      "note": "A trusted remote principal cannot be rebound to a different source workspace or shared object."
+    },
+    {
+      "id": "G5-006",
+      "status": "covered",
+      "requirements": ["IDW-006", "IDW-009", "IDW-010"],
+      "test": "g5_relationship_lifecycle_is_explicit_and_not_transitive",
+      "note": "Relationship evidence is metadata; no transitive re-share or remote authority transfer is exposed."
+    }
+  ],
+  "known_limitations": [
+    "The implementation is an in-memory domain boundary; durable relationship/decision/audit persistence is not implemented.",
+    "Transport, cryptographic signature verification, remote protocol adapters, provider/export wiring and DataPolicy classification enforcement remain open.",
+    "This fixture is executable evidence for the bounded G5 slice and does not qualify FEDERATION, TRUSTED or a v0.4 release."
+  ]
+}

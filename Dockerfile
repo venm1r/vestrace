@@ -7,13 +7,24 @@ COPY src ./src
 COPY crates ./crates
 COPY migrations ./migrations
 
-RUN cargo build --release --package vestrace-cli --bin vestrace \
+# The revision this binary was built from, compiled in.
+#
+# A capability manifest refuses to be written without one, because a
+# qualification that cannot say which source it describes certifies nothing in
+# particular. The argument is referenced by the build command itself rather than
+# set as an `ENV` above it: a layer rebuilds when something it references
+# changes, and an `ENV` the `RUN` never mentions leaves the compile cached with
+# whatever revision was baked in last time.
+ARG VESTRACE_SOURCE_REVISION=unknown-source-revision
+
+RUN VESTRACE_SOURCE_REVISION="${VESTRACE_SOURCE_REVISION}" \
+    cargo build --release --package vestrace-cli --bin vestrace \
     && strip target/release/vestrace
 
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates \
+    && apt-get install --yes --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 vestrace \
     && useradd --system --uid 10001 --gid vestrace --no-create-home --home-dir /nonexistent vestrace
