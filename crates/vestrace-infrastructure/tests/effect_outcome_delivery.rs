@@ -263,10 +263,8 @@ async fn an_inconclusive_outcome_is_not_delivered(pool: PgPool) {
     );
 
     let stream = events.load_stream(&context, run_id).await.unwrap();
-    assert!(
-        !stream.iter().any(|envelope| matches!(
-            envelope.payload,
-            LegacyRunEvent::ExternalEffectSettled { .. }
-        ))
-    );
+    assert!(!stream.iter().any(|envelope| matches!(
+        envelope.payload,
+        LegacyRunEvent::ExternalEffectSettled { .. }
+    )));
 }

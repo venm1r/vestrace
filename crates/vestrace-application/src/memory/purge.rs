@@ -220,10 +220,8 @@ mod tests {
     /// memory was destroyed.
     #[tokio::test]
     async fn a_purge_that_removed_nothing_is_not_reported_as_success() {
-        let service = HardPurgeMemoryService::new(
-            DeterministicPurgeAuthorizer,
-            RecordingPurge::removing(0),
-        );
+        let service =
+            HardPurgeMemoryService::new(DeterministicPurgeAuthorizer, RecordingPurge::removing(0));
 
         let error = service
             .execute(&context(), command(MemoryId::new()))
@@ -244,10 +242,8 @@ mod tests {
     /// are describing the same event.
     #[tokio::test]
     async fn a_purge_reports_what_it_removed() {
-        let service = HardPurgeMemoryService::new(
-            DeterministicPurgeAuthorizer,
-            RecordingPurge::removing(1),
-        );
+        let service =
+            HardPurgeMemoryService::new(DeterministicPurgeAuthorizer, RecordingPurge::removing(1));
 
         let outcome = service
             .execute(&context(), command(MemoryId::new()))
@@ -353,9 +349,7 @@ impl PurgeAuthorizationPort for GrantedPurgeAuthorizer {
     ) -> Result<PurgeAuthorization, ApplicationError> {
         if reason.trim().is_empty() {
             return Err(ApplicationError::Domain(
-                vestrace_domain::DomainError::InvalidArgument(
-                    "a purge requires a reason".into(),
-                ),
+                vestrace_domain::DomainError::InvalidArgument("a purge requires a reason".into()),
             ));
         }
         let request = vestrace_domain::AuthorizationRequest::new(

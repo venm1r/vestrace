@@ -247,9 +247,8 @@ fn running_executable_digest() -> anyhow::Result<String> {
 
     let path = std::env::current_exe()
         .map_err(|error| anyhow::anyhow!("the running executable could not be located: {error}"))?;
-    let mut file = std::fs::File::open(&path).map_err(|error| {
-        anyhow::anyhow!("the running executable could not be read: {error}")
-    })?;
+    let mut file = std::fs::File::open(&path)
+        .map_err(|error| anyhow::anyhow!("the running executable could not be read: {error}"))?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)
         .map_err(|error| anyhow::anyhow!("the running executable could not be hashed: {error}"))?;
@@ -302,10 +301,11 @@ pub fn run_manifest(
         match (configuration_digest, environment_manifest) {
             (Some(digest), Some(environment)) => (digest, environment),
             (configuration_digest, environment_manifest) => {
-                let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
-                    .map_err(|error| {
-                        anyhow::anyhow!("configuration could not be read for identity: {error}")
-                    })?;
+                let config =
+                    AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+                        .map_err(|error| {
+                            anyhow::anyhow!("configuration could not be read for identity: {error}")
+                        })?;
                 (
                     configuration_digest.unwrap_or_else(|| config.identity_digest()),
                     environment_manifest.unwrap_or_else(|| config.environment_summary()),

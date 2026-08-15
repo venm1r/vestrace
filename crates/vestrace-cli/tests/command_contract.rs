@@ -260,9 +260,8 @@ fn subscribers_filter_globally_rather_than_per_layer() {
     );
 }
 
-const MEMORY_SERVICE_SOURCE: &str = include_str!(
-    "../../vestrace-application/src/memory/services.rs"
-);
+const MEMORY_SERVICE_SOURCE: &str =
+    include_str!("../../vestrace-application/src/memory/services.rs");
 
 /// Every outbox topic the write path produces has a handler that consumes it.
 ///
@@ -284,10 +283,7 @@ fn every_outbox_topic_produced_has_a_handler() {
         .match_indices("OutboxMessage::new(")
         .filter_map(|(index, _)| {
             // The topic is the second argument, on its own line.
-            MEMORY_SERVICE_SOURCE[index..]
-                .lines()
-                .nth(2)
-                .map(str::trim)
+            MEMORY_SERVICE_SOURCE[index..].lines().nth(2).map(str::trim)
         })
         .filter_map(|line| line.strip_prefix('"'))
         .filter_map(|line| line.split('"').next())

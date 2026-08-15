@@ -3834,8 +3834,10 @@ impl ConformanceCase for AContextPackNeverExceedsItsBudget {
             return result(
                 id,
                 requirement,
-                Err("the fixture items account for no tokens, so no budget can be exceeded"
-                    .to_string()),
+                Err(
+                    "the fixture items account for no tokens, so no budget can be exceeded"
+                        .to_string(),
+                ),
                 evidence,
             );
         }
@@ -3861,22 +3863,20 @@ impl ConformanceCase for AContextPackNeverExceedsItsBudget {
         // Exactly at budget: allowed. A budget is a ceiling, not a limit to stay
         // under, and refusing the boundary would make the number mean something
         // other than what it says.
-        let exact = match retrieval_fixture::pack(
-            items.clone(),
-            needed,
-            TimePerspective::Current,
-            true,
-        ) {
-            Ok(pack) => pack,
-            Err(error) => {
-                return result(
-                    id,
-                    requirement,
-                    Err(format!("a pack spending exactly its budget was refused: {error}")),
-                    evidence,
-                );
-            }
-        };
+        let exact =
+            match retrieval_fixture::pack(items.clone(), needed, TimePerspective::Current, true) {
+                Ok(pack) => pack,
+                Err(error) => {
+                    return result(
+                        id,
+                        requirement,
+                        Err(format!(
+                            "a pack spending exactly its budget was refused: {error}"
+                        )),
+                        evidence,
+                    );
+                }
+            };
         if exact.used_tokens > exact.token_budget {
             return result(
                 id,
@@ -8373,8 +8373,7 @@ cap_case!(
         let mut narrower_somewhere = false;
         for (what, request) in &probes {
             let parent_allows = allowed(&actors, std::slice::from_ref(&parent), request);
-            let child_allows =
-                allowed(&child_actors, std::slice::from_ref(child.grant()), request);
+            let child_allows = allowed(&child_actors, std::slice::from_ref(child.grant()), request);
             if child_allows && !parent_allows {
                 return Err(format!(
                     "a delegated child is allowed {what} and its parent is not, so delegation                      produced authority the delegator never held"
@@ -10625,7 +10624,6 @@ mod learning_fixture {
     }
 }
 
-
 const SHARING_EVIDENCE: &str = "crates/vestrace-domain/src/enterprise/sharing.rs";
 const FEDERATION_EVIDENCE: &str = "crates/vestrace-domain/src/enterprise/federation.rs";
 
@@ -10824,8 +10822,9 @@ idw_case!(
 
         let (_, mount, _) = mounted(&parties, at);
         if mount.target_workspace_id() != parties.target_workspace {
-            return Err("the accepted mount does not belong to the workspace that accepted it"
-                .to_string());
+            return Err(
+                "the accepted mount does not belong to the workspace that accepted it".to_string(),
+            );
         }
 
         Ok(format!(
@@ -10891,8 +10890,10 @@ idw_case!(
             );
         }
 
-        Ok("a target policy is scoped to one workspace and one principal, and widens to neither"
-            .to_string())
+        Ok(
+            "a target policy is scoped to one workspace and one principal, and widens to neither"
+                .to_string(),
+        )
     }
 );
 
@@ -10905,8 +10906,10 @@ idw_case!(
      the wrong identity is denied; neither answer stands in for the other",
     SHARING_EVIDENCE,
     || {
-        use crate::enterprise::{MemoryMount, ShareOperation, TargetSharePolicy, evaluate_share_access};
         use crate::enterprise::ShareAccessReason;
+        use crate::enterprise::{
+            MemoryMount, ShareOperation, TargetSharePolicy, evaluate_share_access,
+        };
         use crate::id::PrincipalId;
         use crate::time::now;
         use sharing_fixture::*;
@@ -10915,13 +10918,8 @@ idw_case!(
         let at = now();
         let (grant, mount, policy) = mounted(&parties, at);
 
-        let allowed = evaluate_share_access(
-            &grant,
-            &mount,
-            &policy,
-            ShareOperation::ReadContent,
-            at,
-        );
+        let allowed =
+            evaluate_share_access(&grant, &mount, &policy, ShareOperation::ReadContent, at);
         if !allowed.is_allowed() {
             return Err(format!(
                 "the fully authorized arrangement was denied: {:?}",
@@ -10954,13 +10952,9 @@ idw_case!(
 
         // The same authority, under an identity nobody accepted for.
         let other_principal = PrincipalId::new();
-        let policy_for_someone_else = TargetSharePolicy::new(
-            parties.target_workspace,
-            other_principal,
-            read_only(),
-            None,
-        )
-        .map_err(|error| format!("the substitute policy could not be built: {error}"))?;
+        let policy_for_someone_else =
+            TargetSharePolicy::new(parties.target_workspace, other_principal, read_only(), None)
+                .map_err(|error| format!("the substitute policy could not be built: {error}"))?;
         let wrong_identity = evaluate_share_access(
             &grant,
             &mount,
@@ -11057,8 +11051,10 @@ idw_case!(
             return Err("the accepted mount does not carry the grant it accepted".to_string());
         }
 
-        Ok("a mount requires the exact grant, the exact revision, and operations within it"
-            .to_string())
+        Ok(
+            "a mount requires the exact grant, the exact revision, and operations within it"
+                .to_string(),
+        )
     }
 );
 
@@ -11145,9 +11141,11 @@ idw_case!(
         )
         .is_ok()
         {
-            return Err("a source granted the right to re-share, so the memory could reach a \
+            return Err(
+                "a source granted the right to re-share, so the memory could reach a \
                         workspace the owner never named"
-                .to_string());
+                    .to_string(),
+            );
         }
 
         if TargetSharePolicy::new(
@@ -11187,8 +11185,10 @@ idw_case!(
             ));
         }
 
-        Ok("re-sharing is refused at the grant, the policy, the acceptance and the decision"
-            .to_string())
+        Ok(
+            "re-sharing is refused at the grant, the policy, the acceptance and the decision"
+                .to_string(),
+        )
     }
 );
 
@@ -11400,8 +11400,10 @@ idw_case!(
             return Err("a stale mount still produced a reference".to_string());
         }
 
-        Ok("revoked, expired and stale mounts each stop disclosing and say which they are"
-            .to_string())
+        Ok(
+            "revoked, expired and stale mounts each stop disclosing and say which they are"
+                .to_string(),
+        )
     }
 );
 
@@ -11587,8 +11589,10 @@ idw_case!(
             ));
         }
 
-        Ok("federation trust is necessary and not sufficient; the local share still decides"
-            .to_string())
+        Ok(
+            "federation trust is necessary and not sufficient; the local share still decides"
+                .to_string(),
+        )
     }
 );
 
@@ -11651,7 +11655,6 @@ idw_case!(
         ))
     }
 );
-
 
 const RECOVERY_EVIDENCE: &str = "crates/vestrace-domain/src/trust.rs";
 
@@ -11796,7 +11799,10 @@ rec_case!(
                     .to_string(),
             );
         }
-        if incident.triggering_findings().contains(&HealthFindingId::new()) {
+        if incident
+            .triggering_findings()
+            .contains(&HealthFindingId::new())
+        {
             return Err("the incident claims a finding nobody raised".to_string());
         }
 
@@ -11841,9 +11847,9 @@ rec_case!(
     "Recovery cannot begin before containment is complete, revalidation cannot begin before \
      recovery, and resolution cannot happen before revalidation passes",
     || {
+        use crate::RevalidationRunId;
         use crate::time::now;
         use crate::trust::{IncidentSeverity, IncidentStatus, RevalidationResult};
-        use crate::RevalidationRunId;
         use recovery_fixture::*;
 
         let scope = scope();
@@ -11897,9 +11903,11 @@ rec_case!(
             return Err(format!("the incident ended at {:?}", incident.status()));
         }
 
-        Ok("containment precedes recovery, recovery precedes revalidation, revalidation \
+        Ok(
+            "containment precedes recovery, recovery precedes revalidation, revalidation \
             precedes resolution"
-            .to_string())
+                .to_string(),
+        )
     }
 );
 
@@ -11920,8 +11928,12 @@ rec_case!(
         let at = now();
         let incident = incident(&scope, IncidentSeverity::Critical, at);
 
-        let mut trust =
-            TrustStateRecord::from_incident(scope.clone(), incident.id(), IncidentSeverity::Critical, at);
+        let mut trust = TrustStateRecord::from_incident(
+            scope.clone(),
+            incident.id(),
+            IncidentSeverity::Critical,
+            at,
+        );
         if trust.state() != TrustState::Untrusted {
             return Err(format!(
                 "a critical incident left the scope at {:?}",
@@ -11960,9 +11972,11 @@ rec_case!(
             ));
         }
 
-        Ok("trust moves out of untrusted only through the revalidation run the record \
+        Ok(
+            "trust moves out of untrusted only through the revalidation run the record \
             registered, for its own scope"
-            .to_string())
+                .to_string(),
+        )
     }
 );
 
@@ -12007,9 +12021,8 @@ rec_case!(
 
         // Resuming something that must be reconciled is the exact mistake.
         let mut optimistic = honest.clone();
-        optimistic.retain(|observation| {
-            observation.target != RecoveryTarget::DispatchingExternalEffect
-        });
+        optimistic
+            .retain(|observation| observation.target != RecoveryTarget::DispatchingExternalEffect);
         optimistic.push(
             RecoveryQualificationObservation::new(
                 RecoveryTarget::DispatchingExternalEffect,
@@ -12049,7 +12062,9 @@ rec_case!(
     "An external dispatch interrupted mid-flight, and an outcome nobody observed, both \
      classify as reconciliation rather than as work to redo",
     || {
-        use crate::trust::{RecoveryAction, RecoveryClassification, RecoveryTarget, classify_recovery};
+        use crate::trust::{
+            RecoveryAction, RecoveryClassification, RecoveryTarget, classify_recovery,
+        };
 
         for target in [
             RecoveryTarget::DispatchingExternalEffect,
@@ -12226,8 +12241,10 @@ rec_case!(
             ));
         }
 
-        Ok("only a snapshot whose integrity was checked and passed can be restored from"
-            .to_string())
+        Ok(
+            "only a snapshot whose integrity was checked and passed can be restored from"
+                .to_string(),
+        )
     }
 );
 
@@ -12277,8 +12294,12 @@ rec_case!(
             );
         }
 
-        let mut trust =
-            TrustStateRecord::from_incident(scope.clone(), incident.id(), IncidentSeverity::High, at);
+        let mut trust = TrustStateRecord::from_incident(
+            scope.clone(),
+            incident.id(),
+            IncidentSeverity::High,
+            at,
+        );
         trust
             .begin_revalidation(run.id(), at)
             .map_err(|error| format!("trust revalidation could not begin: {error}"))?;
@@ -12470,8 +12491,12 @@ rec_case!(
             );
         }
 
-        let mut trust =
-            TrustStateRecord::from_incident(scope.clone(), incident.id(), IncidentSeverity::High, at);
+        let mut trust = TrustStateRecord::from_incident(
+            scope.clone(),
+            incident.id(),
+            IncidentSeverity::High,
+            at,
+        );
         trust
             .begin_revalidation(inconclusive.id(), at)
             .map_err(|error| format!("revalidation could not begin: {error}"))?;
@@ -12487,8 +12512,12 @@ rec_case!(
 
         // And it is distinct from a failure, which does settle the question.
         let failed = run(&scope, &incident, RevalidationResult::Failed, at);
-        let mut after_failure =
-            TrustStateRecord::from_incident(scope.clone(), incident.id(), IncidentSeverity::High, at);
+        let mut after_failure = TrustStateRecord::from_incident(
+            scope.clone(),
+            incident.id(),
+            IncidentSeverity::High,
+            at,
+        );
         after_failure
             .begin_revalidation(failed.id(), at)
             .map_err(|error| format!("revalidation could not begin: {error}"))?;
@@ -12541,7 +12570,10 @@ rec_case!(
         for (classification, action) in [
             (RecoveryClassification::SafeToResume, RecoveryAction::Resume),
             (RecoveryClassification::SafeToRetry, RecoveryAction::Retry),
-            (RecoveryClassification::MustReconcile, RecoveryAction::Reconcile),
+            (
+                RecoveryClassification::MustReconcile,
+                RecoveryAction::Reconcile,
+            ),
         ] {
             let mut attempt = sweep.clone();
             attempt.push(
@@ -12569,9 +12601,11 @@ rec_case!(
             return Err("the sweep that escalated divergence to a human was refused".to_string());
         }
 
-        Ok("divergent history escalates to a person, and every automatic resolution of it is \
+        Ok(
+            "divergent history escalates to a person, and every automatic resolution of it is \
             refused"
-            .to_string())
+                .to_string(),
+        )
     }
 );
 
@@ -12638,9 +12672,9 @@ rec_case!(
      action taken, and who closed it with what evidence; closure without evidence or without \
      a disposition is refused",
     || {
+        use crate::PrincipalId;
         use crate::time::now;
         use crate::trust::{IncidentSeverity, IncidentStatus, RevalidationResult};
-        use crate::PrincipalId;
         use chrono::Duration;
         use recovery_fixture::*;
 
@@ -12727,7 +12761,6 @@ rec_case!(
         ))
     }
 );
-
 
 rec_case!(
     RestoringRebuildsRatherThanTrusts,
@@ -12838,7 +12871,12 @@ rec_case!(
             return Err(format!("the scope started at {:?}", trust.state()));
         }
 
-        let partial = run(&scope, &incident, RevalidationResult::PassedWithDegradation, at);
+        let partial = run(
+            &scope,
+            &incident,
+            RevalidationResult::PassedWithDegradation,
+            at,
+        );
         if !partial.is_successful() {
             return Err(
                 "a revalidation that passed with degradation is not counted as successful, so \
@@ -12880,7 +12918,6 @@ rec_case!(
         Ok("degradation restores partly and a later clean run completes it".to_string())
     }
 );
-
 
 const QUALIFICATION_EVIDENCE: &str = "crates/vestrace-domain/src/trust.rs";
 const GATE_EVIDENCE: &str = "crates/vestrace-domain/src/conformance/gate.rs";
@@ -12964,7 +13001,9 @@ mod qualification_fixture {
             QualificationProfile::Trusted,
             full_report(QualificationProfile::Trusted),
             full_evidence(QualificationProfile::Trusted),
-            vec!["local-file key custody does not pass production crypto qualification".to_string()],
+            vec![
+                "local-file key custody does not pass production crypto qualification".to_string(),
+            ],
             at,
         )
     }
@@ -13012,7 +13051,9 @@ qual_case!(
      over, however many other results it carries",
     QUALIFICATION_EVIDENCE,
     || {
-        use crate::conformance::{ConformanceReport, QualificationProfile, runner::profile_requirements};
+        use crate::conformance::{
+            ConformanceReport, QualificationProfile, runner::profile_requirements,
+        };
         use crate::time::now;
         use qualification_fixture::*;
 
@@ -13022,7 +13063,9 @@ qual_case!(
         bundle(profile, full_report(profile), Vec::new(), Vec::new(), at)?;
 
         let mut short = profile_requirements(profile);
-        let dropped = short.pop().ok_or_else(|| "the profile is empty".to_string())?;
+        let dropped = short
+            .pop()
+            .ok_or_else(|| "the profile is empty".to_string())?;
         let report = ConformanceReport::from_results(
             Some(profile),
             short.into_iter().map(passing_result).collect(),
@@ -13223,7 +13266,9 @@ qual_case!(
         let profile = QualificationProfile::Trusted;
         let evidence = full_evidence(profile);
         if evidence.len() < 2 {
-            return Err("the trusted gate requires almost nothing, so this proves little".to_string());
+            return Err(
+                "the trusted gate requires almost nothing, so this proves little".to_string(),
+            );
         }
         if !GovernanceFederationGate::evaluate(profile, &evidence).is_passed() {
             return Err("the complete evidence set was refused".to_string());
@@ -13403,8 +13448,8 @@ qual_case!(
         use crate::conformance::QualificationProfile;
         use crate::time::now;
         use crate::trust::{
-            QualificationBaseline, QualificationBundle, QualificationLifecycle,
-            TrustedGateFailure, TrustedQualificationGate,
+            QualificationBaseline, QualificationBundle, QualificationLifecycle, TrustedGateFailure,
+            TrustedQualificationGate,
         };
         use qualification_fixture::*;
 
@@ -13423,10 +13468,34 @@ qual_case!(
 
         // Each of these is a material change to what was qualified.
         for (label, build, config, environment, suite) in [
-            ("configuration", "sha256:build", "sha256:config-2", "environment://fixture", "suite-v1"),
-            ("build", "sha256:build-2", "sha256:config", "environment://fixture", "suite-v1"),
-            ("environment", "sha256:build", "sha256:config", "environment://other", "suite-v1"),
-            ("suite version", "sha256:build", "sha256:config", "environment://fixture", "suite-v2"),
+            (
+                "configuration",
+                "sha256:build",
+                "sha256:config-2",
+                "environment://fixture",
+                "suite-v1",
+            ),
+            (
+                "build",
+                "sha256:build-2",
+                "sha256:config",
+                "environment://fixture",
+                "suite-v1",
+            ),
+            (
+                "environment",
+                "sha256:build",
+                "sha256:config",
+                "environment://other",
+                "suite-v1",
+            ),
+            (
+                "suite version",
+                "sha256:build",
+                "sha256:config",
+                "environment://fixture",
+                "suite-v2",
+            ),
         ] {
             let changed = QualificationBundle::from_conformance_report(
                 QualificationLifecycle::Release,
@@ -13452,7 +13521,9 @@ qual_case!(
                 ));
             }
             if baseline.matches_bundle(&changed) {
-                return Err(format!("the baseline still matches after the {label} changed"));
+                return Err(format!(
+                    "the baseline still matches after the {label} changed"
+                ));
             }
             let decision = TrustedQualificationGate::evaluate(&changed, &baseline);
             if decision.is_passed()
@@ -13467,8 +13538,10 @@ qual_case!(
             }
         }
 
-        Ok("build, configuration, environment and suite version each bind the baseline"
-            .to_string())
+        Ok(
+            "build, configuration, environment and suite version each bind the baseline"
+                .to_string(),
+        )
     }
 );
 
@@ -13499,7 +13572,9 @@ qual_case!(
             let mut baseline = QualificationBaseline::from_bundle(&bundle, at)
                 .map_err(|error| format!("the baseline could not be published: {error}"))?;
             if !TrustedQualificationGate::evaluate(&bundle, &baseline).is_passed() {
-                return Err("the freshly published baseline did not qualify its own bundle".to_string());
+                return Err(
+                    "the freshly published baseline did not qualify its own bundle".to_string(),
+                );
             }
 
             let later = at + Duration::days(90);
@@ -13552,9 +13627,11 @@ qual_case!(
             }
         }
 
-        Ok("a baseline can go stale or be invalidated, must say why, and qualifies nothing \
+        Ok(
+            "a baseline can go stale or be invalidated, must say why, and qualifies nothing \
             afterwards"
-            .to_string())
+                .to_string(),
+        )
     }
 );
 
@@ -13620,8 +13697,10 @@ qual_case!(
             );
         }
 
-        Ok("a peer's word about itself is refused; the same claim attested by another is not"
-            .to_string())
+        Ok(
+            "a peer's word about itself is refused; the same claim attested by another is not"
+                .to_string(),
+        )
     }
 );
 
@@ -13672,7 +13751,9 @@ qual_case!(
         )?;
         let decision = TrustedQualificationGate::evaluate(&lesser, &baseline);
         if decision.is_passed()
-            || !decision.failures().contains(&TrustedGateFailure::WrongProfile)
+            || !decision
+                .failures()
+                .contains(&TrustedGateFailure::WrongProfile)
         {
             return Err(format!(
                 "a FEDERATION bundle was accepted as a trust claim: {:?}",
@@ -13688,16 +13769,15 @@ qual_case!(
     }
 );
 
-
 const EFFECT_EVIDENCE: &str = "crates/vestrace-domain/src/external_effects.rs";
 
 /// An intent, an authorization and an adapter that answers however the case
 /// needs it to.
 mod effect_case_fixture {
     use crate::external_effects::{
-        AdapterDispatchResult, AdapterError, DeliverySemantics, EffectAuthorization,
+        AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectAuthorization,
         EffectPrecondition, EffectReversibility, ExternalEffectAdapter,
-        ExternalEffectAdapterDescriptor, ExternalEffectIntent, IdempotencyProfile, DryRunMode,
+        ExternalEffectAdapterDescriptor, ExternalEffectIntent, IdempotencyProfile,
     };
     use crate::id::{PrincipalId, WorkspaceId};
     use crate::time::Timestamp;
@@ -13848,9 +13928,9 @@ effect_case!(
      receipt names the same effect, and an authorization that disagrees with any field of the \
      intent is refused rather than reconciled",
     || {
+        use crate::Capability;
         use crate::external_effects::{EffectAuthorization, EffectReversibility};
         use crate::time::now;
-        use crate::Capability;
         use effect_case_fixture::*;
 
         let actors = actors();
@@ -13953,12 +14033,12 @@ effect_case!(
     "An adapter declares its delivery semantics, and dispatching an intent through an adapter \
      whose declaration differs is refused rather than attempted",
     || {
+        use crate::Capability;
         use crate::external_effects::{
             DeliverySemantics, DispatchError, DryRunMode, EffectReversibility,
             ExternalEffectAdapterDescriptor, IdempotencyProfile,
         };
         use crate::time::now;
-        use crate::Capability;
         use effect_case_fixture::*;
 
         let actors = actors();
@@ -14024,8 +14104,10 @@ effect_case!(
             }
         }
 
-        Ok("an adapter's declared semantics must match the intent's, or dispatch refuses"
-            .to_string())
+        Ok(
+            "an adapter's declared semantics must match the intent's, or dispatch refuses"
+                .to_string(),
+        )
     }
 );
 
@@ -14137,10 +14219,7 @@ effect_case!(
             }
         }
 
-        Ok(format!(
-            "a compensation names effect {}",
-            original.id()
-        ))
+        Ok(format!("a compensation names effect {}", original.id()))
     }
 );
 
@@ -14274,8 +14353,10 @@ effect_case!(
             return Err("an unknown receipt was written with no evidence at all".to_string());
         }
 
-        Ok("acknowledged, failed and unknown dispatches each leave a receipt with evidence"
-            .to_string())
+        Ok(
+            "acknowledged, failed and unknown dispatches each leave a receipt with evidence"
+                .to_string(),
+        )
     }
 );
 
@@ -14328,14 +14409,12 @@ effect_case!(
         let inconclusive = reconcile_effect(
             &intent,
             &receipt,
-            vec![
-                ObservedEffectState::new(
-                    EvidenceStrength::ResponseDigest,
-                    None,
-                    "state://provider/unclear",
-                    vec!["evidence://read-back/1".to_string()],
-                ),
-            ],
+            vec![ObservedEffectState::new(
+                EvidenceStrength::ResponseDigest,
+                None,
+                "state://provider/unclear",
+                vec!["evidence://read-back/1".to_string()],
+            )],
             at,
         )
         .map_err(|error| format!("reconciliation failed: {error}"))?;
@@ -14349,14 +14428,12 @@ effect_case!(
         let confirmed = reconcile_effect(
             &intent,
             &receipt,
-            vec![
-                ObservedEffectState::new(
-                    EvidenceStrength::ExternalResourceReadBack,
-                    Some(true),
-                    "state://provider/charge_01",
-                    vec!["evidence://read-back/2".to_string()],
-                ),
-            ],
+            vec![ObservedEffectState::new(
+                EvidenceStrength::ExternalResourceReadBack,
+                Some(true),
+                "state://provider/charge_01",
+                vec!["evidence://read-back/2".to_string()],
+            )],
             at,
         )
         .map_err(|error| format!("reconciliation failed: {error}"))?;
@@ -14369,8 +14446,7 @@ effect_case!(
             ));
         }
 
-        Ok("an acknowledgement is never a confirmation; only an observation confirms"
-            .to_string())
+        Ok("an acknowledgement is never a confirmation; only an observation confirms".to_string())
     }
 );
 
@@ -14436,7 +14512,10 @@ effect_case!(
         if serialized.to_string().contains(SECRET) {
             return Err("the serialized receipt contains the secret".to_string());
         }
-        if receipt.response_digest().is_some_and(|digest| !digest.starts_with("sha256:")) {
+        if receipt
+            .response_digest()
+            .is_some_and(|digest| !digest.starts_with("sha256:"))
+        {
             return Err("the receipt keeps a response that is not a digest".to_string());
         }
 
@@ -14446,7 +14525,6 @@ effect_case!(
         ))
     }
 );
-
 
 /// A classification, a policy, and a deletion to verify.
 mod governance_fixture_two {
@@ -14591,7 +14669,11 @@ gov_case_two!(
 
         // And the reverse: a perfectly usable key does not widen the data
         // policy by one destination.
-        let narrow = policy(Sensitivity::Restricted, &[DataDestination::LocalModel], None);
+        let narrow = policy(
+            Sensitivity::Restricted,
+            &[DataDestination::LocalModel],
+            None,
+        );
         let refused = narrow.evaluate(
             &classification(Sensitivity::Confidential),
             DataDestination::RemoteProvider,
@@ -14611,9 +14693,11 @@ gov_case_two!(
             ));
         }
 
-        Ok("the data gate refuses on destination and sensitivity; the crypto gate refuses on \
+        Ok(
+            "the data gate refuses on destination and sensitivity; the crypto gate refuses on \
             key state, and neither decides the other"
-            .to_string())
+                .to_string(),
+        )
     }
 );
 
@@ -14625,8 +14709,8 @@ gov_case_two!(
     "Holding the capability does not make a forbidden destination allowed or lift the \
      sensitivity ceiling: the policy refuses for its own reason with the capability granted",
     || {
-        use crate::security::{DataDestination, Sensitivity};
         use crate::Capability;
+        use crate::security::{DataDestination, Sensitivity};
         use governance_fixture_two::*;
 
         let policy = policy(
@@ -14657,9 +14741,7 @@ gov_case_two!(
             true,
         );
         if too_sensitive.is_allowed() {
-            return Err(
-                "a granted capability lifted the policy's sensitivity ceiling".to_string(),
-            );
+            return Err("a granted capability lifted the policy's sensitivity ceiling".to_string());
         }
         if !too_sensitive.reason().contains("ceiling") {
             return Err(format!(
@@ -14694,8 +14776,8 @@ gov_case_two!(
     "A policy that allows the classification and the destination still refuses when the \
      required capability is absent, and says which of the two it was",
     || {
-        use crate::security::{DataDestination, Sensitivity};
         use crate::Capability;
+        use crate::security::{DataDestination, Sensitivity};
         use governance_fixture_two::*;
 
         let policy = policy(
@@ -14797,8 +14879,10 @@ gov_case_two!(
             ));
         }
 
-        Ok("logical, physical and cryptographic deletion stay distinguishable end to end"
-            .to_string())
+        Ok(
+            "logical, physical and cryptographic deletion stay distinguishable end to end"
+                .to_string(),
+        )
     }
 );
 
@@ -14812,7 +14896,9 @@ gov_case_two!(
      the claim rather than completing it",
     || {
         use crate::time::now;
-        use crate::trust::{DataHold, DeletionSemantics, DeletionVerificationOutcome, verify_deletion};
+        use crate::trust::{
+            DataHold, DeletionSemantics, DeletionVerificationOutcome, verify_deletion,
+        };
         use chrono::Duration;
         use governance_fixture_two::*;
 
@@ -14865,8 +14951,7 @@ gov_case_two!(
         .is_ok()
         {
             return Err(
-                "a verification that never looked at a planned dependency was accepted"
-                    .to_string(),
+                "a verification that never looked at a planned dependency was accepted".to_string(),
             );
         }
 
@@ -14895,10 +14980,7 @@ gov_case_two!(
         .map_err(|error| format!("verification failed: {error}"))?;
         if blocked.outcome() != DeletionVerificationOutcome::BlockedByHold || blocked.is_complete()
         {
-            return Err(format!(
-                "an active hold produced {:?}",
-                blocked.outcome()
-            ));
+            return Err(format!("an active hold produced {:?}", blocked.outcome()));
         }
 
         // And a genuine, fully covered deletion with nothing left does complete.
@@ -14927,7 +15009,6 @@ gov_case_two!(
     }
 );
 
-
 qual_case!(
     AttestationIsAdmissibleOnlyWhereExecutionIsNot,
     "exec-qual-011-attestation-has-a-boundary",
@@ -14942,7 +15023,9 @@ qual_case!(
         use crate::conformance::gate::{
             EvidenceOrigin, GovernanceFederationGate, HardGateEvidence, HardGateFailure,
         };
-        use crate::conformance::{RequirementFamily as F, RequirementId, VerificationClass, registry};
+        use crate::conformance::{
+            RequirementFamily as F, RequirementId, VerificationClass, registry,
+        };
         use qualification_fixture::*;
 
         let profile = QualificationProfile::Trusted;
@@ -15009,11 +15092,11 @@ qual_case!(
         // where a demonstration belongs.
         let on_behaviour = replace(behavioural[0], EvidenceOrigin::LocalAttested);
         if on_behaviour.is_passed()
-            || !on_behaviour
-                .failures()
-                .contains(&HardGateFailure::AttestationWhereExecutionIsRequired {
+            || !on_behaviour.failures().contains(
+                &HardGateFailure::AttestationWhereExecutionIsRequired {
                     requirement_id: behavioural[0],
-                })
+                },
+            )
         {
             return Err(format!(
                 "a written claim stood in for {}, which describes behaviour: {:?}",
@@ -15050,7 +15133,6 @@ qual_case!(
     }
 );
 
-
 cap_case!(
     AuthorityIsWhatWasGrantedNotWhoYouAre,
     "exec-cap-001-authority-is-granted-not-inherited",
@@ -15061,8 +15143,8 @@ cap_case!(
      the authority held, not of who holds it",
     CAPABILITY_EVIDENCE,
     || {
-        use crate::security::{CapabilityGrant, evaluate_capability_grants};
         use crate::id::PolicyDecisionId;
+        use crate::security::{CapabilityGrant, evaluate_capability_grants};
         use crate::{AuthorizationRequest, Capability, RiskCategory, time::now};
         use capability_fixture::*;
 
@@ -15185,7 +15267,6 @@ cap_case!(
         )
     }
 );
-
 
 gov_case_two!(
     DeletingEvidenceReopensWhatRestedOnIt,
@@ -15352,7 +15433,6 @@ gov_case_two!(
     }
 );
 
-
 idw_case!(
     ADerivationRemembersWhoseContentItWas,
     "exec-idw-011-a-derivation-remembers-its-source",
@@ -15455,13 +15535,15 @@ idw_case!(
         }
 
         match derivation.input_refs.as_slice() {
-            [EvidenceRef::SharedMemoryRevisionRef {
-                source_workspace_id,
-                memory_id,
-                revision_id,
-                grant_revision_id,
-                source_generation,
-            }] => {
+            [
+                EvidenceRef::SharedMemoryRevisionRef {
+                    source_workspace_id,
+                    memory_id,
+                    revision_id,
+                    grant_revision_id,
+                    source_generation,
+                },
+            ] => {
                 if *source_workspace_id != deriving.source_workspace {
                     return Err(
                         "the derivation does not name the workspace the content came from, so a \
@@ -15537,8 +15619,6 @@ idw_case!(
     }
 );
 
-
-
 macro_rules! lrn_case {
     ($name:ident, $id:expr, $number:expr, $category:expr, $description:expr, $body:expr) => {
         struct $name;
@@ -15574,7 +15654,9 @@ macro_rules! lrn_case {
 
 /// A proposal and the measurements behind it.
 mod learning_change_fixture {
-    use crate::id::{EvaluationId, LearningProjectionId, LearningProposalId, PrincipalId, WorkspaceId};
+    use crate::id::{
+        EvaluationId, LearningProjectionId, LearningProposalId, PrincipalId, WorkspaceId,
+    };
     use crate::learning::{LearningChange, LearningProposal, LearningTarget};
     use crate::time::Timestamp;
 
@@ -15615,10 +15697,10 @@ lrn_case!(
      approved it; a proposal nobody submitted cannot be applied, and one written against a \
      revision the target has left is refused naming both",
     || {
+        use crate::DomainError;
         use crate::id::{PrincipalId, WorkspaceId};
         use crate::learning::LearningProposalStatus;
         use crate::time::now;
-        use crate::DomainError;
         use learning_change_fixture::*;
 
         let workspace = WorkspaceId::new();
@@ -15871,7 +15953,7 @@ mod tests {
             Box::new(ConflictResolutionKeepsItsBasis),
             Box::new(SupersessionKeepsWhatItReplaced),
             Box::new(AContextPackNeverExceedsItsBudget),
-        Box::new(HydrationRequiresAnAuthorizationCheck),
+            Box::new(HydrationRequiresAnAuthorizationCheck),
             Box::new(EveryIncludedItemNamesItsSource),
             Box::new(RepresentationLevelsAreDistinguished),
             Box::new(TokenBudgetIsEnforced),
@@ -15908,8 +15990,8 @@ mod tests {
             Box::new(AGrantStatesItsScopeAndItsEnd),
             Box::new(AGrantCoversWhatIsBeneathItAndNothingAbove),
             Box::new(AMaterialChangeInvalidatesTheApproval),
-        Box::new(AChildIsNeverAllowedWhatItsParentIsDenied),
-        Box::new(DelegationOnlyNarrows),
+            Box::new(AChildIsNeverAllowedWhatItsParentIsDenied),
+            Box::new(DelegationOnlyNarrows),
             Box::new(EveryEvaluationProducesADecision),
             Box::new(NothingIsPermittedWithoutAGrant),
             Box::new(RiskIsPartOfTheVerdict),

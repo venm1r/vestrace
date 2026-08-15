@@ -10,9 +10,8 @@ pub mod token_entropy;
 
 pub use config::{
     AppConfig, AuthConfig, ConfigOverrides, DatabaseConfig, EffectAdapterConfig, EffectsConfig,
-    EmbeddingConfig, HttpConfig, LogFormat,
-    ModelConfig, ObservabilityConfig, PolicyConfig, PolicyEngineKind, QualificationConfig,
-    RecoveryConfig, SecretsConfig,
+    EmbeddingConfig, HttpConfig, LogFormat, ModelConfig, ObservabilityConfig, PolicyConfig,
+    PolicyEngineKind, QualificationConfig, RecoveryConfig, SecretsConfig,
 };
 pub use error::{InfrastructureError, InfrastructureErrorKind};
 pub use http_read_back::HttpExternalEffectReadBackAdapter;

@@ -49,7 +49,10 @@ fn intent_for(workspace_id: WorkspaceId, execution_ref: &str) -> ExternalEffectI
 }
 
 fn intent() -> ExternalEffectIntent {
-    intent_for(WorkspaceId::new(), "run://01900000-0000-7000-8000-000000000001")
+    intent_for(
+        WorkspaceId::new(),
+        "run://01900000-0000-7000-8000-000000000001",
+    )
 }
 
 /// The workspace an adapter call is scoped to.

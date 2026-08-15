@@ -118,22 +118,44 @@ impl HardGateEvidence {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum HardGateFailure {
-    UnsupportedProfile { profile: QualificationProfile },
-    MissingEvidence { requirement_id: RequirementId },
-    DuplicateEvidence { requirement_id: RequirementId },
-    Failed { requirement_id: RequirementId },
-    NotApplicable { requirement_id: RequirementId },
-    Skipped { requirement_id: RequirementId },
-    Inconclusive { requirement_id: RequirementId },
-    MissingEvidenceReference { requirement_id: RequirementId },
-    MissingPolicyVersion { requirement_id: RequirementId },
-    RemoteSelfAssertion { requirement_id: RequirementId },
+    UnsupportedProfile {
+        profile: QualificationProfile,
+    },
+    MissingEvidence {
+        requirement_id: RequirementId,
+    },
+    DuplicateEvidence {
+        requirement_id: RequirementId,
+    },
+    Failed {
+        requirement_id: RequirementId,
+    },
+    NotApplicable {
+        requirement_id: RequirementId,
+    },
+    Skipped {
+        requirement_id: RequirementId,
+    },
+    Inconclusive {
+        requirement_id: RequirementId,
+    },
+    MissingEvidenceReference {
+        requirement_id: RequirementId,
+    },
+    MissingPolicyVersion {
+        requirement_id: RequirementId,
+    },
+    RemoteSelfAssertion {
+        requirement_id: RequirementId,
+    },
     /// A written claim standing in for a requirement that describes behaviour.
     ///
     /// Admissible for `Static` requirements and for nothing else: everything
     /// with another class describes something that can be made to happen, and a
     /// sentence about it is not evidence that it does.
-    AttestationWhereExecutionIsRequired { requirement_id: RequirementId },
+    AttestationWhereExecutionIsRequired {
+        requirement_id: RequirementId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

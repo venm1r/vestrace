@@ -64,7 +64,6 @@ impl CryptoAdapterQualificationTarget {
         })
     }
 
-
     /// The key custody arrangement being qualified, in full.
     ///
     /// A crypto qualification that cannot say which provider, key, version and
@@ -127,7 +126,6 @@ impl CryptoAdapterQualificationEvidence {
             evidence_refs,
         }
     }
-
 
     pub fn observed_key(&self) -> &KeyReference {
         &self.observed_key

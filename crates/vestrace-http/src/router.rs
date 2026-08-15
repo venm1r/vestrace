@@ -892,4 +892,3 @@ mod tests {
         assert!(http_capability(&Method::GET, "/unmatched").is_none());
     }
 }
-

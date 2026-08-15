@@ -1067,7 +1067,8 @@ impl ConformanceCase for FaultScenariosAreBoundToWhatTheyQualify {
         };
 
         let outcome: Result<String, String> = (|| {
-            if FaultInjectionSettings::new(true, "   ", FaultInjectionEnvironment::Ephemeral).is_ok()
+            if FaultInjectionSettings::new(true, "   ", FaultInjectionEnvironment::Ephemeral)
+                .is_ok()
             {
                 return Err(
                     "fault injection was configured against no particular build, so a crash \
@@ -1100,7 +1101,9 @@ impl ConformanceCase for FaultScenariosAreBoundToWhatTheyQualify {
             )
             .map_err(|error| format!("disabled settings were refused: {error}"))?;
             if disabled.enabled() {
-                return Err("fault injection reports enabled when it was configured off".to_string());
+                return Err(
+                    "fault injection reports enabled when it was configured off".to_string()
+                );
             }
 
             Ok(format!(
@@ -1460,8 +1463,10 @@ impl ConformanceCase for RankDecidesFusionNotMagnitude {
                 .collect();
 
             let baseline = reciprocal_rank_fusion(&[lexical.clone(), semantic.clone()], 60.0);
-            let baseline_order: Vec<MemoryId> =
-                baseline.iter().map(|candidate| candidate.memory_id).collect();
+            let baseline_order: Vec<MemoryId> = baseline
+                .iter()
+                .map(|candidate| candidate.memory_id)
+                .collect();
 
             // The same rankings, with one channel's numbers multiplied and
             // shifted. Order within the channel is untouched, so the fused

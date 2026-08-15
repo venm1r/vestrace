@@ -481,7 +481,10 @@ fn purging_a_memory_is_not_a_write() {
     use vestrace_http::http_capability_for_test as capability;
 
     assert_eq!(
-        capability(&Method::DELETE, "/v1/memories/01a00000-0000-7000-8000-000000000000"),
+        capability(
+            &Method::DELETE,
+            "/v1/memories/01a00000-0000-7000-8000-000000000000"
+        ),
         Some(Capability::MemoryPurge)
     );
     assert_eq!(
@@ -489,7 +492,10 @@ fn purging_a_memory_is_not_a_write() {
         Some(Capability::MemoryWrite)
     );
     assert_eq!(
-        capability(&Method::GET, "/v1/memories/01a00000-0000-7000-8000-000000000000"),
+        capability(
+            &Method::GET,
+            "/v1/memories/01a00000-0000-7000-8000-000000000000"
+        ),
         Some(Capability::MemoryRead)
     );
 }

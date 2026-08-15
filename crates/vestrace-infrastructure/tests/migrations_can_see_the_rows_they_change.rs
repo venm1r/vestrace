@@ -223,9 +223,7 @@ fn a_migration_that_writes_to_a_forced_table_lifts_the_policy_first() {
             if !forced.contains(&table) {
                 continue;
             }
-            let lifted = sql.contains(&format!(
-                "alter table {table} no force row level security"
-            ));
+            let lifted = sql.contains(&format!("alter table {table} no force row level security"));
             if !lifted {
                 offences.push(format!(
                     "{name}: {kind} on `{table}`, which is under a forced policy — the runtime \

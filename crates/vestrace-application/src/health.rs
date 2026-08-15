@@ -32,8 +32,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use vestrace_domain::HealthFindingId;
 use vestrace_domain::DomainError;
+use vestrace_domain::HealthFindingId;
 use vestrace_domain::health::{
     FindingDisposition, FindingLifecycleStatus, HealthFinding, HealthOccurrence, HealthScope,
     HealthSeverity, HealthState, InvariantDefinition, InvariantRegistry, Repairability,

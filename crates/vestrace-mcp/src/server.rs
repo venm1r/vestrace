@@ -702,10 +702,19 @@ fn mcp_authorization_request(
     // contained by any grant that did not spell them identically.
     let (capability, resource) = match tool {
         "search_memories" => (Capability::ContextRetrieve, None),
-        "get_memory" => (Capability::MemoryRead, Some(("memory_id", ResourceKind::Memory))),
+        "get_memory" => (
+            Capability::MemoryRead,
+            Some(("memory_id", ResourceKind::Memory)),
+        ),
         "vestrace_models_list" => (Capability::ModelRead, None),
-        "vestrace_agent_get" => (Capability::AgentRead, Some(("agent_id", ResourceKind::Agent))),
-        "vestrace_skill_get" => (Capability::SkillRead, Some(("skill_id", ResourceKind::Skill))),
+        "vestrace_agent_get" => (
+            Capability::AgentRead,
+            Some(("agent_id", ResourceKind::Agent)),
+        ),
+        "vestrace_skill_get" => (
+            Capability::SkillRead,
+            Some(("skill_id", ResourceKind::Skill)),
+        ),
         "vestrace_workflow_get" | "vestrace_workflow_context" => (
             Capability::WorkflowRead,
             Some(("workflow_id", ResourceKind::Workflow)),

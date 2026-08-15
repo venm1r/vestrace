@@ -355,7 +355,6 @@ fn if_match_revision(headers: &HeaderMap) -> Result<u32, ApiError> {
         .map_err(|_| ApiError::bad_request("If-Match header must be a revision number"))
 }
 
-
 /// The key this write is deduplicated on.
 ///
 /// # Why this is not simply `x-request-id`
@@ -376,7 +375,9 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
         let value = value
             .to_str()
             .map_err(|_| {
-                ApiError::bad_request(format!("{IDEMPOTENCY_KEY_HEADER} header must be valid UTF-8"))
+                ApiError::bad_request(format!(
+                    "{IDEMPOTENCY_KEY_HEADER} header must be valid UTF-8"
+                ))
             })?
             .trim();
         if value.is_empty() || value.len() > 200 {

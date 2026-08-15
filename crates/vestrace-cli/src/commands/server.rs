@@ -3,12 +3,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use tokio::signal;
 use tracing::Subscriber;
-use tracing_subscriber::{
-    EnvFilter,
-    filter,
-    fmt::MakeWriter,
-    prelude::*,
-};
+use tracing_subscriber::{EnvFilter, filter, fmt::MakeWriter, prelude::*};
 use vestrace_application::QualificationRuntime;
 use vestrace_application::{
     ConfiguredCapabilityPolicyEngine, DenyAllPolicyEngine, MemoryService, RetrievalService,
@@ -19,12 +14,11 @@ use vestrace_infrastructure::{
     AppConfig, LogFormat, ObservabilityConfig, PgAgUiRepository, PgAgentRepository,
     PgArtifactRepository, PgAuditRepository, PgCapabilityGrantRepository, PgConnectionRepository,
     PgEvaluationRepository, PgEventRepository, PgExecutionHistoryRepository,
-    PgHealthFindingRepository, PgIdempotencyRepository, PgInvariantObserver, PgMemoryRepository,
-    PgModelExecutionRepository, PgModelRepository, PgOutboxRepository, PgProvenanceRepository,
-    PgExternalEffectRepository, PgProviderRepository, PgPurgeRepository, PgRelationRepository,
-    PgRetrievalJournal,
-    PgRoutingDecisionRepository,
-    PgRunLeasePort, PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
+    PgExternalEffectRepository, PgHealthFindingRepository, PgIdempotencyRepository,
+    PgInvariantObserver, PgMemoryRepository, PgModelExecutionRepository, PgModelRepository,
+    PgOutboxRepository, PgProvenanceRepository, PgProviderRepository, PgPurgeRepository,
+    PgRelationRepository, PgRetrievalJournal, PgRoutingDecisionRepository, PgRunLeasePort,
+    PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
     PgTriggerRepository, PgVectorRetriever, PgWorkQueuePort, PgWorkflowRepository,
     PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
@@ -886,8 +880,4 @@ mod tests {
         let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
         assert!(event.is_object(), "{event}");
     }
-
-
-
-
 }

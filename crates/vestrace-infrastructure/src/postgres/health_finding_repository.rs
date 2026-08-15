@@ -117,14 +117,13 @@ impl HealthFindingRepository for PgHealthFindingRepository {
             .await
             .map_err(storage_error)?;
 
-        let row = sqlx::query(
-            "SELECT payload FROM health_findings WHERE id = $1 AND workspace_id = $2",
-        )
-        .bind(id.as_uuid())
-        .bind(context.workspace_id.as_uuid())
-        .fetch_optional(scoped.connection())
-        .await
-        .map_err(storage_error)?;
+        let row =
+            sqlx::query("SELECT payload FROM health_findings WHERE id = $1 AND workspace_id = $2")
+                .bind(id.as_uuid())
+                .bind(context.workspace_id.as_uuid())
+                .fetch_optional(scoped.connection())
+                .await
+                .map_err(storage_error)?;
 
         scoped.commit().await.map_err(storage_error)?;
         row.map(|row| {

@@ -102,16 +102,25 @@ impl AppConfig {
             hasher.update([0u8]);
         };
 
-        field("database.max_connections", &self.database.max_connections.to_string());
+        field(
+            "database.max_connections",
+            &self.database.max_connections.to_string(),
+        );
         field("policy.engine", &format!("{:?}", self.policy.engine));
         field("policy.version", &self.policy.version);
-        field("policy.risk_ceiling", &format!("{:?}", self.policy.risk_ceiling));
+        field(
+            "policy.risk_ceiling",
+            &format!("{:?}", self.policy.risk_ceiling),
+        );
         for capability in &self.policy.capabilities {
             field("policy.capability", capability);
         }
         field("auth.enabled", &self.auth.is_enabled().to_string());
         field("secrets.key_version", self.secrets.effective_key_version());
-        field("secrets.configured", &self.secrets.master_key.is_some().to_string());
+        field(
+            "secrets.configured",
+            &self.secrets.master_key.is_some().to_string(),
+        );
         field("model.enabled", &self.model.enabled.to_string());
         field("model.base_url", &self.model.base_url);
         field("model.name", &self.model.model_name);
@@ -119,7 +128,10 @@ impl AppConfig {
         field("embedding.base_url", &self.embedding.base_url);
         field("embedding.model", &self.embedding.model_name);
         field("embedding.space", &self.embedding.space_name);
-        field("qualification.enabled", &self.qualification.enabled.to_string());
+        field(
+            "qualification.enabled",
+            &self.qualification.enabled.to_string(),
+        );
         field("recovery.enabled", &self.recovery.enabled.to_string());
         for adapter in self.effects.configured() {
             field("effects.adapter", &adapter.name);
@@ -428,10 +440,7 @@ pub struct EffectsConfig {
 impl EffectsConfig {
     /// Every adapter this deployment configured, from either source.
     pub fn configured(&self) -> Vec<&EffectAdapterConfig> {
-        self.webhook
-            .iter()
-            .chain(self.adapters.iter())
-            .collect()
+        self.webhook.iter().chain(self.adapters.iter()).collect()
     }
 }
 

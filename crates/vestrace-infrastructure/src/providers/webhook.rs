@@ -133,7 +133,11 @@ impl HttpWebhookEffectAdapter {
     ) -> Result<Option<bool>, AdapterError> {
         let response = self
             .client
-            .get(format!("{}/{}", self.read_back_url.trim_end_matches('/'), intent.id()))
+            .get(format!(
+                "{}/{}",
+                self.read_back_url.trim_end_matches('/'),
+                intent.id()
+            ))
             .send()
             .await
             .map_err(|error| AdapterError::Unavailable(error.to_string()))?;

@@ -160,8 +160,7 @@ fn only_static_requirements_can_be_satisfied_by_an_attestation() {
     let mut wrong = Vec::new();
     for requirement in requirements() {
         let family = requirement.id.family.to_string().to_uppercase();
-        let Some((_, class, _)) = catalogue.get(&(family.clone(), requirement.id.number))
-        else {
+        let Some((_, class, _)) = catalogue.get(&(family.clone(), requirement.id.number)) else {
             continue;
         };
         if matches!(requirement.class, V::Static) && class != "STATIC" {
@@ -178,7 +177,6 @@ fn only_static_requirements_can_be_satisfied_by_an_attestation() {
         wrong.join("\n  ")
     );
 }
-
 
 /// The authoritative wording is carried verbatim, not paraphrased.
 ///
@@ -213,7 +211,9 @@ fn every_requirement_carries_the_catalogues_own_wording() {
         "{} requirement(s) do not carry the catalogue's wording:
   {}",
         wrong.len(),
-        wrong.join("
-  ")
+        wrong.join(
+            "
+  "
+        )
     );
 }

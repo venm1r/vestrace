@@ -90,7 +90,6 @@ pub fn claims_losing_evidence(
     verification: &DeletionVerification,
     links: &[ClaimEvidenceLink],
 ) -> HashSet<ClaimId> {
-
     if !verification.is_complete() {
         return HashSet::new();
     }

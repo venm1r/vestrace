@@ -74,7 +74,6 @@ impl RestorationEvidence {
         }
     }
 
-
     /// What the restoration rests on.
     ///
     /// Stored and unreadable until the sweep that made recorded facts readable:

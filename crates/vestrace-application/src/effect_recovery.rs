@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use vestrace_domain::id::AgentRunId;
 use vestrace_domain::Timestamp;
 use vestrace_domain::external_effects::{
     ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation, ObservedEffectState,
 };
+use vestrace_domain::id::AgentRunId;
 
 use crate::{
     ApplicationError, ExternalEffectReconciliationService, ExternalEffectRecoveryCandidate,

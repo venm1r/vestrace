@@ -26,9 +26,9 @@
 
 use std::sync::Arc;
 
+use vestrace_domain::DomainError;
 use vestrace_domain::id::{CorrelationId, OperationId, RunEventId};
 use vestrace_domain::run::{LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunVersion};
-use vestrace_domain::DomainError;
 use vestrace_domain::{Timestamp, now};
 
 use crate::{
@@ -158,9 +158,7 @@ impl EffectOutcomeDeliveryService {
                 component: "effect-outcome-delivery".to_owned(),
             },
             causation_id: OperationId::new(),
-            correlation_id: CorrelationId::from_uuid(
-                outcome.reconciliation.effect_id().as_uuid(),
-            ),
+            correlation_id: CorrelationId::from_uuid(outcome.reconciliation.effect_id().as_uuid()),
             payload,
             // When the observation was made, not when it was filed. The two
             // differ by however long the run was unreachable.

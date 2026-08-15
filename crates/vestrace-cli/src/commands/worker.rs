@@ -2,18 +2,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::signal;
+use vestrace_application::retrieval::EmbedMemoryHandler;
 use vestrace_application::run::{
     AdvanceRunHandler, ExecuteStepHandler, ResumeRunHandler, RunWorkHandlerRegistry, RunWorker,
     RunWorkerConfig, SystemClock,
 };
-use vestrace_application::retrieval::EmbedMemoryHandler;
 use vestrace_application::{OutboxDispatcher, QualificationRuntime, RequestContext};
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
-    PgMemoryTextSource,
-    PgModelExecutionRepository, PgModelRepository, PgOutboxRepository, PgRunLeasePort,
-    PgSecretStore, PgStore, PgWorkQueuePort, PostgresRunStore, SecretBackedProviderFactory,
+    PgMemoryTextSource, PgModelExecutionRepository, PgModelRepository, PgOutboxRepository,
+    PgRunLeasePort, PgSecretStore, PgStore, PgWorkQueuePort, PostgresRunStore,
+    SecretBackedProviderFactory,
 };
 
 /// How many messages one drain pass claims per workspace.
@@ -68,13 +68,13 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     // reconciliation recorded before this worker started, or by one an adapter
     // that is no longer configured produced. Refusing to deliver those because
     // no adapter is configured *now* would strand them.
-    let outcome_delivery = Arc::new(
-        vestrace_application::EffectOutcomeDeliveryService::new(
-            Arc::new(PgExternalEffectRepository::new(store.clone())),
-            Arc::new(vestrace_infrastructure::PgRunEventStore::new(store.clone())),
-            Arc::new(vestrace_infrastructure::PgRunRecoveryStore::new(store.clone())),
-        ),
-    );
+    let outcome_delivery = Arc::new(vestrace_application::EffectOutcomeDeliveryService::new(
+        Arc::new(PgExternalEffectRepository::new(store.clone())),
+        Arc::new(vestrace_infrastructure::PgRunEventStore::new(store.clone())),
+        Arc::new(vestrace_infrastructure::PgRunRecoveryStore::new(
+            store.clone(),
+        )),
+    ));
 
     let run_store = Arc::new(PostgresRunStore::new(&store));
     let lease_port = Arc::new(PgRunLeasePort::new(&store));
@@ -331,7 +331,6 @@ async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestCon
     worked
 }
 
-
 /// The sweep that answers "did that actually happen".
 ///
 /// # Why this is the worker's job
@@ -357,10 +356,9 @@ fn build_effect_reconciliation(
         return Ok(None);
     };
 
-    let read_back = vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(
-        &adapter.read_back_url,
-    )
-    .map_err(|error| anyhow::anyhow!("effect read-back is not configurable: {error}"))?;
+    let read_back =
+        vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(&adapter.read_back_url)
+            .map_err(|error| anyhow::anyhow!("effect read-back is not configurable: {error}"))?;
 
     tracing::info!(
         adapter = %adapter.name,

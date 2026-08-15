@@ -1,9 +1,4 @@
-use axum::{
-    Json,
-    extract::State,
-    http::HeaderMap,
-    routing::post,
-};
+use axum::{Json, extract::State, http::HeaderMap, routing::post};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vestrace_domain::external_effects::{
@@ -103,9 +98,7 @@ pub async fn perform_effect(
     let preconditions = request
         .preconditions
         .into_iter()
-        .map(|precondition| {
-            EffectPrecondition::new(precondition.name, precondition.expected_value)
-        })
+        .map(|precondition| EffectPrecondition::new(precondition.name, precondition.expected_value))
         .collect::<Result<Vec<_>, _>>()
         .map_err(ApiError::from_domain)?;
 
