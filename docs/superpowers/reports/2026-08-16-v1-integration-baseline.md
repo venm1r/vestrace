@@ -77,21 +77,43 @@ nginx entry: R100 apps/console/nginx.conf apps/console/nginx.conf.template
 
 ### Step 4: checkpoint commit and staged-preservation verification
 
-The approved source categories were prepared for this exact command:
+The approved source categories were committed successfully with:
 
 ```text
 git -c safe.directory=E:/Soft/vestrace -C E:\Soft\vestrace commit --only -m "chore: checkpoint v1 integration baseline" -- [approved categories]
 ```
 
-The execution environment rejected the command because it would create a broad 576-path commit directly on `main`; it required explicit user approval for that history mutation. No commit was created and no alternate path was attempted. The index is deliberately left unchanged: it still contains the 576 approved source paths plus the pre-existing nginx rename. Consequently, post-commit cached-diff verification has not run. Once explicit approval is available, the required post-commit cached state is only:
+The resulting commit is `64347860e40fa24dc84b0ab1eb4fa2e80f931319` (`chore: checkpoint v1 integration baseline`) and contains the 576 non-nginx source paths: 308 additions, 80 deletions, and 188 modifications. It deliberately excludes both nginx rename sides and every generated/cache exclusion.
+
+Post-commit cached-diff verification succeeded. The sole cached entry is:
 
 ```text
 R100    apps/console/nginx.conf    apps/console/nginx.conf.template
 ```
 
+The generated/cache exclusion scan returned no cached path under `apps/console/node_modules`, `apps/console/dist`, `target`, or `graphify-out`. Their pre-existing worktree changes remain unstaged.
+
 ## Final gate evidence
 
-Results are appended task-by-task with command, UTC timestamp, exit status, counts, and environment.
+### Task 1 checkpoint completion — 2026-08-15T20:38:52Z
+
+Environment: local `E:\Soft\vestrace` checkout on `main`; Git invoked with `safe.directory=E:/Soft/vestrace`.
+
+```text
+git -c safe.directory=E:/Soft/vestrace -C E:\Soft\vestrace rev-parse HEAD
+exit 0
+64347860e40fa24dc84b0ab1eb4fa2e80f931319
+
+git -c safe.directory=E:/Soft/vestrace -C E:\Soft\vestrace diff --cached --name-status
+exit 0
+R100    apps/console/nginx.conf    apps/console/nginx.conf.template
+
+cached generated/cache exclusion scan
+exit 0
+(no matching paths)
+```
+
+No tests were run for this checkpoint-only Task 1. The starting-gate evidence above is retained as historical evidence, not newly produced final-gate test evidence.
 
 ## Remaining v1 gates and non-claims
 
@@ -100,6 +122,6 @@ Results are appended task-by-task with command, UTC timestamp, exit status, coun
 
 ## Self-review and concerns
 
-- Self-review: the starting state matched the approved values before any index write; only the explicit source categories were staged; and the staged-scope exclusion scan was empty. The commit and its post-commit cached-diff check remain pending solely on explicit authorization for the broad commit to `main`.
+- Self-review: the starting state matched the approved values before any index write; only the explicit source categories were staged; the staged-scope exclusion scan was empty; commit `64347860e40fa24dc84b0ab1eb4fa2e80f931319` contains the approved 576 source paths; and the post-commit cached diff retains only the pre-existing nginx rename.
 - No tests are run by this checkpoint-only task; the starting-gate results above are historical baseline evidence, not newly produced results.
 - Git warned that `C:\Users\venmi/.config/git/ignore` was inaccessible and emitted line-ending conversion warnings while staging. Neither warning changed the staged classification or scope.
