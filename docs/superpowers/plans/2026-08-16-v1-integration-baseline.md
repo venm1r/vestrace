@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Work in `E:\Soft\vestrace` on the existing `main` checkout. Do not create a worktree.
-- Treat HEAD `7f6a49a39d7af42a42eb6b52e1d9b00195c7584e` and the 588-path dirty tree observed on 2026-08-16 as the approved starting point.
+- Treat design commit `7f6a49a39d7af42a42eb6b52e1d9b00195c7584e` and the 588-path dirty tree observed on 2026-08-16 as the approved source starting point; the later plan commits are documentation-only control artifacts.
 - Preserve the pre-existing staged rename `apps/console/nginx.conf -> apps/console/nginx.conf.template`; never include it in a commit in this plan.
 - Do not reset, restore, rebase, stash, delete existing work, run `git add -A`, or use an implicit commit scope.
 - Leave `apps/console/node_modules/`, `apps/console/dist/`, `target/`, and `graphify-out/` untouched and uncommitted.
@@ -57,7 +57,7 @@ git -c safe.directory=E:/Soft/vestrace -C $repo diff --cached --name-status
 git -c safe.directory=E:/Soft/vestrace -C $repo status --porcelain=v1 | Measure-Object
 ```
 
-Expected: HEAD is the design commit, `main` is ahead 26 and behind 3, the staged diff contains only the nginx rename, and the dirty count is 588 unless the operator has intentionally changed the tree after approval. Stop and reconcile any unexpected drift before staging.
+Expected: HEAD contains this implementation plan, `main` is ahead 28 and behind 3, the staged diff contains only the nginx rename, and the dirty count is 588 unless the operator has intentionally changed the tree after approval. Stop and reconcile any unexpected drift before staging.
 
 - [ ] **Step 2: Create the verification report**
 
@@ -68,8 +68,9 @@ Create `docs/superpowers/reports/2026-08-16-v1-integration-baseline.md` with the
 
 **Design:** `docs/superpowers/specs/2026-08-16-v1-integration-baseline-design.md`
 **Plan:** `docs/superpowers/plans/2026-08-16-v1-integration-baseline.md`
-**Starting HEAD:** `7f6a49a39d7af42a42eb6b52e1d9b00195c7584e`
-**Starting branch:** `main`, ahead 26 and behind 3 relative to `origin/main`
+**Approved source point:** design commit `7f6a49a39d7af42a42eb6b52e1d9b00195c7584e`
+**Execution-start HEAD:** the commit captured by Task 1 Step 1, containing this plan
+**Starting branch:** `main`, ahead 28 and behind 3 relative to `origin/main`
 
 ## Baseline inventory
 
