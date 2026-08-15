@@ -19,7 +19,6 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
 
     let store_for_journal = store.clone();
     let store_for_memory = store.clone();
-    let pool = store.pool().clone();
 
     let memory_service = MemoryService::new(
         PgEventRepository::new(store_for_memory.clone()),

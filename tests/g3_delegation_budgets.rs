@@ -35,6 +35,8 @@ fn at() -> vestrace_domain::Timestamp {
     Utc::now()
 }
 
+// Explicit test fixture constructor: keep every grant field visible at each call site.
+#[allow(clippy::too_many_arguments)]
 fn grant_spec(
     workspace_id: WorkspaceId,
     subject_id: PrincipalId,
@@ -391,7 +393,6 @@ fn g3_depth_is_bounded_even_when_a_contract_requests_more() {
         30,
     )
     .unwrap();
-    let mut budget = budget;
     assert!(
         first
             .delegate(

@@ -421,7 +421,7 @@ fn required_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Uuid,
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use async_trait::async_trait;
     use axum::{
@@ -432,14 +432,11 @@ mod tests {
     use uuid::Uuid;
     use vestrace_application::{
         ApplicationError, CreateRunCommand, HealthRepository, NullExecutionHistoryRepository,
-        PolicyDecisionEngine, RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
+        PolicyDecisionEngine, RequestContext, RunUseCases,
     };
     use vestrace_domain::{
-        id::{AgentRunId, AgentRuntimeSnapshotId, PrincipalId},
-        run::{
-            AgentRun, NewAgentRun, RunActor, RunCommand, RunCommandEnvelope, RunExecutionMode,
-            RunVersion,
-        },
+        id::{AgentRunId, AgentRuntimeSnapshotId},
+        run::{AgentRun, RunExecutionMode, RunVersion},
     };
 
     use crate::{AppState, build_router};
@@ -479,49 +476,6 @@ mod tests {
             _id: AgentRunId,
         ) -> Result<Option<AgentRun>, ApplicationError> {
             Ok(None)
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingCommands {
-        recorded: Arc<Mutex<Option<RunCommandEnvelope>>>,
-    }
-
-    #[async_trait]
-    impl RunCommandExecutor for RecordingCommands {
-        async fn execute(
-            &self,
-            _context: &RequestContext,
-            command: RunCommandEnvelope,
-        ) -> Result<RunCommandResult, ApplicationError> {
-            let (principal_id, title) = match &command.command {
-                RunCommand::Create {
-                    principal_id,
-                    title,
-                } => (*principal_id, title.clone()),
-                other => panic!("unexpected command: {other:?}"),
-            };
-            let run = AgentRun::create(
-                NewAgentRun {
-                    id: command.run_id,
-                    workspace_id: command.workspace_id,
-                    objective: title,
-                    coordinator_snapshot_id: AgentRuntimeSnapshotId::from_uuid(
-                        principal_id.as_uuid(),
-                    ),
-                    execution_mode: RunExecutionMode::Autopilot,
-                    parent: None,
-                    budget_snapshot_id: None,
-                    resource_usage_snapshot_id: None,
-                },
-                command.issued_at,
-            )
-            .unwrap();
-            *self.recorded.lock().unwrap() = Some(command);
-            Ok(RunCommandResult {
-                run,
-                events: Vec::new(),
-            })
         }
     }
 

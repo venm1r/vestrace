@@ -160,7 +160,7 @@ async fn create_access_token(
     let at = now();
     let expires_at = match request.expires_in_days {
         None => None,
-        Some(days) if days < 1 || days > MAX_LIFETIME_DAYS => {
+        Some(days) if !(1..=MAX_LIFETIME_DAYS).contains(&days) => {
             return Err(ApiError::bad_request(format!(
                 "expires_in_days must be between 1 and {MAX_LIFETIME_DAYS}"
             )));

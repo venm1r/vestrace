@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use secrecy::ExposeSecret;
-use sqlx::Row;
 use vestrace_application::retrieval::EmbeddingBackfillService;
 use vestrace_application::{
     HealthInspectionService, InspectedFinding, InvariantObserver, RequestContext,

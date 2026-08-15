@@ -7,20 +7,18 @@ use axum::{
 use tower::ServiceExt;
 use vestrace_application::{
     ApplicationError, CreateRunCommand, GrantPolicyEngine, HealthRepository,
-    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunCommandExecutor,
-    RunCommandResult, RunUseCases,
+    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunUseCases,
 };
 use vestrace_domain::{
     Capability, CapabilityGrant, CapabilityGrantSpec, RiskCategory,
     id::{AgentRunId, CapabilityGrantId, PrincipalId, WorkspaceId},
     now,
-    run::{AgentRun, RunCommandEnvelope},
+    run::AgentRun,
 };
 use vestrace_http::{AppState, build_router};
 
 struct HealthyRepository;
 struct EmptyRunUseCases;
-struct UnusedRunCommands;
 
 #[async_trait::async_trait]
 impl HealthRepository for HealthyRepository {
@@ -55,19 +53,6 @@ impl RunUseCases for EmptyRunUseCases {
         _id: AgentRunId,
     ) -> Result<Option<AgentRun>, ApplicationError> {
         Ok(None)
-    }
-}
-
-#[async_trait::async_trait]
-impl RunCommandExecutor for UnusedRunCommands {
-    async fn execute(
-        &self,
-        _context: &RequestContext,
-        _command: RunCommandEnvelope,
-    ) -> Result<RunCommandResult, ApplicationError> {
-        Err(ApplicationError::Unavailable(
-            "run commands are unavailable in this router contract".to_owned(),
-        ))
     }
 }
 

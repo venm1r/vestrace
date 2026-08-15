@@ -255,6 +255,8 @@ fn running_executable_digest() -> anyhow::Result<String> {
     Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
+// Direct CLI dispatch boundary: keep every flag explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn run_manifest(
     manifest_version: String,
     product: String,
@@ -690,6 +692,8 @@ struct DeploymentQualificationResult {
     checks: BTreeMap<String, &'static str>,
 }
 
+// Direct CLI dispatch boundary: keep every flag explicit.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_verify(
     profile: QualificationProfile,
     lifecycle: QualificationLifecycle,
@@ -957,6 +961,8 @@ fn resolve_signing_key(
         .map_err(|_| anyhow::anyhow!("Ed25519 private key is not valid PKCS#8"))
 }
 
+// Direct CLI dispatch boundary: keep every flag explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn run_sign(
     artifact: ConformanceArtifactArg,
     artifact_file: PathBuf,
@@ -1035,6 +1041,8 @@ struct SignatureVerificationResult {
     status: &'static str,
 }
 
+// Direct CLI dispatch boundary: keep every flag explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn run_verify_signature(
     artifact: ConformanceArtifactArg,
     artifact_file: PathBuf,
@@ -1648,6 +1656,80 @@ fn evaluate_requirement(
     }
 }
 
+fn print_report_human(report: &ConformanceReport) {
+    if let Some(p) = &report.profile {
+        println!("Profile: {p}");
+    } else {
+        println!("Profile: ALL");
+    }
+    println!();
+
+    let groups = vestrace_domain::conformance::runner::group_by_family(&report.results);
+    for (family, results) in &groups {
+        println!("[{family}]");
+        for r in results {
+            let status_str = match r.status {
+                CaseStatus::Pass => "PASS",
+                CaseStatus::Fail => "FAIL",
+                CaseStatus::Skip => "SKIP",
+                CaseStatus::NotApplicable => "N/A ",
+            };
+            let ids: Vec<_> = r.requirement_ids.iter().map(|id| id.to_string()).collect();
+            // A pass says how it was reached. Without this the reader cannot
+            // tell a check that ran from a sentence somebody wrote.
+            let origin = match (r.status, r.origin) {
+                (CaseStatus::Pass, CaseOrigin::Executed) => " [executed]",
+                (CaseStatus::Pass, CaseOrigin::Attested) => " [attested]",
+                _ => "",
+            };
+            println!("  {status_str} {}{origin} — {}", ids.join(", "), r.message);
+        }
+        println!();
+    }
+
+    let s = &report.summary;
+    println!(
+        "Summary: {} total, {} passed ({} executed, {} attested), {} failed, {} skipped, {} N/A",
+        s.total,
+        s.passed,
+        s.passed_executed,
+        s.passed - s.passed_executed,
+        s.failed,
+        s.skipped,
+        s.not_applicable
+    );
+
+    // Named explicitly, because an attested behavioural requirement is the one
+    // failure mode this report used to hide completely.
+    let shortfall = report.attested_but_should_execute();
+    if !shortfall.is_empty() {
+        let ids: Vec<_> = shortfall.iter().map(|id| id.to_string()).collect();
+        println!();
+        println!(
+            "{} behavioural requirement(s) pass on an attestation alone, with no case that \
+             could ever fail: {}",
+            shortfall.len(),
+            ids.join(", ")
+        );
+    }
+
+    if s.failed > 0 {
+        std::process::exit(1);
+    }
+}
+
+/// The profile closure, taken from the domain rather than restated here.
+///
+/// This function used to carry its own copy of the whole `match`, and
+/// `build_report` used *this* copy — so the domain's `profile_requirements`,
+/// which the hard gate uses, could disagree with what `conformance check`
+/// reported, and nothing would have said so. One definition, two callers.
+fn profile_requirement_ids(
+    profile: QualificationProfile,
+) -> Vec<vestrace_domain::conformance::RequirementId> {
+    vestrace_domain::conformance::runner::profile_requirements(profile)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -1820,78 +1902,4 @@ mod tests {
 
         assert!(error.contains("lifecycle=deployment"));
     }
-}
-
-fn print_report_human(report: &ConformanceReport) {
-    if let Some(p) = &report.profile {
-        println!("Profile: {p}");
-    } else {
-        println!("Profile: ALL");
-    }
-    println!();
-
-    let groups = vestrace_domain::conformance::runner::group_by_family(&report.results);
-    for (family, results) in &groups {
-        println!("[{family}]");
-        for r in results {
-            let status_str = match r.status {
-                CaseStatus::Pass => "PASS",
-                CaseStatus::Fail => "FAIL",
-                CaseStatus::Skip => "SKIP",
-                CaseStatus::NotApplicable => "N/A ",
-            };
-            let ids: Vec<_> = r.requirement_ids.iter().map(|id| id.to_string()).collect();
-            // A pass says how it was reached. Without this the reader cannot
-            // tell a check that ran from a sentence somebody wrote.
-            let origin = match (r.status, r.origin) {
-                (CaseStatus::Pass, CaseOrigin::Executed) => " [executed]",
-                (CaseStatus::Pass, CaseOrigin::Attested) => " [attested]",
-                _ => "",
-            };
-            println!("  {status_str} {}{origin} — {}", ids.join(", "), r.message);
-        }
-        println!();
-    }
-
-    let s = &report.summary;
-    println!(
-        "Summary: {} total, {} passed ({} executed, {} attested), {} failed, {} skipped, {} N/A",
-        s.total,
-        s.passed,
-        s.passed_executed,
-        s.passed - s.passed_executed,
-        s.failed,
-        s.skipped,
-        s.not_applicable
-    );
-
-    // Named explicitly, because an attested behavioural requirement is the one
-    // failure mode this report used to hide completely.
-    let shortfall = report.attested_but_should_execute();
-    if !shortfall.is_empty() {
-        let ids: Vec<_> = shortfall.iter().map(|id| id.to_string()).collect();
-        println!();
-        println!(
-            "{} behavioural requirement(s) pass on an attestation alone, with no case that \
-             could ever fail: {}",
-            shortfall.len(),
-            ids.join(", ")
-        );
-    }
-
-    if s.failed > 0 {
-        std::process::exit(1);
-    }
-}
-
-/// The profile closure, taken from the domain rather than restated here.
-///
-/// This function used to carry its own copy of the whole `match`, and
-/// `build_report` used *this* copy — so the domain's `profile_requirements`,
-/// which the hard gate uses, could disagree with what `conformance check`
-/// reported, and nothing would have said so. One definition, two callers.
-fn profile_requirement_ids(
-    profile: QualificationProfile,
-) -> Vec<vestrace_domain::conformance::RequirementId> {
-    vestrace_domain::conformance::runner::profile_requirements(profile)
 }

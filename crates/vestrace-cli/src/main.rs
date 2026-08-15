@@ -26,6 +26,8 @@ struct Cli {
     command: Command,
 }
 
+// Keep the direct Clap command shape during stabilization; parsing remains unchanged.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Command {
     Server,

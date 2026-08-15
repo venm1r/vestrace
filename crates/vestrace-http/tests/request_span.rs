@@ -12,12 +12,9 @@ use tracing::{Subscriber, field::Visit, span::Attributes};
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
 use vestrace_application::{
     ApplicationError, CreateRunCommand, HealthRepository, NullExecutionHistoryRepository,
-    RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
+    RequestContext, RunUseCases,
 };
-use vestrace_domain::{
-    id::AgentRunId,
-    run::{AgentRun, RunCommandEnvelope},
-};
+use vestrace_domain::{id::AgentRunId, run::AgentRun};
 use vestrace_http::{AppState, build_router};
 
 const INVALID_REQUEST_ID: &str = "invalid-request-id-secret";
@@ -30,21 +27,6 @@ const HEADER_SECRET: &str = "arbitrary-header-secret-2267";
 
 struct HealthyRepository;
 struct EmptyRunUseCases;
-struct StubRunCommandExecutor;
-
-#[async_trait::async_trait]
-impl RunCommandExecutor for StubRunCommandExecutor {
-    async fn execute(
-        &self,
-        _context: &RequestContext,
-        _command: RunCommandEnvelope,
-    ) -> Result<RunCommandResult, ApplicationError> {
-        Err(ApplicationError::Unavailable(
-            "run command execution is unavailable in request span tests".to_owned(),
-        ))
-    }
-}
-
 #[async_trait::async_trait]
 impl HealthRepository for HealthyRepository {
     async fn check(&self) -> Result<(), ApplicationError> {

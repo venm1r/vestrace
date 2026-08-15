@@ -74,7 +74,6 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let store_for_memory = store.clone();
     let store_for_ag_ui = store.clone();
     let store_for_runs = store.clone();
-    let pool = store.pool().clone();
     let memory_service = MemoryService::new(
         PgEventRepository::new(store_for_memory.clone()),
         PgMemoryRepository::new(store_for_memory.clone()),
@@ -713,12 +712,9 @@ where
 /// Global filters take no per-layer state and short-circuit the whole
 /// subscriber, which is what these two want anyway: the target allowlist exists
 /// to clamp dependency output for everyone, not for one layer.
-fn output_filters(
-    config: &ObservabilityConfig,
-) -> anyhow::Result<(
-    filter::FilterFn<for<'a, 'b> fn(&'a tracing::Metadata<'b>) -> bool>,
-    EnvFilter,
-)> {
+type MetadataFilter = filter::FilterFn<for<'a, 'b> fn(&'a tracing::Metadata<'b>) -> bool>;
+
+fn output_filters(config: &ObservabilityConfig) -> anyhow::Result<(MetadataFilter, EnvFilter)> {
     let user_filter = EnvFilter::try_new(&config.log_filter)
         .map_err(|_| anyhow!("invalid observability log filter"))?;
     let targets: for<'a, 'b> fn(&'a tracing::Metadata<'b>) -> bool = is_vestrace_target;

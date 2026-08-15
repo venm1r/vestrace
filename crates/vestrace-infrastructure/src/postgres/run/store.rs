@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
 use vestrace_application::run::ports::{CommitRun, RunSnapshot, RunStorePort};
 use vestrace_application::{ApplicationError, RequestContext};
 use vestrace_domain::id::{

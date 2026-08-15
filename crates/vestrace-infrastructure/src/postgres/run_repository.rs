@@ -25,6 +25,8 @@ struct AgentRunRow {
     id: uuid::Uuid,
     workspace_id: uuid::Uuid,
     principal_id: uuid::Uuid,
+    // Keep the canonical SQL projection lossless even though the domain run uses `objective`.
+    #[allow(dead_code)]
     title: String,
     objective: String,
     coordinator_snapshot_id: Option<uuid::Uuid>,

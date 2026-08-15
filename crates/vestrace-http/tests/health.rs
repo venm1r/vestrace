@@ -10,12 +10,9 @@ use axum::{
 use tower::ServiceExt;
 use vestrace_application::{
     ApplicationError, CreateRunCommand, HealthRepository, NullExecutionHistoryRepository,
-    RequestContext, RunCommandExecutor, RunCommandResult, RunUseCases,
+    RequestContext, RunUseCases,
 };
-use vestrace_domain::{
-    id::AgentRunId,
-    run::{AgentRun, RunCommandEnvelope},
-};
+use vestrace_domain::{id::AgentRunId, run::AgentRun};
 use vestrace_http::{AppState, build_router};
 
 const VALID_REQUEST_ID: &str = "01890f3e-7b28-7c00-8000-000000000001";
@@ -82,21 +79,6 @@ impl RunUseCases for EmptyRunUseCases {
         _id: AgentRunId,
     ) -> Result<Option<AgentRun>, ApplicationError> {
         Ok(None)
-    }
-}
-
-struct StubRunCommandExecutor;
-
-#[async_trait::async_trait]
-impl RunCommandExecutor for StubRunCommandExecutor {
-    async fn execute(
-        &self,
-        _context: &RequestContext,
-        _command: RunCommandEnvelope,
-    ) -> Result<RunCommandResult, ApplicationError> {
-        Err(ApplicationError::Unavailable(
-            "run command execution is unavailable in health tests".to_owned(),
-        ))
     }
 }
 

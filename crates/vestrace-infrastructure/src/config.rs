@@ -372,7 +372,7 @@ struct FileModelConfig {
 /// No API key here. The credential is a per-workspace secret resolved through
 /// the secret store at invocation time, so `secret_name` names it rather than
 /// carrying it.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ModelConfig {
     pub enabled: bool,
@@ -452,18 +452,6 @@ impl Default for EmbeddingConfig {
             model_name: String::new(),
             space_name: "default".to_string(),
             secret_name: None,
-        }
-    }
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            base_url: String::new(),
-            model_name: String::new(),
-            secret_name: String::new(),
-            max_tokens: None,
         }
     }
 }

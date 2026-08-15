@@ -7,14 +7,13 @@ use axum::{
 use tower::ServiceExt;
 use vestrace_application::{
     ApplicationError, CreateRunCommand, DenyAllPolicyEngine, HealthRepository,
-    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunCommandExecutor,
-    RunCommandResult, RunUseCases,
+    NullExecutionHistoryRepository, PolicyDecisionEngine, RequestContext, RunUseCases,
 };
 use vestrace_domain::{
     PrincipalId, WorkspaceId,
     id::{AgentRunId, AgentRuntimeSnapshotId},
     now,
-    run::{AgentRun, NewAgentRun, RunCommand, RunCommandEnvelope, RunExecutionMode},
+    run::{AgentRun, NewAgentRun, RunExecutionMode},
 };
 use vestrace_http::{AppState, build_router};
 
