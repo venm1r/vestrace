@@ -19,7 +19,7 @@ use vestrace_domain::{
 pub struct MemoryService<E, M, P, R, O, I> {
     event_repo: E,
     memory_repo: M,
-    provenance_repo: P,
+    _provenance_repo: P,
     relation_repo: R,
     outbox_repo: O,
     idempotency_repo: I,
@@ -45,7 +45,7 @@ where
         Self {
             event_repo,
             memory_repo,
-            provenance_repo,
+            _provenance_repo: provenance_repo,
             relation_repo,
             outbox_repo,
             idempotency_repo,

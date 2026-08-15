@@ -142,6 +142,97 @@ impl PurgeAuthorizationPort for DeterministicPurgeAuthorizer {
     }
 }
 
+/// Purge as a use case, so a surface can hold one without knowing which
+/// authorizer and which repository it was built from.
+#[async_trait]
+pub trait PurgeUseCase: Send + Sync {
+    async fn purge(
+        &self,
+        context: &RequestContext,
+        command: HardPurgeMemoryCommand,
+    ) -> Result<PurgeOutcome, ApplicationError>;
+}
+
+pub type SharedPurgeUseCase = std::sync::Arc<dyn PurgeUseCase>;
+
+#[async_trait]
+impl<A, P> PurgeUseCase for HardPurgeMemoryService<A, P>
+where
+    A: PurgeAuthorizationPort,
+    P: PurgeRepository,
+{
+    async fn purge(
+        &self,
+        context: &RequestContext,
+        command: HardPurgeMemoryCommand,
+    ) -> Result<PurgeOutcome, ApplicationError> {
+        self.execute(context, command).await
+    }
+}
+
+/// Authorization for a purge, taken from the same grant store every other
+/// governed request consults.
+///
+/// # Why the deterministic authorizer could not be wired
+///
+/// `DeterministicPurgeAuthorizer` returns a fixed reference and an hour's
+/// validity for anybody who asks. It is a fixture, and putting it behind an
+/// HTTP surface would have meant the one irreversible operation in the system
+/// authorizing itself — with an audit row naming `deterministic-test-approval`
+/// as the thing that permitted it.
+///
+/// This asks the policy engine for `memory.purge` against the memory's own
+/// scope, at critical risk, and carries the decision's identifier forward as the
+/// authorization reference. So the audit names a decision that was really made,
+/// against a grant that can be listed and revoked, and revoking it closes the
+/// surface on the next request.
+pub struct GrantedPurgeAuthorizer {
+    boundary: crate::AuthorizationBoundary,
+    validity: chrono::Duration,
+}
+
+impl GrantedPurgeAuthorizer {
+    pub fn new(boundary: crate::AuthorizationBoundary) -> Self {
+        Self {
+            boundary,
+            // Short: the authorization is checked immediately before the
+            // deletion it permits, and a window is only useful to something
+            // that might act later.
+            validity: chrono::Duration::minutes(5),
+        }
+    }
+}
+
+#[async_trait]
+impl PurgeAuthorizationPort for GrantedPurgeAuthorizer {
+    async fn authorize(
+        &self,
+        context: &RequestContext,
+        memory_id: MemoryId,
+        reason: &str,
+    ) -> Result<PurgeAuthorization, ApplicationError> {
+        if reason.trim().is_empty() {
+            return Err(ApplicationError::Domain(
+                vestrace_domain::DomainError::InvalidArgument("a purge requires a reason".into()),
+            ));
+        }
+        let request = vestrace_domain::AuthorizationRequest::new(
+            vestrace_domain::Capability::MemoryPurge,
+            "memory.purge",
+            format!("memory://{memory_id}"),
+            // Destroying a memory is the most consequential thing this system
+            // can be asked to do, so it is requested at the top of the scale and
+            // a grant with a lower ceiling refuses it.
+            vestrace_domain::RiskCategory::Critical,
+        );
+        let decision = self.boundary.require(context, request).await?;
+        Ok(PurgeAuthorization {
+            authorization_reference: decision.id.to_string(),
+            expires_at: now() + self.validity,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,96 +366,5 @@ mod tests {
         assert_eq!(calls[0].0, memory_id);
         assert_eq!(calls[0].1, "subject exercised erasure");
         assert_eq!(calls[0].2, "approval-2026-08-14-001");
-    }
-}
-
-/// Purge as a use case, so a surface can hold one without knowing which
-/// authorizer and which repository it was built from.
-#[async_trait]
-pub trait PurgeUseCase: Send + Sync {
-    async fn purge(
-        &self,
-        context: &RequestContext,
-        command: HardPurgeMemoryCommand,
-    ) -> Result<PurgeOutcome, ApplicationError>;
-}
-
-pub type SharedPurgeUseCase = std::sync::Arc<dyn PurgeUseCase>;
-
-#[async_trait]
-impl<A, P> PurgeUseCase for HardPurgeMemoryService<A, P>
-where
-    A: PurgeAuthorizationPort,
-    P: PurgeRepository,
-{
-    async fn purge(
-        &self,
-        context: &RequestContext,
-        command: HardPurgeMemoryCommand,
-    ) -> Result<PurgeOutcome, ApplicationError> {
-        self.execute(context, command).await
-    }
-}
-
-/// Authorization for a purge, taken from the same grant store every other
-/// governed request consults.
-///
-/// # Why the deterministic authorizer could not be wired
-///
-/// `DeterministicPurgeAuthorizer` returns a fixed reference and an hour's
-/// validity for anybody who asks. It is a fixture, and putting it behind an
-/// HTTP surface would have meant the one irreversible operation in the system
-/// authorizing itself — with an audit row naming `deterministic-test-approval`
-/// as the thing that permitted it.
-///
-/// This asks the policy engine for `memory.purge` against the memory's own
-/// scope, at critical risk, and carries the decision's identifier forward as the
-/// authorization reference. So the audit names a decision that was really made,
-/// against a grant that can be listed and revoked, and revoking it closes the
-/// surface on the next request.
-pub struct GrantedPurgeAuthorizer {
-    boundary: crate::AuthorizationBoundary,
-    validity: chrono::Duration,
-}
-
-impl GrantedPurgeAuthorizer {
-    pub fn new(boundary: crate::AuthorizationBoundary) -> Self {
-        Self {
-            boundary,
-            // Short: the authorization is checked immediately before the
-            // deletion it permits, and a window is only useful to something
-            // that might act later.
-            validity: chrono::Duration::minutes(5),
-        }
-    }
-}
-
-#[async_trait]
-impl PurgeAuthorizationPort for GrantedPurgeAuthorizer {
-    async fn authorize(
-        &self,
-        context: &RequestContext,
-        memory_id: MemoryId,
-        reason: &str,
-    ) -> Result<PurgeAuthorization, ApplicationError> {
-        if reason.trim().is_empty() {
-            return Err(ApplicationError::Domain(
-                vestrace_domain::DomainError::InvalidArgument("a purge requires a reason".into()),
-            ));
-        }
-        let request = vestrace_domain::AuthorizationRequest::new(
-            vestrace_domain::Capability::MemoryPurge,
-            "memory.purge",
-            format!("memory://{memory_id}"),
-            // Destroying a memory is the most consequential thing this system
-            // can be asked to do, so it is requested at the top of the scale and
-            // a grant with a lower ceiling refuses it.
-            vestrace_domain::RiskCategory::Critical,
-        );
-        let decision = self.boundary.require(context, request).await?;
-        Ok(PurgeAuthorization {
-            authorization_reference: decision.id.to_string(),
-            expires_at: now() + self.validity,
-        })
     }
 }

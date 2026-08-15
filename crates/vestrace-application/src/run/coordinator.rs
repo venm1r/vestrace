@@ -95,7 +95,7 @@ where
                 coordinator_snapshot_id: run.coordinator_snapshot_id,
                 parent: run.parent,
             },
-            command.correlation_id.unwrap_or_else(CorrelationId::new),
+            command.correlation_id.unwrap_or_default(),
             None,
             at,
         )?;
@@ -177,7 +177,7 @@ where
                 to: command.target,
                 result: command.result.clone(),
             },
-            command.correlation_id.unwrap_or_else(CorrelationId::new),
+            command.correlation_id.unwrap_or_default(),
             command.causation_event_id,
             at,
         )?;
@@ -267,7 +267,7 @@ where
             RunEventPayload::StepsAdded {
                 steps: steps.clone(),
             },
-            command.correlation_id.unwrap_or_else(CorrelationId::new),
+            command.correlation_id.unwrap_or_default(),
             None,
             at,
         )?;
@@ -563,7 +563,7 @@ where
             },
             // Same correlation as the transition it accompanies, so both halves
             // of the approval trace back to one request.
-            command.correlation_id.unwrap_or_else(CorrelationId::new),
+            command.correlation_id.unwrap_or_default(),
             None,
             at,
         )?;

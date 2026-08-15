@@ -1006,36 +1006,6 @@ impl ConformanceCase for SensitiveDataIsRedactedBeforeItReachesALog {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_application_case_passes_against_the_current_code() {
-        for case in [
-            Box::new(FusionIsATotalOrderOverTheData) as Box<dyn ConformanceCase>,
-            Box::new(ContextIsNotBuiltAcrossAWorkspaceBoundary),
-            Box::new(TheJournalRecordsEveryChannelAndTheParameters),
-            Box::new(HydrationResolvesTheExactRevision),
-            Box::new(AMissingRevisionIsNotSubstituted),
-            Box::new(ClassificationIsEnforcedAtHydration),
-            Box::new(AFindingCannotExistWithoutARegisteredInvariant),
-            Box::new(RedactionKeepsTheSentenceAndRemovesTheSecret),
-            Box::new(SensitiveDataIsRedactedBeforeItReachesALog),
-        ] {
-            let outcome = case.run();
-            assert_eq!(
-                outcome.status,
-                CaseStatus::Pass,
-                "{} failed: {}",
-                outcome.case_id,
-                outcome.message
-            );
-            assert_eq!(outcome.origin, CaseOrigin::Executed);
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // QUAL-008 / QUAL-016 — Fault scenarios: deterministic, bound to what they
 // qualify, and unable to name a production environment.
@@ -1543,5 +1513,35 @@ impl ConformanceCase for RankDecidesFusionNotMagnitude {
             outcome,
             "crates/vestrace-application/src/retrieval/fusion.rs",
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_application_case_passes_against_the_current_code() {
+        for case in [
+            Box::new(FusionIsATotalOrderOverTheData) as Box<dyn ConformanceCase>,
+            Box::new(ContextIsNotBuiltAcrossAWorkspaceBoundary),
+            Box::new(TheJournalRecordsEveryChannelAndTheParameters),
+            Box::new(HydrationResolvesTheExactRevision),
+            Box::new(AMissingRevisionIsNotSubstituted),
+            Box::new(ClassificationIsEnforcedAtHydration),
+            Box::new(AFindingCannotExistWithoutARegisteredInvariant),
+            Box::new(RedactionKeepsTheSentenceAndRemovesTheSecret),
+            Box::new(SensitiveDataIsRedactedBeforeItReachesALog),
+        ] {
+            let outcome = case.run();
+            assert_eq!(
+                outcome.status,
+                CaseStatus::Pass,
+                "{} failed: {}",
+                outcome.case_id,
+                outcome.message
+            );
+            assert_eq!(outcome.origin, CaseOrigin::Executed);
+        }
     }
 }

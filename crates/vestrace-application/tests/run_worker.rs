@@ -33,11 +33,6 @@ impl MockClock {
             now: Mutex::new(ts),
         }
     }
-
-    fn advance(&self, dur: chrono::Duration) {
-        let mut now = self.now.lock().unwrap();
-        *now = *now + dur;
-    }
 }
 
 impl RunClockPort for MockClock {
@@ -59,10 +54,6 @@ impl MockRunStore {
             create_commit: Mutex::new(None),
             commit_commit: Mutex::new(None),
         }
-    }
-
-    fn set_snapshot(&self, snapshot: RunSnapshot) {
-        *self.snapshot.lock().unwrap() = Some(snapshot);
     }
 }
 
@@ -128,10 +119,6 @@ impl MockLeasePort {
 
     fn set_acquire_ok(&self, lease: RunLease) {
         *self.acquire_lease.lock().unwrap() = Some(lease);
-    }
-
-    fn set_acquire_err(&self, error: ApplicationError) {
-        *self.acquire_error.lock().unwrap() = Some(error);
     }
 }
 
@@ -300,10 +287,6 @@ impl MockHandler {
 
     fn invoke_count(&self) -> u32 {
         self.invoked.load(Ordering::SeqCst)
-    }
-
-    fn set_outcome(&self, outcome: RunWorkOutcome) {
-        *self.outcome.lock().unwrap() = outcome;
     }
 }
 

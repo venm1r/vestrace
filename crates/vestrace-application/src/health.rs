@@ -165,7 +165,7 @@ impl HealthInspectionService {
 
         // Worst first: an operator reading a truncated list should see the
         // errors.
-        inspected.sort_by(|left, right| right.severity().cmp(&left.severity()));
+        inspected.sort_by_key(|finding| std::cmp::Reverse(finding.severity()));
         Ok(inspected)
     }
 }
@@ -257,7 +257,7 @@ impl HealthMonitorService {
     /// on this run: a problem that stopped being observed is still open until
     /// something verifies it away, and hiding it because this run did not see it
     /// would resolve findings by forgetting them.
-
+    ///
     /// Answer a finding: silence it, or accept the risk it describes.
     ///
     /// # Why this exists
