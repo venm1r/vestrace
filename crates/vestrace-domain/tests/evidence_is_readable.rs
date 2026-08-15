@@ -164,7 +164,7 @@ fn every_recorded_field_can_be_read() {
             // Every impl block for the type, in this file.
             let mut methods = String::new();
             let needle = format!("\nimpl {name} ");
-            let generic_needle = format!("\nimpl<");
+            let generic_needle = "\nimpl<".to_string();
             for (index, _) in text.match_indices(&needle) {
                 methods.push_str(&text[index..]);
             }

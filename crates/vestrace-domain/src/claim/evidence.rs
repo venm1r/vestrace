@@ -30,6 +30,7 @@ pub struct ClaimEvidenceLink {
 }
 
 impl ClaimEvidenceLink {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         link_id: ClaimEvidenceLinkId,
         claim_id: ClaimId,

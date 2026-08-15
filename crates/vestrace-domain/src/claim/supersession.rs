@@ -51,6 +51,7 @@ impl SupersessionLink {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn for_memory_revision(
         link_id: SupersessionLinkId,
         workspace_id: WorkspaceId,

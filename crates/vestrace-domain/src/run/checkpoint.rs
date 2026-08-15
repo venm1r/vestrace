@@ -145,9 +145,8 @@ mod tests {
     fn duplicate_completed_steps_rejected() {
         let id = RunStepId::new();
         let mut payload = valid_payload();
-        if let RunCheckpointPayload::V1(v1) = &mut payload {
-            v1.completed_steps = vec![id, id];
-        }
+        let RunCheckpointPayload::V1(v1) = &mut payload;
+        v1.completed_steps = vec![id, id];
         let result = RunCheckpoint::new(
             RunCheckpointId::new(),
             WorkspaceId::new(),

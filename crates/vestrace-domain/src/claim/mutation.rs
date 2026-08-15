@@ -57,6 +57,7 @@ pub struct CognitiveMutation {
 }
 
 impl CognitiveMutation {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mutation_id: CognitiveMutationId,
         actor: PrincipalId,

@@ -1,4 +1,5 @@
 mod assessment;
+#[allow(clippy::module_inception)]
 mod claim;
 mod conflict;
 mod evidence;

@@ -149,6 +149,19 @@ pub fn profile_requirements(profile: QualificationProfile) -> Vec<RequirementId>
     }
 }
 
+pub fn group_by_family(
+    results: &[ConformanceCaseResult],
+) -> BTreeMap<String, Vec<&ConformanceCaseResult>> {
+    let mut groups: BTreeMap<String, Vec<&ConformanceCaseResult>> = BTreeMap::new();
+    for r in results {
+        for id in &r.requirement_ids {
+            let family = format!("{}", id.family);
+            groups.entry(family).or_default().push(r);
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::profile_requirements;
@@ -202,17 +215,4 @@ mod tests {
             );
         }
     }
-}
-
-pub fn group_by_family(
-    results: &[ConformanceCaseResult],
-) -> BTreeMap<String, Vec<&ConformanceCaseResult>> {
-    let mut groups: BTreeMap<String, Vec<&ConformanceCaseResult>> = BTreeMap::new();
-    for r in results {
-        for id in &r.requirement_ids {
-            let family = format!("{}", id.family);
-            groups.entry(family).or_default().push(r);
-        }
-    }
-    groups
 }

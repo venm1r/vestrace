@@ -509,6 +509,7 @@ impl FederatedAccessDecision {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_federated_memory_access(
     relationship: &FederationRelationship,
     identity: &RemoteIdentity,

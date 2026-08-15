@@ -368,10 +368,10 @@ impl ConformanceCase for DerivedStateRebuildsFromTheEventLog {
             Err("replay produced state for a different run or workspace".to_string())
         } else {
             Ok(format!(
-                "replay of {} events reconstructs the run at version {} with status {:?}, \
+                "replay of {} events reconstructs the run at version {:?} with status {:?}, \
                  and repeats identically",
                 log.events.len(),
-                format!("{:?}", first.version),
+                first.version,
                 first.status
             ))
         };
@@ -15334,7 +15334,7 @@ gov_case_two!(
         ];
 
         // The deletion, covering exactly the doomed evidence.
-        let (request, plan) = deletion(DeletionSemantics::PhysicalDelete, at);
+        let (request, _plan) = deletion(DeletionSemantics::PhysicalDelete, at);
         let plan = crate::trust::DeletionPlan::new(
             request.id(),
             vec![doomed.reference()],

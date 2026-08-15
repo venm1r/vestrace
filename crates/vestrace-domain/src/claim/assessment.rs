@@ -30,6 +30,7 @@ pub struct ClaimAssessment {
 }
 
 impl ClaimAssessment {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         assessment_id: ClaimAssessmentId,
         claim_id: ClaimId,
