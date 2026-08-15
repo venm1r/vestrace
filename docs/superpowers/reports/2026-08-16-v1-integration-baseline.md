@@ -125,3 +125,30 @@ No tests were run for this checkpoint-only Task 1. The starting-gate evidence ab
 - Self-review: the starting state matched the approved values before any index write; only the explicit source categories were staged; the staged-scope exclusion scan was empty; commit `64347860e40fa24dc84b0ab1eb4fa2e80f931319` contains the approved 576 source paths; and the post-commit cached diff retains only the pre-existing nginx rename.
 - No tests are run by this checkpoint-only task; the starting-gate results above are historical baseline evidence, not newly produced results.
 - Git warned that `C:\Users\venmi/.config/git/ignore` was inaccessible and emitted line-ending conversion warnings while staging. Neither warning changed the staged classification or scope.
+
+## Task 6 local CI and console evidence
+
+### 2026-08-15T21:42:02Z through 2026-08-15T21:47:17Z
+
+All commands ran in `E:\Soft\vestrace` at `2ea1f9219ddba701094ece76edc1c6058220ecfb`. Git invocations used `-c safe.directory=E:/Soft/vestrace`. The default Windows `bash` launcher could not start its WSL backend (`Bash/Service/CreateInstance/E_ACCESSDENIED`), so the three repository scripts were run unchanged with the installed `C:\Program Files\Git\bin\bash.exe`.
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `cargo fmt --all -- --check` | 21:42:02--21:42:04 | 0 | pass |
+| `bash ./scripts/foundation-doc-truth.sh` | 21:42:23--21:42:23 | 0 | pass (`documentation truthfulness checks passed`) |
+| `bash ./scripts/foundation-boundary-truth.sh` | 21:42:28--21:42:28 | 0 | pass (`HTTP boundary checks passed`) |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 21:42:33--21:42:34 | 0 | pass |
+| `cargo test --workspace --all-targets --all-features --no-run` | 21:42:40--21:44:35 | 0 | pass |
+| `cargo build -p vestrace-cli --bin vestrace` | 21:44:41--21:44:43 | 0 | pass |
+| `bash ./scripts/foundation-cli-truth.sh` | 21:44:48--21:44:49 | 1 | **fail**: `worker returned an unexpected error: ... Error: database is unavailable` |
+| `cargo test --test v1_release_evidence -- --nocapture` | 21:45:07--21:45:11 | 0 | 4 passed |
+| `cargo test -p vestrace-domain --test the_registry_matches_the_specification -- --nocapture` | 21:45:16--21:45:17 | 0 | 3 passed |
+| `cargo test -p vestrace-integration-tests --test v01_acceptance -- --nocapture` | 21:45:22--21:45:24 | 0 | 9 passed |
+
+The CLI truth script deliberately points its commands at `postgres://p0-user:***@127.0.0.1:9/vestrace_p0_unavailable`. It expects `worker`, `mcp`, `doctor`, and `rebuild` to report `... command is not implemented`; the current binary reached the worker and instead reported `database is unavailable`. This is a real local CI gate failure. The interpretation that the script expectation is stale relative to the implemented worker is an inference from its current assertions and output, not a source change in this evidence-only task.
+
+Console validation reran after replacing the task snippet's unsupported `New-Item -LiteralPath` (this host exposes only `New-Item -Path`) with the equivalent `New-Item -Path`. `npm run typecheck` and `npm exec -- vite build --outDir <resolved-temp-path> --emptyOutDir` both exited 0 between 2026-08-15T21:46:32Z and 2026-08-15T21:46:44Z. Output resolved under the system temp root at `C:\Users\venmi\AppData\Local\Temp\vestrace-console-v1-70f1bdd9b7e047f0a8f00883466fac8c`; it was left for OS cleanup. The generated-path status count stayed `43` before and after, and the binary-diff hash stayed `771c271c6fcc611a3405860235cc2ecdac411fb5` before and after. Thus `apps/console/dist` and `apps/console/node_modules` were byte-for-byte preserved.
+
+`cargo run -q -p vestrace-cli -- conformance check trusted --json` ran from 2026-08-15T21:47:16Z to 2026-08-15T21:47:17Z and exited `1` as expected for an open gate. Its isolated JSON report parsed to exactly `199` total, `195` passed, `0` failed, `4` skipped, and `0` not-applicable. The skips were exactly `IDW-010`, `IDW-014`, `QUAL-010`, and `REC-016`.
+
+Self-review: source was not edited; the console build used a validated disposable system-temp path; the before/after generated status and binary-diff hashes matched; and the existing staged nginx rename was not included in this report's intended commit. Concern: Task 6 is not fully green because `foundation-cli-truth.sh` exited 1; this report records `DONE_WITH_CONCERNS`, not a qualification claim.
