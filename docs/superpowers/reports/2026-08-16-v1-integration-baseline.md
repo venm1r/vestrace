@@ -174,3 +174,59 @@ Two disposable binaries outside tracked source provided RED evidence. The pre-fi
 The script now checks for a password or full unavailable URL before reporting any mismatch and reports only bounded diagnostics. It additionally requires successful, subcommand-specific help usage for MCP and migrate using portable exact-subcommand patterns, while retaining their unavailable-database assertions. GREEN: the generic fake now failed on `mcp --help`; the leak fake failed with `worker leaked database credentials` without echoing either secret form; and the real script passed. `foundation-doc-truth.sh` and `foundation-boundary-truth.sh` both freshly passed, as did fmt, workspace Clippy, all-target/all-feature no-run compilation, CLI build, the 4/3/9 focused suites, and the isolated console typecheck/Vite build. Generated status remained 43 entries and its binary-diff hash remained `771c271c6fcc611a3405860235cc2ecdac411fb5` before and after. TRUSTED remains the expected open result: exit 1, 199/195/0/4/0, exactly `IDW-010`, `IDW-014`, `QUAL-010`, and `REC-016`.
 
 This section is included in the two-file commit that corrects the verification script. The minor malformed-helper-delimiter finding is explicitly deferred for final triage. No Rust product code, generated console output, or qualification claim is included.
+
+## Task 7 isolated PostgreSQL and Compose runtime evidence — BLOCKED
+
+### Fresh standalone PostgreSQL gate — 2026-08-16T05:54:19Z through 2026-08-16T05:56:59Z
+
+All commands ran from `E:\Soft\vestrace` at HEAD `9e51bee64b5a63660d585e7633249126283dd527`. The test container was uniquely named `vestrace-v1-pg-2ff81842e3e94fd0bd6bca7d9279a981`, validated against `^vestrace-v1-pg-[0-9a-f]{32}$`, and confirmed absent before creation. Image `pgvector/pgvector:pg17` resolved to `sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f` (registry digest of the same value). Docker assigned non-default binding `127.0.0.1:6614` to container port `5432`; readiness passed on attempt 3.
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `docker pull pgvector/pgvector:pg17` | 05:54:19--05:54:37 | 0 | image resolved at the digest above |
+| `docker run --detach --name vestrace-v1-pg-2ff81842e3e94fd0bd6bca7d9279a981 --env POSTGRES_DB=vestrace_test --env POSTGRES_USER=vestrace --env POSTGRES_PASSWORD=vestrace --publish 127.0.0.1::5432 pgvector/pgvector:pg17` | 05:54:37--05:54:38 | 0 | container `45521331adc021e4d89fed5c235c966cd88878ae89fec1c415ed69b2d6e2818f` |
+| `docker exec <validated-name> pg_isready -U vestrace -d vestrace_test` | 05:54:39--05:54:41 | 0 | 3 attempts; accepting connections |
+| `DATABASE_URL=postgres://vestrace:vestrace@127.0.0.1:6614/vestrace_test cargo test --workspace --all-targets --all-features --no-fail-fast -- --nocapture` | 05:54:41--05:56:55 | 0 | 128 result lines; 912 passed / 0 failed / 4 ignored / 0 measured / 0 filtered |
+| `cargo build -p vestrace-cli --bin vestrace` | 05:56:55--05:56:56 | 0 | pass |
+| `VESTRACE_DATABASE__URL=<same isolated URL> target/debug/vestrace migrate` | 05:56:56--05:56:58 | 0 | first migration pass; no stdout/stderr |
+| `VESTRACE_DATABASE__URL=<same isolated URL> target/debug/vestrace migrate` | 05:56:58--05:56:58 | 0 | idempotent second pass; no stdout/stderr |
+| `docker rm --force <validated-name>` | 05:56:58--05:56:59 | 0 | emitted only the exact validated name; subsequent exact-name query found 0 containers |
+
+The four ignored workspace tests were exactly the four Docker-dependent `compose_smoke` cases. The log also contains the intentional panic from `restricted_role_is_dropped_when_a_test_body_panics`; its enclosing cleanup-path test passed and the aggregate failure count remained zero. A first invocation at 05:53:31Z stopped before container creation because Windows PowerShell promoted Docker's normal `Unable to find image ... locally` pull notice to a terminating pipeline record. That invocation created no container and required no cleanup; the explicit pull above removed the invocation artifact.
+
+### Isolated Compose acceptance — blocked 2026-08-16T06:01:49Z
+
+The Compose project was uniquely named `vestrace-v1-baseline-7595ffdf46ac4389ae48042da6693e07`, validated against `^vestrace-v1-baseline-[0-9a-f]{32}$`, and confirmed to have zero containers, networks, and volumes before use. Non-default, initially free host ports were selected: server `127.0.0.1:6830` and console `127.0.0.1:6831`. The default `vestrace` project's six container IDs, network `7e1d3b86f7e2|vestrace_default`, and volume `vestrace_postgres-data` were snapshotted before the isolated run.
+
+Built image evidence:
+
+- server: `sha256:f434871a3c946158d8ee21aa82f01744d937c5d97d43db38e1c3597f1a3d79a6`
+- worker: `sha256:3b518fdfcc11db7102545ebd49e3ad28f4678a96f0ae70934a520b6f8e6f531b`
+- console: `sha256:4d51a1ea88a46c8d4776b6bf65ef9d8fcb9076a879878b0e2131c3bd07639706`
+- Compose PostgreSQL `pgvector/pgvector:pg17-bookworm`: `sha256:7ae6051efd0e60444282c27c7e141af07f322ce033300e727a49c3dd11075e38`
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `COMPOSE_PROJECT_NAME=<validated-project> VESTRACE_HTTP_PORT=6830 VESTRACE_CONSOLE_PORT=6831 docker compose config --quiet` | 05:58:44--05:58:45 | 0 | pass |
+| `docker compose up --build --detach --wait --wait-timeout 180` under the same environment | 05:58:45--06:01:49 | 1 | images built and PostgreSQL became healthy; `vestrace-server` exited 1, so dependent health failed |
+| validated `docker compose down --volumes --remove-orphans` | 06:01:49--06:01:56 | 0 | removed exactly 5 isolated containers, 1 isolated network, and 1 isolated volume; 0 matching resources remained |
+
+A bounded diagnostic rerun used the same validated project only after confirming its isolated resource counts were zero. `docker compose up --detach` reproduced exit 1 at 06:02:36Z--06:02:45Z. `docker compose ps --all` and `docker compose logs --no-color --timestamps postgres vestrace-server` both exited 0 and captured:
+
+```text
+Error: bootstrap credential could not be seeded: error returned from database: insert or update on table "access_tokens" violates foreign key constraint "access_tokens_workspace_id_fkey"
+DETAIL: Key is not present in table "workspaces".
+```
+
+This is a source/Compose startup-order defect, not an environment blocker: the server seeds the configured bootstrap credential before its workspace exists, while the `dev-seed` service that creates that workspace depends on the server becoming healthy. Per the Task 7 stop condition, `foundation-smoke.sh`, `foundation-run-smoke.sh`, `foundation-runtime-rls.sh`, and the four ignored Compose tests were **not run** after the health dependency failed; no result is inferred for them.
+
+Diagnostic cleanup again exited 0, removed exactly the five isolated containers, one isolated network, and one isolated volume, and left zero matching resources. The before/after default-project container, network, and volume snapshots were identical in both cleanup passes. No existing/default project, volume, container, or default host port was operated on.
+
+### Task 7 state, non-claims, and self-review
+
+- Status: **BLOCKED** on the fresh Compose server startup defect above; standalone PostgreSQL gates are green.
+- Environment blockers: none. Docker permission, image pulls, PostgreSQL 17, Rust workspace tests, CLI build, migrations, Compose config, image builds, and isolated cleanup all ran.
+- Source edits: none. Only this durable evidence report and the untracked task report were written.
+- Commit: deliberately not created because the runtime gate is blocked and the task authorizes the report-only commit only after all acceptance gates pass.
+- Cached state before report editing remained exactly `R100 apps/console/nginx.conf apps/console/nginx.conf.template`; cached generated/cache scan was empty. Console generated/cache status was 43 entries after the runtime work and its then-current binary-diff hash was `690ab1d436e059b160c06b36b443cbd4e8af0afe`. That hash differs from Task 6's recorded `771c271c6fcc611a3405860235cc2ecdac411fb5`. Task 7 did not target those paths, but no pre-run hash was captured, so byte-for-byte preservation across Task 7 is not claimed.
+- Self-review: names matched their strict prefixes before every destructive command; isolated resources were absent before creation and absent after both cleanup paths; non-default host ports were used; the default Compose snapshot was unchanged; no smoke/RLS/ignored-test pass is claimed; TRUSTED, v1.0, production evidence, crypto custody, and exact-environment qualification remain unclaimed.
