@@ -262,7 +262,8 @@ pub struct ConformanceCaseResult {
     pub status: CaseStatus,
     pub message: String,
     pub evidence: Option<String>,
-    /// Whether anything actually ran. See [`CaseOrigin`].
+    /// How the result was established: runtime execution, compiler proof of a
+    /// type-level invariant, or attestation. See [`CaseOrigin`].
     #[serde(default)]
     pub origin: CaseOrigin,
 }

@@ -90,3 +90,34 @@ fn trusted_human_output_labels_build_verified_and_splits_pass_origins() {
     assert!(stdout.contains("build-verified: 1"));
     assert!(stdout.contains("attested:"));
 }
+
+#[test]
+fn trusted_json_explains_build_verified_origin_as_compiler_proof() {
+    let output = trusted(&["--json"]);
+    assert!(
+        !output.status.success(),
+        "TRUSTED must remain open: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse TRUSTED report stdout as JSON");
+    let qual_001 = report["results"]
+        .as_array()
+        .expect("report results are an array")
+        .iter()
+        .find(|result| {
+            result["requirement_ids"]
+                .as_array()
+                .is_some_and(|requirements| {
+                    requirements.iter().any(|requirement| {
+                        requirement["family"] == "qual" && requirement["number"] == 1
+                    })
+                })
+        })
+        .expect("QUAL-001 result");
+    let message = qual_001["message"].as_str().expect("QUAL-001 message");
+
+    assert!(message.contains("BuildVerified"));
+    assert!(message.contains("compiler proof"));
+}
