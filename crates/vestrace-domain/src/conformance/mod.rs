@@ -225,6 +225,8 @@ pub enum CaseStatus {
 ///
 /// The distinction is the whole difference between a qualification report and a
 /// list of intentions. `Executed` means code ran and asserted the property.
+/// `BuildVerified` means compilation established a type-level invariant that
+/// could not be false in the resulting binary.
 /// `Attested` means a human wrote down that the property holds and named where
 /// to look — useful for `VerificationClass::Static`, which describes an
 /// architectural shape no unit test can observe, and worthless as proof of a
@@ -238,6 +240,7 @@ pub enum CaseStatus {
 #[serde(rename_all = "snake_case")]
 pub enum CaseOrigin {
     Executed,
+    BuildVerified,
     #[default]
     Attested,
 }
@@ -246,6 +249,7 @@ impl std::fmt::Display for CaseOrigin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Executed => write!(f, "executed"),
+            Self::BuildVerified => write!(f, "build_verified"),
             Self::Attested => write!(f, "attested"),
         }
     }
@@ -277,12 +281,16 @@ pub struct ConformanceSummary {
     pub failed: usize,
     pub skipped: usize,
     pub not_applicable: usize,
-    /// How many of `passed` were reached by running something. The remainder
-    /// are attestations. Reported separately because a summary that adds the
-    /// two together is the summary that made this repository believe it had 40
-    /// verified requirements when it had none.
+    /// How many of `passed` were reached by running something. Reported
+    /// separately because a summary that adds execution, build verification,
+    /// and attestation together can make this repository believe it has
+    /// verified requirements when it has none.
     #[serde(default)]
     pub passed_executed: usize,
+    /// How many of `passed` were established by compilation of a type-level
+    /// invariant rather than by runtime execution or attestation.
+    #[serde(default)]
+    pub passed_build_verified: usize,
 }
 
 impl ConformanceReport {
@@ -311,6 +319,10 @@ impl ConformanceReport {
             .iter()
             .filter(|r| r.status == CaseStatus::Pass && r.origin == CaseOrigin::Executed)
             .count();
+        let passed_build_verified = results
+            .iter()
+            .filter(|r| r.status == CaseStatus::Pass && r.origin == CaseOrigin::BuildVerified)
+            .count();
         Self {
             profile,
             results,
@@ -321,6 +333,7 @@ impl ConformanceReport {
                 skipped,
                 not_applicable,
                 passed_executed,
+                passed_build_verified,
             },
         }
     }
@@ -377,33 +390,60 @@ mod tests {
     }
 
     #[test]
-    fn an_attested_pass_is_counted_separately_from_an_executed_one() {
-        // The summary previously reported only `passed`, which is how forty
-        // hand-written claims read as forty verified requirements.
+    fn pass_origins_are_counted_separately() {
+        let result = |case_id: &str, family: RequirementFamily, number: u16, origin: CaseOrigin| {
+            ConformanceCaseResult {
+                case_id: case_id.into(),
+                requirement_ids: vec![RequirementId::new(family, number)],
+                status: CaseStatus::Pass,
+                message: "passed".into(),
+                evidence: Some(format!("evidence:{case_id}")),
+                origin,
+            }
+        };
         let report = ConformanceReport::from_results(
             None,
             vec![
-                ConformanceCaseResult {
-                    case_id: "executed".into(),
-                    requirement_ids: vec![RequirementId::new(RequirementFamily::Tmp, 2)],
-                    status: CaseStatus::Pass,
-                    message: "ran".into(),
-                    evidence: None,
-                    origin: CaseOrigin::Executed,
-                },
-                ConformanceCaseResult {
-                    case_id: "attested".into(),
-                    requirement_ids: vec![RequirementId::new(RequirementFamily::Arc, 5)],
-                    status: CaseStatus::Pass,
-                    message: "claimed".into(),
-                    evidence: None,
-                    origin: CaseOrigin::Attested,
-                },
+                result("executed", RequirementFamily::Tmp, 2, CaseOrigin::Executed),
+                result(
+                    "build-verified",
+                    RequirementFamily::Idw,
+                    10,
+                    CaseOrigin::BuildVerified,
+                ),
+                result("attested", RequirementFamily::Arc, 5, CaseOrigin::Attested),
             ],
         );
 
-        assert_eq!(report.summary.passed, 2);
+        assert_eq!(report.summary.passed, 3);
         assert_eq!(report.summary.passed_executed, 1);
+        assert_eq!(report.summary.passed_build_verified, 1);
+    }
+
+    #[test]
+    fn legacy_reports_default_new_evidence_fields_safely() {
+        let json = r#"{
+            "profile":null,
+            "results":[{
+                "case_id":"legacy",
+                "requirement_ids":[{"family":"arc","number":5}],
+                "status":"pass",
+                "message":"legacy claim",
+                "evidence":"docs/legacy.md"
+            }],
+            "summary":{
+                "total":1,
+                "passed":1,
+                "failed":0,
+                "skipped":0,
+                "not_applicable":0,
+                "passed_executed":0
+            }
+        }"#;
+
+        let report: ConformanceReport = serde_json::from_str(json).unwrap();
+        assert_eq!(report.results[0].origin, CaseOrigin::Attested);
+        assert_eq!(report.summary.passed_build_verified, 0);
     }
 
     #[test]

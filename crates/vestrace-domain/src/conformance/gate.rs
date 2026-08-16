@@ -19,7 +19,7 @@ pub enum GateEvidenceStatus {
 /// Where a piece of gate evidence came from, which decides how much it is
 /// worth.
 ///
-/// # Why there are four of these and not three
+/// # Why there are five of these and not four
 ///
 /// There were three, and `CaseOrigin::Attested` was mapped onto
 /// `RemoteSelfAsserted` — so this installation's own written reading of its own
@@ -44,6 +44,9 @@ pub enum GateEvidenceStatus {
 pub enum EvidenceOrigin {
     /// A case ran here and produced this result.
     LocalExecutable,
+    /// Compilation established a type-level invariant in the local domain
+    /// crate. Admissible only for `Domain` requirements.
+    LocalBuildVerified,
     /// A written claim about this build, published beside it. Admissible only
     /// where the requirement's class is `Static` — see
     /// [`GovernanceFederationGate::evaluate`].
@@ -156,6 +159,11 @@ pub enum HardGateFailure {
     AttestationWhereExecutionIsRequired {
         requirement_id: RequirementId,
     },
+    /// A compiler-verified claim was supplied for a requirement whose class
+    /// requires runtime evidence.
+    BuildVerificationWhereRuntimeIsRequired {
+        requirement_id: RequirementId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -242,6 +250,16 @@ impl GovernanceFederationGate {
                         .unwrap_or(false);
                     if !is_static {
                         failures.push(HardGateFailure::AttestationWhereExecutionIsRequired {
+                            requirement_id,
+                        });
+                    }
+                }
+                EvidenceOrigin::LocalBuildVerified => {
+                    let is_domain = registry::find(&requirement_id)
+                        .map(|requirement| requirement.class == super::VerificationClass::Domain)
+                        .unwrap_or(false);
+                    if !is_domain {
+                        failures.push(HardGateFailure::BuildVerificationWhereRuntimeIsRequired {
                             requirement_id,
                         });
                     }
@@ -516,7 +534,28 @@ mod tests {
         EvidenceOrigin, GateEvidenceStatus, GovernanceFederationGate, HardGateEvidence,
         HardGateFailure,
     };
-    use crate::conformance::{QualificationProfile, RequirementFamily, RequirementId};
+    use crate::conformance::{
+        QualificationProfile, RequirementFamily, RequirementId, VerificationClass, registry,
+    };
+
+    fn trusted_evidence() -> Vec<HardGateEvidence> {
+        GovernanceFederationGate::required_requirements(QualificationProfile::Trusted)
+            .into_iter()
+            .map(|id| {
+                let policy_version = matches!(
+                    (id.family, id.number),
+                    (RequirementFamily::Gov, 24) | (RequirementFamily::Gov, 25)
+                )
+                .then(|| "policy-v1".to_owned());
+                HardGateEvidence::pass(
+                    id,
+                    format!("evidence:{id}"),
+                    policy_version,
+                    EvidenceOrigin::LocalExecutable,
+                )
+            })
+            .collect()
+    }
 
     #[test]
     fn federation_gate_rejects_missing_required_evidence() {
@@ -537,5 +576,64 @@ mod tests {
                 .failures()
                 .contains(&HardGateFailure::Skipped { requirement_id: id })
         );
+    }
+
+    #[test]
+    fn trusted_gate_accepts_build_verified_domain_evidence() {
+        let id = RequirementId::new(RequirementFamily::Mem, 1);
+        let requirement = registry::find(&id).expect("MEM-001 must be registered");
+        assert_eq!(requirement.class, VerificationClass::Domain);
+
+        let evidence = trusted_evidence()
+            .into_iter()
+            .map(|item| {
+                if item.requirement_id() == id {
+                    HardGateEvidence::pass(
+                        id,
+                        "evidence:MEM-001",
+                        None,
+                        EvidenceOrigin::LocalBuildVerified,
+                    )
+                } else {
+                    item
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let decision = GovernanceFederationGate::evaluate(QualificationProfile::Trusted, &evidence);
+        assert!(
+            decision.is_passed(),
+            "unexpected failures: {:?}",
+            decision.failures()
+        );
+    }
+
+    #[test]
+    fn trusted_gate_rejects_build_verified_non_domain_evidence() {
+        let id = RequirementId::new(RequirementFamily::Arc, 2);
+        let requirement = registry::find(&id).expect("ARC-002 must be registered");
+        assert_ne!(requirement.class, VerificationClass::Domain);
+
+        let evidence = trusted_evidence()
+            .into_iter()
+            .map(|item| {
+                if item.requirement_id() == id {
+                    HardGateEvidence::pass(
+                        id,
+                        "evidence:ARC-002",
+                        None,
+                        EvidenceOrigin::LocalBuildVerified,
+                    )
+                } else {
+                    item
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let decision = GovernanceFederationGate::evaluate(QualificationProfile::Trusted, &evidence);
+        assert!(!decision.is_passed());
+        assert!(decision.failures().contains(
+            &HardGateFailure::BuildVerificationWhereRuntimeIsRequired { requirement_id: id }
+        ));
     }
 }
