@@ -1207,6 +1207,7 @@ fn hard_gate_evidence(report: &ConformanceReport) -> Vec<HardGateEvidence> {
         // execution is not the right form.
         let origin = match result.origin {
             CaseOrigin::Executed => EvidenceOrigin::LocalExecutable,
+            CaseOrigin::BuildVerified => EvidenceOrigin::LocalBuildVerified,
             CaseOrigin::Attested => EvidenceOrigin::LocalAttested,
         };
         for requirement_id in &result.requirement_ids {
@@ -1286,7 +1287,7 @@ fn build_report(profile: Option<QualificationProfile>) -> ConformanceReport {
 
     let reqs = registry::all();
 
-    // An executed case outranks a written claim about the same requirement.
+    // A registered case outranks a written claim about the same requirement.
     // Everything used to come from `evaluate_requirement`, a table of
     // hand-written assertions that ran nothing; those remain as the fallback,
     // but they are now marked `Attested` rather than passed off as verified.
@@ -1295,10 +1296,11 @@ fn build_report(profile: Option<QualificationProfile>) -> ConformanceReport {
     // most of what is left — how channels fuse, what a boundary refuses, what a
     // journal records — is application behaviour that is invisible from there.
     // The CLI is the first place that can see both.
-    let executed: HashMap<_, _> = cases::executable_cases()
+    let verified: HashMap<_, _> = cases::executable_cases()
         .run_all(None)
         .results
         .into_iter()
+        .chain(cases::build_verified_cases().run_all(None).results)
         .chain(
             vestrace_application::conformance_cases::executable_cases()
                 .run_all(None)
@@ -1315,7 +1317,7 @@ fn build_report(profile: Option<QualificationProfile>) -> ConformanceReport {
 
     let results: Vec<_> = reqs
         .iter()
-        .map(|req| match executed.get(&req.id) {
+        .map(|req| match verified.get(&req.id) {
             Some(result) => result.clone(),
             None => {
                 let (status, message, evidence) = evaluate_requirement(req);
@@ -1380,12 +1382,6 @@ fn evaluate_requirement(
             CaseStatus::Skip,
             "Nothing preserves forensic evidence before a destructive recovery, because              nothing performs a destructive recovery. `CaptureProfile::Forensic` exists in the              state-engine types and is constructed by no code; there is no snapshot-before-             overwrite step to attach evidence to. What is in place is the surrounding              discipline this requirement protects: a recovery point carries its provenance and              refuses to be restored from unless its integrity was checked (REC-007, REC-008),              and closing an incident keeps everything it was opened for (REC-018). This is a              SHOULD, and it is unimplemented rather than unverified".to_string(),
             None,
-        ),
-        (F::Idw, 10, _) => (
-            CaseStatus::Skip,
-            "`SharedMemoryRef` cannot be substituted for a local `MemoryId` because no              conversion exists: it exposes `source_memory_id()` and no `From`, `Into`, `Deref`              or accessor yielding a local identifier. That is a property of the type, and the              absence of a conversion is precisely what a runtime case cannot observe — a case              asserting it would only be re-stating that it did not call something. IDW-009              executes the half that is observable: the reference names its source workspace,              memory, revision and grant revision, and its source workspace is never the              borrowing one"
-                .to_string(),
-            Some("crates/vestrace-domain/src/enterprise/sharing.rs".to_string()),
         ),
         (F::Idw, 14, _) => (
             CaseStatus::Skip,
@@ -1677,10 +1673,9 @@ fn print_report_human(report: &ConformanceReport) {
             let ids: Vec<_> = r.requirement_ids.iter().map(|id| id.to_string()).collect();
             // A pass says how it was reached. Without this the reader cannot
             // tell a check that ran from a sentence somebody wrote.
-            let origin = match (r.status, r.origin) {
-                (CaseStatus::Pass, CaseOrigin::Executed) => " [executed]",
-                (CaseStatus::Pass, CaseOrigin::Attested) => " [attested]",
-                _ => "",
+            let origin = match r.status {
+                CaseStatus::Pass => format!(" [{}]", r.origin),
+                _ => String::new(),
             };
             println!("  {status_str} {}{origin} — {}", ids.join(", "), r.message);
         }
@@ -1689,11 +1684,14 @@ fn print_report_human(report: &ConformanceReport) {
 
     let s = &report.summary;
     println!(
-        "Summary: {} total, {} passed ({} executed, {} attested), {} failed, {} skipped, {} N/A",
+        "Summary: {} total, {} passed (executed: {}, build-verified: {}, attested: {}), {} failed, {} skipped, {} N/A",
         s.total,
         s.passed,
         s.passed_executed,
-        s.passed - s.passed_executed,
+        s.passed_build_verified,
+        s.passed
+            .saturating_sub(s.passed_executed)
+            .saturating_sub(s.passed_build_verified),
         s.failed,
         s.skipped,
         s.not_applicable
