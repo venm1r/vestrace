@@ -151,7 +151,7 @@ Console validation reran after replacing the task snippet's unsupported `New-Ite
 
 `cargo run -q -p vestrace-cli -- conformance check trusted --json` ran from 2026-08-15T21:47:16Z to 2026-08-15T21:47:17Z and exited `1` as expected for an open gate. Its isolated JSON report parsed to exactly `199` total, `195` passed, `0` failed, `4` skipped, and `0` not-applicable. The skips were exactly `IDW-010`, `IDW-014`, `QUAL-010`, and `REC-016`.
 
-Self-review: source was not edited; the console build used a validated disposable system-temp path; the before/after generated status and binary-diff hashes matched; and the existing staged nginx rename was not included in this report's intended commit. Concern: Task 6 is not fully green because `foundation-cli-truth.sh` exited 1; this report records `DONE_WITH_CONCERNS`, not a qualification claim.
+Historical self-review: source was not edited; the console build used a validated disposable system-temp path; the before/after generated status and binary-diff hashes matched; and the existing staged nginx rename was not included in the original evidence commit. The former CLI-script failure is superseded by the corrections below; this report makes no qualification claim.
 
 ### Task 6 CLI truthfulness correction — 2026-08-16
 
@@ -165,4 +165,12 @@ TRUSTED reran with the expected open result: exit 1, 199 total / 195 passed / 0 
 
 Before staging this correction, `git diff --cached --name-status` still contained only `R100 apps/console/nginx.conf apps/console/nginx.conf.template`; no generated or cache path was staged. The committed scope is limited to this durable report, `scripts/foundation-cli-truth.sh`, and the paired Task 6 design/plan amendments.
 
-The scoped commit was attempted at 2026-08-16T05:35:42Z but Git could not create `E:/Soft/vestrace/.git/index.lock` (`Permission denied`) before staging. No lock file was present on read-only inspection, no approved path entered the index, and the sole cached rename remains preserved. This correction is verified but pending the explicit four-file commit; it does not alter the generated-path proof or any non-claim above.
+The scoped commit initially failed at 2026-08-16T05:35:42Z because Git could not create `E:/Soft/vestrace/.git/index.lock` (`Permission denied`); this historical permission issue was resolved by `25043a5` (`test: align CLI truth gate with implemented commands`). The sole cached rename remains preserved, and no generated or cache path entered that commit.
+
+### Task 6 review correction — credential-safe CLI truth diagnostics
+
+Two disposable binaries outside tracked source provided RED evidence. The pre-fix script accepted a generic fake that returned only `database is unavailable` for MCP and migrate, so it could not distinguish their routing. A separate fake emitted the scripted password alongside a wrong result; the pre-fix mismatch diagnostic included that password before its credential-leak check. The actual CLI help output was first observed as `Usage: vestrace.exe mcp [OPTIONS]` and `Usage: vestrace.exe migrate [OPTIONS]`, both successful.
+
+The script now checks for a password or full unavailable URL before reporting any mismatch and reports only bounded diagnostics. It additionally requires successful, subcommand-specific help usage for MCP and migrate using portable exact-subcommand patterns, while retaining their unavailable-database assertions. GREEN: the generic fake now failed on `mcp --help`; the leak fake failed with `worker leaked database credentials` without echoing either secret form; and the real script passed. `foundation-doc-truth.sh` and `foundation-boundary-truth.sh` both freshly passed, as did fmt, workspace Clippy, all-target/all-feature no-run compilation, CLI build, the 4/3/9 focused suites, and the isolated console typecheck/Vite build. Generated status remained 43 entries and its binary-diff hash remained `771c271c6fcc611a3405860235cc2ecdac411fb5` before and after. TRUSTED remains the expected open result: exit 1, 199/195/0/4/0, exactly `IDW-010`, `IDW-014`, `QUAL-010`, and `REC-016`.
+
+This section is included in the two-file commit that corrects the verification script. The minor malformed-helper-delimiter finding is explicitly deferred for final triage. No Rust product code, generated console output, or qualification claim is included.

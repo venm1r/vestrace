@@ -9,6 +9,16 @@ if [[ ! -x "$binary" ]]; then
   exit 1
 fi
 
+assert_no_credential_leak() {
+  local command="$1"
+  local output="$2"
+
+  if grep -Fq "p0-secret-password" <<<"$output" || grep -Fq "$unavailable_url" <<<"$output"; then
+    echo "$command leaked database credentials" >&2
+    exit 1
+  fi
+}
+
 run_expect_failure() {
   local command="$1"
   shift
@@ -27,6 +37,8 @@ run_expect_failure() {
   status=$?
   set -e
 
+  assert_no_credential_leak "$command" "$output"
+
   if [[ "$status" -eq 0 ]]; then
     echo "$command unexpectedly succeeded" >&2
     exit 1
@@ -34,21 +46,42 @@ run_expect_failure() {
 
   for expected in "${expected[@]}"; do
     if ! grep -Fq "$expected" <<<"$output"; then
-      echo "$command returned an unexpected error: $output" >&2
+      echo "$command returned an unexpected error" >&2
       exit 1
     fi
   done
+}
 
-  if grep -Fq "p0-secret-password" <<<"$output" || grep -Fq "$unavailable_url" <<<"$output"; then
-    echo "$command leaked database credentials" >&2
+run_expect_help() {
+  local command="$1"
+  local usage_pattern="$2"
+  local output
+  local status
+
+  set +e
+  output=$("$binary" "$command" --help 2>&1)
+  status=$?
+  set -e
+
+  assert_no_credential_leak "$command --help" "$output"
+
+  if [[ "$status" -ne 0 ]]; then
+    echo "$command --help unexpectedly failed" >&2
+    exit 1
+  fi
+
+  if ! grep -Eq "$usage_pattern" <<<"$output"; then
+    echo "$command --help returned unexpected usage" >&2
     exit 1
   fi
 }
 
 run_expect_failure worker "starting vestrace worker" "database is unavailable" --
 run_expect_failure mcp "database is unavailable" --
+run_expect_help mcp '^Usage: .* mcp \[OPTIONS\]$'
 run_expect_failure doctor "Connecting to database at postgres://***@127.0.0.1:9/vestrace_p0_unavailable" "database is unavailable" --
 run_expect_failure rebuild "Connecting to database at postgres://***@127.0.0.1:9/vestrace_p0_unavailable" "database is unavailable" -- search-documents
 run_expect_failure migrate "database is unavailable" --
+run_expect_help migrate '^Usage: .* migrate \[OPTIONS\]$'
 
 echo "CLI truthfulness checks passed"
