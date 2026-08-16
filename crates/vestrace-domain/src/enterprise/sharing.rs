@@ -634,6 +634,26 @@ impl SharedMemoryRef {
     }
 }
 
+mod idw_010_compile_time_boundary {
+    use std::{borrow::Borrow, ops::Deref};
+
+    use static_assertions::assert_not_impl_any;
+
+    use super::SharedMemoryRef;
+    use crate::id::MemoryId;
+
+    assert_not_impl_any!(SharedMemoryRef:
+        Into<MemoryId>,
+        AsRef<MemoryId>,
+        Borrow<MemoryId>,
+        Deref<Target = MemoryId>
+    );
+    assert_not_impl_any!(MemoryId:
+        From<SharedMemoryRef>,
+        From<&'static SharedMemoryRef>
+    );
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct ShareDisclosure {
     shared_ref: SharedMemoryRef,

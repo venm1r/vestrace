@@ -208,6 +208,49 @@ pub fn executable_cases() -> ConformanceRunner {
     runner
 }
 
+/// Build the runner holding cases established by production compilation.
+pub fn build_verified_cases() -> ConformanceRunner {
+    let mut runner = ConformanceRunner::new();
+    runner.register(Box::new(SharedMemoryRefIsNotLocalMemoryId));
+    runner
+}
+
+struct SharedMemoryRefIsNotLocalMemoryId;
+
+impl ConformanceCase for SharedMemoryRefIsNotLocalMemoryId {
+    fn case_id(&self) -> &str {
+        "build-idw-010-shared-memory-ref-is-not-local-memory-id"
+    }
+
+    fn requirement_ids(&self) -> &[RequirementId] {
+        &[RequirementId {
+            family: RequirementFamily::Idw,
+            number: 10,
+        }]
+    }
+
+    fn category(&self) -> CaseCategory {
+        CaseCategory::Static
+    }
+
+    fn description(&self) -> &str {
+        "SharedMemoryRef cannot substitute for a local MemoryId"
+    }
+
+    fn run(&self) -> ConformanceCaseResult {
+        ConformanceCaseResult {
+            case_id: self.case_id().to_owned(),
+            requirement_ids: self.requirement_ids().to_vec(),
+            status: CaseStatus::Pass,
+            message: "SharedMemoryRef has no local MemoryId substitution traits".to_owned(),
+            evidence: Some(
+                "crates/vestrace-domain/src/enterprise/sharing.rs:SharedMemoryRef".to_owned(),
+            ),
+            origin: CaseOrigin::BuildVerified,
+        }
+    }
+}
+
 /// A run's event log, built for the replay cases below.
 ///
 /// Deliberately a real `LegacyRunEventEnvelope` sequence rather than a stub:
@@ -15876,6 +15919,26 @@ lrn_case!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idw_010_is_reported_only_as_build_verified() {
+        let report = build_verified_cases().run_all(None);
+        assert_eq!(report.results.len(), 1);
+
+        let result = &report.results[0];
+        assert_eq!(
+            result.requirement_ids,
+            vec![RequirementId::new(RequirementFamily::Idw, 10)]
+        );
+        assert_eq!(result.status, CaseStatus::Pass);
+        assert_eq!(result.origin, CaseOrigin::BuildVerified);
+        assert_eq!(
+            result.evidence.as_deref(),
+            Some("crates/vestrace-domain/src/enterprise/sharing.rs:SharedMemoryRef")
+        );
+        assert_eq!(report.summary.passed_build_verified, 1);
+        assert_eq!(report.summary.passed_executed, 0);
+    }
 
     #[test]
     fn every_executable_case_passes_against_the_current_domain() {
