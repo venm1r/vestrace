@@ -541,6 +541,10 @@ git -c safe.directory=E:/Soft/vestrace -C $repo commit --only -m "docs: record v
 
 ---
 
+## 2026-08-16 Task 6 amendment: CLI truthfulness contract
+
+Human approval expands Task 6 only to a test-first correction of `scripts/foundation-cli-truth.sh`. After reproducing the stale assertion failure, update that script to invoke `worker`, `mcp`, `doctor`, `rebuild search-documents`, and `migrate` against the deliberate unavailable URL; require each command's specific observable unavailable-database result and preserve the no-credential-leak assertion. Re-run the deterministic Task 6 gates and commit only this script, this plan, the paired design amendment, and the durable evidence report. Do not change Rust product behavior, generated console output, or the known TRUSTED skips.
+
 ### Task 8: Perform the final baseline review
 
 **Files:**

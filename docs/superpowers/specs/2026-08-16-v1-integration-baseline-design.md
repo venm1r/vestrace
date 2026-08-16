@@ -130,3 +130,7 @@ After this baseline closes, implementation proceeds through separate reviewed de
 6. exact-environment TRUSTED qualification and release evidence.
 
 Each item retains its own test-first cycle, evidence gate, non-claims, and atomic commit boundary.
+
+## 2026-08-16 Task 6 amendment: CLI truthfulness contract
+
+The human-approved Task 6 scope includes one verification-script-only correction. `scripts/foundation-cli-truth.sh` must exercise the implemented `worker`, `mcp`, `doctor`, `rebuild search-documents`, and `migrate` paths against its deliberately unavailable database URL, require their observable command-specific unavailable-database behavior, and reject credential leakage. This is not a product-behavior change: Rust command implementations, generated console output, and the known TRUSTED skips remain out of scope.
