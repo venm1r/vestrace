@@ -601,3 +601,9 @@ Use `superpowers:requesting-code-review` against the design, plan, report, and e
 - [ ] **Step 4: State the truthful outcome**
 
 If every available gate passes and any environment-blocked gate is explicitly recorded, report: “V1 Integration Baseline complete; v1.0 remains open on `IDW-010`, `IDW-014`, `QUAL-010`, `REC-016`, production release evidence/crypto custody, and exact-environment qualification.” Do not state that Vestrace v1.0 is complete.
+
+## 2026-08-16 Task 8 amendment: exact-range whitespace GREEN
+
+Human approval expands Task 8 only to the exact-range whitespace gate reproduced by `git diff --check 444fa61..7c0cded`: 70 intentional two-space Markdown hard breaks and one genuine blank EOF. Add root `.gitattributes` with `*.md whitespace=-blank-at-eol,blank-at-eof`, remove only that blank EOF, and record the policy in the design, plan, and durable report. The policy must preserve Markdown hard-break semantics, retain `blank-at-eof`, and leave non-Markdown whitespace checks unchanged.
+
+Use default Git behavior without a `core.whitespace` command-line override. Prove the Markdown attribute with `git check-attr`, prove a non-Markdown trailing-space negative case without editing tracked source when safely possible, and rerun the full Task 8 deterministic, focused, TRUSTED, scope, cache, and generated-state checks. Commit only `.gitattributes`, the one Q8 document, this plan, the paired design amendment, and the durable report. The ignored progress ledger and task report remain outside the commit, as do the pre-existing nginx rename and all generated/cache paths.

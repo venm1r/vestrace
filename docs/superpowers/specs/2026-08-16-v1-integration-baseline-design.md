@@ -146,3 +146,9 @@ The run-smoke harness resolves Python 3 portably by execute-checking the bounded
 The authenticated run-smoke isolation contract follows the actual authority boundary: other-workspace identity headers without a bearer must receive 401, while the valid admin bearer plus those spoofed headers must remain bound to the bearer's workspace and return the same run. This verifies that headers cannot impersonate a tenant and cannot override credential identity; true storage isolation remains the responsibility of runtime RLS and database suites.
 
 The ignored metrics checks follow the same authentication boundary as production. Both use `VESTRACE_ADMIN_TOKEN` with the public local-development fallback already shared by Compose and run smoke, never expose the credential in diagnostics, and require a successful authenticated response before inspecting metrics. In particular, the sensitive-label check must not treat an unauthorized or otherwise failed response as evidence that labels are safe. Health probes remain public and unauthenticated.
+
+## 2026-08-16 Task 8 amendment: Markdown whitespace policy
+
+The final exact-range review exposed two distinct conditions: Markdown metadata uses two trailing spaces intentionally for hard line breaks, while one document had a genuine blank line at end of file. Root `.gitattributes` therefore assigns only `*.md` the policy `whitespace=-blank-at-eol,blank-at-eof`. This preserves Markdown rendering while retaining Git's blank-at-EOF check. Non-Markdown paths receive no override and remain subject to Git's normal whitespace checks.
+
+The sole blank EOF is removed from `docs/documentation-gap-delta-2026-08-12-q8-automatic-runtime-qualification.md`. This amendment changes no product behavior, no requirement status, and no TRUSTED or v1.0 claim.

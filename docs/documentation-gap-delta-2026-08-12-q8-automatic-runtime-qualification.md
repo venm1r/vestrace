@@ -53,4 +53,3 @@ Q8 does not claim:
 - automatic signature verification or issuer/profile allowlists;
 - deterministic fault injection, crash/recovery execution, or post-incident requalification;
 - release approval, permanent certification, or progressive trust restoration.
-
