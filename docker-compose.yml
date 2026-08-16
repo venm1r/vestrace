@@ -17,6 +17,21 @@ services:
       - ./docker/postgres/init-runtime-role.sh:/docker-entrypoint-initdb.d/10-runtime-role.sh:ro
       - postgres-data:/var/lib/postgresql/data
 
+  vestrace-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate"]
+    restart: "no"
+
   vestrace-server:
     build:
       context: .
@@ -28,6 +43,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      dev-seed:
+        condition: service_completed_successfully
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 10
@@ -131,6 +148,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      dev-seed:
+        condition: service_completed_successfully
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 5
@@ -211,8 +230,8 @@ services:
   dev-seed:
     image: pgvector/pgvector:pg17-bookworm
     depends_on:
-      vestrace-server:
-        condition: service_healthy
+      vestrace-migrate:
+        condition: service_completed_successfully
     environment:
       PGPASSWORD: bootstrap-local-development-only
     entrypoint: ["psql", "-h", "postgres", "-U", "vestrace_bootstrap", "-d", "vestrace", "-v", "ON_ERROR_STOP=1", "-c"]

@@ -230,3 +230,117 @@ Diagnostic cleanup again exited 0, removed exactly the five isolated containers,
 - Commit: deliberately not created because the runtime gate is blocked and the task authorizes the report-only commit only after all acceptance gates pass.
 - Cached state before report editing remained exactly `R100 apps/console/nginx.conf apps/console/nginx.conf.template`; cached generated/cache scan was empty. Console generated/cache status was 43 entries after the runtime work and its then-current binary-diff hash was `690ab1d436e059b160c06b36b443cbd4e8af0afe`. That hash differs from Task 6's recorded `771c271c6fcc611a3405860235cc2ecdac411fb5`. Task 7 did not target those paths, but no pre-run hash was captured, so byte-for-byte preservation across Task 7 is not claimed.
 - Self-review: names matched their strict prefixes before every destructive command; isolated resources were absent before creation and absent after both cleanup paths; non-default host ports were used; the default Compose snapshot was unchanged; no smoke/RLS/ignored-test pass is claimed; TRUSTED, v1.0, production evidence, crypto custody, and exact-environment qualification remain unclaimed.
+
+## Task 7 fix round 1/5 — Compose bootstrap GREEN, NEEDS_CONTEXT on authenticated run smoke
+
+Human approval expanded Task 7 to the minimal Compose-only correction of the fresh-volume startup order. RED remained the exact isolated command `docker compose up --build --detach --wait --wait-timeout 180` from 2026-08-16T05:58:45Z--06:01:49Z and diagnostic log `18-compose-diagnostic-logs.log`, where the server exited on `access_tokens_workspace_id_fkey` because the configured workspace did not exist.
+
+The correction adds a one-shot `vestrace-migrate` service using the existing root Dockerfile and restricted runtime database URL. The resolved order is healthy PostgreSQL -> successful migration -> successful idempotent `dev-seed` -> server and worker; the worker remains independent of server health and console still waits for server health. No Rust product behavior changed.
+
+Fresh deterministic evidence:
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| isolated `docker compose config --quiet` plus JSON DAG assertions | 06:23:45--06:23:46 | 0 | all approved dependency conditions and `migrate` command matched |
+| `cargo fmt --all -- --check` | 06:24:00--06:24:02 | 0 | pass |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 06:24:02--06:24:04 | 0 | pass |
+| `cargo test --workspace --all-targets --all-features --no-run` | 06:24:04--06:24:05 | 0 | pass |
+
+GREEN used isolated project `vestrace-v1-baseline-95aea296c62245a09a34d7a74248d5b1`, validated by `^vestrace-v1-baseline-[0-9a-f]{32}$`, with free non-default ports `127.0.0.1:10174 -> 8080` and `127.0.0.1:10175 -> 3000`. The project had zero pre-existing containers, networks, or volumes.
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `docker compose up --build --detach --wait --wait-timeout 180` | 06:25:33--06:25:56 | 0 | migration exited 0, seed exited 0, PostgreSQL/server/console healthy, worker running |
+| `C:\Program Files\Git\bin\bash.exe ./scripts/foundation-smoke.sh http://127.0.0.1:10174` | 06:25:57--06:25:57 | 0 | health smoke passed |
+| `C:\Program Files\Git\bin\bash.exe ./scripts/foundation-run-smoke.sh http://127.0.0.1:10174` | 06:25:57--06:25:58 | 1 | new blocker: run create returned HTTP 401 `a valid Vestrace access token is required` |
+| validated `docker compose down --volumes --remove-orphans` | 06:25:58--06:26:06 | 0 | removed exactly 6 containers, 1 network, and 1 volume; zero isolated resources remained |
+
+The startup-order hypothesis is confirmed: migration image `sha256:00d54e61c192386344cb86716028fc29dce7b9c10ad59eed71f885a14299e8a6` exited 0, `dev-seed` then inserted the workspace and principal and exited 0, and only then did server startup and recovery complete without the former foreign-key failure. Other isolated images were server `sha256:9e12922980fed280ca93eb8e76cf0ae600843df28a105b89a1e2e514f52af6f1`, worker `sha256:d459c5cc57a7ec70c57356ef4df17f0802a24b4814e30eab912bc5a6770a0457`, console `sha256:877de7abebfb46b54d0d4bffd992b9a9301e42ae04be048fb68a52c6a9d6bf3f`, and PostgreSQL `sha256:7ae6051efd0e60444282c27c7e141af07f322ce033300e727a49c3dd11075e38`.
+
+The new failure is outside the approved Compose-only fix: `foundation-run-smoke.sh` sends workspace, principal, and content-type headers directly to the authenticated server but no bearer access token. Per the stop condition, its source was not changed and `foundation-runtime-rls.sh` plus the ignored `compose_smoke` tests were not run. Task 7 therefore returns **NEEDS_CONTEXT** for a separate test-first authorization update.
+
+Preservation proof is complete for this round. Generated/cache status was 43 entries before and after; the exact Task 6 hashing method produced `771c271c6fcc611a3405860235cc2ecdac411fb5` before and after. The default project container/network/volume snapshot was identical before and after. The historical missing pre-hash concern above remains historically truthful, while this fix round has an exact before/after proof. No commit was created in this round because the next required gate exposed a separate source defect.
+
+### Task 7 fix round 1 continuation — authorization GREEN, NEEDS_CONTEXT on Git Bash Python resolution
+
+Human resolution authorized exactly two verification-harness files. `foundation-run-smoke.sh` now sends bearer authorization from an explicit second argument, then `VESTRACE_ADMIN_TOKEN`, then the existing public Compose development fallback; it never prints the token or Authorization header. `compose_smoke.rs` now formats all health/metrics URLs from a validated `VESTRACE_HTTP_PORT` and defaults to 8080. Its pure parser tests do not mutate process-global environment.
+
+Port parser RED ran at 2026-08-16T06:30:32Z--06:30:46Z and exited 101 because `base_url_from_port` did not exist. GREEN ran at 06:31:29Z--06:31:31Z and passed 3/3: default 8080, explicit 18080, and invalid non-numeric override. Fresh `cargo fmt --all -- --check`, workspace all-target/all-feature Clippy with warnings denied, and workspace all-target/all-feature no-run compilation then exited 0 at 06:32:01Z--06:32:06Z.
+
+A second fresh project, `vestrace-v1-baseline-86a5cc48c4564d54b4c0cc50bebed8d2`, used validated non-default ports 11298 and 11299. Compose config, build/start/wait, and health smoke exited 0. Authenticated run smoke passed the former HTTP 401 boundary and created the run, but then exited 49 because required Git Bash resolved `python3` to the unusable Windows Store alias:
+
+```text
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+```
+
+Bounded diagnosis found `python3` at `/c/Users/venmi/AppData/Local/Microsoft/WindowsApps/python3` (permission denied) while `python` resolves to the available Hermes virtual environment and reports Python 3.11.15. This is a newly exposed portability defect in the same script. Per the explicit stop rule, no additional source change was made; runtime RLS and the ignored Compose tests were not run.
+
+The run-smoke log contained zero occurrences of the configured token or full Authorization header. Cleanup exited 0 and removed exactly 6 isolated containers, 1 network, and 1 volume; zero isolated resources remained. The default project snapshot was unchanged. Generated/cache status remained 43 entries and hash `771c271c6fcc611a3405860235cc2ecdac411fb5` before and after. Status remains **NEEDS_CONTEXT** and no round commit was created.
+
+### Task 7 fix round 1 continuation — Python resolver GREEN, NEEDS_CONTEXT on authenticated cross-workspace assertion
+
+The approved portable interpreter resolver execute-checks `python3` then `python` with a minimal Python 3 version predicate, fails early with only that bounded candidate list, and reuses the selected command for all three existing JSON operations. Git Bash syntax validation passed. The former exit 49 is GREEN: the next fresh run executed create, list, and get JSON assertions successfully without emitting the token or Authorization header.
+
+The fresh project `vestrace-v1-baseline-abdcb1faa79047deb365af4fc6ab3610` used validated non-default ports 5681/5682. An initial orchestration attempt stopped before `compose config` because of a PowerShell evidence-logger typo; it created zero resources and preservation checks remained equal. The corrected retry produced:
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `docker compose config --quiet` | 06:38:15.1617176Z--06:38:15.5108080Z | 0 | pass |
+| `docker compose up --build --detach --wait --wait-timeout 180` | 06:38:15.5145112Z--06:38:38.4789762Z | 0 | pass |
+| Git Bash `foundation-smoke.sh http://127.0.0.1:5681` | 06:38:38.4799816Z--06:38:39.1661351Z | 0 | pass |
+| Git Bash authenticated `foundation-run-smoke.sh http://127.0.0.1:5681` | 06:38:39.1666750Z--06:38:42.0036684Z | 1 | Python resolver/JSON checks pass; cross-workspace GET unexpectedly returns 200 |
+| validated cleanup | 06:38:42.8392731Z--06:38:50.3058682Z | 0 | removed 6/1/1; remaining 0/0/0 |
+
+Exact new failure:
+
+```text
+cross-workspace run lookup was not isolated (HTTP 200): {"id":"...","title":"P0 compose smoke run","status":"created",...}
+```
+
+Root-cause tracing confirms the authentication middleware replaces both `x-workspace-id` and `x-principal-id` with the bearer token's resolved identity before handlers run. Reusing the admin token while spoofing the other workspace headers therefore still queries the admin workspace, making the script's expected 404 assertion invalid under authenticated requests. This is a newly exposed authorization-harness defect; no unapproved source change was made. Runtime RLS and ignored Compose tests remain unrun.
+
+The retry log contained zero token/full-Authorization matches. Cleanup, default-project identity, and generated/cache preservation all passed; generated state remained 43 entries and hash `771c271c6fcc611a3405860235cc2ecdac411fb5`. Status remains **NEEDS_CONTEXT** and no commit was created.
+
+### Task 7 fix round 1 continuation - bearer-authority GREEN, metrics harness NEEDS_CONTEXT
+
+The approved HTTP contract correction is GREEN. In fresh isolated project `vestrace-v1-baseline-0a486fc95d594391ab82c2f403effdde` on initially free non-default ports 4511/4512, Compose config and build/start/wait passed. Health smoke passed. Authenticated run smoke passed its create/list/get checks plus the two authority assertions: spoofed other-workspace headers without a bearer returned 401, while the valid admin bearer with the same headers remained bound to the bearer identity and returned the original run with HTTP 200. Runtime role and RLS checks also passed.
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| `docker compose config --quiet` | 06:43:21.4677405Z--06:43:21.7516570Z | 0 | pass |
+| `docker compose up --build --detach --wait --wait-timeout 180` | 06:43:21.7551642Z--06:43:44.3642938Z | 0 | pass |
+| Git Bash `foundation-smoke.sh http://127.0.0.1:4511` | 06:43:44.3648311Z--06:43:45.0371387Z | 0 | pass |
+| Git Bash authenticated `foundation-run-smoke.sh http://127.0.0.1:4511` | 06:43:45.0381419Z--06:43:48.0877490Z | 0 | pass |
+| Git Bash `foundation-runtime-rls.sh` | 06:43:48.0887491Z--06:43:50.4796820Z | 0 | pass |
+| ignored `compose_smoke` suite, single-threaded | 06:43:50.4806836Z--06:45:43.5681188Z | 101 | 3 passed / 1 failed; `/metrics` non-2xx |
+| validated cleanup | 06:45:44.1843362Z--06:45:45.9513799Z | 0 | zero isolated resources; default snapshot unchanged |
+
+The newly exposed failure is a verification-harness authentication defect. Production deliberately protects `/metrics`; only liveness and readiness are public. The ignored metrics endpoint test sends no bearer and therefore turns the expected 401 into an empty `curl -f` failure. The separate sensitive-label metrics test also sends no bearer and can pass vacuously on the unauthorized response. Per the stop condition, neither test was changed without human context.
+
+The ignored tests operated only on the validated isolated `COMPOSE_PROJECT_NAME`. Cleanup and an independent post-run inventory found 0 isolated containers, networks, and volumes. The exact default-project container/network/volume snapshot remained unchanged. Generated/cache state remained 43 entries with before/after hash `771c271c6fcc611a3405860235cc2ecdac411fb5`; log scans found no full Authorization header or token-variable label. The nginx rename remains the sole cached entry. Status is **NEEDS_CONTEXT**; no fix-round commit was created.
+
+### Task 7 fix round 1 completion - all isolated runtime gates GREEN
+
+Human resolution authorized a metrics-harness-only correction. Both ignored metrics tests now authenticate from `VESTRACE_ADMIN_TOKEN` with the same public local-development fallback as Compose/run smoke, without printing the credential or full header. The endpoint test requires HTTP success before metric assertions, and the sensitive-label test also requires success before checking the body; it can no longer pass on a 401. Health probes remain unauthenticated. The previous 3/4 ignored result is the RED evidence.
+
+After a mechanical rustfmt-wrap correction, formatting passed at 06:51:04Z--06:51:06Z. The three normal base-URL parser tests passed at 06:51:06Z--06:51:08Z, and the focused ignored-test binary compiled at 06:51:08Z. A preliminary complete GREEN under isolated project `vestrace-v1-baseline-2c8af70339394ac5b073c2ef20e19e12` was followed by a concise-evidence rerun because the first run's verbose output was truncated.
+
+The final exact run used validated project `vestrace-v1-baseline-18bd920638354a19889b9541036a033a`, with zero pre-existing resources and free non-default ports 3915/3916:
+
+| Command | UTC start--end | Exit | Result |
+| --- | --- | ---: | --- |
+| Compose config | 06:56:21.8606202Z--06:56:22.1581114Z | 0 | pass |
+| Compose build/start/wait | 06:56:22.1656268Z--06:56:44.8740345Z | 0 | migration/seed succeeded; required services healthy/running |
+| health smoke | 06:56:45.9868320Z--06:56:46.7323165Z | 0 | pass |
+| authenticated run smoke | 06:56:46.7328612Z--06:56:49.7452209Z | 0 | pass |
+| runtime role/RLS | 06:56:49.7452209Z--06:56:52.1753181Z | 0 | pass |
+| ignored Compose tests | 06:56:52.1753181Z--06:58:45.0774592Z | 0 | 4 passed / 0 failed / 3 filtered |
+| validated cleanup | 06:58:45.0779966Z--06:58:45.7075122Z | 0 | zero isolated resources |
+
+The final images were PostgreSQL `sha256:7ae6051efd0e60444282c27c7e141af07f322ce033300e727a49c3dd11075e38`, migration `sha256:ea1b079e911447addc8d82d41e437600cec2af121e3dcef66dddaa7b356363a1`, server `sha256:5419ecf37a1a8885ca03db3a8a629e2e816fa5b531df80e680e211a68a338163`, worker `sha256:5f6e725d844e93acd368d9dfd7dbd73a1f8ad952de6feff9e7dd1e1dd4d05a0e`, and console `sha256:5dcec11d5e35d9bdee5479ba7a75e8b5f699097435d0b3e47b94e6e8d9f37552`.
+
+The ignored tests inherited only the validated isolated project and non-default port variables. Their internal cleanup left zero resources before the guarded outer cleanup. The default project snapshot was identical before/after. Generated/cache state remained 43 entries with hash `771c271c6fcc611a3405860235cc2ecdac411fb5`. The nginx rename remains the sole cached entry. This closes the runtime acceptance gates but does not claim TRUSTED, v1.0, production custody, or exact-environment qualification.
+
+Post-runtime deterministic verification then freshly passed: Git Bash run-smoke syntax, `cargo fmt --all -- --check`, workspace all-target/all-feature Clippy with `-D warnings`, workspace all-target/all-feature no-run compilation, and the three normal Compose base-URL parser tests. These ran from 07:00:44.6605141Z through 07:00:50.9606139Z and all exited 0; the parser result was 3 passed / 0 failed / 4 filtered.
+
+Final pre-commit scope review found no whitespace errors and exactly the six approved tracked paths. The cache still held only the pre-existing nginx rename and no generated/cache path. Fresh Docker inventory found zero resources for both final GREEN isolated projects and the unchanged default snapshot. Generated/cache state remained 43 entries at hash `771c271c6fcc611a3405860235cc2ecdac411fb5`; Compose and both harnesses contained exactly one shared public fallback value, compared without printing it.

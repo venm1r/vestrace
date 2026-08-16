@@ -134,3 +134,15 @@ Each item retains its own test-first cycle, evidence gate, non-claims, and atomi
 ## 2026-08-16 Task 6 amendment: CLI truthfulness contract
 
 The human-approved Task 6 scope includes one verification-script-only correction. `scripts/foundation-cli-truth.sh` must exercise the implemented `worker`, `mcp`, `doctor`, `rebuild search-documents`, and `migrate` paths against its deliberately unavailable database URL, require their observable command-specific unavailable-database behavior, and reject credential leakage. This is not a product-behavior change: Rust command implementations, generated console output, and the known TRUSTED skips remain out of scope.
+
+## 2026-08-16 Task 7 amendment: deterministic Compose bootstrap order
+
+Human approval expands Task 7 only to the Compose orchestration defect reproduced on a fresh isolated volume. Bootstrap order is authoritative: healthy PostgreSQL -> one-shot `vestrace migrate` -> idempotent workspace/principal seed -> server and worker. The server and worker wait for the seed to complete successfully; the worker does not depend on server health; the console retains its server-health dependency. This amendment changes no Rust product behavior and does not broaden qualification claims.
+
+The approved isolated-acceptance scope also corrects two verification harnesses exposed by the fresh run: `foundation-run-smoke.sh` authenticates with an explicit argument or `VESTRACE_ADMIN_TOKEN`, retaining only the public Compose development token as fallback and never printing it; `compose_smoke.rs` derives every host URL from a validated `VESTRACE_HTTP_PORT` with a pure parser covered for default, valid override, and invalid override. Compose project selection and cleanup behavior remain unchanged.
+
+The run-smoke harness resolves Python 3 portably by execute-checking the bounded candidates `python3` then `python`; path presence alone is insufficient because Windows application aliases may exist but be unusable. It fails early with only the bounded candidate list when neither candidate executes as Python 3, and reuses the selected interpreter for the existing JSON assertions without changing them.
+
+The authenticated run-smoke isolation contract follows the actual authority boundary: other-workspace identity headers without a bearer must receive 401, while the valid admin bearer plus those spoofed headers must remain bound to the bearer's workspace and return the same run. This verifies that headers cannot impersonate a tenant and cannot override credential identity; true storage isolation remains the responsibility of runtime RLS and database suites.
+
+The ignored metrics checks follow the same authentication boundary as production. Both use `VESTRACE_ADMIN_TOKEN` with the public local-development fallback already shared by Compose and run smoke, never expose the credential in diagnostics, and require a successful authenticated response before inspecting metrics. In particular, the sensitive-label check must not treat an unauthorized or otherwise failed response as evidence that labels are safe. Health probes remain public and unauthenticated.

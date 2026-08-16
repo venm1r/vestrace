@@ -2,10 +2,27 @@
 set -euo pipefail
 
 base_url="${1:-http://127.0.0.1:8080}"
+admin_token="${2:-${VESTRACE_ADMIN_TOKEN:-vst_21d7341d3a4009860168e3cccae642b55123de308fe3c714098b133f75caf863}}"
 workspace_id="10000000-0000-0000-0000-000000000001"
 principal_id="10000000-0000-0000-0000-000000000002"
 other_workspace_id="10000000-0000-0000-0000-000000000003"
 other_principal_id="10000000-0000-0000-0000-000000000004"
+
+resolve_python3() {
+  local candidate
+  for candidate in python3 python; do
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)' \
+      >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf 'foundation run smoke requires a usable Python 3 interpreter (tried: python3, python)\n' >&2
+  return 1
+}
+
+python3_command="$(resolve_python3)"
 
 # Local development identity is seeded explicitly outside the HTTP adapter.
 docker compose exec -T postgres \
@@ -30,8 +47,10 @@ create_body="$temp_dir/create.json"
 list_body="$temp_dir/list.json"
 get_body="$temp_dir/get.json"
 other_body="$temp_dir/other.json"
+unauthenticated_body="$temp_dir/unauthenticated.json"
 
 common_headers=(
+  --header "authorization: Bearer $admin_token"
   --header "x-workspace-id: $workspace_id"
   --header "x-principal-id: $principal_id"
   --header 'content-type: application/json'
@@ -47,7 +66,7 @@ status="$(curl --silent --show-error --output "$create_body" --write-out '%{http
   exit 1
 }
 
-run_id="$(python3 - "$create_body" <<'PY'
+run_id="$("$python3_command" - "$create_body" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding='utf-8') as handle:
@@ -75,7 +94,7 @@ status="$(curl --silent --show-error --output "$list_body" --write-out '%{http_c
   exit 1
 }
 
-python3 - "$list_body" "$run_id" <<'PY'
+"$python3_command" - "$list_body" "$run_id" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding='utf-8') as handle:
@@ -91,7 +110,7 @@ status="$(curl --silent --show-error --output "$get_body" --write-out '%{http_co
   exit 1
 }
 
-python3 - "$get_body" "$run_id" <<'PY'
+"$python3_command" - "$get_body" "$run_id" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding='utf-8') as handle:
@@ -100,14 +119,34 @@ assert body['id'] == sys.argv[2]
 assert body['title'] == 'P0 compose smoke run'
 PY
 
-status="$(curl --silent --show-error --output "$other_body" --write-out '%{http_code}' \
+status="$(curl --silent --show-error --output "$unauthenticated_body" --write-out '%{http_code}' \
   --header "x-workspace-id: $other_workspace_id" \
   --header "x-principal-id: $other_principal_id" \
   "${base_url}/v1/runs/${run_id}")"
-[[ "$status" == "404" ]] || {
-  printf 'cross-workspace run lookup was not isolated (HTTP %s): %s\n' "$status" "$(cat "$other_body")" >&2
+[[ "$status" == "401" ]] || {
+  printf 'identity headers authenticated without a bearer credential (HTTP %s): %s\n' \
+    "$status" "$(cat "$unauthenticated_body")" >&2
   exit 1
 }
+
+status="$(curl --silent --show-error --output "$other_body" --write-out '%{http_code}' \
+  --header "authorization: Bearer $admin_token" \
+  --header "x-workspace-id: $other_workspace_id" \
+  --header "x-principal-id: $other_principal_id" \
+  "${base_url}/v1/runs/${run_id}")"
+[[ "$status" == "200" ]] || {
+  printf 'bearer-authoritative run lookup failed (HTTP %s): %s\n' \
+    "$status" "$(cat "$other_body")" >&2
+  exit 1
+}
+
+"$python3_command" - "$other_body" "$run_id" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    body = json.load(handle)
+assert body['id'] == sys.argv[2]
+PY
 
 printf 'foundation run smoke check passed\n'
 printf 'console identity: VITE_VESTRACE_WORKSPACE_ID=%s VITE_VESTRACE_PRINCIPAL_ID=%s\n' \
