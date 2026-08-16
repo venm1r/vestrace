@@ -2512,6 +2512,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "static_assertions",
  "thiserror",
  "tokio",
  "tracing",

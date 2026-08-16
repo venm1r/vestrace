@@ -3,6 +3,7 @@ mod extraction;
 mod ports;
 mod purge;
 mod services;
+mod shared_read;
 
 use crate::{ApplicationError, RequestContext};
 use async_trait::async_trait;
@@ -13,6 +14,7 @@ pub use extraction::*;
 pub use ports::*;
 pub use purge::*;
 pub use services::*;
+pub use shared_read::*;
 
 pub type SharedMemoryUseCases = std::sync::Arc<dyn MemoryUseCases>;
 
