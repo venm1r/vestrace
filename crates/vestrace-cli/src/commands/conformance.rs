@@ -1385,16 +1385,15 @@ fn evaluate_requirement(
         ),
         (F::Idw, 14, _) => (
             CaseStatus::Skip,
-            "Cross-workspace sharing exists only in the domain — `MemoryShareGrant`, \
-             `MemoryMount` and `evaluate_share_access` are constructed by no adapter and \
-             reachable from no surface — so this build has never performed a cross-workspace \
-             read, and there is no code path that could be tempted to relax isolation to \
-             perform one. What can be said is the negative half, and it is now checked by a \
-             live test rather than asserted: every table carrying a workspace_id forces row \
-             level security, including `cross_workspace_memory_grants` itself. Verifying that \
-             a future sharing adapter reads across a boundary *without* relaxing that needs \
-             the adapter to exist first".to_string(),
-            Some("crates/vestrace-infrastructure/tests/row_level_security.rs".to_string()),
+            "PgSharedMemoryRevisionReader and SharedMemoryReadService now execute an exact \
+             permit-bound source revision read under forced RLS, and \
+             tests/idw_014_shared_read_postgres.rs proves direct target isolation through a \
+             restricted NOSUPERUSER NOBYPASSRLS login. The offline conformance report cannot \
+             execute or ingest that database-backed evidence, so IDW-014 remains skipped \
+             until a DB-backed qualification evidence path exists. This is not a production \
+             sharing surface: grants, mounts, policies, and disclosures remain in memory and \
+             source_generation is not stored with memory_revisions".to_string(),
+            Some("tests/idw_014_shared_read_postgres.rs".to_string()),
         ),
         (F::Arc, 1, V::Static) => (
             CaseStatus::Pass,
