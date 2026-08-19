@@ -1233,7 +1233,7 @@ impl ConformanceCase for TrustedClosesOverRecovery {
                 }
             }
 
-            if answered < recovery.len() - 1 {
+            if answered < recovery.len() {
                 return Err(format!(
                     "only {answered} of {} recovery requirements in the TRUSTED closure are \
                      answered by an executed case",

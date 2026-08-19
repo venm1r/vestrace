@@ -68,6 +68,62 @@ pub enum EvaluationAuthority {
     Advisory,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CognitiveEvaluationCriterion {
+    PropertyCheck,
+    StructuralMetric,
+    EvidenceCitation,
+    SchemaValidation,
+    ExactWordingComparison,
+}
+
+impl CognitiveEvaluationCriterion {
+    pub fn is_allowed_for_qualification(self) -> bool {
+        !matches!(self, Self::ExactWordingComparison)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CognitiveQualificationCheck {
+    pub criterion: CognitiveEvaluationCriterion,
+    pub property_name: String,
+    pub metric: EvaluationMetric,
+    pub evidence_refs: Vec<EvidenceRef>,
+}
+
+impl CognitiveQualificationCheck {
+    pub fn new(
+        criterion: CognitiveEvaluationCriterion,
+        property_name: impl Into<String>,
+        metric: EvaluationMetric,
+        evidence_refs: Vec<EvidenceRef>,
+    ) -> Result<Self, DomainError> {
+        let property_name = property_name.into();
+        if property_name.trim().is_empty() {
+            return Err(DomainError::InvalidArgument(
+                "cognitive qualification property name must not be blank".into(),
+            ));
+        }
+        if evidence_refs.is_empty() {
+            return Err(DomainError::InvalidArgument(
+                "cognitive qualification check requires at least one evidence reference".into(),
+            ));
+        }
+        if !criterion.is_allowed_for_qualification() {
+            return Err(DomainError::PolicyViolation(
+                "cognitive qualification must evaluate properties/evidence rather than exact LLM wording".into(),
+            ));
+        }
+        Ok(Self {
+            criterion,
+            property_name,
+            metric,
+            evidence_refs,
+        })
+    }
+}
+
 impl EvaluationAuthority {
     /// Returns whether `self` has the default authority required to outrank an
     /// advisory/model-judge signal. Deterministic and human-authorized signals

@@ -154,12 +154,12 @@ fn fixture(
         grant,
         mount,
         policy,
-        record: SharedMemoryRevisionRecord {
+        record: SharedMemoryRevisionRecord::new(
             source_workspace_id,
             source_memory_id,
-            memory_revision_id: source_revision_id,
-            content: "source content".to_owned(),
-        },
+            source_revision_id,
+            "source content".to_owned(),
+        ),
     }
 }
 
@@ -596,10 +596,11 @@ async fn storage_failure_returns_no_content_or_disclosure() {
     assert!(fixture.mount.disclosures().is_empty());
 }
 
-async fn assert_mismatched_record_denied(mutate: impl FnOnce(&mut SharedMemoryRevisionRecord)) {
+async fn assert_mismatched_record_denied(
+    build_record: impl FnOnce(&Fixture) -> SharedMemoryRevisionRecord,
+) {
     let mut fixture = valid_fixture();
-    let mut record = fixture.record.clone();
-    mutate(&mut record);
+    let record = build_record(&fixture);
     let reader = RecordingReader::default();
     configure(&reader, Ok(Some(record)));
     let service = service(&fixture, reader.clone());
@@ -620,16 +621,39 @@ async fn assert_mismatched_record_denied(mutate: impl FnOnce(&mut SharedMemoryRe
 
 #[tokio::test]
 async fn mismatched_record_workspace_is_storage_failure() {
-    assert_mismatched_record_denied(|record| record.source_workspace_id = WorkspaceId::new()).await;
+    assert_mismatched_record_denied(|fixture| {
+        SharedMemoryRevisionRecord::new(
+            WorkspaceId::new(),
+            fixture.source_memory_id,
+            fixture.source_revision_id,
+            "source content".to_owned(),
+        )
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn mismatched_record_memory_is_storage_failure() {
-    assert_mismatched_record_denied(|record| record.source_memory_id = MemoryId::new()).await;
+    assert_mismatched_record_denied(|fixture| {
+        SharedMemoryRevisionRecord::new(
+            fixture.source_workspace_id,
+            MemoryId::new(),
+            fixture.source_revision_id,
+            "source content".to_owned(),
+        )
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn mismatched_record_revision_is_storage_failure() {
-    assert_mismatched_record_denied(|record| record.memory_revision_id = MemoryRevisionId::new())
-        .await;
+    assert_mismatched_record_denied(|fixture| {
+        SharedMemoryRevisionRecord::new(
+            fixture.source_workspace_id,
+            fixture.source_memory_id,
+            MemoryRevisionId::new(),
+            "source content".to_owned(),
+        )
+    })
+    .await;
 }

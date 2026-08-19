@@ -148,15 +148,41 @@ pub trait SharedMemoryRevisionReader: Send + Sync {
     ) -> Result<Option<SharedMemoryRevisionRecord>, ApplicationError>;
 }
 
+/// A reader-supplied record that remains namespaced to its source revision.
+///
+/// ```compile_fail
+/// use vestrace_application::SharedMemoryRevisionRecord;
+///
+/// let _record = SharedMemoryRevisionRecord {
+///     source_workspace_id: todo!(),
+///     source_memory_id: todo!(),
+///     memory_revision_id: todo!(),
+///     content: todo!(),
+/// };
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct SharedMemoryRevisionRecord {
-    pub source_workspace_id: WorkspaceId,
-    pub source_memory_id: MemoryId,
-    pub memory_revision_id: MemoryRevisionId,
-    pub content: String,
+    source_workspace_id: WorkspaceId,
+    source_memory_id: MemoryId,
+    memory_revision_id: MemoryRevisionId,
+    content: String,
 }
 
 impl SharedMemoryRevisionRecord {
+    pub fn new(
+        source_workspace_id: WorkspaceId,
+        source_memory_id: MemoryId,
+        memory_revision_id: MemoryRevisionId,
+        content: String,
+    ) -> Self {
+        Self {
+            source_workspace_id,
+            source_memory_id,
+            memory_revision_id,
+            content,
+        }
+    }
+
     pub fn source_workspace_id(&self) -> WorkspaceId {
         self.source_workspace_id
     }

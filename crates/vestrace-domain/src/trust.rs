@@ -635,6 +635,106 @@ impl RecoveryQualificationObservation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ForensicEvidenceSnapshot {
+    pub target_ref: String,
+    pub capture_profile: crate::state_engine::CaptureProfile,
+    pub evidence_ref: String,
+    pub captured_at: Timestamp,
+}
+
+impl ForensicEvidenceSnapshot {
+    pub fn new(
+        target_ref: impl Into<String>,
+        capture_profile: crate::state_engine::CaptureProfile,
+        evidence_ref: impl Into<String>,
+        captured_at: Timestamp,
+    ) -> Result<Self, DomainError> {
+        let target_ref = required_text("forensic snapshot target reference", target_ref)?;
+        let evidence_ref = required_text("forensic snapshot evidence reference", evidence_ref)?;
+        if capture_profile != crate::state_engine::CaptureProfile::Forensic {
+            return Err(DomainError::PolicyViolation(
+                "forensic evidence snapshot requires CaptureProfile::Forensic".into(),
+            ));
+        }
+        Ok(Self {
+            target_ref,
+            capture_profile,
+            evidence_ref,
+            captured_at,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DestructiveRecoveryExecution {
+    target_state_ref: String,
+    target: RecoveryTarget,
+    forensic_snapshot: Option<ForensicEvidenceSnapshot>,
+    executed_at: Timestamp,
+}
+
+impl DestructiveRecoveryExecution {
+    pub fn new(
+        target_state_ref: impl Into<String>,
+        target: RecoveryTarget,
+        forensic_snapshot: Option<ForensicEvidenceSnapshot>,
+        executed_at: Timestamp,
+    ) -> Result<Self, DomainError> {
+        let target_state_ref = required_text(
+            "destructive recovery target state reference",
+            target_state_ref,
+        )?;
+        let execution = Self {
+            target_state_ref,
+            target,
+            forensic_snapshot,
+            executed_at,
+        };
+        execution.validate()?;
+        Ok(execution)
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        let snapshot = self.forensic_snapshot.as_ref().ok_or_else(|| {
+            DomainError::PolicyViolation(
+                "destructive recovery requires preserving forensic evidence before execution"
+                    .into(),
+            )
+        })?;
+        if snapshot.target_ref != self.target_state_ref {
+            return Err(DomainError::PolicyViolation(
+                "forensic evidence snapshot target does not match destructive recovery target state"
+                    .into(),
+            ));
+        }
+        if snapshot.capture_profile != crate::state_engine::CaptureProfile::Forensic {
+            return Err(DomainError::PolicyViolation(
+                "destructive recovery requires a forensic profile capture".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn target_state_ref(&self) -> &str {
+        &self.target_state_ref
+    }
+
+    pub fn target(&self) -> RecoveryTarget {
+        self.target
+    }
+
+    pub fn forensic_snapshot(&self) -> &ForensicEvidenceSnapshot {
+        self.forensic_snapshot
+            .as_ref()
+            .expect("validated forensic snapshot")
+    }
+
+    pub fn executed_at(&self) -> Timestamp {
+        self.executed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryQualificationDecision {
     failures: Vec<String>,
 }

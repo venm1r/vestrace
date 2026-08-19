@@ -205,6 +205,10 @@ pub fn executable_cases() -> ConformanceRunner {
     runner.register(Box::new(ThreeKindsOfDeletionStayThree));
     runner.register(Box::new(ADeletionCannotClaimWhatItDidNotCheck));
     runner.register(Box::new(DeletingEvidenceReopensWhatRestedOnIt));
+    runner.register(Box::new(ForensicEvidencePreservedBeforeDestructiveRecovery));
+    runner.register(Box::new(
+        CognitiveQualificationChecksPropertiesNotExactWording,
+    ));
     runner
 }
 
@@ -12707,6 +12711,88 @@ rec_case!(
 );
 
 rec_case!(
+    ForensicEvidencePreservedBeforeDestructiveRecovery,
+    "exec-rec-016-forensic-evidence-preserved-before-destructive-recovery",
+    16,
+    CaseCategory::Evidence,
+    "Before performing a destructive recovery, forensic evidence under CaptureProfile::Forensic must be preserved and bound to the target state reference",
+    || {
+        use crate::state_engine::CaptureProfile;
+        use crate::time::now;
+        use crate::trust::{
+            DestructiveRecoveryExecution, ForensicEvidenceSnapshot, RecoveryTarget,
+        };
+
+        let at = now();
+        let target_state = "run://canonical/run_123";
+
+        // Attempting destructive recovery without forensic snapshot fails
+        if DestructiveRecoveryExecution::new(
+            target_state,
+            RecoveryTarget::DivergentHistory,
+            None,
+            at,
+        )
+        .is_ok()
+        {
+            return Err(
+                "destructive recovery was allowed without forensic evidence preservation"
+                    .to_string(),
+            );
+        }
+
+        // Snapshot with non-forensic profile is rejected
+        if ForensicEvidenceSnapshot::new(
+            target_state,
+            CaptureProfile::Operational,
+            "evidence://snapshot/123",
+            at,
+        )
+        .is_ok()
+        {
+            return Err("forensic snapshot accepted non-forensic capture profile".to_string());
+        }
+
+        let snapshot = ForensicEvidenceSnapshot::new(
+            target_state,
+            CaptureProfile::Forensic,
+            "evidence://snapshot/123",
+            at,
+        )
+        .map_err(|e| format!("failed to build valid forensic snapshot: {e}"))?;
+
+        // Mismatched target state reference is rejected
+        if DestructiveRecoveryExecution::new(
+            "run://other/run_456",
+            RecoveryTarget::DivergentHistory,
+            Some(snapshot.clone()),
+            at,
+        )
+        .is_ok()
+        {
+            return Err(
+                "destructive recovery accepted a forensic snapshot for a different state reference"
+                    .to_string(),
+            );
+        }
+
+        // Valid destructive recovery with matching forensic snapshot succeeds
+        DestructiveRecoveryExecution::new(
+            target_state,
+            RecoveryTarget::DivergentHistory,
+            Some(snapshot),
+            at,
+        )
+        .map_err(|e| format!("valid destructive recovery was refused: {e}"))?;
+
+        Ok(
+            "forensic evidence under CaptureProfile::Forensic is preserved and bound before destructive recovery"
+                .to_string(),
+        )
+    }
+);
+
+rec_case!(
     ClosingAnIncidentDoesNotEraseIt,
     "exec-rec-018-closing-does-not-erase",
     18,
@@ -13359,6 +13445,62 @@ qual_case!(
              gate",
             evidence.len()
         ))
+    }
+);
+
+qual_case!(
+    CognitiveQualificationChecksPropertiesNotExactWording,
+    "exec-qual-010-cognitive-qualification-checks-properties",
+    10,
+    CaseCategory::Behavioral,
+    "Cognitive qualification evaluates structural properties, metrics, schema validity and evidence citations rather than checking exact LLM wording matches",
+    QUALIFICATION_EVIDENCE,
+    || {
+        use crate::EvidenceRef;
+        use crate::evaluation::{
+            CognitiveEvaluationCriterion, CognitiveQualificationCheck, EvaluationMetric,
+        };
+        use crate::id::EventId;
+
+        let metric = EvaluationMetric::new("factual_consistency", 0.95, None)
+            .map_err(|e| format!("metric error: {e}"))?;
+        let evidence = vec![EvidenceRef::event(EventId::new())];
+
+        // Exact wording comparison must be rejected for qualification
+        if CognitiveQualificationCheck::new(
+            CognitiveEvaluationCriterion::ExactWordingComparison,
+            "verbatim_output",
+            metric.clone(),
+            evidence.clone(),
+        )
+        .is_ok()
+        {
+            return Err(
+                "cognitive qualification accepted exact wording comparison instead of checking properties"
+                    .to_string(),
+            );
+        }
+
+        // Property checks must be accepted
+        for criterion in [
+            CognitiveEvaluationCriterion::PropertyCheck,
+            CognitiveEvaluationCriterion::StructuralMetric,
+            CognitiveEvaluationCriterion::EvidenceCitation,
+            CognitiveEvaluationCriterion::SchemaValidation,
+        ] {
+            CognitiveQualificationCheck::new(
+                criterion,
+                "property_verification",
+                metric.clone(),
+                evidence.clone(),
+            )
+            .map_err(|e| format!("valid property check was rejected: {e}"))?;
+        }
+
+        Ok(
+            "cognitive qualification checks properties and evidence while refusing exact wording comparisons"
+                .to_string(),
+        )
     }
 );
 
@@ -16149,6 +16291,8 @@ mod tests {
             Box::new(ThreeKindsOfDeletionStayThree),
             Box::new(ADeletionCannotClaimWhatItDidNotCheck),
             Box::new(DeletingEvidenceReopensWhatRestedOnIt),
+            Box::new(ForensicEvidencePreservedBeforeDestructiveRecovery),
+            Box::new(CognitiveQualificationChecksPropertiesNotExactWording),
         ]
     }
 }
