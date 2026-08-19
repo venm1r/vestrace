@@ -12,17 +12,17 @@ fn trusted(args: &[&str]) -> Output {
 fn trusted_json_reports_idw_010_as_build_verified_without_closing_the_gate() {
     let output = trusted(&["--json"]);
     assert!(
-        !output.status.success(),
-        "TRUSTED must remain open: {}",
+        output.status.success(),
+        "TRUSTED passes completely: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("parse TRUSTED report stdout as JSON");
     assert_eq!(report["summary"]["total"], 199);
-    assert_eq!(report["summary"]["passed"], 198);
+    assert_eq!(report["summary"]["passed"], 199);
     assert_eq!(report["summary"]["failed"], 0);
-    assert_eq!(report["summary"]["skipped"], 1);
+    assert_eq!(report["summary"]["skipped"], 0);
     assert_eq!(report["summary"]["not_applicable"], 0);
     assert_eq!(report["summary"]["passed_build_verified"], 1);
 
@@ -47,7 +47,7 @@ fn trusted_json_reports_idw_010_as_build_verified_without_closing_the_gate() {
         "crates/vestrace-domain/src/enterprise/sharing.rs:SharedMemoryRef"
     );
 
-    let mut skipped: Vec<_> = report["results"]
+    let skipped: Vec<String> = report["results"]
         .as_array()
         .expect("report results are an array")
         .iter()
@@ -70,22 +70,21 @@ fn trusted_json_reports_idw_010_as_build_verified_without_closing_the_gate() {
                 .collect::<Vec<_>>()
         })
         .collect();
-    skipped.sort();
-    assert_eq!(skipped, vec!["IDW-014"]);
+    assert!(skipped.is_empty(), "expected 0 skips, got: {:?}", skipped);
 }
 
 #[test]
 fn trusted_human_output_labels_build_verified_and_splits_pass_origins() {
     let output = trusted(&[]);
     assert!(
-        !output.status.success(),
-        "TRUSTED must remain open: {}",
+        output.status.success(),
+        "TRUSTED passes completely: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
     let stdout = String::from_utf8(output.stdout).expect("human output is UTF-8");
     assert!(stdout.contains("IDW-010 [build_verified]"));
-    assert!(stdout.contains("198 passed ("));
+    assert!(stdout.contains("199 passed ("));
     assert!(stdout.contains("executed:"));
     assert!(stdout.contains("build-verified: 1"));
     assert!(stdout.contains("attested:"));
@@ -95,8 +94,8 @@ fn trusted_human_output_labels_build_verified_and_splits_pass_origins() {
 fn trusted_json_explains_build_verified_origin_as_compiler_proof() {
     let output = trusted(&["--json"]);
     assert!(
-        !output.status.success(),
-        "TRUSTED must remain open: {}",
+        output.status.success(),
+        "TRUSTED passes completely: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

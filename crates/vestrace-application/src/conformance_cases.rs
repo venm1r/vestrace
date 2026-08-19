@@ -37,6 +37,7 @@ pub fn executable_cases() -> ConformanceRunner {
     runner.register(Box::new(TrustedClosesOverRecovery));
     runner.register(Box::new(UnsupportedIsRefusedNotAttempted));
     runner.register(Box::new(RankDecidesFusionNotMagnitude));
+    runner.register(Box::new(CrossWorkspaceMemorySharingPreservesIsolation));
     runner
 }
 
@@ -1516,6 +1517,219 @@ impl ConformanceCase for RankDecidesFusionNotMagnitude {
     }
 }
 
+// ---------------------------------------------------------------------------
+// IDW-014 — Cross-workspace memory sharing must not compromise workspace isolation.
+// ---------------------------------------------------------------------------
+
+struct CrossWorkspaceMemorySharingPreservesIsolation;
+
+impl ConformanceCase for CrossWorkspaceMemorySharingPreservesIsolation {
+    fn case_id(&self) -> &str {
+        "exec-idw-014-cross-workspace-memory-sharing-preserves-isolation"
+    }
+    fn requirement_ids(&self) -> &[RequirementId] {
+        &[RequirementId {
+            family: RequirementFamily::Idw,
+            number: 14,
+        }]
+    }
+    fn category(&self) -> CaseCategory {
+        CaseCategory::Behavioral
+    }
+    fn description(&self) -> &str {
+        "Cross-workspace memory sharing preserves isolation by requiring an exact permit issued only when grant, mount and policy all agree, rejecting wrong target context before reader execution"
+    }
+
+    fn run(&self) -> ConformanceCaseResult {
+        use crate::{
+            ApplicationError, RequestContext, SharedMemoryReadClock, SharedMemoryReadPermit,
+            SharedMemoryReadService, SharedMemoryRevisionReader, SharedMemoryRevisionRecord,
+        };
+        use async_trait::async_trait;
+        use std::collections::BTreeSet;
+        use std::sync::{Arc, Mutex};
+        use vestrace_domain::Timestamp;
+        use vestrace_domain::enterprise::{
+            MemoryMount, MemoryMountAcceptance, MemoryShareGrant, MemoryShareGrantRevision,
+            MemoryShareGrantRevisionSpec, ShareOperation, ShareTarget, TargetSharePolicy,
+        };
+        use vestrace_domain::id::{MemoryId, MemoryRevisionId, PrincipalId, WorkspaceId};
+        use vestrace_domain::time::now;
+
+        struct FixedClock(Timestamp);
+        impl SharedMemoryReadClock for FixedClock {
+            fn now(&self) -> Timestamp {
+                self.0
+            }
+        }
+
+        #[derive(Default)]
+        struct StubReader {
+            calls: Arc<Mutex<usize>>,
+        }
+
+        #[async_trait]
+        impl SharedMemoryRevisionReader for StubReader {
+            async fn read_exact(
+                &self,
+                permit: SharedMemoryReadPermit,
+            ) -> Result<Option<SharedMemoryRevisionRecord>, ApplicationError> {
+                *self.calls.lock().unwrap() += 1;
+                Ok(Some(SharedMemoryRevisionRecord::new(
+                    permit.source_workspace_id(),
+                    permit.source_memory_id(),
+                    permit.memory_revision_id(),
+                    "isolated source content".to_owned(),
+                )))
+            }
+        }
+
+        let outcome: Result<String, String> =
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|err| format!("failed to build runtime: {err}"))?;
+
+                rt.block_on(async {
+                    let at = now();
+                    let source_workspace_id = WorkspaceId::new();
+                    let target_workspace_id = WorkspaceId::new();
+                    let target_principal_id = PrincipalId::new();
+                    let source_memory_id = MemoryId::new();
+                    let source_revision_id = MemoryRevisionId::new();
+
+                    let mut ops = BTreeSet::new();
+                    ops.insert(ShareOperation::IncludeContext);
+                    ops.insert(ShareOperation::ReadContent);
+
+                    let revision = MemoryShareGrantRevision::issue(
+                        MemoryShareGrantRevisionSpec {
+                            source_workspace_id,
+                            target: ShareTarget::ExactWorkspace(target_workspace_id),
+                            memory_id: source_memory_id,
+                            memory_revision_id: source_revision_id,
+                            source_generation: "gen-1".to_owned(),
+                            operations: ops.clone(),
+                            valid_from: at,
+                            valid_until: None,
+                        },
+                        at,
+                    )
+                    .map_err(|err| format!("grant revision error: {err}"))?;
+
+                    let grant = MemoryShareGrant::issue(revision, at)
+                        .map_err(|err| format!("grant issue error: {err}"))?;
+                    let policy = TargetSharePolicy::new(
+                        target_workspace_id,
+                        target_principal_id,
+                        ops.clone(),
+                        None,
+                    )
+                    .map_err(|err| format!("policy error: {err}"))?;
+                    let make_mount = || {
+                        MemoryMount::accept(
+                            MemoryMountAcceptance {
+                                grant_id: grant.id(),
+                                grant_revision_id: grant.revision().id(),
+                                target_workspace_id,
+                                target_principal_id,
+                                operations: ops.clone(),
+                                valid_until: None,
+                            },
+                            &grant,
+                            &policy,
+                            at,
+                        )
+                    };
+
+                    let reader_calls = Arc::new(Mutex::new(0));
+                    let stub_reader = StubReader {
+                        calls: Arc::clone(&reader_calls),
+                    };
+                    let clock = Arc::new(FixedClock(at));
+                    let service = SharedMemoryReadService::new(Arc::new(stub_reader), clock);
+
+                    // 1. Mismatched target workspace in context is rejected before reader execution
+                    let wrong_workspace_ctx =
+                        RequestContext::new(WorkspaceId::new(), target_principal_id);
+                    let mut mount1 = make_mount().map_err(|err| format!("mount error: {err}"))?;
+                    let err_res = service
+                        .read_shared(&wrong_workspace_ctx, &grant, &mut mount1, &policy)
+                        .await;
+                    if !matches!(err_res, Err(ApplicationError::Policy(_))) {
+                        return Err("wrong workspace context was not rejected with Policy error"
+                            .to_string());
+                    }
+                    if *reader_calls.lock().unwrap() != 0 {
+                        return Err("reader was called on mismatched workspace context".to_string());
+                    }
+                    if !mount1.disclosures().is_empty() {
+                        return Err(
+                            "disclosure was recorded on mismatched workspace context".to_string()
+                        );
+                    }
+
+                    // 2. Mismatched target principal in context is rejected before reader execution
+                    let wrong_principal_ctx =
+                        RequestContext::new(target_workspace_id, PrincipalId::new());
+                    let mut mount2 = make_mount().map_err(|err| format!("mount error: {err}"))?;
+                    let err_res = service
+                        .read_shared(&wrong_principal_ctx, &grant, &mut mount2, &policy)
+                        .await;
+                    if !matches!(err_res, Err(ApplicationError::Policy(_))) {
+                        return Err("wrong principal context was not rejected with Policy error"
+                            .to_string());
+                    }
+                    if *reader_calls.lock().unwrap() != 0 {
+                        return Err("reader was called on mismatched principal context".to_string());
+                    }
+
+                    // 3. Authorized context executes reader and records exact disclosure
+                    let valid_ctx = RequestContext::new(target_workspace_id, target_principal_id);
+                    let mut mount3 = make_mount().map_err(|err| format!("mount error: {err}"))?;
+                    let read_res = service
+                        .read_shared(&valid_ctx, &grant, &mut mount3, &policy)
+                        .await
+                        .map_err(|err| format!("authorized read failed: {err}"))?;
+
+                    if let Some(record) = read_res {
+                        if record.content() != "isolated source content" {
+                            return Err("read content did not match expected".to_string());
+                        }
+                    } else {
+                        return Err("authorized read returned None".to_string());
+                    }
+
+                    if *reader_calls.lock().unwrap() != 1 {
+                        return Err(
+                            "reader was not called exactly once for authorized context".to_string()
+                        );
+                    }
+                    if mount3.disclosures().len() != 1 {
+                        return Err("disclosure was not recorded for authorized read".to_string());
+                    }
+
+                    Ok(
+                    "exact permit-bound read under matching workspace context succeeded and wrong \
+                     context was rejected without disclosure"
+                        .to_string(),
+                )
+                })
+            })
+            .join()
+            .map_err(|_| "background runner thread panicked".to_string())
+            .and_then(|res| res);
+
+        result(
+            self.case_id(),
+            self.requirement_ids()[0],
+            outcome,
+            "crates/vestrace-application/src/memory/shared_read.rs",
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1532,6 +1746,7 @@ mod tests {
             Box::new(AFindingCannotExistWithoutARegisteredInvariant),
             Box::new(RedactionKeepsTheSentenceAndRemovesTheSecret),
             Box::new(SensitiveDataIsRedactedBeforeItReachesALog),
+            Box::new(CrossWorkspaceMemorySharingPreservesIsolation),
         ] {
             let outcome = case.run();
             assert_eq!(

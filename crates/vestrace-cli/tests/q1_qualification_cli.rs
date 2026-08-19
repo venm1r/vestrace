@@ -41,12 +41,13 @@ fn conformance_bundle_writes_target_bound_json_before_failed_exit() {
 
     assert!(
         output_path.exists(),
-        "bundle must be written before a failed qualification exit; stderr: {}",
+        "bundle must be written; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        !output.status.success(),
-        "current evaluator has skipped requirements and must not claim a pass"
+        output.status.success(),
+        "evaluator with 199/199 passing requirements must succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let document: Value = serde_json::from_slice(&fs::read(&output_path).expect("read bundle"))
