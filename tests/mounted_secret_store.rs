@@ -425,3 +425,140 @@ fn the_store_reads_the_public_half_of_each_version() {
 
     fs::remove_dir_all(&root).ok();
 }
+
+use vestrace_application::{
+    CryptoAdapterQualificationProbe, CryptoAdapterQualificationTarget, CryptoCustody,
+    CryptoQualificationCheck,
+};
+use vestrace_infrastructure::crypto::MountedStoreCryptoProbe;
+
+fn target(key_id: &str, version: &str, scope: &str) -> CryptoAdapterQualificationTarget {
+    CryptoAdapterQualificationTarget::new(
+        MOUNTED_SECRET_STORE_PROVIDER,
+        CryptoCustody::MountedSecretStore,
+        key_id,
+        version,
+        "ed25519",
+        KeyPurpose::Signing,
+        scope,
+    )
+    .unwrap()
+}
+
+/// Two versions holding the same key are one key under two names. Counting
+/// directories would call that a rotation; comparing the material does not.
+#[test]
+fn identical_material_under_two_versions_is_not_a_rotation() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let key_dir = root.join("release-signing");
+    fs::create_dir_all(key_dir.join("v2")).unwrap();
+    fs::write(key_dir.join("v2").join("state"), "retired").unwrap();
+    fs::copy(
+        key_dir.join("v1").join("private.pkcs8"),
+        key_dir.join("v2").join("private.pkcs8"),
+    )
+    .unwrap();
+    fs::copy(
+        key_dir.join("v1").join("public.bin"),
+        key_dir.join("v2").join("public.bin"),
+    )
+    .unwrap();
+
+    let probe = MountedStoreCryptoProbe::new(MountedSecretStoreKeyProvider::new(&root));
+    let evidence = probe
+        .collect(&target("release-signing", "v1", "release"))
+        .unwrap();
+
+    assert!(
+        !evidence
+            .passed_checks()
+            .contains(&CryptoQualificationCheck::Rotation),
+        "the same key under two version names is not a rotation"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// A store with an active key, a revoked predecessor holding different
+/// material, and readable public halves supports all six checks.
+#[test]
+fn a_complete_store_yields_every_check() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v2", "active");
+    write_version(&root, "release-signing", "v1", "revoked");
+
+    let probe = MountedStoreCryptoProbe::new(MountedSecretStoreKeyProvider::new(&root));
+    let evidence = probe
+        .collect(&target("release-signing", "v2", "release"))
+        .unwrap();
+
+    for check in [
+        CryptoQualificationCheck::Resolution,
+        CryptoQualificationCheck::ScopeIsolation,
+        CryptoQualificationCheck::CryptographicRoundTrip,
+        CryptoQualificationCheck::Lifecycle,
+        CryptoQualificationCheck::Rotation,
+        CryptoQualificationCheck::SecretNonDisclosure,
+    ] {
+        assert!(
+            evidence.passed_checks().contains(&check),
+            "{check:?} was not collected"
+        );
+    }
+    assert_eq!(evidence.evidence_refs().len(), 6);
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// One version is not a rotation and no revocation is not a lifecycle.
+#[test]
+fn a_single_version_store_yields_neither_rotation_nor_lifecycle() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+
+    let probe = MountedStoreCryptoProbe::new(MountedSecretStoreKeyProvider::new(&root));
+    let evidence = probe
+        .collect(&target("release-signing", "v1", "release"))
+        .unwrap();
+
+    assert!(
+        evidence
+            .passed_checks()
+            .contains(&CryptoQualificationCheck::Resolution)
+    );
+    assert!(
+        !evidence
+            .passed_checks()
+            .contains(&CryptoQualificationCheck::Rotation)
+    );
+    assert!(
+        !evidence
+            .passed_checks()
+            .contains(&CryptoQualificationCheck::Lifecycle)
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// The service's own verdict over a complete store, which is the point of all
+/// of it.
+#[test]
+fn a_complete_store_passes_crypto_qualification() {
+    use vestrace_application::CryptoAdapterQualificationService;
+
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v2", "active");
+    write_version(&root, "release-signing", "v1", "revoked");
+
+    let probe = MountedStoreCryptoProbe::new(MountedSecretStoreKeyProvider::new(&root));
+    let decision = CryptoAdapterQualificationService::evaluate_with_probe(
+        &target("release-signing", "v2", "release"),
+        &probe,
+    )
+    .unwrap();
+
+    assert!(decision.is_passed(), "failures: {:?}", decision.failures());
+
+    fs::remove_dir_all(&root).ok();
+}
