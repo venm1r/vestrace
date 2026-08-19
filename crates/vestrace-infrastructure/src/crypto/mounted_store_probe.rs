@@ -17,6 +17,19 @@ use super::mounted_secret_store::{MOUNTED_SECRET_STORE_PROVIDER, MountedSecretSt
 
 const PROBE_PAYLOAD: &[u8] = b"vestrace crypto qualification probe";
 
+/// Whether `rendered` contains `secret` as a contiguous byte run.
+///
+/// Pulled out of the probe so it can be pinned directly: every fixture the
+/// shipped suite exercises has the adapter refuse cleanly, so nothing in that
+/// suite can tell this scan apart from one that always answers "clean" unless
+/// the scan itself is tested against a string built to contain the secret.
+pub fn discloses(rendered: &str, secret: &[u8]) -> bool {
+    rendered
+        .as_bytes()
+        .windows(secret.len().max(1))
+        .any(|window| window == secret)
+}
+
 pub struct MountedStoreCryptoProbe {
     provider: MountedSecretStoreKeyProvider,
 }
@@ -140,9 +153,11 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
             }
         }
 
-        // Rotation: a superseded version exists, is refused, and is a
-        // different key. The last clause is the one that matters — the same
-        // material under two names would satisfy the first two.
+        // Rotation: a version other than the active one is marked retired or
+        // revoked by the store, and its public key differs from the active
+        // version's. The key comparison is the one that matters — the same
+        // material under two version names would satisfy a check that only
+        // looked at the state label.
         let active_public = self
             .provider
             .public_key(target.key_id(), target.key_version())
@@ -175,10 +190,7 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
                 Err(error) => format!("{error} {error:?}"),
                 Ok(_) => String::new(),
             };
-            let leaked = rendered
-                .as_bytes()
-                .windows(bytes.len().max(1))
-                .any(|window| window == bytes.as_slice());
+            let leaked = discloses(&rendered, bytes);
             if !rendered.is_empty() && !leaked {
                 checks.push(CryptoQualificationCheck::SecretNonDisclosure);
                 refs.push(format!(

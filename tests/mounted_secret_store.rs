@@ -430,7 +430,7 @@ use vestrace_application::{
     CryptoAdapterQualificationProbe, CryptoAdapterQualificationTarget, CryptoCustody,
     CryptoQualificationCheck,
 };
-use vestrace_infrastructure::crypto::MountedStoreCryptoProbe;
+use vestrace_infrastructure::crypto::{MountedStoreCryptoProbe, discloses};
 
 fn target(key_id: &str, version: &str, scope: &str) -> CryptoAdapterQualificationTarget {
     CryptoAdapterQualificationTarget::new(
@@ -561,4 +561,28 @@ fn a_complete_store_passes_crypto_qualification() {
     assert!(decision.is_passed(), "failures: {:?}", decision.failures());
 
     fs::remove_dir_all(&root).ok();
+}
+
+/// `discloses` is what the probe's SecretNonDisclosure check stands on, and
+/// every fixture in this suite has the adapter refuse cleanly, so nothing
+/// above pins the scan itself — a version that always answered "clean" would
+/// pass every other case here unnoticed. Pinned directly instead, against a
+/// synthetic string built to contain the secret: no adapter, no leaking code
+/// path, so nothing leaky ships.
+#[test]
+fn discloses_finds_the_secret_bytes_and_a_clean_string_does_not() {
+    let secret: &[u8] = b"super-secret-material-0123456789";
+    let mut leaking = b"resolution denied: debug dump ".to_vec();
+    leaking.extend_from_slice(secret);
+    leaking.extend_from_slice(b" end of dump");
+    let leaking = String::from_utf8(leaking).unwrap();
+
+    assert!(
+        discloses(&leaking, secret),
+        "the secret bytes went undetected"
+    );
+    assert!(
+        !discloses("resolution denied: outside declared scope", secret),
+        "a clean refusal was reported as disclosing the secret"
+    );
 }
