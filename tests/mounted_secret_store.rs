@@ -66,8 +66,10 @@ fn request(purpose: &str) -> SecretResolutionRequest {
 }
 
 /// The store's declaration is the one the caller cannot edit. A reference
-/// claiming a scope the store never granted is refused even though the caller
-/// wrote both halves of its own request.
+/// claiming a scope the store never granted is refused even though the
+/// request's own purpose matches the declaration — isolating the reference
+/// check from the request-purpose check, which is proven separately by
+/// `a_resolution_outside_the_declared_scope_is_refused`.
 #[test]
 fn a_scope_the_store_did_not_declare_is_refused() {
     let root = store_root(&suffix());
@@ -77,7 +79,7 @@ fn a_scope_the_store_did_not_declare_is_refused() {
     let error = provider
         .resolve(
             &key_ref("release-signing", "v1", "export"),
-            &request("export"),
+            &request("release"),
         )
         .expect_err("a scope the store did not declare must be refused");
 
@@ -165,6 +167,29 @@ fn a_key_id_cannot_walk_out_of_the_store() {
     let error = provider
         .resolve(&key_ref("../../etc", "v1", "release"), &request("release"))
         .expect_err("a traversing key id must be refused");
+
+    assert!(
+        matches!(error, KeyProviderError::Denied(_)),
+        "got {error:?}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// A key version is an identifier, not a path. `declaration()` never sees the
+/// version, so only the segment check inside `resolve` itself can catch this.
+#[test]
+fn a_key_version_cannot_walk_out_of_the_store() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let error = provider
+        .resolve(
+            &key_ref("release-signing", "../../etc", "release"),
+            &request("release"),
+        )
+        .expect_err("a traversing key version must be refused");
 
     assert!(
         matches!(error, KeyProviderError::Denied(_)),
