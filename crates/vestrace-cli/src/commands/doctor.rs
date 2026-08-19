@@ -12,7 +12,7 @@ use vestrace_infrastructure::{AppConfig, PgHealthFindingRepository, PgInvariantO
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let url = config.database.url.expose_secret();
-    let redacted = redact_url(url);
+    let redacted = crate::commands::redact_url(url);
 
     print!("Connecting to database at {redacted} ... ");
     let store = PgStore::connect(&config.database)
@@ -119,15 +119,4 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         println!("Doctor: {warning_count} warning(s) found, no errors");
         Ok(())
     }
-}
-
-fn redact_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(scheme_end) = url.find("://") {
-            let scheme = &url[..scheme_end + 3];
-            let host = &url[at_pos + 1..];
-            return format!("{scheme}***@{host}");
-        }
-    }
-    url.to_string()
 }
