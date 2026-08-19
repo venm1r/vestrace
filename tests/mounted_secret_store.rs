@@ -176,6 +176,28 @@ fn a_key_id_cannot_walk_out_of_the_store() {
     fs::remove_dir_all(&root).ok();
 }
 
+/// `declaration()` is called directly by callers that never go through
+/// `resolve` (a probe reading what the store declares, for instance), so its
+/// own segment check is the only guard on that path — not redundant with
+/// `resolve`'s outer check, which this call never reaches.
+#[test]
+fn a_declaration_cannot_walk_out_of_the_store() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let error = provider
+        .declaration("../../etc")
+        .expect_err("a traversing key id must be refused");
+
+    assert!(
+        matches!(error, KeyProviderError::Denied(_)),
+        "got {error:?}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
 /// A key version is an identifier, not a path. `declaration()` never sees the
 /// version, so only the segment check inside `resolve` itself can catch this.
 #[test]
