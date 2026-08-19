@@ -157,7 +157,9 @@ enum ConformanceAction {
         #[arg(long)]
         artifact_file: PathBuf,
         #[arg(long)]
-        private_key_file: PathBuf,
+        private_key_file: Option<PathBuf>,
+        #[arg(long)]
+        key_store_root: Option<PathBuf>,
         #[arg(long)]
         signer_identity: String,
         #[arg(long, default_value = "local-file")]

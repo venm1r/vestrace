@@ -217,6 +217,7 @@ pub async fn run(
             artifact,
             artifact_file,
             private_key_file,
+            key_store_root,
             signer_identity,
             key_provider,
             key_id,
@@ -227,6 +228,7 @@ pub async fn run(
             artifact,
             artifact_file,
             private_key_file,
+            key_store_root,
             signer_identity,
             key_provider,
             key_id,
@@ -1197,18 +1199,31 @@ impl KeyProvider for LocalFileKeyProvider {
     }
 }
 
+/// The custody named by `--key-provider` decides where the key comes from, and
+/// exactly one source may be given for it: a command that silently preferred
+/// one over the other would sign with a key its operator did not choose.
 fn resolve_signing_key(
     key_ref: &KeyReference,
-    private_key_file: PathBuf,
+    private_key_file: Option<PathBuf>,
+    key_store_root: Option<PathBuf>,
 ) -> anyhow::Result<Ed25519KeyPair> {
-    let provider = LocalFileKeyProvider::new(private_key_file);
     let request =
         SecretResolutionRequest::new(WorkspaceId::new(), key_ref.scope(), "conformance://sign");
-    let key_material = provider
-        .resolve(key_ref, &request)
-        .map_err(|error| anyhow::anyhow!("signing key resolution failed: {error}"))?;
-    let key_bytes = key_material.into_bytes();
-    Ed25519KeyPair::from_pkcs8(&key_bytes)
+    let key_material = match (key_ref.provider(), private_key_file, key_store_root) {
+        (vestrace_infrastructure::crypto::LOCAL_FILE_PROVIDER, Some(file), None) => {
+            LocalFileKeyProvider::new(file).resolve(key_ref, &request)
+        }
+        (vestrace_infrastructure::crypto::MOUNTED_SECRET_STORE_PROVIDER, None, Some(root)) => {
+            vestrace_infrastructure::crypto::MountedSecretStoreKeyProvider::new(root)
+                .resolve(key_ref, &request)
+        }
+        (provider, _, _) => anyhow::bail!(
+            "provider '{provider}' requires exactly one of --private-key-file (local-file) or \
+             --key-store-root (mounted-secret-store)"
+        ),
+    }
+    .map_err(|error| anyhow::anyhow!("signing key resolution failed: {error}"))?;
+    Ed25519KeyPair::from_pkcs8(&key_material.into_bytes())
         .map_err(|_| anyhow::anyhow!("Ed25519 private key is not valid PKCS#8"))
 }
 
@@ -1217,7 +1232,8 @@ fn resolve_signing_key(
 pub fn run_sign(
     artifact: ConformanceArtifactArg,
     artifact_file: PathBuf,
-    private_key_file: PathBuf,
+    private_key_file: Option<PathBuf>,
+    key_store_root: Option<PathBuf>,
     signer_identity: String,
     key_provider: String,
     key_id: String,
@@ -1233,7 +1249,7 @@ pub fn run_sign(
         key_scope,
         SignatureAlgorithm::Ed25519.as_str(),
     )?;
-    let private_key = resolve_signing_key(&key_ref, private_key_file)?;
+    let private_key = resolve_signing_key(&key_ref, private_key_file, key_store_root)?;
     let serialized = match artifact {
         ConformanceArtifactArg::Manifest => {
             let manifest = VestraceCapabilityManifest::from_json(&std::fs::read(&artifact_file)?)
