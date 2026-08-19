@@ -99,6 +99,30 @@ enum ConformanceAction {
         #[arg(long)]
         post_incident_evidence_file: Option<PathBuf>,
     },
+    /// Ask the v1.0 release gate whether this exact build in this exact
+    /// environment may be released.
+    ///
+    /// The gate names every evidence source it does not have, so a release
+    /// that cannot be made says which evidence is missing rather than failing
+    /// for a reason nobody recorded.
+    Release {
+        #[arg(long)]
+        manifest_file: PathBuf,
+        #[arg(long)]
+        bundle_file: PathBuf,
+        #[arg(long, value_enum)]
+        profile: ConformanceProfileArg,
+        /// Collect runtime qualification from the configured database.
+        ///
+        /// Without it the gate reports runtime evidence as missing, which is
+        /// what it is: nobody looked.
+        #[arg(long)]
+        runtime_evidence: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     Verify {
         #[arg(long, value_enum)]
         profile: ConformanceProfileArg,

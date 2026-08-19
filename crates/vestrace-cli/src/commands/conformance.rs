@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use clap::ValueEnum;
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
+use secrecy::ExposeSecret as _;
 use vestrace_application::{
+    ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget,
     QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
-    RuntimeQualificationEvidence, evaluate_runtime_qualification,
+    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
 };
 use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
@@ -152,6 +154,26 @@ pub async fn run(
                 suite_version,
                 known_limitations,
                 post_incident_evidence_file,
+                config_path,
+                &config_overrides,
+            )
+            .await
+        }
+        ConformanceAction::Release {
+            manifest_file,
+            bundle_file,
+            profile,
+            runtime_evidence,
+            json,
+            output,
+        } => {
+            run_release(
+                manifest_file,
+                bundle_file,
+                profile.into(),
+                runtime_evidence,
+                json,
+                output,
                 config_path,
                 &config_overrides,
             )
@@ -678,6 +700,235 @@ async fn run_automatic_qualification_with_evidence(
         anyhow::bail!(
             "automatic {component} qualification failed; evidence was written to {} and persisted",
             output.display()
+        );
+    }
+    Ok(())
+}
+
+/// The gate's verdict in the words the specification uses, so a reader who
+/// greps the failure out of CI lands on the requirement rather than on prose
+/// somebody wrote about it.
+fn release_failure_name(failure: ExactEnvironmentReleaseFailure) -> &'static str {
+    match failure {
+        ExactEnvironmentReleaseFailure::ReleaseIdentityMismatch => "release_identity_mismatch",
+        ExactEnvironmentReleaseFailure::SchemaVersionsMismatch => "schema_versions_mismatch",
+        ExactEnvironmentReleaseFailure::ProfileMismatch => "profile_mismatch",
+        ExactEnvironmentReleaseFailure::ReleaseApprovalMissing => "release_approval_missing",
+        ExactEnvironmentReleaseFailure::ReleaseApprovalFailed => "release_approval_failed",
+        ExactEnvironmentReleaseFailure::RuntimeQualificationMissing => {
+            "runtime_qualification_missing"
+        }
+        ExactEnvironmentReleaseFailure::RuntimeQualificationFailed => {
+            "runtime_qualification_failed"
+        }
+        ExactEnvironmentReleaseFailure::RuntimeManifestMismatch => "runtime_manifest_mismatch",
+        ExactEnvironmentReleaseFailure::CryptoQualificationMissing => {
+            "crypto_qualification_missing"
+        }
+        ExactEnvironmentReleaseFailure::CryptoQualificationFailed => "crypto_qualification_failed",
+        ExactEnvironmentReleaseFailure::RecoveryQualificationMissing => {
+            "recovery_qualification_missing"
+        }
+        ExactEnvironmentReleaseFailure::RecoveryQualificationFailed => {
+            "recovery_qualification_failed"
+        }
+        ExactEnvironmentReleaseFailure::FaultSuiteMissing => "fault_suite_missing",
+        ExactEnvironmentReleaseFailure::FaultSuiteFailed => "fault_suite_failed",
+        ExactEnvironmentReleaseFailure::CapabilityRestorationMissing => {
+            "capability_restoration_missing"
+        }
+        ExactEnvironmentReleaseFailure::CapabilityRestorationFailed => {
+            "capability_restoration_failed"
+        }
+        ExactEnvironmentReleaseFailure::EvidenceReferencesMissing => "evidence_references_missing",
+        ExactEnvironmentReleaseFailure::KnownLimitationsMissing => "known_limitations_missing",
+        ExactEnvironmentReleaseFailure::KnownLimitationBlank => "known_limitation_blank",
+    }
+}
+
+/// Every distinct place a doubting reader can go to check this release.
+///
+/// Two requirements answered by the same file are one place to look, so the
+/// references are deduplicated here rather than counted twice — the gate reads
+/// this set to decide whether the release cites anything at all.
+fn bundle_evidence_refs(bundle: &QualificationBundle) -> Vec<String> {
+    let mut seen = HashSet::new();
+    bundle
+        .evidence()
+        .iter()
+        .filter_map(|entry| entry.evidence_ref())
+        .filter(|reference| seen.insert(reference.to_string()))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[derive(serde::Serialize)]
+struct ReleaseGateReport {
+    release_version: String,
+    profile: QualificationProfile,
+    manifest_digest: String,
+    status: &'static str,
+    failures: Vec<&'static str>,
+}
+
+/// Read the deployment's own account of itself: which role the runtime holds
+/// and whether its migration history is the one this build expects.
+///
+/// Every failure here is reported rather than folded into absent evidence. An
+/// operator who asked for this and got an unreachable database has learned
+/// something about the environment being released, and a report that called it
+/// `missing` would describe the environment as unexamined instead.
+async fn collect_runtime_qualification(
+    manifest: &VestraceCapabilityManifest,
+    bundle: &QualificationBundle,
+    profile: QualificationProfile,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<RuntimeQualificationDecision> {
+    let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "runtime evidence could not be collected: configuration failed: {error}"
+            )
+        })?;
+    let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!("runtime evidence could not be collected from {redacted}: {error}")
+    })?;
+    let runtime = store
+        .deployment_qualification_evidence()
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("runtime evidence could not be collected from {redacted}: {error}")
+        })?;
+    Ok(evaluate_runtime_qualification(
+        QualificationRuntime::Server,
+        manifest,
+        bundle,
+        profile,
+        bundle.lifecycle(),
+        &runtime,
+    ))
+}
+
+/// Ask the v1.0 release gate about an exact build in an exact environment.
+///
+/// The target is the capability manifest; the evidence identity is the
+/// bundle's, deliberately and not the manifest's again, so a bundle qualified
+/// against some other build is a mismatch the gate reports rather than a
+/// substitution nobody notices.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_release(
+    manifest_file: PathBuf,
+    bundle_file: PathBuf,
+    profile: QualificationProfile,
+    runtime_evidence: bool,
+    json: bool,
+    output: Option<PathBuf>,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<()> {
+    let manifest = VestraceCapabilityManifest::from_json(&std::fs::read(&manifest_file)?).map_err(
+        |error| {
+            anyhow::anyhow!(
+                "failed to load capability manifest {}: {error}",
+                manifest_file.display()
+            )
+        },
+    )?;
+    let bundle: QualificationBundle = serde_json::from_slice(&std::fs::read(&bundle_file)?)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to load qualification bundle {}: {error}",
+                bundle_file.display()
+            )
+        })?;
+
+    let target = ExactEnvironmentReleaseTarget::from_manifest(&manifest, profile)
+        .map_err(|error| anyhow::anyhow!("failed to build exact release target: {error}"))?;
+
+    let runtime_qualification = if runtime_evidence {
+        Some(
+            collect_runtime_qualification(
+                &manifest,
+                &bundle,
+                profile,
+                config_path,
+                config_overrides,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    // The remaining evidence sources are `None` because nothing in this build
+    // produces one. That is the answer the gate is being asked for, so it is
+    // reported rather than filled in with something that was not collected.
+    let evidence = ExactEnvironmentReleaseEvidence::new(
+        manifest.product_version(),
+        bundle.source_revision(),
+        bundle.build_digest(),
+        bundle.configuration_digest(),
+        bundle.environment_manifest(),
+        bundle.target_manifest(),
+        manifest.schema_versions().to_vec(),
+        bundle.profile(),
+        None,
+        runtime_qualification,
+        None,
+        None,
+        None,
+        Vec::new(),
+        bundle_evidence_refs(&bundle),
+        bundle.known_limitations().to_vec(),
+    );
+
+    let decision = V1ReleaseEvidenceService::evaluate(&target, &evidence);
+    let failures: Vec<&'static str> = decision
+        .failures()
+        .iter()
+        .copied()
+        .map(release_failure_name)
+        .collect();
+    let report = ReleaseGateReport {
+        release_version: manifest.product_version().to_owned(),
+        profile,
+        manifest_digest: manifest.manifest_digest().to_owned(),
+        status: if decision.is_passed() {
+            "passed"
+        } else {
+            "failed"
+        },
+        failures,
+    };
+
+    let serialized = serde_json::to_vec_pretty(&report)?;
+    if let Some(output) = &output {
+        if let Some(parent) = output.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(output, &serialized)?;
+    }
+
+    if json {
+        println!("{}", String::from_utf8(serialized)?);
+    } else {
+        println!(
+            "v1.0 release gate: {} ({})",
+            report.status, report.manifest_digest
+        );
+        for failure in &report.failures {
+            println!("  {failure}");
+        }
+    }
+
+    if !decision.is_passed() {
+        anyhow::bail!(
+            "v1.0 release gate did not pass: {}",
+            report.failures.join(", ")
         );
     }
     Ok(())
