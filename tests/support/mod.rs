@@ -113,6 +113,242 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)]
+pub enum RestrictedRuntimeRoleSetupStep {
+    GrantConnect,
+    GrantSchemaUsage,
+    GrantTableSelect,
+}
+
+#[derive(Default)]
+struct RestrictedRuntimeRoleSetupProgress {
+    connect_granted: bool,
+    schema_usage_granted: bool,
+    table_select_granted: bool,
+}
+
+async fn cleanup_restricted_runtime_role(
+    admin_pool: &sqlx::PgPool,
+    role: &RestrictedRole,
+    database_name: &str,
+    progress: &RestrictedRuntimeRoleSetupProgress,
+) -> Vec<sqlx::Error> {
+    let quoted = role.quoted();
+    let quoted_db = quote_identifier(database_name);
+    let mut statements = Vec::new();
+    if progress.table_select_granted {
+        statements.push(format!(
+            "REVOKE ALL PRIVILEGES ON TABLE memories, memory_revisions FROM {quoted}"
+        ));
+    }
+    if progress.schema_usage_granted {
+        statements.push(format!("REVOKE USAGE ON SCHEMA public FROM {quoted}"));
+    }
+    if progress.connect_granted {
+        statements.push(format!(
+            "REVOKE CONNECT ON DATABASE {quoted_db} FROM {quoted}"
+        ));
+    }
+    statements.push(format!("DROP ROLE {quoted}"));
+
+    let mut errors = Vec::new();
+    for statement in statements {
+        if let Err(error) = sqlx::query(&statement).execute(admin_pool).await {
+            errors.push(error);
+        }
+    }
+    errors
+}
+
+pub async fn with_restricted_runtime_role<T, F, Fut>(admin_pool: &sqlx::PgPool, test: F) -> T
+where
+    T: Send + 'static,
+    F: FnOnce(sqlx::PgPool, RestrictedRole) -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+{
+    with_restricted_runtime_role_connector(
+        admin_pool,
+        None,
+        |options, _role| async move {
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_with(options)
+                .await
+        },
+        test,
+    )
+    .await
+}
+
+pub async fn with_restricted_runtime_role_connector<T, F, Fut, C, CFut>(
+    admin_pool: &sqlx::PgPool,
+    fail_before: Option<RestrictedRuntimeRoleSetupStep>,
+    connect: C,
+    test: F,
+) -> T
+where
+    T: Send + 'static,
+    F: FnOnce(sqlx::PgPool, RestrictedRole) -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    C: FnOnce(sqlx::postgres::PgConnectOptions, RestrictedRole) -> CFut + Send + 'static,
+    CFut: Future<Output = Result<sqlx::PgPool, sqlx::Error>> + Send + 'static,
+{
+    let name: String = sqlx::query_scalar(
+        "SELECT 'vestrace_runtime_' || replace(gen_random_uuid()::text, '-', '')",
+    )
+    .fetch_one(admin_pool)
+    .await
+    .unwrap();
+    let password: String = sqlx::query_scalar("SELECT replace(gen_random_uuid()::text, '-', '')")
+        .fetch_one(admin_pool)
+        .await
+        .unwrap();
+    let role = RestrictedRole { name };
+    let quoted = role.quoted();
+
+    sqlx::query(&format!(
+        "CREATE ROLE {quoted} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+    ))
+    .execute(admin_pool)
+    .await
+    .unwrap();
+
+    let database_name: String = sqlx::query_scalar("SELECT current_database()")
+        .fetch_one(admin_pool)
+        .await
+        .unwrap();
+    let quoted_db = quote_identifier(&database_name);
+
+    let mut progress = RestrictedRuntimeRoleSetupProgress::default();
+
+    if let Some(step) = fail_before {
+        if step == RestrictedRuntimeRoleSetupStep::GrantConnect {
+            let cleanup_errors =
+                cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+            assert!(
+                cleanup_errors.is_empty(),
+                "cleanup failed: {cleanup_errors:?}"
+            );
+            panic!(
+                "restricted runtime role setup failed for {}: failpoint before GrantConnect",
+                role.name()
+            );
+        }
+    }
+    if let Err(err) = sqlx::query(&format!(
+        "GRANT CONNECT ON DATABASE {quoted_db} TO {quoted}"
+    ))
+    .execute(admin_pool)
+    .await
+    {
+        let cleanup_errors =
+            cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+        panic!(
+            "restricted runtime role setup failed for {}: {err}; cleanup errors: {cleanup_errors:?}",
+            role.name()
+        );
+    }
+    progress.connect_granted = true;
+
+    if let Some(step) = fail_before {
+        if step == RestrictedRuntimeRoleSetupStep::GrantSchemaUsage {
+            let cleanup_errors =
+                cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+            assert!(
+                cleanup_errors.is_empty(),
+                "cleanup failed: {cleanup_errors:?}"
+            );
+            panic!(
+                "restricted runtime role setup failed for {}: failpoint before GrantSchemaUsage",
+                role.name()
+            );
+        }
+    }
+    if let Err(err) = sqlx::query(&format!("GRANT USAGE ON SCHEMA public TO {quoted}"))
+        .execute(admin_pool)
+        .await
+    {
+        let cleanup_errors =
+            cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+        panic!(
+            "restricted runtime role setup failed for {}: {err}; cleanup errors: {cleanup_errors:?}",
+            role.name()
+        );
+    }
+    progress.schema_usage_granted = true;
+
+    if let Some(step) = fail_before {
+        if step == RestrictedRuntimeRoleSetupStep::GrantTableSelect {
+            let cleanup_errors =
+                cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+            assert!(
+                cleanup_errors.is_empty(),
+                "cleanup failed: {cleanup_errors:?}"
+            );
+            panic!(
+                "restricted runtime role setup failed for {}: failpoint before GrantTableSelect",
+                role.name()
+            );
+        }
+    }
+    if let Err(err) = sqlx::query(&format!(
+        "GRANT SELECT ON TABLE memories, memory_revisions TO {quoted}"
+    ))
+    .execute(admin_pool)
+    .await
+    {
+        let cleanup_errors =
+            cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+        panic!(
+            "restricted runtime role setup failed for {}: {err}; cleanup errors: {cleanup_errors:?}",
+            role.name()
+        );
+    }
+    progress.table_select_granted = true;
+
+    let options = admin_pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .username(role.name())
+        .password(&password);
+    let connect_result = connect(options, role.clone()).await;
+    let runtime_pool = match connect_result {
+        Ok(pool) => pool,
+        Err(err) => {
+            let cleanup_errors =
+                cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+            assert!(
+                cleanup_errors.is_empty(),
+                "cleanup failed: {cleanup_errors:?}"
+            );
+            panic!("restricted runtime role pool connection failed: {err}");
+        }
+    };
+
+    let test_pool = runtime_pool.clone();
+    let test_role = role.clone();
+    let outcome = tokio::spawn(async move { test(test_pool, test_role).await }).await;
+
+    runtime_pool.close().await;
+
+    let cleanup_errors =
+        cleanup_restricted_runtime_role(admin_pool, &role, &database_name, &progress).await;
+    assert!(
+        cleanup_errors.is_empty(),
+        "cleanup failed: {cleanup_errors:?}"
+    );
+
+    match outcome {
+        Ok(value) => value,
+        Err(join_error) if join_error.is_panic() => {
+            std::panic::resume_unwind(join_error.into_panic())
+        }
+        Err(join_error) => panic!("restricted runtime role test task was cancelled: {join_error}"),
+    }
+}
+
 pub async fn assume_restricted_workspace(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     role: &RestrictedRole,
