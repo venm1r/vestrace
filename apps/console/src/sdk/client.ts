@@ -200,13 +200,10 @@ export interface SystemHealth {
 }
 
 export interface ProfileItem {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  mfa_enabled: boolean;
-  active_sessions: number;
-  api_keys: Array<{ id: string; name: string; created: string; last_used: string }>;
+  workspace_id: string;
+  principal_id: string;
+  identity_source: string;
+  authenticated: boolean;
 }
 
 const API_BASE = '/api/v1';
@@ -315,6 +312,35 @@ export interface UpdateWorkspaceSettingsPayload {
   log_level: string;
 }
 
+export interface CreateAgentPayload {
+  name: string;
+  description: string;
+  system_prompt: string;
+}
+
+export interface CreateProviderPayload {
+  name: string;
+  locality: 'local' | 'remote';
+}
+
+export interface CreateModelPayload {
+  provider_id: string;
+  model_name: string;
+  context_window: number;
+  input_cost_per_mtoken: number;
+  output_cost_per_mtoken: number;
+}
+
+export interface CreateWorkflowPayload {
+  name: string;
+}
+
+export interface CreateEvaluationPayload {
+  name: string;
+  model_id?: string;
+  summary?: string;
+}
+
 export const vestraceClient = {
   getSettings: (): Promise<WorkspaceSettings> => request<WorkspaceSettings>('/settings'),
   getSystemHealth: (): Promise<SystemHealth> => request<SystemHealth>('/system/health'),
@@ -340,12 +366,37 @@ export const vestraceClient = {
     }),
   listArtifacts: (): Promise<ArtifactItem[]> => request<ArtifactItem[]>('/artifacts'),
   listAgents: (): Promise<AgentItem[]> => request<AgentItem[]>('/agents'),
+  createAgent: (payload: CreateAgentPayload): Promise<AgentItem> =>
+    request<AgentItem>('/agents', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listWorkflows: (): Promise<WorkflowItem[]> => request<WorkflowItem[]>('/workflows'),
+  createWorkflow: (payload: CreateWorkflowPayload): Promise<{ workflow_id: string }> =>
+    request<{ workflow_id: string }>('/workflows', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listTriggers: (): Promise<TriggerItem[]> => request<TriggerItem[]>('/triggers'),
   listConnections: (): Promise<ConnectionItem[]> => request<ConnectionItem[]>('/connections'),
   listModels: (): Promise<ModelItem[]> => request<ModelItem[]>('/models'),
+  createModel: (payload: CreateModelPayload): Promise<ModelItem> =>
+    request<ModelItem>('/models', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listProviders: (): Promise<ProviderItem[]> => request<ProviderItem[]>('/providers'),
+  createProvider: (payload: CreateProviderPayload): Promise<ProviderItem> =>
+    request<ProviderItem>('/providers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listEvaluations: (): Promise<EvaluationItem[]> => request<EvaluationItem[]>('/evaluations'),
+  createEvaluation: (payload: CreateEvaluationPayload): Promise<{ evaluation_id: string }> =>
+    request<{ evaluation_id: string }>('/evaluations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listAuditEvents: (): Promise<AuditEventItem[]> => request<AuditEventItem[]>('/audit'),
   getProfile: (): Promise<ProfileItem> => request<ProfileItem>('/profile'),
 };

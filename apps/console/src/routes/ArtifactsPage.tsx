@@ -38,8 +38,21 @@ function formatSize(bytes: number | undefined): string {
 export const ArtifactsPage: React.FC = () => {
   const { data: artifacts, error, loading, reload } = useApiResource(vestraceClient.listArtifacts);
   const { notice, notify, dismiss } = useNotice();
+  const [selectedArtifact, setSelectedArtifact] = React.useState<typeof items[0] | null>(null);
 
   const items = artifacts ?? [];
+
+  const handleExport = () => {
+    if (items.length === 0) return;
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vestrace-artifacts-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('success', `Exported ${items.length} artifacts metadata records.`);
+  };
 
   return (
     <PageShell>
@@ -50,14 +63,109 @@ export const ArtifactsPage: React.FC = () => {
           <ActionButton
             icon="download"
             disabled={items.length === 0}
-            onClick={() => notify('info', 'Artifact export is not implemented in this build.')}
+            onClick={handleExport}
           >
-            Export Selected
+            Export Artifacts
           </ActionButton>
         }
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />
+
+      {selectedArtifact && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 999,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 'var(--space-md)',
+            backdropFilter: 'blur(4px)',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedArtifact(null);
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              backgroundColor: 'var(--color-surface-container-high)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '24px',
+              border: '1px solid var(--color-outline-variant)',
+              color: 'var(--brand-white)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>
+                {selectedArtifact.name}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSelectedArtifact(null)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--color-on-surface-variant)',
+                  cursor: 'pointer',
+                }}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+              <div>
+                <span style={{ color: 'var(--text-secondary)' }}>Artifact ID: </span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedArtifact.id}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)' }}>Media Type: </span>
+                <span>{selectedArtifact.media_type}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)' }}>Revision: </span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedArtifact.revision_number}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)' }}>Size: </span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{formatSize(selectedArtifact.size_bytes)}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)' }}>SHA-256 Digest: </span>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '12px',
+                    wordBreak: 'break-all',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    backgroundColor: 'var(--color-surface-container-lowest)',
+                    marginTop: '4px',
+                  }}
+                >
+                  {selectedArtifact.content_sha256}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <ActionButton onClick={() => setSelectedArtifact(null)}>
+                Close
+              </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Panel>
         <ResourceState
@@ -129,9 +237,6 @@ export const ArtifactsPage: React.FC = () => {
                     <td
                       className="type-code"
                       style={{ padding: 'var(--space-md)', color: 'var(--text-secondary)' }}
-                      // The full digest on hover: the cell is truncated to keep
-                      // the row readable, but a provenance check needs all 64
-                      // characters.
                       title={artifact.content_sha256}
                     >
                       {shortChecksum(artifact.content_sha256)}
@@ -140,14 +245,9 @@ export const ArtifactsPage: React.FC = () => {
                       <ActionButton
                         variant="quiet"
                         style={{ padding: '6px 12px', fontSize: '13px' }}
-                        onClick={() =>
-                          notify(
-                            'info',
-                            `Artifact download is not implemented in this build (${artifact.name}).`,
-                          )
-                        }
+                        onClick={() => setSelectedArtifact(artifact)}
                       >
-                        Preview &amp; Download
+                        Details
                       </ActionButton>
                     </td>
                   </tr>

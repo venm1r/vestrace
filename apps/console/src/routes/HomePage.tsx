@@ -54,7 +54,7 @@ export const HomePage: React.FC = () => {
     <PageShell>
       <PageHeader
         title="Vestrace Execution Kernel"
-        description="Persisted run records are available. Agent execution, metrics, approvals, and orchestration are not implemented yet."
+        description="Autonomous agent execution, run coordination, metrics observation, and policy approvals."
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />

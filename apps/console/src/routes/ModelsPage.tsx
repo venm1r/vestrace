@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
-import { vestraceClient } from '../sdk/client';
+import React, { useMemo, useState } from 'react';
+import { ModelItem, ProviderItem, vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import { Modal } from '../design-system/primitives/Modal';
+import { Button } from '../design-system/primitives/Button';
 import {
   ActionButton,
   NoticeBanner,
@@ -9,6 +11,7 @@ import {
   Panel,
   ResourceState,
   Th,
+  describeError,
   rowStyle,
   tableHeadRowStyle,
   tableStyle,
@@ -33,16 +36,74 @@ function formatCost(value: number): string {
 }
 
 export const ModelsPage: React.FC = () => {
-  const { data: models, error, loading, reload } = useApiResource(vestraceClient.listModels);
-  const { data: providers } = useApiResource(vestraceClient.listProviders);
+  const { data: initialModels, error, loading, reload } = useApiResource(vestraceClient.listModels);
+  const { data: initialProviders } = useApiResource(vestraceClient.listProviders);
+  const [models, setModels] = useState<ModelItem[] | null>(null);
+  const [providers, setProviders] = useState<ProviderItem[] | null>(null);
   const { notice, notify, dismiss } = useNotice();
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modelName, setModelName] = useState('');
+  const [selectedProviderId, setSelectedProviderId] = useState('');
+  const [newProviderName, setNewProviderName] = useState('');
+  const [newProviderLocality, setNewProviderLocality] = useState<'remote' | 'local'>('remote');
+  const [contextWindow, setContextWindow] = useState('128000');
+  const [inputCost, setInputCost] = useState('0.15');
+  const [outputCost, setOutputCost] = useState('0.60');
+  const [submitting, setSubmitting] = useState(false);
+
+  const providerList = providers ?? initialProviders ?? [];
+  const items = models ?? initialModels ?? [];
+
   const providerNames = useMemo(
-    () => new Map((providers ?? []).map((provider) => [provider.id, provider.name])),
-    [providers],
+    () => new Map(providerList.map((provider) => [provider.id, provider.name])),
+    [providerList],
   );
 
-  const items = models ?? [];
+  const handleCreateModel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modelName.trim()) {
+      notify('warning', 'Model name is required.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      let providerId = selectedProviderId;
+      if (!providerId || providerId === '__new__') {
+        if (!newProviderName.trim()) {
+          notify('warning', 'Provider name is required.');
+          setSubmitting(false);
+          return;
+        }
+        const createdProvider = await vestraceClient.createProvider({
+          name: newProviderName.trim(),
+          locality: newProviderLocality,
+        });
+        providerId = createdProvider.id;
+        setProviders([...providerList, createdProvider]);
+      }
+
+      const newModel = await vestraceClient.createModel({
+        provider_id: providerId,
+        model_name: modelName.trim(),
+        context_window: parseInt(contextWindow, 10) || 128000,
+        input_cost_per_mtoken: parseFloat(inputCost) || 0,
+        output_cost_per_mtoken: parseFloat(outputCost) || 0,
+      });
+
+      setModels([newModel, ...items]);
+      setIsModalOpen(false);
+      setModelName('');
+      setNewProviderName('');
+      notify('success', `Model "${newModel.model_name}" was registered.`);
+    } catch (err: unknown) {
+      const described = describeError(err, 'model registration');
+      notify('error', `${described.title}: ${described.detail}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <PageShell>
@@ -52,9 +113,12 @@ export const ModelsPage: React.FC = () => {
         actions={
           <ActionButton
             icon="model_training"
-            onClick={() =>
-              notify('info', 'Model registration from the console is not implemented in this build.')
-            }
+            onClick={() => {
+              if (providerList.length > 0 && !selectedProviderId) {
+                setSelectedProviderId(providerList[0].id);
+              }
+              setIsModalOpen(true);
+            }}
           >
             Register Model
           </ActionButton>
@@ -62,6 +126,241 @@ export const ModelsPage: React.FC = () => {
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Register Model"
+      >
+        <form onSubmit={handleCreateModel} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <label
+              htmlFor="model-name"
+              style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}
+            >
+              Model Name *
+            </label>
+            <input
+              id="model-name"
+              type="text"
+              required
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder="e.g. gpt-4o-mini or claude-3-5-sonnet"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--color-surface-container)',
+                border: '1px solid var(--color-outline-variant)',
+                color: 'var(--brand-white)',
+                fontSize: '14px',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="model-provider"
+              style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}
+            >
+              Provider *
+            </label>
+            <select
+              id="model-provider"
+              value={selectedProviderId}
+              onChange={(e) => setSelectedProviderId(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--color-surface-container)',
+                border: '1px solid var(--color-outline-variant)',
+                color: 'var(--brand-white)',
+                fontSize: '14px',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+              }}
+            >
+              {providerList.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.locality})
+                </option>
+              ))}
+              <option value="__new__">+ Add New Provider...</option>
+            </select>
+          </div>
+
+          {(selectedProviderId === '__new__' || providerList.length === 0) && (
+            <div
+              style={{
+                padding: '12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--color-surface-container-lowest)',
+                border: '1px dashed var(--color-outline-variant)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+              }}
+            >
+              <div>
+                <label
+                  htmlFor="new-provider-name"
+                  style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}
+                >
+                  New Provider Name *
+                </label>
+                <input
+                  id="new-provider-name"
+                  type="text"
+                  value={newProviderName}
+                  onChange={(e) => setNewProviderName(e.target.value)}
+                  placeholder="e.g. OpenAI or Anthropic"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--color-surface-container)',
+                    border: '1px solid var(--color-outline-variant)',
+                    color: 'var(--brand-white)',
+                    fontSize: '13px',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="new-provider-locality"
+                  style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}
+                >
+                  Locality
+                </label>
+                <select
+                  id="new-provider-locality"
+                  value={newProviderLocality}
+                  onChange={(e) => setNewProviderLocality(e.target.value as 'remote' | 'local')}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--color-surface-container)',
+                    border: '1px solid var(--color-outline-variant)',
+                    color: 'var(--brand-white)',
+                    fontSize: '13px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <option value="remote">Remote (Cloud API)</option>
+                  <option value="local">Local (Self-hosted / On-prem)</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+            <div>
+              <label
+                htmlFor="model-context"
+                style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}
+              >
+                Context Window
+              </label>
+              <input
+                id="model-context"
+                type="number"
+                value={contextWindow}
+                onChange={(e) => setContextWindow(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--color-surface-container)',
+                  border: '1px solid var(--color-outline-variant)',
+                  color: 'var(--brand-white)',
+                  fontSize: '13px',
+                  fontFamily: 'var(--font-mono)',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="model-input-cost"
+                style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}
+              >
+                In ($/Mtok)
+              </label>
+              <input
+                id="model-input-cost"
+                type="number"
+                step="0.01"
+                value={inputCost}
+                onChange={(e) => setInputCost(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--color-surface-container)',
+                  border: '1px solid var(--color-outline-variant)',
+                  color: 'var(--brand-white)',
+                  fontSize: '13px',
+                  fontFamily: 'var(--font-mono)',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="model-output-cost"
+                style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}
+              >
+                Out ($/Mtok)
+              </label>
+              <input
+                id="model-output-cost"
+                type="number"
+                step="0.01"
+                value={outputCost}
+                onChange={(e) => setOutputCost(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--color-surface-container)',
+                  border: '1px solid var(--color-outline-variant)',
+                  color: 'var(--brand-white)',
+                  fontSize: '13px',
+                  fontFamily: 'var(--font-mono)',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsModalOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={submitting}
+              icon="add"
+            >
+              {submitting ? 'Registering...' : 'Register'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Panel>
         <ResourceState

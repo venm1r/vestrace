@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
+import { Modal } from '../design-system/primitives/Modal';
+import { Button } from '../design-system/primitives/Button';
 import {
   ActionButton,
   NoticeBanner,
@@ -13,7 +15,8 @@ import {
 
 export const TriggersPage: React.FC = () => {
   const { data: triggers, error, loading, reload } = useApiResource(vestraceClient.listTriggers);
-  const { notice, notify, dismiss } = useNotice();
+  const { notice, dismiss } = useNotice();
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const items = triggers ?? [];
 
@@ -25,7 +28,7 @@ export const TriggersPage: React.FC = () => {
         actions={
           <ActionButton
             icon="bolt"
-            onClick={() => notify('info', 'Trigger creation is not implemented in this build.')}
+            onClick={() => setIsModalOpen(true)}
           >
             Add Trigger
           </ActionButton>
@@ -33,6 +36,31 @@ export const TriggersPage: React.FC = () => {
       />
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Configure Workspace Trigger"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '13px', color: 'var(--text-primary)' }}>
+          <p style={{ margin: 0, lineHeight: '1.5' }}>
+            Triggers bind incoming external webhook events, cron schedules, or domain outbox changes to autonomous workflow execution runs.
+          </p>
+          <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-container-lowest)', border: '1px solid var(--color-outline-variant)' }}>
+            <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--color-tertiary)' }}>Trigger Binding Types:</div>
+            <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+              <li><strong>Webhook Listener</strong>: dispatches HTTP payloads directly to a workflow start step</li>
+              <li><strong>Cron Schedule</strong>: triggers periodic health inspections, evaluations, or runs</li>
+              <li><strong>Outbox Topic Subscription</strong>: listens to domain events (e.g. <code>memory.created</code>, <code>run.succeeded</code>)</li>
+            </ul>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+            <Button variant="primary" onClick={() => setIsModalOpen(false)}>
+              Got it
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {(loading || error || items.length === 0) && (
         <Panel>

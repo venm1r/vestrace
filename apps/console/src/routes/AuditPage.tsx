@@ -26,6 +26,18 @@ export const AuditPage: React.FC = () => {
 
   const items = events ?? [];
 
+  const handleExport = () => {
+    if (items.length === 0) return;
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vestrace-audit-trail-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('success', `Exported ${items.length} audit events.`);
+  };
+
   return (
     <PageShell>
       <PageHeader
@@ -33,9 +45,9 @@ export const AuditPage: React.FC = () => {
         description="Immutable security event stream, capability authorization logs, and RLS enforcement history."
         actions={
           <ActionButton
-            icon="shield"
+            icon="download"
             disabled={items.length === 0}
-            onClick={() => notify('info', 'Audit export is not implemented in this build.')}
+            onClick={handleExport}
           >
             Export Audit Trail
           </ActionButton>
