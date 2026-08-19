@@ -375,3 +375,53 @@ fn no_refusal_discloses_key_material() {
 
     fs::remove_dir_all(&root).ok();
 }
+
+/// `versions` is read directly by the next task's probe, without going
+/// through `resolve`, so its sort order and its state pairing are load-bearing
+/// on their own — a length check alone would pass against a method that
+/// returned the right count of wrong things.
+#[test]
+fn the_store_lists_every_version_with_its_state() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "revoked");
+    write_version(&root, "release-signing", "v2", "retired");
+    write_version(&root, "release-signing", "v3", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let versions = provider.versions("release-signing").unwrap();
+
+    assert_eq!(
+        versions,
+        vec![
+            ("v1".to_string(), "revoked".to_string()),
+            ("v2".to_string(), "retired".to_string()),
+            ("v3".to_string(), "active".to_string()),
+        ]
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// `public_key` is read directly by the next task's probe to tell two
+/// versions apart. A wrong path join could still return 32 plausible bytes —
+/// only comparing against the exact bytes the fixture wrote catches that.
+#[test]
+fn the_store_reads_the_public_half_of_each_version() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    write_version(&root, "release-signing", "v2", "retired");
+    let expected_v1 = fs::read(root.join("release-signing").join("v1").join("public.bin")).unwrap();
+    let expected_v2 = fs::read(root.join("release-signing").join("v2").join("public.bin")).unwrap();
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let actual_v1 = provider.public_key("release-signing", "v1").unwrap();
+    let actual_v2 = provider.public_key("release-signing", "v2").unwrap();
+
+    assert_eq!(actual_v1.len(), 32);
+    assert_eq!(actual_v2.len(), 32);
+    assert_ne!(actual_v1, actual_v2);
+    assert_eq!(actual_v1, expected_v1);
+    assert_eq!(actual_v2, expected_v2);
+
+    fs::remove_dir_all(&root).ok();
+}
