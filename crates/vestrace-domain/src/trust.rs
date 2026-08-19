@@ -1667,6 +1667,18 @@ pub struct ResolvedKeyMaterial {
     bytes: Vec<u8>,
 }
 
+impl std::fmt::Debug for ResolvedKeyMaterial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The byte count is safe to show; the material itself is never
+        // rendered, so a caller matching on a `Result<ResolvedKeyMaterial, _>`
+        // with `expect_err`/`{:?}` cannot leak it through this impl.
+        formatter
+            .debug_struct("ResolvedKeyMaterial")
+            .field("bytes", &"[REDACTED]")
+            .finish()
+    }
+}
+
 impl ResolvedKeyMaterial {
     pub fn from_ephemeral(bytes: Vec<u8>) -> Result<Self, KeyProviderError> {
         if bytes.is_empty() {

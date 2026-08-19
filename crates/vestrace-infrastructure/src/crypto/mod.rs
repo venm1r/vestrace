@@ -34,6 +34,12 @@ pub const LOCAL_FILE_PROVIDER: &str = "local-file";
 /// declared by migration 0087.
 pub const ALGORITHM_SUITE: &str = "AeadAes256GcmV1";
 
+mod mounted_secret_store;
+
+pub use mounted_secret_store::{
+    KeyDeclaration, MOUNTED_SECRET_STORE_PROVIDER, MountedSecretStoreKeyProvider,
+};
+
 /// AES-256 takes a 256-bit key.
 pub const KEY_LENGTH: usize = 32;
 

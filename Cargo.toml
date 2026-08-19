@@ -54,6 +54,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 [dev-dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
