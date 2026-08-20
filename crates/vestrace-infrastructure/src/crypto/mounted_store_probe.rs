@@ -5,6 +5,9 @@
 //! that checks nothing, so every recording here is downstream of an operation
 //! that could have gone the other way.
 
+use std::fmt::Write as _;
+
+use base64::Engine as _;
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
 use vestrace_application::{
     ApplicationError, CryptoAdapterQualificationEvidence, CryptoAdapterQualificationProbe,
@@ -19,17 +22,75 @@ use super::mounted_secret_store::{MOUNTED_SECRET_STORE_PROVIDER, MountedSecretSt
 
 const PROBE_PAYLOAD: &[u8] = b"vestrace crypto qualification probe";
 
-/// Whether `rendered` contains `secret` as a contiguous byte run.
+/// Whether `rendered` contains the whole of `secret`, in any of the shapes
+/// safe Rust code can realistically render a byte slice into: raw
+/// contiguous bytes, hex (either case), the decimal list a derived `Debug`
+/// on `&[u8]`/`Vec<u8>` produces, or base64.
 ///
 /// Pulled out of the probe so it can be pinned directly: every fixture the
-/// shipped suite exercises has the adapter refuse cleanly, so nothing in that
-/// suite can tell this scan apart from one that always answers "clean" unless
-/// the scan itself is tested against a string built to contain the secret.
+/// shipped suite exercises has the adapter refuse cleanly, so nothing in
+/// that suite can tell this scan apart from one that always answers "clean"
+/// unless the scan itself is tested against a string built to contain the
+/// secret. The raw-bytes search alone cannot do that job for this probe's
+/// actual secret: it is PKCS#8 DER, safe Rust's `format!`/`Display`/`Debug`
+/// can only produce valid UTF-8, and DER essentially never is — so a
+/// scan limited to raw bytes cannot see the single most likely accidental
+/// leak, a derived `Debug` on the key bytes, which renders as
+/// `[48, 81, 2, ...]` and contains none of the secret's own bytes in a row.
+/// Each shape below is searched for independently because none of them
+/// implies another.
+///
+/// What this does not prove: each shape is searched for as the *whole*
+/// secret, contiguous. A rendering that leaks only a fragment of it — the
+/// 32-byte seed inside a PKCS#8 key, say, which is the part that actually
+/// matters cryptographically — is not caught unless that fragment happens
+/// to appear whole in one of these shapes. Passing this scan means the
+/// secret was not rendered in full through a known encoding; it does not
+/// mean no byte of it ever reached output.
 pub fn discloses(rendered: &str, secret: &[u8]) -> bool {
-    rendered
+    if secret.is_empty() {
+        return false;
+    }
+
+    if rendered
         .as_bytes()
-        .windows(secret.len().max(1))
+        .windows(secret.len())
         .any(|window| window == secret)
+    {
+        return true;
+    }
+
+    let mut lower_hex = String::with_capacity(secret.len() * 2);
+    let mut upper_hex = String::with_capacity(secret.len() * 2);
+    for byte in secret {
+        let _ = write!(lower_hex, "{byte:02x}");
+        let _ = write!(upper_hex, "{byte:02X}");
+    }
+    if rendered.contains(&lower_hex) || rendered.contains(&upper_hex) {
+        return true;
+    }
+
+    // A derived `Debug` on a byte slice renders as a comma-separated
+    // decimal list: `[48, 81, 2]` under the compact `{:?}`, the same digits
+    // one per indented line under the pretty `{:#?}`. Stripping every
+    // whitespace character from a copy of `rendered` collapses both forms
+    // to the same string, so one comparison against the digits joined by a
+    // bare comma — no spaces — catches either without matching each shape
+    // separately.
+    let mut decimal = String::new();
+    for (index, byte) in secret.iter().enumerate() {
+        if index > 0 {
+            decimal.push(',');
+        }
+        let _ = write!(decimal, "{byte}");
+    }
+    let compacted: String = rendered.chars().filter(|c| !c.is_whitespace()).collect();
+    if compacted.contains(&decimal) {
+        return true;
+    }
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(secret);
+    rendered.contains(&encoded)
 }
 
 pub struct MountedStoreCryptoProbe {

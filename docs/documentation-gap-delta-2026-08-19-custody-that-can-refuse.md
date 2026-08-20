@@ -91,7 +91,7 @@ that checks nothing.
 | `CryptographicRoundTrip` | sign `PROBE_PAYLOAD` with the resolved key, verify against the store's own `public.bin` |
 | `Lifecycle` | a version the store marks `revoked` is attempted and **refused** |
 | `Rotation` | a superseded version exists and its public key **differs** from the active one's |
-| `SecretNonDisclosure` | the refusal's `Display` and `Debug` are rendered and **scanned** for the private bytes |
+| `SecretNonDisclosure` | the refusal's `Display` and `Debug` are rendered and **scanned**, across several encodings, for the private bytes |
 
 **Rotation compares key material, not directory counts.** Two directories named
 `v1` and `v2` holding the same bytes would satisfy a check that counted
@@ -166,6 +166,65 @@ on: with the version segment check removed, `../../etc` fails as `Unavailable`
 rather than `Denied` because nothing happens to exist at that path, so the
 fallback is filesystem-topology-dependent and the segment check is the only
 guarantee that is not.
+
+## The scan mechanism was the defect, not the scan's use
+
+The previous pass fixed *which* renderings `SecretNonDisclosure` scans — the
+`Ok` value of a successful resolution, taken before it is reduced to raw
+bytes, alongside every refusal's `Display` and `Debug`. It left the scan
+mechanism itself narrow: `discloses` searched only for the secret's own bytes
+run contiguously. That check is close to useless for this probe's actual
+secret. `secret` is raw PKCS#8 DER; every renderer in scope here is safe
+Rust — `format!`, `Display`, `Debug` — and safe Rust can only produce valid
+UTF-8. Raw DER essentially never is. So the single most likely accidental
+leak in this codebase — a derived `Debug` on the key bytes, which renders a
+decimal list like `[48, 81, 2, ...]` — could never match the raw-bytes scan,
+categorically, independent of anything else the adapter does right.
+
+`discloses` now searches five shapes instead of one: raw contiguous bytes
+(kept — cheap, and still the only shape a lossy or unsafe path could
+produce), lowercase hex, uppercase hex, the decimal list a derived `Debug` on
+a byte slice renders — matched once, by stripping whitespace from a copy of
+`rendered` and comparing against the digits joined with a bare comma, which
+catches the compact `{:?}` form and the pretty `{:#?}` form with the same
+comparison rather than two — and base64, via the `base64` crate this crate
+already depends on.
+
+Mutation-proof, one row per shape, each disabling one branch of `discloses`
+and confirming the corresponding unit test fails and no other does:
+
+| Branch disabled | Test that fails | Others affected |
+|---|---|---|
+| raw bytes | `discloses_finds_the_secret_bytes_and_a_clean_string_does_not` | none |
+| lowercase hex | `discloses_finds_lowercase_hex` | none |
+| uppercase hex | `discloses_finds_uppercase_hex` | none |
+| decimal (compact + pretty) | `discloses_finds_derived_debug_decimal_compact_and_pretty` | none |
+| base64 | `discloses_finds_base64` | none |
+
+The end-to-end proof below is the second of its kind in this delta, and
+exists for the same reason as the first: `ResolvedKeyMaterial`'s hand-written
+redacted `Debug` was temporarily swapped for `#[derive(Debug)]` — the exact
+regression this scan exists to catch — and `a_complete_store_yields_every_check`
+was run against it. `SecretNonDisclosure` was no longer recorded. The
+mutation was reverted immediately afterward; `git diff` on `trust.rs`
+confirmed no residue before the fix was committed. Keeping the derived
+`Debug` committed was never on the table, for the same reason the earlier
+splice-based proof below was reverted: it is a code path capable of leaking
+key bytes, and this project ships none. What this proof adds over the
+earlier one is specificity — the earlier splice exercised the probe's
+`!leaked` clause with raw bytes, a shape the scan already covered; this one
+is the first proof in this delta that a *decimal* leak, the shape the
+raw-bytes-only scan could never have caught, is now caught too.
+
+What remains true, and is now stated rather than left implicit: each shape
+is searched for as the *whole* secret. A rendering that leaks only a
+fragment of it — the 32-byte seed inside a PKCS#8 key, the part that
+actually matters cryptographically — is not caught unless that fragment
+happens to appear whole in one of these five shapes. This scan proves the
+secret was not rendered in full through a known encoding; it does not prove
+no byte of it ever reached output. That was true of the raw-bytes-only
+version too — it simply understated by more, since it could not even
+recognize its own probe's most likely failure mode.
 
 ## Against the real candidate, not a fixture
 
@@ -253,11 +312,13 @@ cases prove the three outcomes — missing, collected, failed — against tempor
 fixture stores; the run against the actual manifest was performed by hand and is
 weaker than a test and not claimed to be one. Likewise the committed suite pins
 the disclosure *scan*, not the probe's use of it: no fixture leaks, so a probe
-that dropped the `!leaked` clause would still fail no committed case. The case
-that proved otherwise required an adapter deliberately mutated to splice private
-bytes into a refusal message, and was reverted with it — keeping it would mean
-shipping either a code path capable of leaking key bytes or the `unsafe` that
-`#![forbid(unsafe_code)]` denies.
+that dropped the `!leaked` clause would still fail no committed case. Two cases
+proved otherwise, neither committed — one spliced raw private bytes into a
+refusal message, the other (see "The scan mechanism was the defect" above)
+derived `Debug` on `ResolvedKeyMaterial` to leak decimal digits instead — and
+both were reverted with the adapter they mutated, because keeping either
+would mean shipping a code path capable of leaking key bytes, or the `unsafe`
+that `#![forbid(unsafe_code)]` denies.
 
 **The conformance figure above is carried forward, not re-measured.** This slice
 registers no requirement, closes no skip and touches no registry file — the diff

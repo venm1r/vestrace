@@ -2614,6 +2614,7 @@ name = "vestrace-integration-tests"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "ring",
  "serde",

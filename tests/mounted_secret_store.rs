@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use vestrace_domain::WorkspaceId;
@@ -668,6 +669,88 @@ fn discloses_finds_the_secret_bytes_and_a_clean_string_does_not() {
     assert!(
         discloses(&leaking, secret),
         "the secret bytes went undetected"
+    );
+    assert!(
+        !discloses("resolution denied: outside declared scope", secret),
+        "a clean refusal was reported as disclosing the secret"
+    );
+}
+
+/// Raw contiguous bytes are the cheapest rendering to search for, and the
+/// only one a lossy or unsafe formatting path could produce, but they are
+/// also the shape safe `format!`/`Display`/`Debug` code essentially never
+/// emits for binary key material — a derived `Debug` on `Vec<u8>` never puts
+/// the secret's own bytes in a row. The other cases in this file pin the
+/// shapes safe Rust actually renders it into.
+#[test]
+fn discloses_finds_lowercase_hex() {
+    let secret: &[u8] = b"super-secret-material-0123456789";
+    // clippy::format_collect: a one-shot needle for an assertion, not a hot path.
+    #[allow(clippy::format_collect)]
+    let hex: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
+    let leaking = format!("resolution denied: debug dump {hex} end of dump");
+
+    assert!(
+        discloses(&leaking, secret),
+        "lowercase hex of the secret went undetected"
+    );
+    assert!(
+        !discloses("resolution denied: outside declared scope", secret),
+        "a clean refusal was reported as disclosing the secret"
+    );
+}
+
+#[test]
+fn discloses_finds_uppercase_hex() {
+    let secret: &[u8] = b"super-secret-material-0123456789";
+    // clippy::format_collect: a one-shot needle for an assertion, not a hot path.
+    #[allow(clippy::format_collect)]
+    let hex: String = secret.iter().map(|byte| format!("{byte:02X}")).collect();
+    let leaking = format!("resolution denied: debug dump {hex} end of dump");
+
+    assert!(
+        discloses(&leaking, secret),
+        "uppercase hex of the secret went undetected"
+    );
+    assert!(
+        !discloses("resolution denied: outside declared scope", secret),
+        "a clean refusal was reported as disclosing the secret"
+    );
+}
+
+/// A derived `Debug` on a byte slice — the accidental leak this whole change
+/// exists to catch — renders as a decimal list. `{:?}` renders it compact,
+/// `{:#?}` renders one byte per indented line; both must be caught by the
+/// same check.
+#[test]
+fn discloses_finds_derived_debug_decimal_compact_and_pretty() {
+    let secret: &[u8] = b"super-secret-material-0123456789";
+    let compact_leak = format!("ResolvedKeyMaterial {{ bytes: {secret:?} }}");
+    let pretty_leak = format!("ResolvedKeyMaterial {{\n    bytes: {secret:#?},\n}}");
+
+    assert!(
+        discloses(&compact_leak, secret),
+        "the compact `{{:?}}` decimal rendering went undetected"
+    );
+    assert!(
+        discloses(&pretty_leak, secret),
+        "the pretty `{{:#?}}` decimal rendering went undetected"
+    );
+    assert!(
+        !discloses("resolution denied: outside declared scope", secret),
+        "a clean refusal was reported as disclosing the secret"
+    );
+}
+
+#[test]
+fn discloses_finds_base64() {
+    let secret: &[u8] = b"super-secret-material-0123456789";
+    let encoded = base64::engine::general_purpose::STANDARD.encode(secret);
+    let leaking = format!("resolution denied: debug dump {encoded} end of dump");
+
+    assert!(
+        discloses(&leaking, secret),
+        "base64 of the secret went undetected"
     );
     assert!(
         !discloses("resolution denied: outside declared scope", secret),

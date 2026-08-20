@@ -125,10 +125,10 @@ application and on `ring`) and implements
 | `CryptographicRoundTrip` | sign a probe payload with the resolved key, verify against `public.bin` |
 | `Lifecycle` | a version whose `state` is `revoked` is **attempted and refused** |
 | `Rotation` | two versions exist, the retired one is refused by `resolve`, **and the two public keys differ** |
-| `SecretNonDisclosure` | provoke each refusal and scan rendered `Display` and `Debug` output for the private key bytes |
+| `SecretNonDisclosure` | provoke each refusal and scan rendered `Display` and `Debug` output, across several encodings, for the private key bytes |
 
-A check is recorded only when its attempt produced the expected outcome. Two of
-these deserve their reasoning stated:
+A check is recorded only when its attempt produced the expected outcome. Three
+of these deserve their reasoning stated:
 
 **Rotation compares public keys.** Two directories named `v1` and `v2` holding
 the same key material would satisfy a rotation check that only counted
@@ -141,6 +141,22 @@ will no longer hand out is nevertheless a *different* key from the active one.
 **Non-disclosure is scanned, not asserted.** The private key bytes are searched
 for in the rendered error text, because "the adapter does not leak the key" is
 a claim about formatting code that no type prevents from regressing.
+
+**The scan searches for the secret in every shape safe Rust can realistically
+render it into, not just its own bytes in a row.** `discloses(rendered: &str,
+secret: &[u8]) -> bool` checks raw contiguous bytes, lowercase hex, uppercase
+hex, the decimal list a derived `Debug` on a byte slice renders (`{:?}` and
+`{:#?}` both, via one whitespace-normalised comparison), and base64. Raw bytes
+alone would be close to useless here: the key material is PKCS#8 DER, safe
+Rust's `format!`/`Display`/`Debug` can only produce valid UTF-8, and DER
+essentially never is — so the single most likely accidental leak, a derived
+`Debug` on the key bytes, could never match a raw-bytes-only scan, no matter
+how carefully everything else in the adapter behaved. Each shape is still
+searched for as the *whole* secret; a rendering that leaks only a fragment of
+it — the seed inside the PKCS#8 key, say — is not caught unless that fragment
+happens to appear whole in one of these five shapes. Passing this check means
+the secret was not rendered in full through a known encoding; it does not
+mean no byte of it ever reached output.
 
 Every check contributes an evidence reference naming what was exercised, since
 `CryptoAdapterQualificationService` refuses evidence with no references.
@@ -220,3 +236,12 @@ the three-outcome proof already used for runtime evidence.
   the manifest's `crypto_providers`, and nothing compares the qualified key
   against the key that actually signed the manifest and the bundle. This is a
   real gap, not a footnote.
+- `SecretNonDisclosure` proves the secret was not rendered whole through a
+  known encoding — raw bytes, hex in either case, a derived `Debug`'s decimal
+  list, or base64 — not that no byte of it ever reached output. Each shape is
+  matched as the *whole* secret, contiguous; a rendering that leaks only a
+  fragment of it, such as the 32-byte seed inside a PKCS#8 key rather than the
+  key in full, is not caught unless that fragment happens to appear whole in
+  one of these shapes. This is a real limit, not a rounding error: it is the
+  gap between "this scan did not find the secret" and "the secret cannot
+  appear."
