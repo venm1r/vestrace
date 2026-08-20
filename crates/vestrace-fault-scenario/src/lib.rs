@@ -7,7 +7,9 @@
 //! which is why a test forbids it by name.
 
 pub mod adapter_stub;
+pub mod child;
 pub mod settings;
 
 pub use adapter_stub::AdapterStub;
+pub use child::{ChildStage, aborts_at};
 pub use settings::ScenarioSettings;

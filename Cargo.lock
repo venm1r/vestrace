@@ -2568,6 +2568,7 @@ name = "vestrace-fault-scenario"
 version = "0.0.0"
 dependencies = [
  "reqwest",
+ "secrecy",
  "serde_json",
  "tokio",
  "vestrace-application",
