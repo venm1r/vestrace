@@ -155,10 +155,13 @@ async fn prepare_fixture(settings: &ScenarioSettings) -> Result<PgStore, String>
 /// boundary is platform-shaped: a signal on Unix, a large status on Windows,
 /// and different again under a runtime that reports the signal its own way.
 /// Pinning a number would make this scenario fail on a host rather than on a
-/// defect. What must hold is weaker and is the thing that actually matters: the
-/// child did not finish. A child that exited successfully completed its
-/// lifecycle without crashing, and an observation taken from it would describe a
-/// run that never faulted — so that is refused rather than reported.
+/// defect. What is asserted instead is portable and is the thing that actually
+/// matters: the child did not finish, *and* it got as far as the point it was
+/// asked about. A child that exited successfully completed its lifecycle
+/// without crashing, and an observation taken from it would describe a run that
+/// never faulted. A child that aborted before its point describes where it
+/// broke rather than where it was told to crash, which is worse: it wears a
+/// system finding's clothes. Both are refused rather than reported.
 async fn run_the_child(
     settings: &ScenarioSettings,
     stub: &AdapterStub,
@@ -201,6 +204,14 @@ async fn run_the_child(
             stderr.trim()
         ));
     }
+
+    // A crash is necessary but not sufficient. A child that failed to connect,
+    // failed to authorize or failed to dispatch also aborts, also announces an
+    // effect id, and leaves a database the parent would happily read — filing
+    // "it never got there" under the fault point it never got to. The child says
+    // which stage it finished and this refuses anything else, so a run that
+    // stopped short is exit 1 with nothing on stdout rather than an observation.
+    child::confirm_reached_point(&stderr, settings.point())?;
 
     effect_id_from(&stderr)
 }
@@ -247,18 +258,36 @@ async fn reconcile(
 /// Outcome delivery, built the way the worker builds it.
 ///
 /// A settled outcome that nothing delivered stays owed, and the report says so
-/// by leaving the debt where it is. Nothing here inspects the report: what it
-/// counted is the parent's knowledge, and the observation is read out of the
-/// database afterwards.
+/// by leaving the debt where it is.
+///
+/// # Why the counts are printed
+///
+/// Point 5's `reconciliation_started: true` and `receipt_persisted: true` are
+/// its only two agreements with the suite, and they exist *because delivery
+/// deferred*: the child's `execution_ref` names a run with no event stream, so
+/// the debt stays owed, `notified_at` stays NULL, and `observe`'s debt query can
+/// still see the reconciliation. A pass that delivered instead would pay the
+/// debt before the parent looked and flip that field to `false` — the same
+/// observation, a different world. This report is the only artefact that says
+/// which of the two happened, so it goes to stderr on every run rather than
+/// living in a document's prose.
+///
+/// It goes to **stderr**, and no field of the observation is derived from it.
+/// What the parent counted is the parent's knowledge; the observation is still
+/// read out of the database afterwards.
 async fn deliver_outcomes(store: &PgStore, context: &RequestContext) -> Result<(), String> {
     let delivery = Arc::new(EffectOutcomeDeliveryService::new(
         Arc::new(PgExternalEffectRepository::new(store.clone())),
         Arc::new(PgRunEventStore::new(store.clone())),
         Arc::new(PgRunRecoveryStore::new(store.clone())),
     ));
-    deliver_effect_outcomes(&delivery, context)
+    let report = deliver_effect_outcomes(&delivery, context)
         .await
         .map_err(|error| format!("the settled outcomes could not be delivered: {error}"))?;
+    eprintln!(
+        "vestrace-fault-scenario: outcome delivery: delivered={} deferred={} unattributable={}",
+        report.delivered, report.deferred, report.unattributable
+    );
     Ok(())
 }
 

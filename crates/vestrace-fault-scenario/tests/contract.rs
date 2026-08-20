@@ -22,7 +22,7 @@ fn any_isolation_but_ephemeral_is_refused() {
     std::fs::write(&url_file, "postgres://u:p@127.0.0.1:5432/db").unwrap();
     let env = env_of(&[
         ("VESTRACE_FAULT_POINT", "after_intent_persistence"),
-        ("VESTRACE_FAULT_ISOLATION", "designated-non-production"),
+        ("VESTRACE_FAULT_ISOLATION", "designated_non_production"),
     ]);
 
     let error = settings_from(&["--database-url-file", url_file.to_str().unwrap()], &env)
@@ -140,6 +140,23 @@ fn the_crate_never_constructs_the_expected_observation() {
     assert!(
         offenders.is_empty(),
         "an observation must be found, not stated; offenders: {offenders:?}"
+    );
+}
+
+/// `confirm_reached_point` is unit-tested in `tests/child_points.rs`, but a
+/// check nothing calls refuses nothing. The parent is the only caller that
+/// matters and there is exactly one place it can go — between the child exiting
+/// and the parent reading the database — so this asserts it is still there.
+#[test]
+fn the_parent_admits_only_a_child_that_reached_its_point() {
+    let main = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+    )
+    .unwrap();
+    assert!(
+        main.contains("confirm_reached_point"),
+        "the parent must refuse a child that stopped short of its fault point, or every \
+         setup failure becomes an observation of the point it never reached"
     );
 }
 

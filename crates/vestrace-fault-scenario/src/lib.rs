@@ -13,7 +13,7 @@ pub mod report;
 pub mod settings;
 
 pub use adapter_stub::AdapterStub;
-pub use child::{ChildStage, aborts_at};
+pub use child::{ChildStage, aborts_at, completion_marker, confirm_reached_point};
 pub use observe::observe;
 pub use report::render;
 pub use settings::ScenarioSettings;

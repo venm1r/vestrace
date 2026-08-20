@@ -76,6 +76,54 @@ pub const SCENARIO_PRINCIPAL_ID: &str = "01900000-0000-7000-8000-0000000fa002";
 /// still read back out of the database or counted by the stub.
 pub const EFFECT_ID_MARKER: &str = "vestrace-fault-scenario: effect_id=";
 
+/// The prefix of the line a child writes when it stopped short of its point.
+///
+/// A setup failure and a reached fault point both end in `abort()`, so the
+/// process status cannot tell them apart. This line and
+/// [`completion_marker`] are what can, and the parent requires the latter
+/// before it will accept any reading at all.
+pub const SETUP_FAILURE_MARKER: &str =
+    "vestrace-fault-scenario: child could not reach its fault point: ";
+
+/// The line the child writes once it has finished the stage its point names.
+///
+/// The parent must see exactly this before it treats anything in the database
+/// as an observation of that point. Its absence means the child died somewhere
+/// the experiment did not choose, and a reading taken then would describe where
+/// the child broke rather than where it was told to crash.
+pub fn completion_marker(stage: ChildStage) -> String {
+    format!("completed {stage:?}, aborting")
+}
+
+/// Whether the child's stderr says it reached the point that was asked for.
+///
+/// This is the parent's admission check, not a field of the observation: it
+/// establishes that there *is* an observation to take, and nothing it reads
+/// becomes part of one. The stage is required to be the requested point's own
+/// stage rather than merely some stage, so a child that completed the wrong one
+/// is refused as loudly as a child that completed none.
+///
+/// The two failures this closes are the same failure. A child that could not
+/// dispatch and a child that dispatched and died both leave an aborted process
+/// and an announced effect id; without this the parent would read the first
+/// one's database and file the result under the second one's fault point. Point
+/// 5's precondition guard is the sharpest case — it refuses *after*
+/// `insert_reconciliation` has already committed, so its rows are
+/// byte-identical to a successful point-5 run, and the completion line is the
+/// only thing left that differs.
+pub fn confirm_reached_point(stderr: &str, point: EffectFaultPoint) -> Result<(), String> {
+    let stage = aborts_at(point);
+    if stderr.contains(&completion_marker(stage)) {
+        return Ok(());
+    }
+    Err(format!(
+        "the scenario child never reported completing {stage:?}, so it stopped somewhere \
+         other than the fault point it was asked for and there is no observation of that \
+         point to take; its stderr was: {}",
+        stderr.trim()
+    ))
+}
+
 /// The adapter this scenario configures, named the way a deployment would name
 /// one of its own.
 const SCENARIO_ADAPTER: &str = "fault-scenario-webhook";
@@ -141,14 +189,14 @@ pub async fn run_child(settings: &ScenarioSettings, dispatch_url: &str) -> ! {
             // A setup failure is not a fault observation, and saying so on
             // stderr is the only way the parent can tell the two apart: it sees
             // an aborted process either way.
-            eprintln!("vestrace-fault-scenario: child could not reach its fault point: {error}");
+            eprintln!("{SETUP_FAILURE_MARKER}{error}");
             std::process::abort()
         }
     }
 }
 
 fn abort_after(stage: ChildStage) -> ! {
-    eprintln!("vestrace-fault-scenario: completed {stage:?}, aborting");
+    eprintln!("vestrace-fault-scenario: {}", completion_marker(stage));
     std::process::abort()
 }
 
@@ -156,6 +204,29 @@ fn abort_after(stage: ChildStage) -> ! {
 ///
 /// Returns the stage it completed and lets the caller abort, so every fallible
 /// step can use `?` and there is exactly one `abort()` on the success path.
+///
+/// # What no test proves about the `match stage` below
+///
+/// The design's §7 asks for a per-point test "driven by a fake service set
+/// whose calls are recorded, proving the abort is where the table says". No
+/// such test exists. `tests/child_points.rs` pins `aborts_at`, which is the
+/// point-to-stage table, and `confirm_reached_point`, which is the parent's
+/// admission check — neither observes a single call this function makes.
+///
+/// So the unproven property is precisely the one a drift would live in: that
+/// each arm below issues the call sequence its stage names and stops there.
+/// An arm that gained a call, lost one, or reordered two would move the abort
+/// site by a stage while every test in this crate still passed, and the
+/// resulting observation would be filed under a fault point the process never
+/// crashed at.
+///
+/// It is unproven because proving it needs a recording double for
+/// `SharedExternalEffectRepository`, `ExternalEffectService`,
+/// `PerformExternalEffectService` and `ExternalEffectAdapter` at once, and
+/// standing those up is a larger change than the wave that wrote this note
+/// could carry honestly. Verified by reading in the meantime, which is weaker
+/// than a test and is recorded as such here and in the delta document's
+/// limitations rather than left to look covered.
 async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildStage, String> {
     let stage = aborts_at(settings.point());
 
@@ -258,6 +329,17 @@ async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildS
             // anything: an outcome that is settled and *not* owed is one the
             // run has already been told about, which is the state after the
             // commit rather than before it.
+            //
+            // This guard refuses *after* `insert_reconciliation` above has
+            // already committed, so the rows it leaves behind are identical to
+            // a successful point-5 run and no reading of the database can tell
+            // the two apart. What tells them apart is upstream of the database:
+            // the `Err` returned here takes the `SETUP_FAILURE_MARKER` path in
+            // `run_child`, no completion line is ever written, and
+            // `confirm_reached_point` refuses the run before the parent reads
+            // anything. Without that check this refusal would be silent —
+            // which is the failure it was added to prevent, reproduced by the
+            // guard itself.
             let owed = effects
                 .find_undelivered_outcomes(&context, 32)
                 .await

@@ -8,7 +8,7 @@ profile, makes no release claim, and its headline result is a **failing** suite.
 
 ```text
 fault suite (real ephemeral deployment): FAILED — 4 failures across 5 points, 1 point agrees
-vestrace-fault-scenario suite:            27 passed, 0 failed
+vestrace-fault-scenario suite:            33 passed, 0 failed
 tests/effect_fault_scenario_e2e.rs:       1 test, #[ignore] by default, fails when run
 release gate:                             still cannot pass — 3 evidence sources with no producer
 conformance gate:                         199 passed (190 executed, 8 attested, 1 build-verified), 0 failed, 0 skipped — untouched
@@ -68,6 +68,18 @@ is; an orderly exit would test a shutdown path nobody is asking about.
 | `AfterDispatchBeforeReceipt` | after `dispatch` returns, before `insert_receipt` | **`Unknown`**, reconciliation started, no retry |
 | `AfterReceiptBeforeOutcomeConfirmation` | after `insert_receipt`, before the reconciliation settles | receipt persists, `Reconciling` |
 | `AfterOutcomeBeforeRunCommit` | after the outcome settles, before `mark_outcome_delivered` | outcome survives and is still undelivered, `Reconciling` |
+
+A crash is necessary but not sufficient, and the parent checks both halves. The
+child prints `completed {stage}, aborting` once it has finished the stage its
+point names, and the parent refuses to read anything unless that exact line is
+present: a child that failed to connect, failed to authorize or failed to
+dispatch also aborts and also announces its effect id, and the database it
+leaves behind reads as an *earlier* lifecycle stage. Accepting one would report
+"it never got there" as a finding about the point it never got to — a failed
+dispatch at point 3 rendering as "after dispatch before receipt must become
+UNKNOWN", which is a harness artefact wearing a system finding's clothes and is
+the one confusion this program must never produce. Absence of the line is exit 1
+with nothing on stdout: a failed invocation, not an observation.
 
 Points 4 and 5 sit **outside** `PerformExternalEffectService::perform` — point 5
 inside `ExternalEffectOutcomeDeliveryService`, between
@@ -170,18 +182,34 @@ collapses every status that is not `Acknowledged` or `Failed` to the string
 to produce it is to state it — which is the one thing this work is forbidden to
 do. Points 4 and 5 fail on exactly this.
 
-**2. The recovery sweep is a no-op at all five fault points.** This is arguably
-the larger finding, and it was not something the slice was sent to look for.
+**2. The recovery sweep is a no-op at all five fault points, and at points 1–3
+it is structurally so.** This is arguably the larger finding, and it was not
+something the slice was sent to look for.
 `find_reconciliation_candidates` filters `r.outcome_status = 'unknown'`, and
-**no fault point leaves an unknown receipt**. Points 1–3 leave no receipt row at
-all — at the dispatch point the crash lands before `insert_receipt`, so there is
-nothing for the query to select. Points 4 and 5 leave an *acknowledged* one,
-because the stub answers 200 and `HttpWebhookEffectAdapter` maps 2xx to
-acknowledged. The sweep is therefore structurally unable to see a
-dispatched-but-unreceipted effect, which is **precisely the crash the
-external-effects design exists to survive**. Point 3's
-`reconciliation_started: false` is the same fact from the other side: with no
-receipt row nothing enrols the effect, and it is invisible to recovery forever.
+**no fault point leaves an unknown receipt** — but for two different reasons,
+which are worth keeping apart because only one of them is a property of the
+system.
+
+- **Points 1–3 leave no receipt row at all.** At the dispatch point the crash
+  lands before `insert_receipt`, so there is nothing for the query to select.
+  The query's `JOIN external_effect_receipts r ON r.effect_id = i.id`
+  (`crates/vestrace-infrastructure/src/postgres/external_effect_repository.rs:524`)
+  drops every effect without a receipt before any status filter runs, so no
+  value of `outcome_status` and no cutoff could bring these back. **This is
+  structural**: the sweep cannot see a dispatched-but-unreceipted effect at all,
+  which is *precisely the crash the external-effects design exists to survive*.
+  Point 3's `reconciliation_started: false` is the same fact from the other
+  side — with no receipt row nothing enrols the effect, and it is invisible to
+  recovery forever.
+- **Points 4 and 5 leave an *acknowledged* receipt**, because the stub answers
+  200 and `HttpWebhookEffectAdapter` maps 2xx to acknowledged. These are
+  excluded by the status filter, not by the join — which is the sweep working
+  as designed on a stub that reported success. A stub that answered 5xx or timed
+  out would produce `Unknown` and these two would be swept. **This is a
+  consequence of the fixture, not a structural gap**, and it is scoped that way
+  here so the structural claim above is not diluted by a case that does not
+  support it.
+
 Recorded, not fixed — the repair is a change to the recovery query and its port,
 and this slice's job is to find.
 
@@ -200,7 +228,36 @@ table in any migration — so `Authorized` is not a state any reader can
 distinguish from `Prepared`. Both points read back `prepared`, and point 2's
 failure is that difference and nothing else.
 
-**5. Handing this decision to the release gate would change one word.**
+**5. The system persists no lifecycle status for an effect at all.** This is the
+common root of findings 1 and 4, and the branch stopped one step short of naming
+it. `external_effect_intents` (`migrations/0127_external_effect_reconciliation_records.sql`)
+has columns `id`, `workspace_id`, `adapter`, `payload`, `created_at` — and no
+status column. No later migration adds one. There is no
+`external_effect_status` table, no state machine row, nothing that records where
+in its lifecycle an effect currently is. A status exists only on a *receipt*,
+which is written once at the end of a dispatch, and on a *reconciliation*, which
+is written only after recovery settles something.
+
+So `observe` does not read the status; it **infers** it, from the presence of a
+receipt and, when there is none, from the stub's dispatch count. That inference
+is honest and it is documented as such at `src/observe.rs:97-118`, but it is an
+inference, and its two consequences are findings 1 and 4:
+
+- there is nothing to hold `Reconciling`, which is a *transitional* state and
+  therefore exactly the kind of state only a status field can carry (finding 1);
+- and there is nothing to hold `Authorized`, so points 1 and 2 are one state
+  (finding 4).
+
+The design's own §6 line — "`status` — read back from the effect record" — is
+therefore **unachievable as written**. There is no effect record carrying a
+status to read back. Every other bullet in §6 names a real query
+(`find_receipt`, `find_reconciliation`, the candidate query, the stub's count);
+this one names a field that does not exist. The scenario satisfied the spirit of
+it by reading the strongest persisted evidence available and reporting the
+weaker claim where evidence ran out, and the gap between that and what §6 asked
+for is the finding.
+
+**6. Handing this decision to the release gate would change one word.**
 `ExactEnvironmentReleaseFailure::FaultSuiteMissing` becomes `FaultSuiteFailed` —
 the same distinction the previous slice drew for runtime evidence between
 "nobody looked" and "we looked and it did not pass". Both are failures; only one
@@ -244,6 +301,42 @@ before: release approval, recovery qualification and capability restoration
 remain without producers, so a passing fault suite would not be sufficient even
 if there were one.
 
+**The abort site is verified by reading, not by a test.** The design's §7 asks
+for a per-point test "driven by a fake service set whose calls are recorded,
+proving the abort is where the table says", and no such test exists.
+`tests/child_points.rs` pins `aborts_at` — the point-to-stage table — and the
+parent's admission check, but neither observes a single call the child makes.
+The unproven property is the `ChildStage` → call-sequence mapping in the `match
+stage` at `crates/vestrace-fault-scenario/src/child.rs`, which is precisely
+where a one-stage drift would live: an arm that gained a call, lost one, or
+reordered two would move the abort site while every test in the crate still
+passed. It was verified by reading and found correct. Proving it needs recording
+doubles for the repository, both effect services and the adapter at once, which
+is a larger change than this work carried; the gap is recorded here and in a doc
+comment on the function rather than left to look covered by a test that pins
+something else.
+
+**`observe`'s candidate query uses a wider cutoff than the sweep's.**
+`sweep_candidate` at `crates/vestrace-fault-scenario/src/observe.rs:229` passes
+`now()` to `find_reconciliation_candidates`, where
+`ExternalEffectRecoveryService::sweep` passes `at - RECONCILIATION_RETRY_AFTER`
+(`crates/vestrace-application/src/effect_recovery.rs:215`). The cutoff only
+filters effects that *already* have a reconciliation whose last attempt settled
+nothing, so observe's candidate set strictly **contains** the sweep's: it can
+report an effect as enrolled that the sweep would not yet re-ask about. This is
+inert today for the reason finding 2 gives — no fault point leaves an unknown
+receipt, so the candidate set is empty at all five points regardless of cutoff —
+and it goes live the day the recovery query is fixed. Deliberate, since the
+widest honest set is the right one for a reading that reports enrolment rather
+than performing a sweep, but it is a difference between what the parent asks and
+what the deployment asks, and it is written down as one.
+
+**Delivery counts are now printed.** `deliver_outcomes` prints
+`delivered/deferred/unattributable` to stderr on every run, because point 5's
+two agreements with the suite depend on delivery having *deferred* (see the
+order-dependence note below) and that report is the only artefact that says
+which happened.
+
 **Deferred minors, recorded rather than silently carried.** `crates/vestrace-cli`
 has a shared `redact_url` helper that the scenario's redacted `Debug` does not
 reuse. `AdapterStub::shutdown` aborts the accept task but not in-flight
@@ -252,9 +345,7 @@ connection handlers, so "no task leaks" is broader than the code guarantees, and
 rather than treating it as malformed. The child duplicates the delivery batch
 size `32` instead of referencing the private `DELIVERY_BATCH` constant, and its
 intent uses `RiskCategory::Medium` copied from the fixture where the real HTTP
-call site uses `High`. `deliver_outcomes` discards the delivery report, so a
-storage partial failure that did not surface as an `ApplicationError` would be
-invisible. The stub's `effect_applied` is per-stub rather than per-effect, valid
+call site uses `High`. The stub's `effect_applied` is per-stub rather than per-effect, valid
 only because one stub drives one effect per invocation.
 
 **Point 5's reading is order-dependent and known fragile.** `observe` can see
