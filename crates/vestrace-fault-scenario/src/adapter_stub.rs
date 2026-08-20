@@ -7,11 +7,29 @@
 //! at any of the five fault points; this stub cannot, since nothing in the
 //! scenario's fault injection touches it.
 //!
-//! The parser is deliberately not a web framework: two fixed request shapes
-//! (`POST /dispatch`, `GET /effects`) do not justify the dependency surface,
-//! version churn, and startup cost a framework brings, and a hand-rolled
-//! reader over `\r\n\r\n` is small enough to read in one sitting and audit
-//! for correctness.
+//! The parser is deliberately not a web framework: three fixed request shapes
+//! (`POST /dispatch`, `GET /effects`, `GET /effects/{id}`) do not justify the
+//! dependency surface, version churn, and startup cost a framework brings, and
+//! a hand-rolled reader over `\r\n\r\n` is small enough to read in one sitting
+//! and audit for correctness.
+//!
+//! # Two read-back routes, on purpose
+//!
+//! `GET /effects` answers `{"dispatches":N}` — the stub's own count, which is
+//! the only truthful evidence anything has for `retry_attempted`, and which the
+//! child reads directly.
+//!
+//! `GET /effects/{id}` answers the vocabulary that
+//! `HttpExternalEffectReadBackAdapter` parses: `effect_applied`, `state_ref`,
+//! `evidence_refs`, `evidence_strength`, and nothing else, because that reader
+//! is `deny_unknown_fields`. The parent runs the deployment's own
+//! `ExternalEffectRecoveryService` against this stub, and a stub that could not
+//! answer the adapter the deployment actually ships would leave an effect
+//! unresolvable for a reason belonging to the harness rather than to the system
+//! under test — the observation would then be about the harness.
+//!
+//! The count is not re-derived for the second route. Both routes read the one
+//! counter, which stays exactly what it was.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -41,7 +59,7 @@ impl AdapterStub {
             .map_err(|error| format!("failed to read adapter stub local address: {error}"))?;
 
         let dispatches = Arc::new(AtomicUsize::new(0));
-        let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&dispatches)));
+        let accept_loop = tokio::spawn(accept_loop(listener, addr, Arc::clone(&dispatches)));
 
         Ok(Self {
             addr,
@@ -75,32 +93,87 @@ impl AdapterStub {
     }
 }
 
-async fn accept_loop(listener: TcpListener, dispatches: Arc<AtomicUsize>) {
+async fn accept_loop(
+    listener: TcpListener,
+    addr: std::net::SocketAddr,
+    dispatches: Arc<AtomicUsize>,
+) {
     loop {
         let Ok((socket, _)) = listener.accept().await else {
             return;
         };
         let dispatches = Arc::clone(&dispatches);
-        tokio::spawn(handle_connection(socket, dispatches));
+        tokio::spawn(handle_connection(socket, addr, dispatches));
     }
 }
 
-async fn handle_connection(mut socket: tokio::net::TcpStream, dispatches: Arc<AtomicUsize>) {
+/// The method and path of a request line, or `None` if it is not shaped like
+/// one.
+///
+/// Split rather than prefix-matched: `starts_with("GET /effects")` cannot tell
+/// `/effects` from `/effects/{id}`, and the two routes answer in different
+/// vocabularies.
+fn request_target(request_line: &str) -> Option<(&str, &str)> {
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?;
+    let path = parts.next()?;
+    Some((method, path))
+}
+
+/// What the stub is willing to say about one effect, in the vocabulary
+/// `HttpExternalEffectReadBackAdapter` parses.
+///
+/// `effect_applied` is the stub's own count and nothing else: a dispatch it
+/// counted is one that arrived, and one it did not count is one that did not.
+/// The count is per-stub rather than per-effect, which is exact here because an
+/// invocation starts a stub of its own and drives a single effect through it —
+/// and because a per-effect ledger would mean the stub deciding which effect a
+/// request belonged to instead of reporting what reached it.
+///
+/// `external_resource_read_back` is the honest evidence strength: the far side
+/// was asked directly and answered about the resource, which is what the name
+/// means. Claiming a stronger one — a provider idempotency lookup, say — would
+/// put a guarantee into the reconciliation that no part of this harness
+/// provides.
+fn read_back_body(addr: std::net::SocketAddr, effect_id: &str, dispatches: usize) -> String {
+    serde_json::json!({
+        "effect_applied": dispatches > 0,
+        "state_ref": format!("http://{addr}/effects/{effect_id}#dispatches={dispatches}"),
+        "evidence_refs": [format!("effect://{effect_id}/read-back")],
+        "evidence_strength": "external_resource_read_back",
+    })
+    .to_string()
+}
+
+async fn handle_connection(
+    mut socket: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    dispatches: Arc<AtomicUsize>,
+) {
     let Some(request_line) = read_request_line(&mut socket).await else {
         return;
     };
 
-    let response = if request_line.starts_with("POST /dispatch") {
-        let count = dispatches.fetch_add(1, Ordering::SeqCst) + 1;
-        json_response(
-            200,
-            &format!("{{\"acknowledged\":true,\"dispatches\":{count}}}"),
-        )
-    } else if request_line.starts_with("GET /effects") {
-        let count = dispatches.load(Ordering::SeqCst);
-        json_response(200, &format!("{{\"dispatches\":{count}}}"))
-    } else {
-        json_response(404, "{\"error\":\"unknown route\"}")
+    let response = match request_target(&request_line) {
+        Some(("POST", "/dispatch")) => {
+            let count = dispatches.fetch_add(1, Ordering::SeqCst) + 1;
+            json_response(
+                200,
+                &format!("{{\"acknowledged\":true,\"dispatches\":{count}}}"),
+            )
+        }
+        Some(("GET", "/effects")) => {
+            let count = dispatches.load(Ordering::SeqCst);
+            json_response(200, &format!("{{\"dispatches\":{count}}}"))
+        }
+        Some(("GET", path)) => match path.strip_prefix("/effects/") {
+            Some(effect_id) if !effect_id.is_empty() => {
+                let count = dispatches.load(Ordering::SeqCst);
+                json_response(200, &read_back_body(addr, effect_id, count))
+            }
+            _ => json_response(404, "{\"error\":\"unknown route\"}"),
+        },
+        _ => json_response(404, "{\"error\":\"unknown route\"}"),
     };
 
     let _ = socket.write_all(response.as_bytes()).await;

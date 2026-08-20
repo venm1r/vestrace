@@ -2569,6 +2569,7 @@ version = "0.0.0"
 dependencies = [
  "reqwest",
  "secrecy",
+ "serde",
  "serde_json",
  "tokio",
  "vestrace-application",
