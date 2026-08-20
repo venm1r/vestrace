@@ -7,6 +7,19 @@
 //! and making these tests agree with it would be the same as writing the
 //! expected answer into the observation.
 //!
+//! # Running these
+//!
+//! ```text
+//! DATABASE_URL=postgres://... cargo test -p vestrace-fault-scenario --test observation
+//! ```
+//!
+//! Without `DATABASE_URL` every database-backed case returns early and prints
+//! why — but libtest captures stdout for passing tests, so the notices are only
+//! visible with `-- --nocapture`, and a fully skipped run otherwise reports the
+//! same `passed` summary line as a fully exercised one. A caller that must not
+//! be allowed to skip sets `VESTRACE_REQUIRE_DATABASE=1`, which turns the
+//! absence into a failure; see `a_run_that_requires_a_database_cannot_skip_instead`.
+//!
 //! # Why this does not use `#[sqlx::test]`
 //!
 //! Every other database-backed test in this workspace does, and gets a fresh
@@ -22,7 +35,7 @@ use vestrace_application::{ExternalEffectRepository, RequestContext};
 use vestrace_domain::external_effects::{
     EffectAuthorization, EffectFaultPoint, EffectLifecycleStatus, EffectPrecondition,
     EvidenceStrength, ExternalEffectAdapter, ExternalEffectIntent, ExternalEffectReceipt,
-    ObservedEffectState, reconcile_effect,
+    ObservedEffectState, ReconciliationOutcome, reconcile_effect,
 };
 use vestrace_domain::id::AgentRunId;
 use vestrace_domain::{ExternalEffectId, PrincipalId, RiskCategory, WorkspaceId, now};
@@ -37,6 +50,13 @@ use vestrace_infrastructure::{
 const ANY_POINT: EffectFaultPoint = EffectFaultPoint::AfterIntentPersistence;
 
 const ADAPTER_NAME: &str = "observation-fixture-webhook";
+
+/// The opt-in that turns a skip into a failure.
+///
+/// Named the way the scenario's own three variables are — one underscore,
+/// because this selects a behaviour of the harness rather than setting a value
+/// in the `VESTRACE_SECTION__FIELD` configuration tree.
+const REQUIRE_DATABASE: &str = "VESTRACE_REQUIRE_DATABASE";
 
 /// Everything a case needs: a live database, a live stub, and a workspace no
 /// other case writes into.
@@ -418,4 +438,184 @@ async fn an_acknowledged_receipt_with_no_reconciliation_is_unreachable_by_effect
     assert_eq!(observed.status, EffectLifecycleStatus::Unknown);
 
     fixture.shutdown().await;
+}
+
+/// A reconciliation that settled nothing is invisible to the query this
+/// observation reaches reconciliations through, and the observation reports
+/// that it read none rather than claiming a reading it did not make.
+///
+/// `find_undelivered_outcomes` selects `outcome = ANY(settled_names)`, and
+/// `Inconclusive` — the provider answered and could not tell us — is not
+/// settled. The candidate route cannot cover for it either, because that query
+/// selects `outcome_status = 'unknown'` and this receipt is acknowledged.
+///
+/// No fault point produces this shape today: point 5's read-back answers
+/// definitely, so its reconciliation is `Confirmed`. A read-back that came back
+/// inconclusive would land here instead, and this case exists so that the day
+/// it does is a failing test rather than a quiet one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unsettled_reconciliation_is_invisible_to_the_debt_query() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let effects = fixture.effects();
+    let intent = intent_for(&fixture);
+    effects
+        .insert_intent(&fixture.context, &intent)
+        .await
+        .expect("the fixture intent is recorded");
+    let receipt = acknowledged_receipt(&fixture, &intent);
+    effects
+        .insert_receipt(&fixture.context, &receipt)
+        .await
+        .expect("the fixture receipt is recorded");
+    let reconciliation = reconcile_effect(
+        &intent,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ExternalResourceReadBack,
+            // The far side answered and would not say whether it applied.
+            None,
+            format!("{}#dispatches=unknown", fixture.stub.read_back_url()),
+            vec![format!("effect://{}/read-back", intent.id())],
+        )],
+        now(),
+    )
+    .expect("the fixture reconciliation is valid");
+    assert_eq!(
+        reconciliation.outcome(),
+        ReconciliationOutcome::Inconclusive,
+        "an observation that does not say whether the effect applied settles nothing"
+    );
+    effects
+        .insert_reconciliation(&fixture.context, &reconciliation)
+        .await
+        .expect("the fixture reconciliation is recorded");
+
+    // The row is there: read by its own id it comes straight back.
+    assert!(
+        effects
+            .find_reconciliation(&fixture.context, reconciliation.id())
+            .await
+            .expect("the reconciliation reads back by its own id")
+            .is_some()
+    );
+
+    let observed = observe(&fixture.store, &fixture.context, intent.id(), ANY_POINT, 1)
+        .await
+        .expect("a persisted intent is observable");
+
+    assert!(
+        !observed.reconciliation_started,
+        "a debt query does not reach an unsettled reconciliation, and the observation must not \
+         claim a reading it did not make"
+    );
+    assert!(
+        !observed.receipt_persisted,
+        "the receipt was reachable only through that reconciliation"
+    );
+
+    fixture.shutdown().await;
+}
+
+/// A reconciliation whose run has already been told is invisible for the same
+/// reason: `find_undelivered_outcomes` selects `notified_at IS NULL`, and a
+/// paid debt is not owed.
+///
+/// This is the shape point 5 would take if anything marked the outcome
+/// delivered between the child's abort and the parent's read. The case asserts
+/// the observation before and after the marking, so what it pins is the effect
+/// of paying the debt and nothing else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_already_notified_reconciliation_is_invisible_to_the_debt_query() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let effects = fixture.effects();
+    let intent = intent_for(&fixture);
+    effects
+        .insert_intent(&fixture.context, &intent)
+        .await
+        .expect("the fixture intent is recorded");
+    let receipt = acknowledged_receipt(&fixture, &intent);
+    effects
+        .insert_receipt(&fixture.context, &receipt)
+        .await
+        .expect("the fixture receipt is recorded");
+    let reconciliation = reconcile_effect(
+        &intent,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ExternalResourceReadBack,
+            Some(true),
+            format!("{}#dispatches=1", fixture.stub.read_back_url()),
+            vec![format!("effect://{}/read-back", intent.id())],
+        )],
+        now(),
+    )
+    .expect("the fixture reconciliation is valid");
+    effects
+        .insert_reconciliation(&fixture.context, &reconciliation)
+        .await
+        .expect("the fixture reconciliation is recorded");
+
+    let before = observe(&fixture.store, &fixture.context, intent.id(), ANY_POINT, 1)
+        .await
+        .expect("a persisted intent is observable");
+    assert!(
+        before.reconciliation_started,
+        "a settled and undelivered outcome is the one shape the debt query does return"
+    );
+
+    effects
+        .mark_outcome_delivered(&fixture.context, reconciliation.id(), now())
+        .await
+        .expect("the outcome is marked delivered");
+
+    let observed = observe(&fixture.store, &fixture.context, intent.id(), ANY_POINT, 1)
+        .await
+        .expect("a persisted intent is observable");
+
+    assert!(
+        !observed.reconciliation_started,
+        "paying the debt removed the only route this observation had to the row, and nothing \
+         about the reconciliation itself changed"
+    );
+    assert!(
+        !observed.receipt_persisted,
+        "the receipt was reachable only through that reconciliation"
+    );
+
+    fixture.shutdown().await;
+}
+
+/// A run that was told to use a database may not report success having skipped.
+///
+/// Every database-backed case above returns early and prints why when there is
+/// nothing to run against, and libtest captures that print for a passing test —
+/// so a fully skipped run and a fully exercised one produce the same summary
+/// line. That is right for a developer without Postgres and useless as
+/// release-gate evidence.
+///
+/// Setting `VESTRACE_REQUIRE_DATABASE` says the caller expects a database, and
+/// this case fails when there is not one. It checks a live connection rather
+/// than the presence of `DATABASE_URL`, because a URL naming an unreachable
+/// server skips just as quietly as no URL at all.
+#[tokio::test]
+async fn a_run_that_requires_a_database_cannot_skip_instead() {
+    let demanded = match std::env::var(REQUIRE_DATABASE) {
+        Ok(value) => !matches!(value.trim(), "" | "0" | "false"),
+        Err(_) => false,
+    };
+    if !demanded {
+        return;
+    }
+
+    let fixture = fixture().await;
+    assert!(
+        fixture.is_some(),
+        "{REQUIRE_DATABASE} is set, so every case in this file must run against a real database; \
+         the notice printed above says which part was unavailable"
+    );
+    fixture.expect("the fixture is present").shutdown().await;
 }

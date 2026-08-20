@@ -122,9 +122,16 @@ fn status_of(
 /// `find_receipt` takes a receipt id, which nothing outside the dead process
 /// ever held, so the id has to come from another row first: a reconciliation
 /// names the receipt it is about, and a sweep candidate carries the receipt it
-/// was selected on. When neither exists the receipt is unreachable — which is
-/// not the same as absent, and is reported as "not read" rather than guessed
-/// at.
+/// was selected on. When neither route reaches it the receipt is unreachable —
+/// which is not the same as absent, and is reported as "not read" rather than
+/// guessed at.
+///
+/// The two routes are a fallback chain rather than alternatives. A
+/// reconciliation naming a receipt that `find_receipt` cannot return is not a
+/// state this schema should be able to reach — 0144 gives the reconciliation a
+/// composite foreign key onto `(id, workspace_id)` of the receipt — but if it
+/// ever were, discarding a candidate that is carrying the receipt in hand would
+/// throw away a reading for no reason.
 async fn receipt_of(
     effects: &PgExternalEffectRepository,
     context: &RequestContext,
@@ -132,10 +139,13 @@ async fn receipt_of(
     candidate: Option<&ExternalEffectRecoveryCandidate>,
 ) -> Result<Option<ExternalEffectReceipt>, String> {
     if let Some(reconciliation) = reconciliation {
-        return effects
+        let receipt = effects
             .find_receipt(context, reconciliation.receipt_id())
             .await
-            .map_err(|error| format!("the effect receipt could not be read: {error:?}"));
+            .map_err(|error| format!("the effect receipt could not be read: {error:?}"))?;
+        if receipt.is_some() {
+            return Ok(receipt);
+        }
     }
     Ok(candidate.map(|candidate| candidate.receipt().clone()))
 }
@@ -147,6 +157,34 @@ async fn receipt_of(
 /// knowing its id. Having found the id it is read again through
 /// `find_reconciliation`, which re-checks the row's indexed columns against its
 /// payload — a check the joined listing does not perform.
+///
+/// # What this route cannot see
+///
+/// `find_undelivered_outcomes` is a debt query, not a reconciliation query. Its
+/// predicate is `notified_at IS NULL AND outcome = ANY(settled_names)`, so two
+/// kinds of reconciliation row are invisible to it:
+///
+/// - an **unsettled** one — `Inconclusive`, the provider answered and could not
+///   tell us — which is a reconciliation that plainly ran; and
+/// - an **already notified** one, whose run has been told, which is a
+///   reconciliation that ran and finished.
+///
+/// The candidate route covers neither gap unless the receipt is `unknown`,
+/// because `find_reconciliation_candidates` selects on exactly that status. So
+/// an effect carrying an acknowledged receipt and either kind of row reads back
+/// as `reconciliation_started: false` with the row sitting in the table.
+///
+/// This is harmless for the five fault points as they stand: point 5 leaves a
+/// `Confirmed` reconciliation that nothing has marked delivered, which is
+/// precisely the one shape this query does return. It is written down because
+/// that is a coincidence of the scenario rather than a property of the code —
+/// a read-back that came back inconclusive, or a sweep that paid the debt
+/// before the parent looked, would turn the observation silently false.
+/// `tests/observation.rs` pins both shapes so the day it stops being harmless
+/// is a failing test rather than a quiet one.
+///
+/// Widening the query would be a change to the port, which is not this
+/// function's business.
 async fn owed_reconciliation(
     effects: &PgExternalEffectRepository,
     context: &RequestContext,
@@ -171,9 +209,17 @@ async fn owed_reconciliation(
 
 /// This effect's place in the reconciliation sweep, if it has one.
 ///
-/// The cutoff is the present moment because the question is what the sweep owns
-/// *now*: an effect whose last attempt settled nothing and is older than now is
-/// one the sweep would pick up on its next tick.
+/// Membership is decided by the receipt: `find_reconciliation_candidates`
+/// selects effects whose receipt is `unknown`, and an effect that has never
+/// been reconciled is in the set regardless of any cutoff.
+///
+/// `retry_unsettled_before` is narrower than it sounds. It is a re-ask cadence
+/// and it applies only to an effect that *already* has a reconciliation whose
+/// latest attempt settled nothing: that one comes back only once the attempt is
+/// older than the cutoff. Passing the present moment therefore asks for the
+/// widest honest set — everything with an unknown receipt, including a
+/// previously attempted one whose attempt is already in the past — rather than
+/// filtering anything the sweep would otherwise own.
 async fn sweep_candidate(
     effects: &PgExternalEffectRepository,
     context: &RequestContext,
