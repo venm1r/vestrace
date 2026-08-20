@@ -231,10 +231,11 @@ the three-outcome proof already used for runtime evidence.
   requires the qualified key to equal the `KeyReference` carried by the
   manifest's and the bundle's signatures, and reports `crypto_signer_mismatch`
   otherwise. This closed a gap this section previously recorded as open, in
-  which any well-formed store cleared the requirement for any manifest. What
-  stays open is narrower: an **unsigned** artifact offers nothing to bind to,
-  and the gate does not require signatures, so an unsigned release still
-  carries crypto evidence that floats free. The manifest's operator-declared
+  which any well-formed store cleared the requirement for any manifest. Crypto
+  evidence offered where no signer exists is refused as
+  `crypto_evidence_unbound` — the narrowest rule that closes the bypass, since
+  the roadmap requires signatures only where configured and an unsigned release
+  claiming no crypto evidence stays legitimate. The manifest's operator-declared
   `crypto_providers` field is not consulted — it is prose, while a signature is
   a machine fact.
 - `SecretNonDisclosure` proves the secret was not rendered whole through a

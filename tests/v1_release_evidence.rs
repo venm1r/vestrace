@@ -57,7 +57,26 @@ fn unavailable_exact_environment_evidence_cannot_pass_v1_gate() {
 }
 
 fn manifest() -> VestraceCapabilityManifest {
-    let manifest = VestraceCapabilityManifest::new(
+    let manifest = unsigned_manifest();
+    let signature = SignatureRecord::new(
+        manifest.unsigned_signing_digest().unwrap(),
+        "issuer://release",
+        signing_key(),
+        SignatureAlgorithm::Ed25519,
+        "manifest-signature",
+        now(),
+    )
+    .unwrap();
+    manifest.attach_signature(signature).unwrap()
+}
+
+/// The same release, unsigned.
+///
+/// The roadmap requires signed manifests *where configured*, so an unsigned
+/// release is legitimate and must stay so; what it cannot do is carry crypto
+/// evidence, which would then be bound to nothing.
+fn unsigned_manifest() -> VestraceCapabilityManifest {
+    VestraceCapabilityManifest::new(
         "manifest-v1",
         "vestrace",
         "1.0.0",
@@ -75,17 +94,7 @@ fn manifest() -> VestraceCapabilityManifest {
         Vec::<String>::new(),
         vec!["provider limitations are published"],
     )
-    .unwrap();
-    let signature = SignatureRecord::new(
-        manifest.unsigned_signing_digest().unwrap(),
-        "issuer://release",
-        signing_key(),
-        SignatureAlgorithm::Ed25519,
-        "manifest-signature",
-        now(),
-    )
-    .unwrap();
-    manifest.attach_signature(signature).unwrap()
+    .unwrap()
 }
 
 /// The key the fixture release is signed with.
@@ -459,5 +468,54 @@ fn a_release_signed_by_one_key_is_not_qualified_by_another() {
             .contains(&ExactEnvironmentReleaseFailure::CryptoSignerMismatch),
         "a custody qualification for a key that signed nothing must not clear the requirement: {:?}",
         decision.failures()
+    );
+}
+
+/// A custody qualification offered for a release nothing signed is a true
+/// statement about a key that signed nothing here.
+///
+/// The roadmap requires signed artifacts only *where configured*, so an
+/// unsigned release stays legitimate. What is refused is the combination:
+/// crypto evidence with no signer to bind it to.
+#[test]
+fn crypto_evidence_offered_for_an_unsigned_release_is_bound_to_nothing() {
+    let manifest = unsigned_manifest();
+    let bundle = bundle(&manifest);
+    let target =
+        ExactEnvironmentReleaseTarget::from_manifest(&manifest, QualificationProfile::Trusted)
+            .unwrap();
+
+    let decision =
+        V1ReleaseEvidenceService::evaluate(&target, &complete_evidence(&manifest, &bundle));
+
+    assert!(
+        decision
+            .failures()
+            .contains(&ExactEnvironmentReleaseFailure::CryptoEvidenceUnbound),
+        "crypto evidence with no signer to bind it to must be refused: {:?}",
+        decision.failures()
+    );
+}
+
+/// The guard on the rule above: an unsigned release that offers no crypto
+/// evidence must not be caught by it, or the gate would have quietly tightened
+/// a requirement the roadmap deliberately leaves to configuration.
+#[test]
+fn an_unsigned_release_without_crypto_evidence_is_not_caught_by_the_binding() {
+    let manifest = unsigned_manifest();
+    let target =
+        ExactEnvironmentReleaseTarget::from_manifest(&manifest, QualificationProfile::Trusted)
+            .unwrap();
+
+    let decision = V1ReleaseEvidenceService::evaluate(
+        &target,
+        &ExactEnvironmentReleaseEvidence::unavailable(),
+    );
+
+    assert!(
+        !decision
+            .failures()
+            .contains(&ExactEnvironmentReleaseFailure::CryptoEvidenceUnbound),
+        "an unsigned release that claims no crypto evidence must not be refused for the binding"
     );
 }

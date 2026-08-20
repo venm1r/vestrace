@@ -741,6 +741,7 @@ fn release_failure_name(failure: ExactEnvironmentReleaseFailure) -> &'static str
         }
         ExactEnvironmentReleaseFailure::CryptoQualificationFailed => "crypto_qualification_failed",
         ExactEnvironmentReleaseFailure::CryptoSignerMismatch => "crypto_signer_mismatch",
+        ExactEnvironmentReleaseFailure::CryptoEvidenceUnbound => "crypto_evidence_unbound",
         ExactEnvironmentReleaseFailure::RecoveryQualificationMissing => {
             "recovery_qualification_missing"
         }

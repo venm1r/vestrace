@@ -290,12 +290,15 @@ both.
 
 The signer is read from the artifact, never supplied beside it, because a
 caller able to name the signer could name the one whose custody it had
-qualified. What remains open is narrower and worth stating: when an artifact is
-**unsigned** there is nothing to bind to, and the gate does not require signed
-artifacts, so a release that is never signed still carries crypto evidence that
-floats free. That is a different gap — the gate not demanding signatures — and
-closing it under this heading would have been fixing one hole by describing
-another. Nothing compares the qualified key against the manifest's
+qualified. The bypass that binding alone would have left — sign nothing, and the evidence
+binds to nothing — is closed by the narrowest rule that closes it. The roadmap
+requires signed manifests and bundles *where configured* and marks the signed
+manifest profile-dependent, so an unsigned release stays legitimate and the
+gate does not demand signatures. What it refuses is the **combination**: crypto
+evidence offered where no signer exists, reported as `crypto_evidence_unbound`.
+An unsigned release that claims no crypto evidence is untouched, and a case
+guards exactly that, because a gate that quietly tightened a requirement the
+roadmap leaves to configuration would be legislating rather than checking. Nothing compares the qualified key against the manifest's
 operator-declared `crypto_providers` either; that field is prose, while the
 signature is a machine fact, and the binding uses the fact.
 

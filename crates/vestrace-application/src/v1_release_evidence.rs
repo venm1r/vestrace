@@ -192,6 +192,7 @@ pub enum ExactEnvironmentReleaseFailure {
     CryptoQualificationMissing,
     CryptoQualificationFailed,
     CryptoSignerMismatch,
+    CryptoEvidenceUnbound,
     RecoveryQualificationMissing,
     RecoveryQualificationFailed,
     FaultSuiteMissing,
@@ -302,6 +303,14 @@ impl V1ReleaseEvidenceService {
                         .any(|signer| !signs_with(signer, decision.observed_key())) =>
             {
                 failures.push(ExactEnvironmentReleaseFailure::CryptoSignerMismatch)
+            }
+            // The roadmap requires signed artifacts only where configured, so
+            // an unsigned release is legitimate. Offering custody evidence for
+            // one is not: there is no signer for the qualified key to be, and
+            // the evidence would stand beside the release asserting nothing
+            // about it.
+            Some(_) if target.signer_keys.is_empty() => {
+                failures.push(ExactEnvironmentReleaseFailure::CryptoEvidenceUnbound)
             }
             Some(_) => {}
             None => failures.push(ExactEnvironmentReleaseFailure::CryptoQualificationMissing),
