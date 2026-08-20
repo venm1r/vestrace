@@ -740,6 +740,7 @@ fn release_failure_name(failure: ExactEnvironmentReleaseFailure) -> &'static str
             "crypto_qualification_missing"
         }
         ExactEnvironmentReleaseFailure::CryptoQualificationFailed => "crypto_qualification_failed",
+        ExactEnvironmentReleaseFailure::CryptoSignerMismatch => "crypto_signer_mismatch",
         ExactEnvironmentReleaseFailure::RecoveryQualificationMissing => {
             "recovery_qualification_missing"
         }
@@ -897,8 +898,14 @@ pub async fn run_release(
             )
         })?;
 
-    let target = ExactEnvironmentReleaseTarget::from_manifest(&manifest, profile)
+    let mut target = ExactEnvironmentReleaseTarget::from_manifest(&manifest, profile)
         .map_err(|error| anyhow::anyhow!("failed to build exact release target: {error}"))?;
+    // The bundle is the release's other signed artifact. Binding only the
+    // manifest would leave a bundle signed under some other custody unexamined
+    // while the release read as fully qualified.
+    if let Some(signature) = bundle.signature() {
+        target = target.with_signer_key(signature.key_ref().clone());
+    }
 
     let runtime_qualification = if runtime_evidence {
         Some(

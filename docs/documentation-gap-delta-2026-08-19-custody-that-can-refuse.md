@@ -275,17 +275,29 @@ the store, and this reads it.
 is `KeyPurpose::Storage`, a different key for a different purpose, and its
 custody is still `local-file`. Nothing here upgrades it.
 
-**Crypto evidence is not bound to the build being released.** Runtime
-qualification is bound to the release: `collect_runtime_qualification`
-compares the deployment's own account against `target_manifest`, so runtime
-evidence for one build cannot stand in for another. Crypto qualification does
-no such comparison. `--crypto-evidence` with any well-formed store clears
-`crypto_qualification_missing` for **any** manifest — nothing compares the
-qualified key's declared providers against the manifest's `crypto_providers`,
-and nothing compares the qualified key against the key that actually signed
-the manifest and the bundle. This is a gap, not a footnote: passing crypto
-qualification says a production custody adapter was exercised successfully,
-not that it was exercised against the key backing this particular release.
+**Crypto evidence is now bound to the key that signed the release, and the
+binding is what closed the gap this document originally recorded as open.**
+When first written, `--crypto-evidence` with any well-formed store cleared
+`crypto_qualification_missing` for **any** manifest: passing crypto
+qualification said a production custody adapter had been exercised, not that it
+had been exercised against the key backing this particular release. A signed
+artifact carries a full `KeyReference` — provider, key id, version, purpose,
+scope and algorithm — so the gate now requires the qualified key to be that
+key, for the manifest and for the bundle alike, and reports
+`crypto_signer_mismatch` when it is not. Two artifacts of one release signed
+under two custodies fail for the same reason: the qualified custody cannot be
+both.
+
+The signer is read from the artifact, never supplied beside it, because a
+caller able to name the signer could name the one whose custody it had
+qualified. What remains open is narrower and worth stating: when an artifact is
+**unsigned** there is nothing to bind to, and the gate does not require signed
+artifacts, so a release that is never signed still carries crypto evidence that
+floats free. That is a different gap — the gate not demanding signatures — and
+closing it under this heading would have been fixing one hole by describing
+another. Nothing compares the qualified key against the manifest's
+operator-declared `crypto_providers` either; that field is prose, while the
+signature is a machine fact, and the binding uses the fact.
 
 **Several `CryptoQualificationFailure` variants are structurally unreachable
 on this probe's own path.** `MountedStoreCryptoProbe::collect` builds its

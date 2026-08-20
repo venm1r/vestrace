@@ -8,7 +8,9 @@ use vestrace_domain::VestraceCapabilityManifest;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, HardGateEvidence};
 use vestrace_domain::conformance::{QualificationProfile, RequirementFamily, RequirementId};
 use vestrace_domain::now;
-use vestrace_domain::trust::QualificationBundle;
+use vestrace_domain::trust::{
+    KeyPurpose, KeyReference, QualificationBundle, SignatureAlgorithm, SignatureRecord,
+};
 
 // Repeated deliberately from `tests/mounted_secret_store.rs`: this is a
 // different crate's test binary and the helpers are not shared.
@@ -452,6 +454,64 @@ fn crypto_evidence_from_a_store_that_does_not_exist_is_an_error_not_a_silence() 
         "a release report that could not read the key store must not be published"
     );
 
+    fs::remove_file(&manifest_path).ok();
+    fs::remove_file(&bundle_path).ok();
+}
+
+/// The bundle is the release's other signed artifact, and binding only the
+/// manifest would leave a bundle signed under some other custody unexamined
+/// while the release read as fully qualified.
+///
+/// The manifest here is deliberately unsigned, so the bundle's signer is the
+/// only one the gate can be reading.
+#[test]
+fn a_bundle_signed_under_another_custody_is_not_qualified_by_this_one() {
+    let id = suffix();
+    let store = store_root(&format!("{id}-bundle-signer"));
+    write_key(&store, "release-signing", "release", "v1", "active");
+    write_version(&store, "release-signing", "v2", "revoked");
+
+    let manifest = release_manifest(QualificationProfile::Trusted);
+    let bundle = release_bundle(&manifest, QualificationProfile::Trusted);
+    let foreign_key = KeyReference::new(
+        "mounted-secret-store",
+        "some-other-key",
+        "v1",
+        KeyPurpose::Signing,
+        "release",
+        "ed25519",
+    )
+    .unwrap();
+    let signature = SignatureRecord::new(
+        bundle.unsigned_signing_digest().unwrap(),
+        "issuer://release",
+        foreign_key,
+        SignatureAlgorithm::Ed25519,
+        "bundle-signature",
+        now(),
+    )
+    .unwrap();
+    let bundle = bundle.attach_signature(signature).unwrap();
+
+    let manifest_path =
+        std::env::temp_dir().join(format!("vestrace-crypto-bundlesig-manifest-{id}.json"));
+    let bundle_path =
+        std::env::temp_dir().join(format!("vestrace-crypto-bundlesig-bundle-{id}.json"));
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    fs::write(&bundle_path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+
+    let failures = release_failures(&manifest_path, &bundle_path, Some(&store));
+
+    assert!(
+        failures.contains(&"crypto_signer_mismatch".to_owned()),
+        "a custody qualified for a key the bundle was not signed with must be refused: {failures:?}"
+    );
+
+    fs::remove_dir_all(&store).ok();
     fs::remove_file(&manifest_path).ok();
     fs::remove_file(&bundle_path).ok();
 }

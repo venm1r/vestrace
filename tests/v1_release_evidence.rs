@@ -88,9 +88,15 @@ fn manifest() -> VestraceCapabilityManifest {
     manifest.attach_signature(signature).unwrap()
 }
 
+/// The key the fixture release is signed with.
+///
+/// It names the same custody the crypto fixture qualifies. Before crypto
+/// evidence was bound to the signer, this fixture signed with `local-file`
+/// while claiming a `kms` custody qualification had passed — an incoherence
+/// nothing could observe, and exactly the one the binding exists to catch.
 fn signing_key() -> KeyReference {
     KeyReference::new(
-        "local-file",
+        "kms",
         "release-signing",
         "v1",
         KeyPurpose::Signing,
@@ -104,7 +110,7 @@ fn signer_policy() -> SignerTrustPolicy {
     SignerTrustPolicy::new(vec![
         SignerTrustRule::new(
             "issuer://release",
-            "local-file",
+            "kms",
             "release-signing",
             "v1",
             "release",
@@ -224,6 +230,44 @@ fn crypto_qualification() -> vestrace_application::CryptoQualificationDecision {
     )
 }
 
+/// A qualification of a real custody that is simply not this release's.
+fn mismatched_crypto_qualification() -> vestrace_application::CryptoQualificationDecision {
+    let target = CryptoAdapterQualificationTarget::new(
+        "kms",
+        CryptoCustody::Kms,
+        "some-other-key",
+        "v1",
+        "ed25519",
+        KeyPurpose::Signing,
+        "release",
+    )
+    .unwrap();
+    let key = KeyReference::new(
+        "kms",
+        "some-other-key",
+        "v1",
+        KeyPurpose::Signing,
+        "release",
+        "ed25519",
+    )
+    .unwrap();
+    CryptoAdapterQualificationService::evaluate(
+        &target,
+        &CryptoAdapterQualificationEvidence::new(
+            key,
+            [
+                CryptoQualificationCheck::Resolution,
+                CryptoQualificationCheck::ScopeIsolation,
+                CryptoQualificationCheck::CryptographicRoundTrip,
+                CryptoQualificationCheck::Lifecycle,
+                CryptoQualificationCheck::Rotation,
+                CryptoQualificationCheck::SecretNonDisclosure,
+            ],
+            vec!["evidence:crypto".into()],
+        ),
+    )
+}
+
 fn runtime_qualification(
     manifest: &VestraceCapabilityManifest,
     bundle: &QualificationBundle,
@@ -280,6 +324,16 @@ fn complete_evidence(
     manifest: &VestraceCapabilityManifest,
     bundle: &QualificationBundle,
 ) -> ExactEnvironmentReleaseEvidence {
+    evidence_with_crypto(manifest, bundle, crypto_qualification())
+}
+
+/// Complete evidence in every respect but the custody it examined, so a case
+/// can vary that one fact and leave the rest above suspicion.
+fn evidence_with_crypto(
+    manifest: &VestraceCapabilityManifest,
+    bundle: &QualificationBundle,
+    crypto: vestrace_application::CryptoQualificationDecision,
+) -> ExactEnvironmentReleaseEvidence {
     ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
         manifest.source_revision(),
@@ -291,7 +345,7 @@ fn complete_evidence(
         QualificationProfile::Trusted,
         Some(approval()),
         Some(runtime_qualification(manifest, bundle)),
-        Some(crypto_qualification()),
+        Some(crypto),
         Some(recovery_qualification()),
         Some(fault_qualification()),
         vec![capability_restoration()],
@@ -373,5 +427,37 @@ fn exact_environment_identity_drift_blocks_a_ready_dependency_set() {
         decision
             .failures()
             .contains(&ExactEnvironmentReleaseFailure::ReleaseIdentityMismatch)
+    );
+}
+
+/// Qualifying a key says nothing about a release unless it is the key that
+/// signed it.
+///
+/// Runtime qualification has always been bound to the build it examined, by
+/// comparing the decision's `target_manifest` against the target's digest.
+/// Crypto qualification was bound to nothing: any well-formed custody cleared
+/// the requirement for any release, so the evidence answered a question nobody
+/// had asked about this artifact.
+#[test]
+fn a_release_signed_by_one_key_is_not_qualified_by_another() {
+    let manifest = manifest();
+    let bundle = bundle(&manifest);
+    let target =
+        ExactEnvironmentReleaseTarget::from_manifest(&manifest, QualificationProfile::Trusted)
+            .unwrap();
+
+    // `mismatched_crypto_qualification` examines a key the release was not
+    // signed with; everything else in the evidence is complete and correct.
+    let decision = V1ReleaseEvidenceService::evaluate(
+        &target,
+        &evidence_with_crypto(&manifest, &bundle, mismatched_crypto_qualification()),
+    );
+
+    assert!(
+        decision
+            .failures()
+            .contains(&ExactEnvironmentReleaseFailure::CryptoSignerMismatch),
+        "a custody qualification for a key that signed nothing must not clear the requirement: {:?}",
+        decision.failures()
     );
 }

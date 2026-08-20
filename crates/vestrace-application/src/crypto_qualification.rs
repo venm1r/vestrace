@@ -164,6 +164,7 @@ pub enum CryptoQualificationFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CryptoQualificationDecision {
     failures: Vec<CryptoQualificationFailure>,
+    observed_key: KeyReference,
 }
 
 pub trait CryptoAdapterQualificationProbe {
@@ -180,6 +181,15 @@ impl CryptoQualificationDecision {
 
     pub fn failures(&self) -> &[CryptoQualificationFailure] {
         &self.failures
+    }
+
+    /// The key this qualification actually examined.
+    ///
+    /// A decision that cannot say which key it looked at can be held up beside
+    /// any release, which is how a custody qualification comes to answer a
+    /// question nobody asked about the artifact in hand.
+    pub fn observed_key(&self) -> &KeyReference {
+        &self.observed_key
     }
 }
 
@@ -271,7 +281,10 @@ impl CryptoAdapterQualificationService {
         {
             failures.push(CryptoQualificationFailure::EvidenceReferencesMissing);
         }
-        CryptoQualificationDecision { failures }
+        CryptoQualificationDecision {
+            failures,
+            observed_key: evidence.observed_key.clone(),
+        }
     }
 }
 

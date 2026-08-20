@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use vestrace_domain::VestraceCapabilityManifest;
 use vestrace_domain::conformance::QualificationProfile;
 use vestrace_domain::external_effects::FaultSuiteDecision;
-use vestrace_domain::trust::RecoveryQualificationDecision;
+use vestrace_domain::trust::{KeyReference, RecoveryQualificationDecision};
 
 use crate::ApplicationError;
 use crate::capability_restoration::CapabilityRestorationDecision;
@@ -21,9 +21,20 @@ pub struct ExactEnvironmentReleaseTarget {
     manifest_digest: String,
     schema_versions: Vec<String>,
     profile: QualificationProfile,
+    signer_keys: Vec<KeyReference>,
 }
 
 impl ExactEnvironmentReleaseTarget {
+    /// Record a key that signed this release.
+    ///
+    /// Every signer must be the key the crypto qualification examined. Two
+    /// artifacts of one release signed by two different keys cannot both be the
+    /// qualified custody, so that disagreement is a mismatch rather than a
+    /// choice the gate makes for the reader.
+    pub fn with_signer_key(mut self, key: KeyReference) -> Self {
+        self.signer_keys.push(key);
+        self
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         release_version: impl Into<String>,
@@ -58,6 +69,7 @@ impl ExactEnvironmentReleaseTarget {
             manifest_digest: non_blank("manifest digest", manifest_digest.into())?,
             schema_versions,
             profile,
+            signer_keys: Vec::new(),
         })
     }
 
@@ -75,6 +87,13 @@ impl ExactEnvironmentReleaseTarget {
             manifest.schema_versions().to_vec(),
             profile,
         )
+        .map(|target| match manifest.signature() {
+            // The signer is read from the artifact rather than supplied
+            // alongside it: a caller who could name the signer could name the
+            // one whose custody it had qualified.
+            Some(signature) => target.with_signer_key(signature.key_ref().clone()),
+            None => target,
+        })
     }
 }
 
@@ -172,6 +191,7 @@ pub enum ExactEnvironmentReleaseFailure {
     RuntimeManifestMismatch,
     CryptoQualificationMissing,
     CryptoQualificationFailed,
+    CryptoSignerMismatch,
     RecoveryQualificationMissing,
     RecoveryQualificationFailed,
     FaultSuiteMissing,
@@ -203,6 +223,21 @@ pub trait V1ReleaseEvidenceProbe {
         &self,
         target: &ExactEnvironmentReleaseTarget,
     ) -> Result<ExactEnvironmentReleaseEvidence, ApplicationError>;
+}
+
+/// Whether a signer reference and a qualified key name the same custody.
+///
+/// The reference's `id` is a fresh identifier minted per construction, so
+/// comparing whole references would never match. What has to agree is the
+/// custody: which provider holds the key, which key, which version, for what
+/// scope, under which algorithm.
+fn signs_with(signer: &KeyReference, observed: &KeyReference) -> bool {
+    signer.provider() == observed.provider()
+        && signer.key_id() == observed.key_id()
+        && signer.version() == observed.version()
+        && signer.scope() == observed.scope()
+        && signer.algorithm_suite() == observed.algorithm_suite()
+        && signer.purpose() == observed.purpose()
 }
 
 pub struct V1ReleaseEvidenceService;
@@ -252,8 +287,23 @@ impl V1ReleaseEvidenceService {
             None => failures.push(ExactEnvironmentReleaseFailure::RuntimeQualificationMissing),
         }
         match &evidence.crypto_qualification {
-            Some(decision) if decision.is_passed() => {}
-            Some(_) => failures.push(ExactEnvironmentReleaseFailure::CryptoQualificationFailed),
+            Some(decision) if !decision.is_passed() => {
+                failures.push(ExactEnvironmentReleaseFailure::CryptoQualificationFailed)
+            }
+            // A custody qualification for a key that signed nothing here is a
+            // true statement about some other key. Runtime qualification has
+            // always been bound to the build it examined; this binds crypto to
+            // the artifact it is offered for.
+            Some(decision)
+                if !target.signer_keys.is_empty()
+                    && target
+                        .signer_keys
+                        .iter()
+                        .any(|signer| !signs_with(signer, decision.observed_key())) =>
+            {
+                failures.push(ExactEnvironmentReleaseFailure::CryptoSignerMismatch)
+            }
+            Some(_) => {}
             None => failures.push(ExactEnvironmentReleaseFailure::CryptoQualificationMissing),
         }
         match &evidence.recovery_qualification {
