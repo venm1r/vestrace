@@ -6,6 +6,8 @@
 //! the suite's expected answer would clear the release gate and prove nothing,
 //! which is why a test forbids it by name.
 
+pub mod adapter_stub;
 pub mod settings;
 
+pub use adapter_stub::AdapterStub;
 pub use settings::ScenarioSettings;

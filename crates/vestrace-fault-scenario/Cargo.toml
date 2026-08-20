@@ -22,4 +22,5 @@ vestrace-domain = { path = "../vestrace-domain" }
 vestrace-infrastructure = { path = "../vestrace-infrastructure" }
 
 [dev-dependencies]
+reqwest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
