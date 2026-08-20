@@ -13,6 +13,7 @@ members = [
   "crates/vestrace-infrastructure",
   "crates/vestrace-http",
   "crates/vestrace-cli",
+  "crates/vestrace-fault-scenario",
   "crates/vestrace-mcp",
   "crates/vestrace-rig-spike",
 ]
