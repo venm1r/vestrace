@@ -6,9 +6,11 @@ use clap::ValueEnum;
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
 use secrecy::ExposeSecret as _;
 use vestrace_application::{
-    ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget,
-    QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
-    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
+    CryptoAdapterQualificationService, CryptoAdapterQualificationTarget, CryptoCustody,
+    CryptoQualificationDecision, ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure,
+    ExactEnvironmentReleaseTarget, QualificationRepository, QualificationRuntime,
+    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
+    evaluate_runtime_qualification,
 };
 use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
@@ -164,6 +166,11 @@ pub async fn run(
             bundle_file,
             profile,
             runtime_evidence,
+            crypto_evidence,
+            key_store_root,
+            key_id,
+            key_version,
+            key_scope,
             json,
             output,
         } => {
@@ -172,6 +179,11 @@ pub async fn run(
                 bundle_file,
                 profile.into(),
                 runtime_evidence,
+                crypto_evidence,
+                key_store_root,
+                key_id,
+                key_version,
+                key_scope,
                 json,
                 output,
                 config_path,
@@ -813,6 +825,40 @@ async fn collect_runtime_qualification(
     ))
 }
 
+/// Qualify the custody that holds the release signing key.
+///
+/// Like runtime evidence, asking for this and not getting it is an error: a
+/// release whose key store could not be read has not been shown to have weak
+/// custody, it has been shown to be unexamined, and those are different facts.
+fn collect_crypto_qualification(
+    key_store_root: Option<PathBuf>,
+    key_id: Option<String>,
+    key_version: &str,
+    key_scope: &str,
+) -> anyhow::Result<CryptoQualificationDecision> {
+    let root = key_store_root.ok_or_else(|| {
+        anyhow::anyhow!("crypto evidence could not be collected: --key-store-root is required")
+    })?;
+    let key_id = key_id.ok_or_else(|| {
+        anyhow::anyhow!("crypto evidence could not be collected: --key-id is required")
+    })?;
+    let target = CryptoAdapterQualificationTarget::new(
+        vestrace_infrastructure::crypto::MOUNTED_SECRET_STORE_PROVIDER,
+        CryptoCustody::MountedSecretStore,
+        key_id,
+        key_version,
+        "ed25519",
+        KeyPurpose::Signing,
+        key_scope,
+    )
+    .map_err(|error| anyhow::anyhow!("crypto evidence could not be collected: {error}"))?;
+    let probe = vestrace_infrastructure::crypto::MountedStoreCryptoProbe::new(
+        vestrace_infrastructure::crypto::MountedSecretStoreKeyProvider::new(root),
+    );
+    CryptoAdapterQualificationService::evaluate_with_probe(&target, &probe)
+        .map_err(|error| anyhow::anyhow!("crypto evidence could not be collected: {error}"))
+}
+
 /// Ask the v1.0 release gate about an exact build in an exact environment.
 ///
 /// The target is the capability manifest; the evidence identity is the
@@ -825,6 +871,11 @@ pub async fn run_release(
     bundle_file: PathBuf,
     profile: QualificationProfile,
     runtime_evidence: bool,
+    crypto_evidence: bool,
+    key_store_root: Option<PathBuf>,
+    key_id: Option<String>,
+    key_version: String,
+    key_scope: String,
     json: bool,
     output: Option<PathBuf>,
     config_path: Option<&Path>,
@@ -864,9 +915,21 @@ pub async fn run_release(
         None
     };
 
-    // The remaining evidence sources are `None` because nothing in this build
-    // produces one. That is the answer the gate is being asked for, so it is
-    // reported rather than filled in with something that was not collected.
+    let crypto_qualification = if crypto_evidence {
+        Some(collect_crypto_qualification(
+            key_store_root,
+            key_id,
+            &key_version,
+            &key_scope,
+        )?)
+    } else {
+        None
+    };
+
+    // Release approval, recovery qualification, the fault suite and capability
+    // restoration remain `None` because nothing in this build produces one.
+    // That is the answer the gate is being asked for, so it is reported rather
+    // than filled in with something that was not collected.
     let evidence = ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
         bundle.source_revision(),
@@ -878,7 +941,7 @@ pub async fn run_release(
         bundle.profile(),
         None,
         runtime_qualification,
-        None,
+        crypto_qualification,
         None,
         None,
         Vec::new(),

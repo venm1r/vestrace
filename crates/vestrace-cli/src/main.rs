@@ -118,6 +118,17 @@ enum ConformanceAction {
         /// what it is: nobody looked.
         #[arg(long)]
         runtime_evidence: bool,
+        /// Collect crypto adapter qualification from a mounted secret store.
+        #[arg(long)]
+        crypto_evidence: bool,
+        #[arg(long)]
+        key_store_root: Option<PathBuf>,
+        #[arg(long)]
+        key_id: Option<String>,
+        #[arg(long, default_value = "v1")]
+        key_version: String,
+        #[arg(long, default_value = "release")]
+        key_scope: String,
         #[arg(long)]
         json: bool,
         #[arg(long)]
