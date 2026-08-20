@@ -345,6 +345,12 @@ fn release_failures(
 fn crypto_evidence_is_missing_collected_or_failed() {
     let id = suffix();
     let complete = store_root(&format!("{id}-complete"));
+    // v1 active / v2 revoked, not the other way round: `--key-version`
+    // defaults to `v1` below (via `run_release`, which never passes it), and
+    // rotation still holds with v1 active because the probe searches for any
+    // retired-or-revoked version other than the target's — v2 revoked
+    // satisfies both Lifecycle and Rotation regardless of which version
+    // number is active.
     write_key(&complete, "release-signing", "release", "v1", "active");
     write_version(&complete, "release-signing", "v2", "revoked");
 
@@ -371,6 +377,52 @@ fn crypto_evidence_is_missing_collected_or_failed() {
 
     fs::remove_dir_all(&complete).ok();
     fs::remove_dir_all(&thin).ok();
+    fs::remove_file(&manifest_path).ok();
+    fs::remove_file(&bundle_path).ok();
+}
+
+/// `--key-store-root` and `--key-id` name a store to read from, but naming
+/// one without asking `--crypto-evidence` to collect from it is a request
+/// this build cannot honour — silently ignoring the flags would contradict
+/// this branch's own rule that an unhonourable request is an error, not a
+/// silence. clap enforces it directly via `requires`.
+#[test]
+fn key_store_root_and_key_id_without_crypto_evidence_are_rejected() {
+    let id = suffix();
+    let root = store_root(&id);
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let (manifest_path, bundle_path) = release_pair(&id);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--json",
+            "--key-store-root",
+            root.to_str().unwrap(),
+            "--key-id",
+            "release-signing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "--key-store-root and --key-id without --crypto-evidence must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("crypto-evidence") || stderr.contains("crypto_evidence"),
+        "the error must name the missing --crypto-evidence flag, got stderr: {stderr}"
+    );
+
+    fs::remove_dir_all(&root).ok();
     fs::remove_file(&manifest_path).ok();
     fs::remove_file(&bundle_path).ok();
 }

@@ -1280,9 +1280,18 @@ fn resolve_signing_key(
             vestrace_infrastructure::crypto::MountedSecretStoreKeyProvider::new(root)
                 .resolve(key_ref, &request)
         }
-        (provider, _, _) => anyhow::bail!(
+        (
+            provider @ (vestrace_infrastructure::crypto::LOCAL_FILE_PROVIDER
+            | vestrace_infrastructure::crypto::MOUNTED_SECRET_STORE_PROVIDER),
+            _,
+            _,
+        ) => anyhow::bail!(
             "provider '{provider}' requires exactly one of --private-key-file (local-file) or \
              --key-store-root (mounted-secret-store)"
+        ),
+        (provider, _, _) => anyhow::bail!(
+            "unknown key provider '{provider}'; supported providers are 'local-file' and \
+             'mounted-secret-store'"
         ),
     }
     .map_err(|error| anyhow::anyhow!("signing key resolution failed: {error}"))?;

@@ -176,6 +176,69 @@ fn a_key_id_cannot_walk_out_of_the_store() {
     fs::remove_dir_all(&root).ok();
 }
 
+/// A drive-relative fragment (`C:keys`) is not a single path segment: on
+/// Windows, `Path::new(root).join("C:keys")` discards `root` entirely and
+/// names `C:keys` outright, so a string-contains check on `/`, `\` and `..`
+/// alone would let this one through.
+#[test]
+fn a_drive_relative_key_id_cannot_replace_the_store_root() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let error = provider
+        .resolve(&key_ref("C:keys", "v1", "release"), &request("release"))
+        .expect_err("a drive-relative key id must be refused");
+
+    assert!(
+        matches!(error, KeyProviderError::Denied(_)),
+        "got {error:?}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// `.` names the store root itself, not a key within it.
+#[test]
+fn a_bare_dot_key_id_is_refused() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let error = provider
+        .resolve(&key_ref(".", "v1", "release"), &request("release"))
+        .expect_err("a bare '.' key id must be refused");
+
+    assert!(
+        matches!(error, KeyProviderError::Denied(_)),
+        "got {error:?}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// An absolute path is not a single path segment either.
+#[test]
+fn an_absolute_path_key_id_is_refused() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let error = provider
+        .resolve(
+            &key_ref("/etc/passwd", "v1", "release"),
+            &request("release"),
+        )
+        .expect_err("an absolute path key id must be refused");
+
+    assert!(
+        matches!(error, KeyProviderError::Denied(_)),
+        "got {error:?}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
 /// `declaration()` is called directly by callers that never go through
 /// `resolve` (a probe reading what the store declares, for instance), so its
 /// own segment check is the only guard on that path — not redundant with
@@ -396,6 +459,31 @@ fn the_store_lists_every_version_with_its_state() {
             ("v1".to_string(), "revoked".to_string()),
             ("v2".to_string(), "retired".to_string()),
             ("v3".to_string(), "active".to_string()),
+        ]
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// Kubernetes Secret projections add sidecar entries such as `..data`
+/// alongside the version directories this adapter cares about. This
+/// adapter's whole point is being fed by an orchestrator, so a sidecar entry
+/// must be skipped rather than failing the whole listing.
+#[test]
+fn a_kubernetes_data_sidecar_does_not_break_the_version_listing() {
+    let root = store_root(&suffix());
+    write_key(&root, "release-signing", "release", "v1", "active");
+    write_version(&root, "release-signing", "v2", "retired");
+    fs::create_dir_all(root.join("release-signing").join("..data")).unwrap();
+    let provider = MountedSecretStoreKeyProvider::new(&root);
+
+    let versions = provider.versions("release-signing").unwrap();
+
+    assert_eq!(
+        versions,
+        vec![
+            ("v1".to_string(), "active".to_string()),
+            ("v2".to_string(), "retired".to_string()),
         ]
     );
 

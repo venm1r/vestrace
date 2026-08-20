@@ -11,7 +11,9 @@ use vestrace_application::{
     CryptoAdapterQualificationTarget, CryptoQualificationCheck,
 };
 use vestrace_domain::WorkspaceId;
-use vestrace_domain::trust::{KeyProvider, KeyReference, SecretResolutionRequest};
+use vestrace_domain::trust::{
+    KeyProvider, KeyProviderError, KeyReference, SecretResolutionRequest,
+};
 
 use super::mounted_secret_store::{MOUNTED_SECRET_STORE_PROVIDER, MountedSecretStoreKeyProvider};
 
@@ -73,7 +75,7 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
         let active = self
             .provider
             .resolve(&observed, &Self::request(&declaration.scope));
-        let material = match active {
+        let (material, resolved_debug) = match active {
             Ok(material) => {
                 checks.push(CryptoQualificationCheck::Resolution);
                 refs.push(format!(
@@ -81,19 +83,24 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
                     target.key_id(),
                     target.key_version()
                 ));
-                Some(material.into_bytes())
+                // The only rendering that can actually hold the material: the
+                // Ok value of a successful resolution, taken before it is
+                // reduced to raw bytes below. Every other rendering the
+                // non-disclosure scan gathers is of a refusal, whose text
+                // structurally cannot contain key bytes.
+                let debug = format!("{material:?}");
+                (Some(material.into_bytes()), Some(debug))
             }
-            Err(_) => None,
+            Err(_) => (None, None),
         };
 
         // Scope isolation: a resolution for something the store did not declare
         // must be refused. Attempted, not assumed.
         let foreign_scope = format!("{}-not-this", declaration.scope);
-        if self
+        let foreign_scope_result = self
             .provider
-            .resolve(&observed, &Self::request(&foreign_scope))
-            .is_err()
-        {
+            .resolve(&observed, &Self::request(&foreign_scope));
+        if matches!(foreign_scope_result, Err(KeyProviderError::Denied(_))) {
             checks.push(CryptoQualificationCheck::ScopeIsolation);
             refs.push(format!(
                 "evidence:mounted-store/scope-denial/{}",
@@ -128,27 +135,34 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
             .versions(target.key_id())
             .map_err(|error| ApplicationError::InvalidConfiguration(format!("{error}")))?;
 
-        // Lifecycle: a version the store has revoked is refused.
-        if let Some((version, _)) = versions.iter().find(|(_, state)| state == "revoked") {
-            let revoked = KeyReference::new(
-                MOUNTED_SECRET_STORE_PROVIDER,
-                target.key_id(),
-                version,
-                target.purpose(),
-                declaration.scope.clone(),
-                declaration.algorithm.clone(),
-            )
-            .map_err(|error| ApplicationError::InvalidConfiguration(format!("{error}")))?;
-            if self
-                .provider
-                .resolve(&revoked, &Self::request(&declaration.scope))
-                .is_err()
-            {
+        // Lifecycle: a version the store has revoked is refused. Built once
+        // and kept, since the non-disclosure scan below reuses the same
+        // refusal rather than provoking a different one.
+        let revoked_ref = match versions.iter().find(|(_, state)| state == "revoked") {
+            Some((version, _)) => Some(
+                KeyReference::new(
+                    MOUNTED_SECRET_STORE_PROVIDER,
+                    target.key_id(),
+                    version,
+                    target.purpose(),
+                    declaration.scope.clone(),
+                    declaration.algorithm.clone(),
+                )
+                .map_err(|error| ApplicationError::InvalidConfiguration(format!("{error}")))?,
+            ),
+            None => None,
+        };
+        if let Some(revoked) = &revoked_ref {
+            if matches!(
+                self.provider
+                    .resolve(revoked, &Self::request(&declaration.scope)),
+                Err(KeyProviderError::NotUsable)
+            ) {
                 checks.push(CryptoQualificationCheck::Lifecycle);
                 refs.push(format!(
                     "evidence:mounted-store/lifecycle/{}/{}",
                     target.key_id(),
-                    version
+                    revoked.version()
                 ));
             }
         }
@@ -181,15 +195,47 @@ impl CryptoAdapterQualificationProbe for MountedStoreCryptoProbe {
         }
 
         // Non-disclosure is a property of formatting code, which no type
-        // prevents from regressing, so it is searched for rather than asserted.
+        // prevents from regressing, so it is searched for rather than
+        // asserted — and searched for across several renderings, not one.
+        // The foreign-scope refusal used below interpolates only
+        // `request.purpose()` and `declaration.scope`, never key material, so
+        // by itself it carries no information about whether material leaks:
+        // an adapter that dumped bytes into a `NotUsable` or `Unavailable`
+        // error, or that reverted `ResolvedKeyMaterial`'s redacted `Debug`,
+        // would still pass a scan of that one rendering alone. The Ok value
+        // of the successful resolution is the one rendering that can
+        // actually hold the material, so it is included unconditionally.
         if let Some(bytes) = &material {
-            let rendered = match self
+            let mut rendered = String::new();
+            if let Err(error) = &foreign_scope_result {
+                rendered.push_str(&format!("{error} {error:?} "));
+            }
+            let unknown_version = KeyReference::new(
+                MOUNTED_SECRET_STORE_PROVIDER,
+                target.key_id(),
+                format!("{}-does-not-exist", target.key_version()),
+                target.purpose(),
+                declaration.scope.clone(),
+                declaration.algorithm.clone(),
+            )
+            .map_err(|error| ApplicationError::InvalidConfiguration(format!("{error}")))?;
+            if let Err(error) = self
                 .provider
-                .resolve(&observed, &Self::request(&foreign_scope))
+                .resolve(&unknown_version, &Self::request(&declaration.scope))
             {
-                Err(error) => format!("{error} {error:?}"),
-                Ok(_) => String::new(),
-            };
+                rendered.push_str(&format!("{error} {error:?} "));
+            }
+            if let Some(revoked) = &revoked_ref {
+                if let Err(error) = self
+                    .provider
+                    .resolve(revoked, &Self::request(&declaration.scope))
+                {
+                    rendered.push_str(&format!("{error} {error:?} "));
+                }
+            }
+            if let Some(debug) = &resolved_debug {
+                rendered.push_str(debug);
+            }
             let leaked = discloses(&rendered, bytes);
             if !rendered.is_empty() && !leaked {
                 checks.push(CryptoQualificationCheck::SecretNonDisclosure);

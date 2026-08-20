@@ -211,3 +211,12 @@ the three-outcome proof already used for runtime evidence.
   the v1.0 release gate. Release approval, recovery qualification, fault suite
   and capability restoration remain without producers, so the gate still cannot
   pass after this work.
+- Crypto evidence is not bound to the build being released. Runtime
+  qualification is bound — `collect_runtime_qualification` compares the
+  deployment's own account against `target_manifest` — but crypto
+  qualification performs no equivalent comparison: `--crypto-evidence` with
+  any well-formed store clears `crypto_qualification_missing` for any
+  manifest. Nothing compares the qualified key's declared providers against
+  the manifest's `crypto_providers`, and nothing compares the qualified key
+  against the key that actually signed the manifest and the bundle. This is a
+  real gap, not a footnote.

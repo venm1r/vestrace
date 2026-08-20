@@ -51,19 +51,26 @@ impl MountedSecretStoreKeyProvider {
 
     /// One path segment, or nothing.
     ///
-    /// A key id is an identifier, not a path: accepting a separator or `..`
-    /// would let a caller name any file on the host and call it a key.
+    /// A key id is an identifier, not a path: accepting a separator, `..`, a
+    /// bare `.`, or a drive-relative fragment like `C:keys` would let a
+    /// caller name any file on the host and call it a key. Windows resolves
+    /// `Path::new(root).join(value)` by replacing the whole path outright
+    /// when `value` carries a prefix or is rooted, so string-contains checks
+    /// on `/`, `\` and `..` are not sufficient on this platform: the value is
+    /// required to parse as exactly one [`std::path::Component::Normal`].
     fn segment(name: &str, value: &str) -> Result<(), KeyProviderError> {
-        if value.trim().is_empty()
-            || value.contains('/')
-            || value.contains('\\')
-            || value.contains("..")
-        {
+        if value.trim().is_empty() {
             return Err(KeyProviderError::Denied(format!(
                 "{name} must be a single path segment"
             )));
         }
-        Ok(())
+        let mut components = Path::new(value).components();
+        match (components.next(), components.next()) {
+            (Some(std::path::Component::Normal(_)), None) => Ok(()),
+            _ => Err(KeyProviderError::Denied(format!(
+                "{name} must be a single path segment"
+            ))),
+        }
     }
 
     fn read_trimmed(path: &Path, what: &str) -> Result<String, KeyProviderError> {
@@ -90,6 +97,14 @@ impl MountedSecretStoreKeyProvider {
 
     /// Every version the store holds with the state it declares, sorted so a
     /// probe reading two of them gets the same pair on every run.
+    ///
+    /// An orchestrator-fed mount is not only the version directories this
+    /// adapter cares about: Kubernetes Secret projections add sidecar
+    /// entries such as `..data` (a symlink to the current revision) and
+    /// `..<timestamp>` beside them. This adapter's whole point is being fed
+    /// by an orchestrator, so an entry that is not a version this store can
+    /// name — its name fails [`Self::segment`], or it holds no readable
+    /// `state` file — is skipped rather than failing the entire listing.
     pub fn versions(&self, key_id: &str) -> Result<Vec<(String, String)>, KeyProviderError> {
         Self::segment("key id", key_id)?;
         let key_dir = self.root.join(key_id);
@@ -103,7 +118,13 @@ impl MountedSecretStoreKeyProvider {
                 continue;
             }
             let version = entry.file_name().to_string_lossy().into_owned();
-            let state = Self::read_trimmed(&entry.path().join("state"), "declared state")?;
+            if Self::segment("key version", &version).is_err() {
+                continue;
+            }
+            let state = match Self::read_trimmed(&entry.path().join("state"), "declared state") {
+                Ok(state) => state,
+                Err(_) => continue,
+            };
             versions.push((version, state));
         }
         versions.sort();
@@ -207,5 +228,34 @@ impl KeyProvider for MountedSecretStoreKeyProvider {
             KeyProviderError::Unavailable(format!("key material is unreadable: {error}"))
         })?;
         ResolvedKeyMaterial::from_ephemeral(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `purpose_name` is a hand-written mirror of `KeyPurpose`'s serde
+    /// mapping, and nothing pins the two together — a rename on either side
+    /// would drift silently. Serializing each variant through `serde_json`
+    /// and comparing pins the mirror to the thing it mirrors.
+    #[test]
+    fn purpose_name_matches_every_key_purpose_serde_name() {
+        for purpose in [
+            KeyPurpose::Storage,
+            KeyPurpose::Export,
+            KeyPurpose::Signing,
+            KeyPurpose::Federation,
+            KeyPurpose::Backup,
+            KeyPurpose::Provider,
+        ] {
+            let serialized = serde_json::to_string(&purpose).unwrap();
+            let serde_name = serialized.trim_matches('"');
+            assert_eq!(
+                purpose_name(purpose),
+                serde_name,
+                "purpose_name drifted from KeyPurpose's serde mapping for {purpose:?}"
+            );
+        }
     }
 }

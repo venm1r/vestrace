@@ -97,8 +97,13 @@ that checks nothing.
 `v1` and `v2` holding the same bytes would satisfy a check that counted
 versions, so the probe reads both public halves and records `Rotation` only if
 they differ. The superseded version's public half is read from `public.bin`
-directly rather than through `resolve`, which refuses it — the point is that a
-key the store will no longer hand out is nevertheless a *different* key.
+directly — `Rotation` never calls `resolve` on it at all. For a `revoked`
+predecessor, `resolve` is separately called and refused, but by the
+`Lifecycle` check above, not by `Rotation`; for a merely `retired`
+predecessor nothing in the probe calls `resolve` on it anywhere, so nothing
+refuses it. The point of `Rotation` is only that a key the store will no
+longer hand out as active is nevertheless a *different* key from the active
+one.
 
 ## The plan predicted three mutations; the evidence corrected it
 
@@ -210,6 +215,30 @@ the store, and this reads it.
 **The workspace secrets master key is untouched.** `VESTRACE_SECRETS__MASTER_KEY`
 is `KeyPurpose::Storage`, a different key for a different purpose, and its
 custody is still `local-file`. Nothing here upgrades it.
+
+**Crypto evidence is not bound to the build being released.** Runtime
+qualification is bound to the release: `collect_runtime_qualification`
+compares the deployment's own account against `target_manifest`, so runtime
+evidence for one build cannot stand in for another. Crypto qualification does
+no such comparison. `--crypto-evidence` with any well-formed store clears
+`crypto_qualification_missing` for **any** manifest — nothing compares the
+qualified key's declared providers against the manifest's `crypto_providers`,
+and nothing compares the qualified key against the key that actually signed
+the manifest and the bundle. This is a gap, not a footnote: passing crypto
+qualification says a production custody adapter was exercised successfully,
+not that it was exercised against the key backing this particular release.
+
+**Several `CryptoQualificationFailure` variants are structurally unreachable
+on this probe's own path.** `MountedStoreCryptoProbe::collect` builds its
+observed `KeyReference` directly from the target's provider, key id, key
+version and purpose, and only fills scope and algorithm from what the store
+declares — so `ProviderMismatch`, `KeyIdMismatch` and `KeyVersionMismatch` can
+never fire, and `PurposeMismatch` cannot fire directly either: a purpose
+mismatch is only visible indirectly, because `resolve`'s own purpose check
+would refuse the resolution and `Resolution` would go unrecorded. Of the six
+comparisons `CryptoAdapterQualificationService::evaluate` can make against the
+observed key, only `AlgorithmMismatch` and `ScopeMismatch` are genuine
+store-vs-caller comparisons on this probe's path.
 
 **The release gate still cannot pass.** Four evidence sources — release
 approval, recovery qualification, fault suite, capability restoration — remain

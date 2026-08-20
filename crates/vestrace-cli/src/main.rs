@@ -121,9 +121,11 @@ enum ConformanceAction {
         /// Collect crypto adapter qualification from a mounted secret store.
         #[arg(long)]
         crypto_evidence: bool,
-        #[arg(long)]
+        /// Requires `--crypto-evidence`: naming a store without asking to
+        /// collect from it is a request this build cannot honour silently.
+        #[arg(long, requires = "crypto_evidence")]
         key_store_root: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, requires = "crypto_evidence")]
         key_id: Option<String>,
         #[arg(long, default_value = "v1")]
         key_version: String,
