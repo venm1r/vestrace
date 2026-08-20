@@ -51,6 +51,34 @@ fn the_database_url_is_read_from_a_file_not_an_argument() {
     std::fs::remove_file(&url_file).ok();
 }
 
+/// `Debug` is how a panic message or a log line renders this struct, and
+/// `expect_err` above uses it whenever the invocation unexpectedly succeeds.
+/// None of those call sites should be able to print the password.
+#[test]
+fn the_debug_rendering_never_prints_the_database_password() {
+    let url_file = std::env::temp_dir().join(format!("vfs-url4-{}.txt", std::process::id()));
+    let url = "postgres://u:s3cr3t@127.0.0.1:5432/db";
+    std::fs::write(&url_file, url).unwrap();
+    let env = env_of(&[
+        ("VESTRACE_FAULT_POINT", "after_intent_persistence"),
+        ("VESTRACE_FAULT_ISOLATION", "ephemeral"),
+    ]);
+
+    let settings = settings_from(&["--database-url-file", url_file.to_str().unwrap()], &env)
+        .expect("a well-formed invocation must be accepted");
+
+    let rendered = format!("{settings:?}");
+    assert!(
+        !rendered.contains("s3cr3t"),
+        "debug rendering leaked the password: {rendered}"
+    );
+    assert!(
+        !rendered.contains(url),
+        "debug rendering leaked the full connection string: {rendered}"
+    );
+    std::fs::remove_file(&url_file).ok();
+}
+
 #[test]
 fn a_missing_url_file_is_refused() {
     let env = env_of(&[

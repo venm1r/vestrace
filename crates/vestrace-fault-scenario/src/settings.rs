@@ -6,11 +6,24 @@ use vestrace_domain::external_effects::EffectFaultPoint;
 /// `VESTRACE_FAULT_*` variables, so everything else has to arrive through
 /// arguments — and the database URL cannot, because argv is readable by any
 /// process on the host. It arrives as a path to a file instead.
-#[derive(Debug)]
 pub struct ScenarioSettings {
     point: EffectFaultPoint,
     database_url: String,
     is_child: bool,
+}
+
+impl std::fmt::Debug for ScenarioSettings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The point and child flag are safe to show and are the useful half
+        // when diagnosing a refusal; the connection string carries a password
+        // and is never rendered.
+        formatter
+            .debug_struct("ScenarioSettings")
+            .field("point", &self.point)
+            .field("database_url", &"[REDACTED]")
+            .field("is_child", &self.is_child)
+            .finish()
+    }
 }
 
 impl ScenarioSettings {
