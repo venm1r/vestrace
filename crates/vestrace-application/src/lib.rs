@@ -91,8 +91,8 @@ pub use effect_recovery::{
     RECONCILIATION_RETRY_AFTER,
 };
 pub use effect_repository::{
-    ExternalEffectRecoveryCandidate, ExternalEffectRepository, SharedExternalEffectRepository,
-    UndeliveredOutcome,
+    ExternalEffectRecoveryCandidate, ExternalEffectRepository, LostDispatchAdoption,
+    LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
 };
 pub use error::ApplicationError;
 pub use execution_ports::{

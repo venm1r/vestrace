@@ -7,7 +7,7 @@ use vestrace_application::{
     ApplicationError, AuthorizationBoundary, ConfiguredCapabilityPolicyEngine,
     ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry, ExternalEffectRecoveryCandidate,
     ExternalEffectRecoveryError, ExternalEffectRecoveryService, ExternalEffectRepository,
-    ExternalEffectService, PerformExternalEffectService, RequestContext,
+    ExternalEffectService, LostDispatchAdoption, PerformExternalEffectService, RequestContext,
 };
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectLifecycleStatus,
@@ -16,8 +16,9 @@ use vestrace_domain::external_effects::{
     ExternalReconciliation, IdempotencyProfile, ObservedEffectState, ReconciliationOutcome,
 };
 use vestrace_domain::{
-    AuthorizationRequest, Capability, ExternalEffectId, ExternalEffectReceiptId,
-    ExternalReconciliationId, PrincipalId, RiskCategory, WorkerId, WorkspaceId,
+    AuthorizationRequest, Capability, ExternalEffectId, ExternalEffectLifecycleTransitionId,
+    ExternalEffectReceiptId, ExternalReconciliationId, PrincipalId, RiskCategory, WorkerId,
+    WorkspaceId,
 };
 
 fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
@@ -114,11 +115,15 @@ struct MemoryEffectRepository {
     dispatch_started_signal: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct MemoryLifecycleTransition {
+    id: ExternalEffectLifecycleTransitionId,
+    ordinal: u64,
     workspace_id: WorkspaceId,
     effect_id: ExternalEffectId,
     status: EffectLifecycleStatus,
+    cause: String,
+    cause_ref: String,
     recorded_at: vestrace_domain::Timestamp,
     dispatch_owner: Option<WorkerId>,
     dispatch_expires_at: Option<vestrace_domain::Timestamp>,
@@ -169,17 +174,20 @@ impl MemoryEffectRepository {
                 "effect evidence not found".into(),
             ));
         }
-        self.transitions
-            .lock()
-            .await
-            .push(MemoryLifecycleTransition {
-                workspace_id: context.workspace_id,
-                effect_id,
-                status: EffectLifecycleStatus::Dispatching,
-                recorded_at,
-                dispatch_owner: None,
-                dispatch_expires_at: None,
-            });
+        let mut transitions = self.transitions.lock().await;
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: ExternalEffectLifecycleTransitionId::new(),
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id,
+            status: EffectLifecycleStatus::Dispatching,
+            cause: "dispatch_started".into(),
+            cause_ref: effect_id.to_string(),
+            recorded_at,
+            dispatch_owner: None,
+            dispatch_expires_at: None,
+        });
         Ok(())
     }
 
@@ -202,6 +210,31 @@ impl MemoryEffectRepository {
                     transition.dispatch_expires_at?,
                     transition.recorded_at,
                 ))
+            })
+            .collect()
+    }
+
+    async fn lost_dispatch_evidence(
+        &self,
+        effect_id: ExternalEffectId,
+    ) -> Vec<(
+        EffectLifecycleStatus,
+        String,
+        ExternalEffectLifecycleTransitionId,
+    )> {
+        self.transitions
+            .lock()
+            .await
+            .iter()
+            .filter(|transition| {
+                transition.effect_id == effect_id && transition.cause == "dispatch_lost"
+            })
+            .map(|transition| {
+                (
+                    transition.status,
+                    transition.cause.clone(),
+                    transition.cause_ref.parse().unwrap(),
+                )
             })
             .collect()
     }
@@ -241,17 +274,20 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         intents.push(intent.clone());
         drop(intents);
-        self.transitions
-            .lock()
-            .await
-            .push(MemoryLifecycleTransition {
-                workspace_id: context.workspace_id,
-                effect_id: intent.id(),
-                status: EffectLifecycleStatus::Prepared,
-                recorded_at: intent.created_at(),
-                dispatch_owner: None,
-                dispatch_expires_at: None,
-            });
+        let mut transitions = self.transitions.lock().await;
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: ExternalEffectLifecycleTransitionId::new(),
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id: intent.id(),
+            status: EffectLifecycleStatus::Prepared,
+            cause: "intent_recorded".into(),
+            cause_ref: intent.id().to_string(),
+            recorded_at: intent.created_at(),
+            dispatch_owner: None,
+            dispatch_expires_at: None,
+        });
         Ok(())
     }
 
@@ -294,17 +330,20 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         receipts.push(receipt.clone());
         drop(receipts);
-        self.transitions
-            .lock()
-            .await
-            .push(MemoryLifecycleTransition {
-                workspace_id: context.workspace_id,
-                effect_id: receipt.effect_id(),
-                status: receipt.outcome_status(),
-                recorded_at: receipt.recorded_at(),
-                dispatch_owner: None,
-                dispatch_expires_at: None,
-            });
+        let mut transitions = self.transitions.lock().await;
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: ExternalEffectLifecycleTransitionId::new(),
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id: receipt.effect_id(),
+            status: receipt.outcome_status(),
+            cause: "receipt_recorded".into(),
+            cause_ref: receipt.id().to_string(),
+            recorded_at: receipt.recorded_at(),
+            dispatch_owner: None,
+            dispatch_expires_at: None,
+        });
         Ok(())
     }
 
@@ -343,14 +382,25 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         {
             return Ok(None);
         }
-        Ok(self
-            .receipts
+        let receipt_id = self
+            .transitions
             .lock()
             .await
             .iter()
-            .filter(|receipt| receipt.effect_id() == effect_id)
-            .max_by_key(|receipt| receipt.recorded_at())
-            .cloned())
+            .filter(|transition| {
+                transition.workspace_id == context.workspace_id
+                    && transition.effect_id == effect_id
+                    && transition.cause == "receipt_recorded"
+            })
+            .max_by_key(|transition| transition.ordinal)
+            .map(|transition| transition.cause_ref.clone());
+        let receipts = self.receipts.lock().await;
+        Ok(receipt_id.and_then(|receipt_id| {
+            receipts
+                .iter()
+                .find(|receipt| receipt.id().to_string() == receipt_id)
+                .cloned()
+        }))
     }
 
     async fn record_dispatch_started(
@@ -360,7 +410,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         dispatch_owner: WorkerId,
         dispatch_expires_at: vestrace_domain::Timestamp,
         recorded_at: vestrace_domain::Timestamp,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError> {
         if !self
             .intents
             .lock()
@@ -372,21 +422,69 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                 "effect evidence not found".into(),
             ));
         }
-        self.transitions
-            .lock()
-            .await
-            .push(MemoryLifecycleTransition {
-                workspace_id: context.workspace_id,
-                effect_id,
-                status: EffectLifecycleStatus::Dispatching,
-                recorded_at,
-                dispatch_owner: Some(dispatch_owner),
-                dispatch_expires_at: Some(dispatch_expires_at),
-            });
+        let transition_id = ExternalEffectLifecycleTransitionId::new();
+        let mut transitions = self.transitions.lock().await;
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: transition_id,
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id,
+            status: EffectLifecycleStatus::Dispatching,
+            cause: "dispatch_started".into(),
+            cause_ref: effect_id.to_string(),
+            recorded_at,
+            dispatch_owner: Some(dispatch_owner),
+            dispatch_expires_at: Some(dispatch_expires_at),
+        });
+        drop(transitions);
         if let Some(signal) = self.dispatch_started_signal.lock().unwrap().as_ref() {
             signal.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        Ok(())
+        Ok(transition_id)
+    }
+
+    async fn adopt_lost_dispatch(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        recorded_at: vestrace_domain::Timestamp,
+    ) -> Result<LostDispatchAdoption, ApplicationError> {
+        let mut transitions = self.transitions.lock().await;
+        let cause_ref = dispatch_transition_id.to_string();
+        if transitions.iter().any(|transition| {
+            transition.workspace_id == context.workspace_id
+                && transition.effect_id == effect_id
+                && transition.cause == "dispatch_lost"
+                && transition.cause_ref == cause_ref
+        }) {
+            return Ok(LostDispatchAdoption::AlreadyAdopted);
+        }
+        if !transitions.iter().any(|transition| {
+            transition.id == dispatch_transition_id
+                && transition.workspace_id == context.workspace_id
+                && transition.effect_id == effect_id
+                && transition.status == EffectLifecycleStatus::Dispatching
+        }) {
+            return Err(ApplicationError::Storage(
+                "external effect dispatch could not be adopted".into(),
+            ));
+        }
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: ExternalEffectLifecycleTransitionId::new(),
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id,
+            status: EffectLifecycleStatus::Unknown,
+            cause: "dispatch_lost".into(),
+            cause_ref,
+            recorded_at,
+            dispatch_owner: None,
+            dispatch_expires_at: None,
+        });
+        Ok(LostDispatchAdoption::Adopted)
     }
 
     async fn find_lifecycle_status(
@@ -394,15 +492,19 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         context: &RequestContext,
         effect_id: ExternalEffectId,
     ) -> Result<Option<EffectLifecycleStatus>, ApplicationError> {
-        Ok(self
-            .transitions
-            .lock()
-            .await
+        let transitions = self.transitions.lock().await;
+        let has_receipt = transitions.iter().any(|transition| {
+            transition.workspace_id == context.workspace_id
+                && transition.effect_id == effect_id
+                && transition.cause == "receipt_recorded"
+        });
+        Ok(transitions
             .iter()
             .filter(|transition| {
                 transition.workspace_id == context.workspace_id && transition.effect_id == effect_id
             })
-            .max_by_key(|transition| transition.recorded_at)
+            .filter(|transition| !(has_receipt && transition.cause == "dispatch_lost"))
+            .max_by_key(|transition| transition.ordinal)
             .map(|transition| transition.status))
     }
 
@@ -454,17 +556,20 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         {
             self.reconciled.lock().await.push(reconciliation.clone());
             if reconciliation.outcome().is_settled() {
-                self.transitions
-                    .lock()
-                    .await
-                    .push(MemoryLifecycleTransition {
-                        workspace_id: context.workspace_id,
-                        effect_id: reconciliation.effect_id(),
-                        status: EffectLifecycleStatus::Reconciling,
-                        recorded_at: reconciliation.reconciled_at(),
-                        dispatch_owner: None,
-                        dispatch_expires_at: None,
-                    });
+                let mut transitions = self.transitions.lock().await;
+                let ordinal = transitions.len() as u64 + 1;
+                transitions.push(MemoryLifecycleTransition {
+                    id: ExternalEffectLifecycleTransitionId::new(),
+                    ordinal,
+                    workspace_id: context.workspace_id,
+                    effect_id: reconciliation.effect_id(),
+                    status: EffectLifecycleStatus::Reconciling,
+                    cause: "outcome_settled".into(),
+                    cause_ref: reconciliation.id().to_string(),
+                    recorded_at: reconciliation.reconciled_at(),
+                    dispatch_owner: None,
+                    dispatch_expires_at: None,
+                });
             }
         }
         Ok(())
@@ -545,17 +650,20 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             _ => return Err(ApplicationError::Storage("outcome is not settled".into())),
         };
         self.delivered.lock().await.push(reconciliation_id);
-        self.transitions
-            .lock()
-            .await
-            .push(MemoryLifecycleTransition {
-                workspace_id: context.workspace_id,
-                effect_id: reconciliation.effect_id(),
-                status,
-                recorded_at: at,
-                dispatch_owner: None,
-                dispatch_expires_at: None,
-            });
+        let mut transitions = self.transitions.lock().await;
+        let ordinal = transitions.len() as u64 + 1;
+        transitions.push(MemoryLifecycleTransition {
+            id: ExternalEffectLifecycleTransitionId::new(),
+            ordinal,
+            workspace_id: context.workspace_id,
+            effect_id: reconciliation.effect_id(),
+            status,
+            cause: "outcome_delivered".into(),
+            cause_ref: reconciliation_id.to_string(),
+            recorded_at: at,
+            dispatch_owner: None,
+            dispatch_expires_at: None,
+        });
         Ok(())
     }
 
@@ -597,16 +705,31 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                     .filter(|item| {
                         item.workspace_id == workspace_id && item.effect_id == intent.id()
                     })
-                    .max_by_key(|item| item.recorded_at);
-                if effect_receipts.is_empty()
-                    && latest_status.is_some_and(|item| {
-                        item.status == EffectLifecycleStatus::Dispatching
-                            && item
+                    .max_by_key(|item| item.ordinal);
+                if effect_receipts.is_empty() {
+                    if let Some(latest) = latest_status {
+                        let recovery = if latest.status == EffectLifecycleStatus::Dispatching
+                            && latest
                                 .dispatch_expires_at
                                 .is_some_and(|deadline| deadline < dispatch_expired_before)
-                    })
-                {
-                    candidates.push(ExternalEffectRecoveryCandidate::new(intent, None).unwrap());
+                        {
+                            Some((latest.id, false))
+                        } else if latest.status == EffectLifecycleStatus::Unknown
+                            && latest.cause == "dispatch_lost"
+                            && latest.recorded_at < retry_unsettled_before
+                        {
+                            Some((latest.cause_ref.parse().unwrap(), true))
+                        } else {
+                            None
+                        };
+                        if let Some((dispatch_transition_id, already_adopted)) = recovery {
+                            candidates.push(ExternalEffectRecoveryCandidate::for_lost_dispatch(
+                                intent,
+                                dispatch_transition_id,
+                                already_adopted,
+                            ));
+                        }
+                    }
                 }
                 candidates
             })
@@ -642,6 +765,21 @@ struct MemoryReadBack {
     requests: Arc<Mutex<Vec<&'static str>>>,
     receipts: Arc<Mutex<Vec<Option<ExternalEffectReceiptId>>>>,
     observations: Vec<ObservedEffectState>,
+}
+
+struct FailingMemoryReadBack;
+
+#[async_trait]
+impl ExternalEffectReadBackAdapter for FailingMemoryReadBack {
+    async fn observe(
+        &self,
+        _intent: &ExternalEffectIntent,
+        _receipt: Option<&ExternalEffectReceipt>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "provider read-back failed".into(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -958,6 +1096,37 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates() {
 }
 
 #[tokio::test]
+async fn receipt_lookup_follows_latest_receipt_transition_not_adverse_recorded_time() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = MemoryEffectRepository::default();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let recorded_later_but_inserted_first =
+        receipt_with_status(&effect, EffectLifecycleStatus::Unknown, at(30));
+    let recorded_earlier_but_inserted_last =
+        receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(20));
+    repository
+        .insert_receipt(&context, &recorded_later_but_inserted_first)
+        .await
+        .unwrap();
+    repository
+        .insert_receipt(&context, &recorded_earlier_but_inserted_last)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .find_receipt_by_effect(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(recorded_earlier_but_inserted_last),
+        "receipt lookup followed recorded time instead of the latest receipt transition ordinal"
+    );
+}
+
+#[tokio::test]
 async fn memory_repository_rejects_conflicting_duplicate_intent_and_receipt_evidence() {
     let workspace_id = WorkspaceId::new();
     let actor_id = PrincipalId::new();
@@ -1139,7 +1308,7 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
     let effect = intent(workspace_id, actor_id, &run_ref());
     let context = RequestContext::new(workspace_id, actor_id);
     repository.insert_intent(&context, &effect).await.unwrap();
-    repository
+    let dispatch_transition_id = repository
         .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
         .await
         .unwrap();
@@ -1163,6 +1332,15 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
     let report = service.run(&context, at(30), at(30), at(22)).await.unwrap();
 
     assert_eq!(&*observed_receipts.lock().await, &[None]);
+    assert_eq!(
+        repository.lost_dispatch_evidence(effect.id()).await,
+        vec![(
+            EffectLifecycleStatus::Unknown,
+            "dispatch_lost".to_owned(),
+            dispatch_transition_id,
+        )],
+        "recovery did not name the exact dispatch transition it adopted"
+    );
     assert_eq!(report.reconciliations().len(), 1);
     assert_eq!(report.reconciliations()[0].receipt_id(), None);
     assert_eq!(
@@ -1175,6 +1353,161 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
             .await
             .unwrap(),
         Some(EffectLifecycleStatus::Reconciling)
+    );
+}
+
+#[tokio::test]
+async fn a_dispatch_before_its_stated_deadline_is_not_adopted() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(31), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry(
+            "webhook-v1",
+            Arc::new(MemoryReadBack {
+                endpoint: "https://webhook.effects.test/read-back",
+                requests: Arc::new(Mutex::new(Vec::new())),
+                receipts: Arc::new(Mutex::new(Vec::new())),
+                observations: Vec::new(),
+            }),
+        ),
+    );
+
+    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+
+    assert!(report.reconciliations().is_empty());
+    assert!(report.unreachable().is_empty());
+    assert!(
+        repository
+            .lost_dispatch_evidence(effect.id())
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Dispatching)
+    );
+}
+
+#[tokio::test]
+async fn lost_dispatch_adoption_survives_missing_route_and_is_rediscovered() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "missing");
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let dispatch_transition_id = repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([]).unwrap(),
+    );
+
+    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    assert_eq!(first.unreachable().len(), 1);
+    assert_eq!(
+        repository.lost_dispatch_evidence(effect.id()).await,
+        vec![(
+            EffectLifecycleStatus::Unknown,
+            "dispatch_lost".to_owned(),
+            dispatch_transition_id,
+        )]
+    );
+
+    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    assert_eq!(second.unreachable().len(), 1);
+    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    assert_eq!(
+        repository.lost_dispatch_evidence(effect.id()).await.len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn lost_dispatch_adoption_survives_provider_failure_and_is_rediscovered() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry("webhook-v1", Arc::new(FailingMemoryReadBack)),
+    );
+
+    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+
+    assert_eq!(first.unreachable().len(), 1);
+    assert_eq!(second.unreachable().len(), 1);
+    assert_eq!(
+        repository.lost_dispatch_evidence(effect.id()).await.len(),
+        1
+    );
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Unknown)
+    );
+}
+
+#[tokio::test]
+async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptless_recovery() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "missing");
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([]).unwrap(),
+    );
+    service.run(&context, at(30), at(30), at(22)).await.unwrap();
+
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(15));
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Acknowledged),
+        "recorded-time ordering hid a real receipt behind dispatch_lost"
+    );
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a real receipt did not retire receipt-less recovery"
     );
 }
 

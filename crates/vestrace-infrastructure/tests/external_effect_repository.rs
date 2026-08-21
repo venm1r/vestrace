@@ -1,9 +1,18 @@
-use std::{borrow::Cow, future::Future};
+use std::{
+    borrow::Cow,
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
+use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use vestrace_application::{
-    ApplicationError, ExternalEffectFaultSuiteEvidence, ExternalEffectRepository,
+    ApplicationError, ExternalEffectFaultSuiteEvidence, ExternalEffectReadBackAdapter,
+    ExternalEffectReadBackRegistry, ExternalEffectRecoveryService, ExternalEffectRepository,
     FaultSuiteEvidenceRepository, RequestContext,
 };
 use vestrace_domain::external_effects::{
@@ -41,6 +50,71 @@ struct MigratedDispatchTransitionRow {
     created_at: chrono::DateTime<Utc>,
     dispatch_owner: Option<String>,
     dispatch_expires_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LegacyOrdinalTransitionRow {
+    id: uuid::Uuid,
+    effect_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    status: String,
+    cause: String,
+    cause_ref: String,
+    recorded_at: chrono::DateTime<Utc>,
+    created_at: chrono::DateTime<Utc>,
+    dispatch_owner: Option<String>,
+    dispatch_expires_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct MigratedOrdinalTransitionRow {
+    id: uuid::Uuid,
+    effect_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    status: String,
+    cause: String,
+    cause_ref: String,
+    recorded_at: chrono::DateTime<Utc>,
+    created_at: chrono::DateTime<Utc>,
+    dispatch_owner: Option<String>,
+    dispatch_expires_at: Option<chrono::DateTime<Utc>>,
+    ordinal: i64,
+}
+
+struct CountingReadBack {
+    calls: Arc<AtomicUsize>,
+}
+
+struct FailingReadBack;
+
+#[async_trait]
+impl ExternalEffectReadBackAdapter for CountingReadBack {
+    async fn observe(
+        &self,
+        _intent: &ExternalEffectIntent,
+        _receipt: Option<&ExternalEffectReceipt>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:delivered",
+            vec!["evidence:provider-lookup".into()],
+        )])
+    }
+}
+
+#[async_trait]
+impl ExternalEffectReadBackAdapter for FailingReadBack {
+    async fn observe(
+        &self,
+        _intent: &ExternalEffectIntent,
+        _receipt: Option<&ExternalEffectReceipt>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "provider read-back failed".into(),
+        ))
+    }
 }
 
 #[derive(Clone)]
@@ -587,6 +661,171 @@ async fn dispatch_deadline_migration_preserves_0153_rows_and_enforces_only_new_e
     );
 }
 
+#[sqlx::test]
+async fn lifecycle_ordinal_migration_orders_distinct_and_tied_rows_preserves_fields_and_advances_sequence(
+    pool: PgPool,
+) {
+    let migrations_through_dispatch_deadlines = Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 154)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    };
+    migrations_through_dispatch_deadlines
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let effect = intent();
+    let dispatch_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let receipt_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+    let prepared_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+    let distinct_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap();
+    let receipt_ref = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000005").unwrap();
+    let tied_created_at = at(100);
+    let distinct_created_at = at(90);
+    let mut stored_order = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('vestrace.workspace_id', $1, true)")
+        .bind(effect.workspace_id().to_string())
+        .execute(&mut *stored_order)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO external_effect_intents (id, workspace_id, adapter, payload) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .bind(effect.adapter())
+    .bind(serde_json::to_value(&effect).unwrap())
+    .execute(&mut *stored_order)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO external_effect_lifecycle_transitions \
+             (id, effect_id, workspace_id, status, cause, cause_ref, recorded_at, created_at, \
+              dispatch_owner, dispatch_expires_at) \
+         VALUES \
+             ($1, $4, $5, 'prepared', 'intent_recorded', $6, $7, $10, NULL, NULL), \
+             ($2, $4, $5, 'dispatching', 'dispatch_started', $6, $8, $10, $11, $12), \
+             ($3, $4, $5, 'unknown', 'receipt_recorded', $13, $9, $10, NULL, NULL), \
+             ($14, $4, $5, 'prepared', 'intent_recorded', $6, $15, $16, NULL, NULL)",
+    )
+    // The distinct timestamp row is inserted last but must sort first. Among
+    // the three tied rows, VALUES order is prepared, dispatch, receipt while
+    // fixed-id order is dispatch, receipt, prepared.
+    .bind(prepared_id)
+    .bind(dispatch_id)
+    .bind(receipt_id)
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .bind(effect.id().to_string())
+    .bind(at(10))
+    .bind(at(30))
+    .bind(at(20))
+    .bind(tied_created_at)
+    .bind("worker-fixed")
+    .bind(at(40))
+    .bind(receipt_ref.to_string())
+    .bind(distinct_id)
+    .bind(at(5))
+    .bind(distinct_created_at)
+    .execute(&mut *stored_order)
+    .await
+    .unwrap();
+    stored_order.commit().await.unwrap();
+
+    let before: Vec<LegacyOrdinalTransitionRow> = sqlx::query_as(
+        "SELECT id, effect_id, workspace_id, status, cause, cause_ref, recorded_at, created_at, \
+                dispatch_owner, dispatch_expires_at \
+         FROM external_effect_lifecycle_transitions ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(before.len(), 4);
+    assert_eq!(
+        before
+            .iter()
+            .filter(|row| row.created_at == tied_created_at)
+            .count(),
+        3
+    );
+    assert_eq!(
+        before
+            .iter()
+            .filter(|row| row.created_at == distinct_created_at)
+            .count(),
+        1
+    );
+
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let after: Vec<MigratedOrdinalTransitionRow> = sqlx::query_as(
+        "SELECT id, effect_id, workspace_id, status, cause, cause_ref, recorded_at, created_at, \
+                dispatch_owner, dispatch_expires_at, ordinal \
+         FROM external_effect_lifecycle_transitions ORDER BY ordinal",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after.iter().map(|row| row.ordinal).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+    assert_eq!(
+        after.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![distinct_id, dispatch_id, receipt_id, prepared_id],
+        "legacy rows did not use created_at first and the fixed-id fallback for ties"
+    );
+    let before_by_id = before
+        .iter()
+        .map(|row| (row.id, row))
+        .collect::<std::collections::HashMap<_, _>>();
+    for after in &after {
+        let before = before_by_id
+            .get(&after.id)
+            .expect("migration introduced an unknown transition id");
+        assert_eq!(before.id, after.id);
+        assert_eq!(before.effect_id, after.effect_id);
+        assert_eq!(before.workspace_id, after.workspace_id);
+        assert_eq!(before.status, after.status);
+        assert_eq!(before.cause, after.cause);
+        assert_eq!(before.cause_ref, after.cause_ref);
+        assert_eq!(before.recorded_at, after.recorded_at);
+        assert_eq!(before.created_at, after.created_at);
+        assert_eq!(before.dispatch_owner, after.dispatch_owner);
+        assert_eq!(before.dispatch_expires_at, after.dispatch_expires_at);
+    }
+
+    let backfill_max = after
+        .iter()
+        .map(|row| row.ordinal)
+        .max()
+        .expect("backfill produced no ordinals");
+    let post_migration_ordinal: i64 = sqlx::query_scalar(
+        "INSERT INTO external_effect_lifecycle_transitions \
+             (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+         VALUES ($1, $2, 'prepared', 'intent_recorded', $3, $4) \
+         RETURNING ordinal",
+    )
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .bind(effect.id().to_string())
+    .bind(at(200))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        post_migration_ordinal > backfill_max,
+        "the ordinal sequence did not advance beyond the legacy backfill"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn external_effect_repository_round_trips_unknown_and_reconciliation_evidence(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
@@ -651,7 +890,7 @@ async fn repository_operations_append_qualified_lifecycle_evidence_without_repla
     repository.insert_intent(&context, &intent).await.unwrap();
     let prepared: (String, String, String) = sqlx::query_as(
         "SELECT status, cause, cause_ref FROM external_effect_lifecycle_transitions \
-         WHERE effect_id = $1 AND workspace_id = $2 ORDER BY recorded_at DESC, created_at DESC, id DESC LIMIT 1",
+         WHERE effect_id = $1 AND workspace_id = $2 ORDER BY ordinal DESC LIMIT 1",
     )
     .bind(intent.id().as_uuid())
     .bind(intent.workspace_id().as_uuid())
@@ -685,7 +924,7 @@ async fn repository_operations_append_qualified_lifecycle_evidence_without_repla
     repository.insert_receipt(&context, &receipt).await.unwrap();
     let receipt_transition: (String, String, String) = sqlx::query_as(
         "SELECT status, cause, cause_ref FROM external_effect_lifecycle_transitions \
-         WHERE effect_id = $1 AND workspace_id = $2 ORDER BY recorded_at DESC, created_at DESC, id DESC LIMIT 1",
+         WHERE effect_id = $1 AND workspace_id = $2 ORDER BY ordinal DESC LIMIT 1",
     )
     .bind(intent.id().as_uuid())
     .bind(intent.workspace_id().as_uuid())
@@ -881,6 +1120,336 @@ async fn concurrent_lifecycle_writers_append_without_losing_a_transition(pool: P
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(pool: PgPool) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let dispatch_transition_id = repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([(
+            "webhook-v1".to_owned(),
+            Arc::new(CountingReadBack {
+                calls: Arc::clone(&calls),
+            }) as Arc<dyn ExternalEffectReadBackAdapter>,
+        )])
+        .unwrap(),
+    );
+    let second = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([(
+            "webhook-v1".to_owned(),
+            Arc::new(CountingReadBack {
+                calls: Arc::clone(&calls),
+            }) as Arc<dyn ExternalEffectReadBackAdapter>,
+        )])
+        .unwrap(),
+    );
+
+    // Both sweepers hold the same pre-adoption candidate. The unique
+    // dispatch-lost key, not a sequential re-query, decides which may ask.
+    let (first_candidates, second_candidates) = tokio::join!(
+        first.discover(&context, at(10), at(22)),
+        second.discover(&context, at(10), at(22)),
+    );
+    let first_candidate = first_candidates.unwrap().pop().unwrap();
+    let second_candidate = second_candidates.unwrap().pop().unwrap();
+    assert_eq!(
+        first_candidate.dispatch_transition_id(),
+        Some(dispatch_transition_id)
+    );
+    assert_eq!(
+        second_candidate.dispatch_transition_id(),
+        Some(dispatch_transition_id)
+    );
+
+    let (first_result, second_result) = tokio::join!(
+        first.reconcile_candidate(&context, &first_candidate, at(30)),
+        second.reconcile_candidate(&context, &second_candidate, at(30)),
+    );
+    let reconciliations = [first_result.unwrap(), second_result.unwrap()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert_eq!(reconciliations.len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE workspace_id = $1 AND effect_id = $2 AND cause = 'dispatch_lost'"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_reconciliations \
+             WHERE workspace_id = $1 AND effect_id = $2"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evidence(
+    pool: PgPool,
+) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([]).unwrap(),
+    );
+
+    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+
+    assert_eq!(first.unreachable().len(), 1);
+    assert_eq!(second.unreachable().len(), 1);
+    assert_eq!(first.unreachable()[0].effect_id, effect.id());
+    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    assert!(first.reconciliations().is_empty());
+    assert!(second.reconciliations().is_empty());
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Unknown)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE workspace_id = $1 AND effect_id = $2 AND cause = 'dispatch_lost'"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_reconciliations \
+             WHERE workspace_id = $1 AND effect_id = $2"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn provider_failure_after_adoption_is_unreachable_again_without_duplicate_evidence(
+    pool: PgPool,
+) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        ExternalEffectReadBackRegistry::new([(
+            "webhook-v1".to_owned(),
+            Arc::new(FailingReadBack) as Arc<dyn ExternalEffectReadBackAdapter>,
+        )])
+        .unwrap(),
+    );
+
+    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+
+    assert_eq!(first.unreachable().len(), 1);
+    assert_eq!(second.unreachable().len(), 1);
+    assert_eq!(first.unreachable()[0].effect_id, effect.id());
+    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    assert!(first.reconciliations().is_empty());
+    assert!(second.reconciliations().is_empty());
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Unknown)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE workspace_id = $1 AND effect_id = $2 AND cause = 'dispatch_lost'"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_reconciliations \
+             WHERE workspace_id = $1 AND effect_id = $2"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_candidate(
+    pool: PgPool,
+) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let dispatch_transition_id = repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    repository
+        .adopt_lost_dispatch(&context, effect.id(), dispatch_transition_id, at(30))
+        .await
+        .unwrap();
+
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(15));
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Acknowledged),
+        "recorded_at incorrectly outranked a real receipt"
+    );
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let dispatch_transition_id = repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
+        .await
+        .unwrap();
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(15));
+
+    // Allocate the receipt transition's ordinal first but keep it invisible.
+    // Adoption then allocates and commits a higher ordinal before this receipt
+    // commits, reproducing the adverse BIGSERIAL/visibility ordering.
+    let mut late_receipt = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('vestrace.workspace_id', $1, true)")
+        .bind(effect.workspace_id().to_string())
+        .execute(&mut *late_receipt)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO external_effect_receipts \
+             (id, effect_id, workspace_id, outcome_status, payload) \
+         VALUES ($1, $2, $3, 'acknowledged', $4)",
+    )
+    .bind(receipt.id().as_uuid())
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .bind(serde_json::to_value(&receipt).unwrap())
+    .execute(&mut *late_receipt)
+    .await
+    .unwrap();
+    let receipt_ordinal: i64 = sqlx::query_scalar(
+        "INSERT INTO external_effect_lifecycle_transitions \
+             (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+         VALUES ($1, $2, 'acknowledged', 'receipt_recorded', $3, $4) \
+         RETURNING ordinal",
+    )
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .bind(receipt.id().to_string())
+    .bind(receipt.recorded_at())
+    .fetch_one(&mut *late_receipt)
+    .await
+    .unwrap();
+
+    repository
+        .adopt_lost_dispatch(&context, effect.id(), dispatch_transition_id, at(30))
+        .await
+        .unwrap();
+    let adoption_ordinal: i64 = sqlx::query_scalar(
+        "SELECT ordinal FROM external_effect_lifecycle_transitions \
+         WHERE workspace_id = $1 AND effect_id = $2 AND cause = 'dispatch_lost'",
+    )
+    .bind(effect.workspace_id().as_uuid())
+    .bind(effect.id().as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(receipt_ordinal < adoption_ordinal);
+    late_receipt.commit().await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Acknowledged)
+    );
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_owners(
     pool: PgPool,
 ) {
@@ -936,7 +1505,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
     .bind(expired.id().as_uuid())
     .bind(expired.workspace_id().as_uuid())
     .bind(expired.id().to_string())
-    .bind(at(22))
+    .bind(at(5))
     .execute(&pool)
     .await
     .unwrap();
@@ -952,7 +1521,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
     assert_eq!(
         later_candidates[0].intent(),
         &live,
-        "an older Dispatching row qualified after a newer lifecycle transition"
+        "a later ordinal with adverse lower recorded_at did not retire the older dispatch"
     );
 
     let reconciliation = reconcile_effect(
@@ -1055,6 +1624,35 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: 
     let mut expected = vec![first.id().to_string(), second.id().to_string()];
     expected.sort();
     assert_eq!(actual, expected);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn receipt_lookup_follows_latest_receipt_transition_not_adverse_recorded_time(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let recorded_later_but_inserted_first =
+        receipt_with_status(&effect, EffectLifecycleStatus::Unknown, at(30));
+    let recorded_earlier_but_inserted_last =
+        receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(20));
+    repository
+        .insert_receipt(&context, &recorded_later_but_inserted_first)
+        .await
+        .unwrap();
+    repository
+        .insert_receipt(&context, &recorded_earlier_but_inserted_last)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .find_receipt_by_effect(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(recorded_earlier_but_inserted_last),
+        "receipt lookup followed recorded time instead of the latest receipt transition ordinal"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

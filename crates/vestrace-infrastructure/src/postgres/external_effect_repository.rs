@@ -3,15 +3,16 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::FromRow;
 use vestrace_application::{
-    ApplicationError, ExternalEffectRecoveryCandidate, ExternalEffectRepository, RequestContext,
-    UndeliveredOutcome,
+    ApplicationError, ExternalEffectRecoveryCandidate, ExternalEffectRepository,
+    LostDispatchAdoption, RequestContext, UndeliveredOutcome,
 };
 use vestrace_domain::external_effects::{
     EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
     ReconciliationOutcome,
 };
 use vestrace_domain::{
-    ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp, WorkerId,
+    ExternalEffectId, ExternalEffectLifecycleTransitionId, ExternalEffectReceiptId,
+    ExternalReconciliationId, Timestamp, WorkerId,
 };
 
 use super::PgStore;
@@ -85,6 +86,8 @@ struct RecoveryCandidateRow {
     receipt_effect_id: Option<uuid::Uuid>,
     outcome_status: Option<String>,
     receipt_payload: Option<Value>,
+    dispatch_transition_id: Option<uuid::Uuid>,
+    dispatch_already_adopted: bool,
 }
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
@@ -93,6 +96,13 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
 
 fn conflict(message: impl Into<String>) -> ApplicationError {
     ApplicationError::Conflict(message.into())
+}
+
+fn is_dispatch_lost_unique_violation(error: &sqlx::Error) -> bool {
+    error.as_database_error().is_some_and(|database_error| {
+        database_error.code().as_deref() == Some("23505")
+            && database_error.constraint() == Some("uq_external_effect_lifecycle_dispatch_lost")
+    })
 }
 
 fn enum_name<T: Serialize>(value: T) -> Result<String, ApplicationError> {
@@ -394,7 +404,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
               AND t.cause = 'receipt_recorded' \
               AND t.cause_ref = r.id::text \
              WHERE r.effect_id = $1 AND r.workspace_id = $2 \
-             ORDER BY (t.id IS NOT NULL) DESC, t.recorded_at DESC, t.created_at DESC, t.id DESC, \
+             ORDER BY (t.id IS NOT NULL) DESC, t.ordinal DESC, \
                       r.created_at DESC, r.id DESC \
              LIMIT 1",
         )
@@ -426,34 +436,87 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         dispatch_owner: WorkerId,
         dispatch_expires_at: Timestamp,
         recorded_at: Timestamp,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError> {
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-        let result = sqlx::query(
+        let transition_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "INSERT INTO external_effect_lifecycle_transitions \
                  (effect_id, workspace_id, status, cause, cause_ref, recorded_at, \
                   dispatch_owner, dispatch_expires_at) \
              SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $5, $3, $4 \
              FROM external_effect_intents \
-             WHERE id = $1 AND workspace_id = $2",
+             WHERE id = $1 AND workspace_id = $2 \
+             RETURNING id",
         )
         .bind(effect_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
         .bind(dispatch_owner.to_string())
         .bind(dispatch_expires_at)
         .bind(recorded_at)
-        .execute(scoped.connection())
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
-        if result.rows_affected() != 1 {
-            return Err(storage_error(
-                "external effect dispatch could not be recorded",
-            ));
+        let transition_id = transition_id
+            .ok_or_else(|| storage_error("external effect dispatch could not be recorded"))?;
+        scoped.commit().await.map_err(storage_error)?;
+        Ok(ExternalEffectLifecycleTransitionId::from_uuid(
+            transition_id,
+        ))
+    }
+
+    async fn adopt_lost_dispatch(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        recorded_at: Timestamp,
+    ) -> Result<LostDispatchAdoption, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             SELECT dispatch.effect_id, dispatch.workspace_id, \
+                    'unknown', 'dispatch_lost', dispatch.id::text, $4 \
+             FROM external_effect_lifecycle_transitions dispatch \
+             WHERE dispatch.id = $3 \
+               AND dispatch.effect_id = $1 \
+               AND dispatch.workspace_id = $2 \
+               AND dispatch.status = 'dispatching' \
+             RETURNING id",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(dispatch_transition_id.as_uuid())
+        .bind(recorded_at)
+        .fetch_optional(scoped.connection())
+        .await;
+        match inserted {
+            Ok(Some(_)) => {
+                scoped.commit().await.map_err(storage_error)?;
+                Ok(LostDispatchAdoption::Adopted)
+            }
+            Ok(None) => {
+                scoped.rollback().await.map_err(storage_error)?;
+                Err(storage_error(
+                    "external effect dispatch could not be adopted",
+                ))
+            }
+            Err(error) if is_dispatch_lost_unique_violation(&error) => {
+                scoped.rollback().await.map_err(storage_error)?;
+                Ok(LostDispatchAdoption::AlreadyAdopted)
+            }
+            Err(error) => {
+                scoped.rollback().await.map_err(storage_error)?;
+                Err(storage_error(error))
+            }
         }
-        scoped.commit().await.map_err(storage_error)
     }
 
     async fn count_deadline_less_dispatching_transitions(
@@ -491,9 +554,19 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .await
             .map_err(storage_error)?;
         let status = sqlx::query_scalar::<_, String>(
-            "SELECT status FROM external_effect_lifecycle_transitions \
-             WHERE effect_id = $1 AND workspace_id = $2 \
-             ORDER BY recorded_at DESC, created_at DESC, id DESC LIMIT 1",
+            "SELECT transition.status \
+             FROM external_effect_lifecycle_transitions transition \
+             WHERE transition.effect_id = $1 AND transition.workspace_id = $2 \
+               AND ( \
+                    transition.cause <> 'dispatch_lost' \
+                    OR NOT EXISTS ( \
+                        SELECT 1 FROM external_effect_lifecycle_transitions receipt \
+                        WHERE receipt.effect_id = transition.effect_id \
+                          AND receipt.workspace_id = transition.workspace_id \
+                          AND receipt.cause = 'receipt_recorded' \
+                    ) \
+               ) \
+             ORDER BY transition.ordinal DESC LIMIT 1",
         )
         .bind(effect_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
@@ -759,6 +832,8 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                         r.effect_id AS receipt_effect_id,
                         r.outcome_status,
                         r.payload AS receipt_payload,
+                        NULL::UUID AS dispatch_transition_id,
+                        FALSE AS dispatch_already_adopted,
                         r.created_at AS candidate_at
                  FROM external_effect_receipts r
                  JOIN external_effect_intents i
@@ -790,6 +865,12 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                         NULL::UUID AS receipt_effect_id,
                         NULL::TEXT AS outcome_status,
                         NULL::JSONB AS receipt_payload,
+                        CASE
+                            WHEN dispatch.cause = 'dispatch_lost'
+                                THEN dispatch.cause_ref::UUID
+                            ELSE dispatch.id
+                        END AS dispatch_transition_id,
+                        dispatch.cause = 'dispatch_lost' AS dispatch_already_adopted,
                         dispatch.recorded_at AS candidate_at
                  FROM external_effect_lifecycle_transitions dispatch
                  JOIN external_effect_intents i
@@ -805,9 +886,14 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                  ) last ON TRUE
                  WHERE dispatch.workspace_id = $1
                    AND i.workspace_id = $1
-                   AND dispatch.status = 'dispatching'
-                   AND dispatch.dispatch_expires_at IS NOT NULL
-                   AND dispatch.dispatch_expires_at < $4
+                   AND (
+                        (dispatch.status = 'dispatching'
+                         AND dispatch.dispatch_expires_at IS NOT NULL
+                         AND dispatch.dispatch_expires_at < $4)
+                     OR (dispatch.status = 'unknown'
+                         AND dispatch.cause = 'dispatch_lost'
+                         AND dispatch.recorded_at < $3)
+                   )
                    AND NOT EXISTS (
                        SELECT 1 FROM external_effect_receipts r
                        WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id
@@ -816,8 +902,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                        SELECT 1 FROM external_effect_lifecycle_transitions newer
                        WHERE newer.effect_id = dispatch.effect_id
                          AND newer.workspace_id = dispatch.workspace_id
-                         AND (newer.recorded_at, newer.created_at, newer.id)
-                             > (dispatch.recorded_at, dispatch.created_at, dispatch.id)
+                         AND newer.ordinal > dispatch.ordinal
                    )
                    AND (
                          last.outcome IS NULL
@@ -825,7 +910,8 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                    )
              )
              SELECT intent_id, workspace_id, adapter, intent_payload,
-                    receipt_id, receipt_effect_id, outcome_status, receipt_payload
+                    receipt_id, receipt_effect_id, outcome_status, receipt_payload,
+                    dispatch_transition_id, dispatch_already_adopted
              FROM candidates
              ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST",
         )
@@ -866,7 +952,23 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                     }
                 }
 
-                ExternalEffectRecoveryCandidate::new(intent, receipt)
+                match receipt {
+                    Some(receipt) => ExternalEffectRecoveryCandidate::new(intent, receipt),
+                    None => {
+                        let dispatch_transition_id = row.dispatch_transition_id.ok_or_else(|| {
+                            storage_error(
+                                "receipt-less recovery candidate is missing dispatch transition id",
+                            )
+                        })?;
+                        Ok(ExternalEffectRecoveryCandidate::for_lost_dispatch(
+                            intent,
+                            ExternalEffectLifecycleTransitionId::from_uuid(
+                                dispatch_transition_id,
+                            ),
+                            row.dispatch_already_adopted,
+                        ))
+                    }
+                }
             })
             .collect()
     }

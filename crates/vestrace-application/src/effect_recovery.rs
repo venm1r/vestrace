@@ -10,7 +10,7 @@ use vestrace_domain::id::AgentRunId;
 
 use crate::{
     ApplicationError, ExternalEffectReconciliationService, ExternalEffectRecoveryCandidate,
-    RequestContext, SharedExternalEffectRepository,
+    LostDispatchAdoption, RequestContext, SharedExternalEffectRepository,
 };
 
 #[async_trait]
@@ -219,7 +219,25 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         candidate: &ExternalEffectRecoveryCandidate,
         reconciled_at: Timestamp,
-    ) -> Result<ExternalReconciliation, ExternalEffectRecoveryError> {
+    ) -> Result<Option<ExternalReconciliation>, ExternalEffectRecoveryError> {
+        if let Some(lost_dispatch) = candidate.lost_dispatch() {
+            if lost_dispatch.needs_adoption()
+                && self
+                    .repository
+                    .adopt_lost_dispatch(
+                        context,
+                        candidate.intent().id(),
+                        lost_dispatch.dispatch_transition_id(),
+                        reconciled_at,
+                    )
+                    .await?
+                    == LostDispatchAdoption::AlreadyAdopted
+            {
+                // Another sweeper owns this attempt. Reporting it as a provider
+                // failure would be false, and asking would duplicate read-back.
+                return Ok(None);
+            }
+        }
         let read_back = self.read_backs.resolve(candidate.intent().adapter())?;
         let observations = read_back
             .observe(candidate.intent(), candidate.receipt())
@@ -234,7 +252,7 @@ impl ExternalEffectRecoveryService {
         self.repository
             .insert_reconciliation(context, &reconciliation)
             .await?;
-        Ok(reconciliation)
+        Ok(Some(reconciliation))
     }
 
     /// Reconcile every effect whose outcome nobody knows.
@@ -272,10 +290,11 @@ impl ExternalEffectRecoveryService {
                 .reconcile_candidate(context, candidate, reconciled_at)
                 .await
             {
-                Ok(reconciliation) => {
+                Ok(Some(reconciliation)) => {
                     reconciliations.push(reconciliation);
                     runs.push(candidate.intent().execution_run_id());
                 }
+                Ok(None) => {}
                 Err(error) => unreachable.push(UnreconciledEffect {
                     effect_id: candidate.intent().id(),
                     reason: error.to_string(),

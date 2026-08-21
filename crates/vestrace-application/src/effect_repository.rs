@@ -5,8 +5,8 @@ use vestrace_domain::external_effects::{
     EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
 };
 use vestrace_domain::{
-    DomainError, ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp,
-    WorkerId,
+    DomainError, ExternalEffectId, ExternalEffectLifecycleTransitionId, ExternalEffectReceiptId,
+    ExternalReconciliationId, Timestamp, WorkerId,
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -71,7 +71,21 @@ pub trait ExternalEffectRepository: Send + Sync {
         dispatch_owner: WorkerId,
         dispatch_expires_at: Timestamp,
         recorded_at: Timestamp,
-    ) -> Result<(), ApplicationError>;
+    ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError>;
+
+    /// Atomically append the UNKNOWN assertion for one expired dispatch.
+    ///
+    /// Candidate discovery cannot be the claim at READ COMMITTED: two readers
+    /// can both hold the same Dispatching row. The storage implementation must
+    /// use the dispatch-lost unique key to identify the winner and classify the
+    /// loser without asking the provider.
+    async fn adopt_lost_dispatch(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        recorded_at: Timestamp,
+    ) -> Result<LostDispatchAdoption, ApplicationError>;
 
     /// Legacy dispatch assertions that nobody gave a deadline.
     ///
@@ -152,6 +166,12 @@ pub trait ExternalEffectRepository: Send + Sync {
 
 pub type SharedExternalEffectRepository = Arc<dyn ExternalEffectRepository>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LostDispatchAdoption {
+    Adopted,
+    AlreadyAdopted,
+}
+
 /// A settled outcome that its run has not been told about.
 ///
 /// Carries the intent because that is the only thing that knows which run asked
@@ -178,6 +198,25 @@ impl UndeliveredOutcome {
 pub struct ExternalEffectRecoveryCandidate {
     intent: ExternalEffectIntent,
     receipt: Option<ExternalEffectReceipt>,
+    lost_dispatch: Option<LostDispatchRecovery>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LostDispatchRecovery {
+    NeedsAdoption(ExternalEffectLifecycleTransitionId),
+    Adopted(ExternalEffectLifecycleTransitionId),
+}
+
+impl LostDispatchRecovery {
+    pub const fn dispatch_transition_id(self) -> ExternalEffectLifecycleTransitionId {
+        match self {
+            Self::NeedsAdoption(id) | Self::Adopted(id) => id,
+        }
+    }
+
+    pub const fn needs_adoption(self) -> bool {
+        matches!(self, Self::NeedsAdoption(_))
+    }
 }
 
 impl ExternalEffectRecoveryCandidate {
@@ -204,7 +243,34 @@ impl ExternalEffectRecoveryCandidate {
             )
             .into());
         }
-        Ok(Self { intent, receipt })
+        if receipt.is_none() {
+            return Err(DomainError::InvalidArgument(
+                "receipt-less recovery requires a dispatch transition identity".into(),
+            )
+            .into());
+        }
+        Ok(Self {
+            intent,
+            receipt,
+            lost_dispatch: None,
+        })
+    }
+
+    pub fn for_lost_dispatch(
+        intent: ExternalEffectIntent,
+        dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        already_adopted: bool,
+    ) -> Self {
+        let lost_dispatch = if already_adopted {
+            LostDispatchRecovery::Adopted(dispatch_transition_id)
+        } else {
+            LostDispatchRecovery::NeedsAdoption(dispatch_transition_id)
+        };
+        Self {
+            intent,
+            receipt: None,
+            lost_dispatch: Some(lost_dispatch),
+        }
     }
 
     pub fn intent(&self) -> &ExternalEffectIntent {
@@ -213,5 +279,14 @@ impl ExternalEffectRecoveryCandidate {
 
     pub fn receipt(&self) -> Option<&ExternalEffectReceipt> {
         self.receipt.as_ref()
+    }
+
+    pub const fn lost_dispatch(&self) -> Option<LostDispatchRecovery> {
+        self.lost_dispatch
+    }
+
+    pub fn dispatch_transition_id(&self) -> Option<ExternalEffectLifecycleTransitionId> {
+        self.lost_dispatch
+            .map(LostDispatchRecovery::dispatch_transition_id)
     }
 }

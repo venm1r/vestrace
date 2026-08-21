@@ -118,6 +118,7 @@ domain_id!(RepairPlanId);
 domain_id!(RepairExecutionId);
 domain_id!(VerificationRunId);
 domain_id!(ExternalEffectId);
+domain_id!(ExternalEffectLifecycleTransitionId);
 domain_id!(ExternalEffectReceiptId);
 domain_id!(ExternalReconciliationId);
 domain_id!(IncidentId);
