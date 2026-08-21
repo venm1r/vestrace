@@ -5,8 +5,9 @@ use chrono::{TimeZone, Utc};
 use tokio::sync::Mutex;
 use vestrace_application::{
     ApplicationError, AuthorizationBoundary, ConfiguredCapabilityPolicyEngine,
-    ExternalEffectReadBackAdapter, ExternalEffectRecoveryCandidate, ExternalEffectRecoveryService,
-    ExternalEffectRepository, ExternalEffectService, PerformExternalEffectService, RequestContext,
+    ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry, ExternalEffectRecoveryCandidate,
+    ExternalEffectRecoveryError, ExternalEffectRecoveryService, ExternalEffectRepository,
+    ExternalEffectService, PerformExternalEffectService, RequestContext,
 };
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectLifecycleStatus,
@@ -36,11 +37,20 @@ fn intent(
     actor_id: PrincipalId,
     execution_ref: &str,
 ) -> ExternalEffectIntent {
+    intent_for_adapter(workspace_id, actor_id, execution_ref, "webhook-v1")
+}
+
+fn intent_for_adapter(
+    workspace_id: WorkspaceId,
+    actor_id: PrincipalId,
+    execution_ref: &str,
+    adapter: &str,
+) -> ExternalEffectIntent {
     ExternalEffectIntent::new(
         execution_ref,
         workspace_id,
         actor_id,
-        "webhook-v1",
+        adapter,
         "send",
         "https://alpha.effects.test/hook",
         "sha256:arguments",
@@ -515,7 +525,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
 }
 
 struct MemoryReadBack {
-    calls: Arc<Mutex<usize>>,
+    endpoint: &'static str,
+    requests: Arc<Mutex<Vec<&'static str>>>,
     receipts: Arc<Mutex<Vec<Option<ExternalEffectReceiptId>>>>,
     observations: Vec<ObservedEffectState>,
 }
@@ -527,13 +538,218 @@ impl ExternalEffectReadBackAdapter for MemoryReadBack {
         _intent: &ExternalEffectIntent,
         receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
-        *self.calls.lock().await += 1;
+        self.requests.lock().await.push(self.endpoint);
         self.receipts
             .lock()
             .await
             .push(receipt.map(ExternalEffectReceipt::id));
         Ok(self.observations.clone())
     }
+}
+
+fn read_back_registry(
+    name: &str,
+    adapter: Arc<dyn ExternalEffectReadBackAdapter>,
+) -> ExternalEffectReadBackRegistry {
+    ExternalEffectReadBackRegistry::new([(name.to_owned(), adapter)]).unwrap()
+}
+
+/// An adapter's answer is evidence only about effects that adapter owns.
+///
+/// This used to ask the first configured endpoint about every effect. A
+/// confident answer from that endpoint could therefore settle an effect sent
+/// somewhere else, making a routing mistake durable evidence.
+#[tokio::test]
+async fn recovery_asks_only_the_adapter_named_by_the_effect() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "second");
+    repository
+        .seed(
+            ExternalEffectRecoveryCandidate::new(effect.clone(), unknown_receipt(&effect)).unwrap(),
+        )
+        .await;
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let first_read_back = Arc::new(MemoryReadBack {
+        endpoint: "https://first.effects.test/read-back",
+        requests: Arc::clone(&requests),
+        receipts: Arc::new(Mutex::new(Vec::new())),
+        observations: vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:first",
+            vec!["evidence:first".into()],
+        )],
+    });
+    let second_read_back = Arc::new(MemoryReadBack {
+        endpoint: "https://second.effects.test/read-back",
+        requests: Arc::clone(&requests),
+        receipts: Arc::new(Mutex::new(Vec::new())),
+        observations: vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:second",
+            vec!["evidence:second".into()],
+        )],
+    });
+    let registry = ExternalEffectReadBackRegistry::new([
+        (
+            "first".to_owned(),
+            first_read_back as Arc<dyn ExternalEffectReadBackAdapter>,
+        ),
+        (
+            "second".to_owned(),
+            second_read_back as Arc<dyn ExternalEffectReadBackAdapter>,
+        ),
+    ])
+    .unwrap();
+    let service = ExternalEffectRecoveryService::new(repository, registry);
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+
+    let requests = requests.lock().await;
+    assert!(!requests.contains(&"https://first.effects.test/read-back"));
+    assert_eq!(
+        &*requests,
+        &["https://second.effects.test/read-back"],
+        "the effect was not asked about at exactly its adapter's endpoint"
+    );
+    assert_eq!(report.reconciliations().len(), 1);
+    assert_eq!(
+        report.reconciliations()[0].observed_state_ref(),
+        "external:second"
+    );
+}
+
+#[test]
+fn read_back_registry_rejects_duplicate_adapter_names() {
+    let adapter: Arc<dyn ExternalEffectReadBackAdapter> = Arc::new(MemoryReadBack {
+        endpoint: "https://duplicate.effects.test/read-back",
+        requests: Arc::new(Mutex::new(Vec::new())),
+        receipts: Arc::new(Mutex::new(Vec::new())),
+        observations: Vec::new(),
+    });
+
+    let error = match ExternalEffectReadBackRegistry::new([
+        ("duplicate".to_owned(), Arc::clone(&adapter)),
+        ("duplicate".to_owned(), adapter),
+    ]) {
+        Ok(_) => panic!("duplicate adapter names were accepted"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error.to_string().contains("duplicate"),
+        "duplicate-name error did not name the collision: {error}"
+    );
+}
+
+#[tokio::test]
+async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "missing");
+    let candidate =
+        ExternalEffectRecoveryCandidate::new(effect.clone(), unknown_receipt(&effect)).unwrap();
+    repository.seed(candidate.clone()).await;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let registry = read_back_registry(
+        "registered",
+        Arc::new(MemoryReadBack {
+            endpoint: "https://registered.effects.test/read-back",
+            requests: Arc::clone(&requests),
+            receipts: Arc::new(Mutex::new(Vec::new())),
+            observations: vec![ObservedEffectState::new(
+                EvidenceStrength::ProviderIdempotencyLookup,
+                Some(true),
+                "external:registered",
+                vec!["evidence:registered".into()],
+            )],
+        }),
+    );
+    let service = ExternalEffectRecoveryService::new(repository.clone(), registry);
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    assert!(matches!(
+        service.reconcile_candidate(&context, &candidate, at(29)).await,
+        Err(ExternalEffectRecoveryError::MissingReadBackRoute { adapter })
+            if adapter == "missing"
+    ));
+
+    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+
+    assert!(report.reconciliations().is_empty());
+    assert_eq!(repository.reconciled_count().await, 0);
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Unknown)
+    );
+    assert!(requests.lock().await.is_empty());
+    assert_eq!(report.unreachable().len(), 1);
+    assert_eq!(report.unreachable()[0].effect_id, effect.id());
+    assert!(
+        report.unreachable()[0].reason.contains("missing"),
+        "no-route reason did not name the adapter: {}",
+        report.unreachable()[0].reason
+    );
+
+    let next_report = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    assert_eq!(next_report.unreachable().len(), 1);
+    assert_eq!(next_report.unreachable()[0].effect_id, effect.id());
+    assert!(requests.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn single_registered_adapter_reconciles_only_its_own_effects() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let registered = intent_for_adapter(workspace_id, actor_id, &run_ref(), "registered");
+    let unregistered = intent_for_adapter(workspace_id, actor_id, &run_ref(), "unregistered");
+    for effect in [&registered, &unregistered] {
+        repository
+            .seed(
+                ExternalEffectRecoveryCandidate::new(effect.clone(), unknown_receipt(effect))
+                    .unwrap(),
+            )
+            .await;
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let registry = read_back_registry(
+        "registered",
+        Arc::new(MemoryReadBack {
+            endpoint: "https://registered.effects.test/read-back",
+            requests: Arc::clone(&requests),
+            receipts: Arc::new(Mutex::new(Vec::new())),
+            observations: vec![ObservedEffectState::new(
+                EvidenceStrength::ProviderIdempotencyLookup,
+                Some(true),
+                "external:registered",
+                vec!["evidence:registered".into()],
+            )],
+        }),
+    );
+    let service = ExternalEffectRecoveryService::new(repository.clone(), registry);
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+
+    assert_eq!(
+        &*requests.lock().await,
+        &["https://registered.effects.test/read-back"]
+    );
+    assert_eq!(report.reconciliations().len(), 1);
+    assert_eq!(report.reconciliations()[0].effect_id(), registered.id());
+    assert_eq!(report.unreachable().len(), 1);
+    assert_eq!(report.unreachable()[0].effect_id, unregistered.id());
+    assert!(report.unreachable()[0].reason.contains("unregistered"));
 }
 
 #[tokio::test]
@@ -718,7 +934,8 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
         .await;
 
     let read_back = Arc::new(MemoryReadBack {
-        calls: Arc::new(Mutex::new(0)),
+        endpoint: "https://webhook.effects.test/read-back",
+        requests: Arc::new(Mutex::new(Vec::new())),
         receipts: Arc::new(Mutex::new(Vec::new())),
         observations: vec![ObservedEffectState::new(
             EvidenceStrength::ProviderIdempotencyLookup,
@@ -727,7 +944,10 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
             vec!["evidence:provider".into()],
         )],
     });
-    let service = ExternalEffectRecoveryService::new(repository.clone(), read_back);
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry("webhook-v1", read_back),
+    );
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
@@ -769,11 +989,15 @@ async fn read_back_without_observations_settles_nothing_and_reports_it() {
         .await;
 
     let read_back = Arc::new(MemoryReadBack {
-        calls: Arc::new(Mutex::new(0)),
+        endpoint: "https://webhook.effects.test/read-back",
+        requests: Arc::new(Mutex::new(Vec::new())),
         receipts: Arc::new(Mutex::new(Vec::new())),
         observations: Vec::new(),
     });
-    let service = ExternalEffectRecoveryService::new(repository.clone(), read_back);
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry("webhook-v1", read_back),
+    );
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
@@ -809,7 +1033,8 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
 
     let observed_receipts = Arc::new(Mutex::new(Vec::new()));
     let read_back = Arc::new(MemoryReadBack {
-        calls: Arc::new(Mutex::new(0)),
+        endpoint: "https://webhook.effects.test/read-back",
+        requests: Arc::new(Mutex::new(Vec::new())),
         receipts: Arc::clone(&observed_receipts),
         observations: vec![ObservedEffectState::new(
             EvidenceStrength::ProviderIdempotencyLookup,
@@ -818,7 +1043,10 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
             vec!["evidence:provider".into()],
         )],
     });
-    let service = ExternalEffectRecoveryService::new(repository.clone(), read_back);
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry("webhook-v1", read_back),
+    );
     let report = service.run(&context, at(30), at(30), at(21)).await.unwrap();
 
     assert_eq!(&*observed_receipts.lock().await, &[None]);

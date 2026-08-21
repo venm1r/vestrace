@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use secrecy::SecretString;
 use vestrace_application::{
-    EffectOutcomeDeliveryService, ExternalEffectRecoveryService, RequestContext,
-    SharedExternalEffectRepository, deliver_effect_outcomes,
+    EffectOutcomeDeliveryService, ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry,
+    ExternalEffectRecoveryService, RequestContext, SharedExternalEffectRepository,
+    deliver_effect_outcomes,
 };
 use vestrace_domain::ExternalEffectId;
 use vestrace_domain::external_effects::FaultObservation;
@@ -247,7 +248,12 @@ async fn reconcile(
         Arc::new(PgExternalEffectRepository::new(store.clone()));
     let read_back = HttpExternalEffectReadBackAdapter::new(stub.read_back_url())
         .map_err(|error| format!("effect read-back is not configurable: {error}"))?;
-    let recovery = ExternalEffectRecoveryService::new(repository, Arc::new(read_back));
+    let read_backs = ExternalEffectReadBackRegistry::new([(
+        "fault-scenario-webhook".to_owned(),
+        Arc::new(read_back) as Arc<dyn ExternalEffectReadBackAdapter>,
+    )])
+    .map_err(|error| format!("effect read-back is not configurable: {error}"))?;
+    let recovery = ExternalEffectRecoveryService::new(repository, read_backs);
     recovery
         .sweep(context, now())
         .await

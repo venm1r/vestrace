@@ -86,8 +86,9 @@ pub use effect_outcome_delivery::{
     EffectOutcomeDeliveryService, OutcomeDeliveryReport, deliver_effect_outcomes,
 };
 pub use effect_recovery::{
-    DISPATCH_CONSIDERED_LOST_AFTER, ExternalEffectReadBackAdapter, ExternalEffectRecoveryReport,
-    ExternalEffectRecoveryService, RECONCILIATION_RETRY_AFTER,
+    DISPATCH_CONSIDERED_LOST_AFTER, ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry,
+    ExternalEffectRecoveryError, ExternalEffectRecoveryReport, ExternalEffectRecoveryService,
+    RECONCILIATION_RETRY_AFTER,
 };
 pub use effect_repository::{
     ExternalEffectRecoveryCandidate, ExternalEffectRepository, SharedExternalEffectRepository,

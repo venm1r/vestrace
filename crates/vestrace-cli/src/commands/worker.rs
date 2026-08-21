@@ -348,29 +348,57 @@ fn build_effect_reconciliation(
     config: &AppConfig,
     store: &PgStore,
 ) -> anyhow::Result<Option<Arc<vestrace_application::ExternalEffectRecoveryService>>> {
-    let Some(adapter) = config.effects.configured().into_iter().next() else {
+    let configured = config.effects.configured();
+    if configured.is_empty() {
         tracing::info!(
             "no external effect adapter is configured; nothing can produce an unknown outcome \
              and nothing needs reconciling"
         );
         return Ok(None);
-    };
+    }
 
-    let read_back =
-        vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(&adapter.read_back_url)
-            .map_err(|error| anyhow::anyhow!("effect read-back is not configurable: {error}"))?;
+    let read_backs = build_effect_read_back_registry(&configured)?;
+    let adapter_names = read_backs.names().collect::<Vec<_>>().join(",");
 
     tracing::info!(
-        adapter = %adapter.name,
-        read_back = %adapter.read_back_url,
+        adapter_count = read_backs.len(),
+        adapters = %adapter_names,
         "unknown external effect outcomes will be reconciled against the far side"
     );
     Ok(Some(Arc::new(
         vestrace_application::ExternalEffectRecoveryService::new(
             Arc::new(PgExternalEffectRepository::new(store.clone())),
-            Arc::new(read_back),
+            read_backs,
         ),
     )))
+}
+
+/// Build every named route before recovery is allowed to start.
+///
+/// Taking only the first configured adapter made configuration order decide
+/// which external system supplied evidence for every effect. Building the
+/// complete registry preserves the adapter identity persisted on each intent,
+/// while registry construction refuses ambiguous duplicate names.
+fn build_effect_read_back_registry(
+    configured: &[&vestrace_infrastructure::EffectAdapterConfig],
+) -> anyhow::Result<vestrace_application::ExternalEffectReadBackRegistry> {
+    let mut adapters = Vec::with_capacity(configured.len());
+    for adapter in configured {
+        let read_back =
+            vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(&adapter.read_back_url)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "effect read-back for adapter `{}` is not configurable: {error}",
+                        adapter.name
+                    )
+                })?;
+        adapters.push((
+            adapter.name.clone(),
+            Arc::new(read_back) as Arc<dyn vestrace_application::ExternalEffectReadBackAdapter>,
+        ));
+    }
+    vestrace_application::ExternalEffectReadBackRegistry::new(adapters)
+        .map_err(|error| anyhow::anyhow!(error))
 }
 
 /// Reconcile each configured workspace once, returning whether anything moved.
@@ -554,4 +582,35 @@ fn build_model_executor(
             },
         ),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_effect_read_back_registry;
+    use vestrace_infrastructure::{EffectAdapterConfig, EffectsConfig};
+
+    #[test]
+    fn worker_builds_read_back_routes_for_every_configured_adapter() {
+        let effects = EffectsConfig {
+            webhook: Some(EffectAdapterConfig {
+                name: "environment".into(),
+                dispatch_url: "https://environment.effects.test/dispatch".into(),
+                read_back_url: "https://environment.effects.test/read-back".into(),
+            }),
+            adapters: vec![EffectAdapterConfig {
+                name: "file".into(),
+                dispatch_url: "https://file.effects.test/dispatch".into(),
+                read_back_url: "https://file.effects.test/read-back".into(),
+            }],
+        };
+        let configured = effects.configured();
+
+        let registry = build_effect_read_back_registry(&configured).unwrap();
+
+        assert_eq!(registry.len(), 2);
+        assert_eq!(
+            registry.names().collect::<Vec<_>>(),
+            ["environment", "file"]
+        );
+    }
 }

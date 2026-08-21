@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,6 +20,72 @@ pub trait ExternalEffectReadBackAdapter: Send + Sync {
         intent: &ExternalEffectIntent,
         receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError>;
+}
+
+/// Why one candidate could not complete its recovery attempt.
+///
+/// A missing route stays distinct from a provider or storage failure because
+/// nobody was asked in that case; folding those together would once again make
+/// configuration ambiguity look like external evidence.
+#[derive(Debug, thiserror::Error)]
+pub enum ExternalEffectRecoveryError {
+    #[error("no external effect read-back route is registered for adapter `{adapter}`")]
+    MissingReadBackRoute { adapter: String },
+    #[error(transparent)]
+    Application(#[from] ApplicationError),
+}
+
+/// The read-back endpoints recovery is allowed to ask, keyed by persisted
+/// adapter identity.
+///
+/// Recovery used to hold one endpoint and therefore treated configuration
+/// order as evidence about which external system owned an effect. Keeping the
+/// name beside the endpoint makes an absent route explicit and refuses the
+/// equally unsafe ambiguity of two endpoints claiming the same name.
+pub struct ExternalEffectReadBackRegistry {
+    adapters: BTreeMap<String, Arc<dyn ExternalEffectReadBackAdapter>>,
+}
+
+impl ExternalEffectReadBackRegistry {
+    pub fn new(
+        adapters: impl IntoIterator<Item = (String, Arc<dyn ExternalEffectReadBackAdapter>)>,
+    ) -> Result<Self, ApplicationError> {
+        let mut registry = Self {
+            adapters: BTreeMap::new(),
+        };
+        for (name, adapter) in adapters {
+            if registry.adapters.contains_key(&name) {
+                return Err(ApplicationError::InvalidConfiguration(format!(
+                    "external effect read-back adapter name `{name}` is registered more than once"
+                )));
+            }
+            registry.adapters.insert(name, adapter);
+        }
+        Ok(registry)
+    }
+
+    pub fn len(&self) -> usize {
+        self.adapters.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.adapters.is_empty()
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.adapters.keys().map(String::as_str)
+    }
+
+    fn resolve(
+        &self,
+        adapter: &str,
+    ) -> Result<&Arc<dyn ExternalEffectReadBackAdapter>, ExternalEffectRecoveryError> {
+        self.adapters.get(adapter).ok_or_else(|| {
+            ExternalEffectRecoveryError::MissingReadBackRoute {
+                adapter: adapter.to_owned(),
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -108,18 +175,18 @@ pub const DISPATCH_CONSIDERED_LOST_AFTER: chrono::Duration = chrono::Duration::m
 
 pub struct ExternalEffectRecoveryService {
     repository: SharedExternalEffectRepository,
-    read_back: Arc<dyn ExternalEffectReadBackAdapter>,
+    read_backs: ExternalEffectReadBackRegistry,
     reconciliation: ExternalEffectReconciliationService,
 }
 
 impl ExternalEffectRecoveryService {
     pub fn new(
         repository: SharedExternalEffectRepository,
-        read_back: Arc<dyn ExternalEffectReadBackAdapter>,
+        read_backs: ExternalEffectReadBackRegistry,
     ) -> Self {
         Self {
             repository,
-            read_back,
+            read_backs,
             reconciliation: ExternalEffectReconciliationService::new(),
         }
     }
@@ -144,9 +211,9 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         candidate: &ExternalEffectRecoveryCandidate,
         reconciled_at: Timestamp,
-    ) -> Result<ExternalReconciliation, ApplicationError> {
-        let observations = self
-            .read_back
+    ) -> Result<ExternalReconciliation, ExternalEffectRecoveryError> {
+        let read_back = self.read_backs.resolve(candidate.intent().adapter())?;
+        let observations = read_back
             .observe(candidate.intent(), candidate.receipt())
             .await?;
         let reconciliation = self.reconciliation.reconcile(
