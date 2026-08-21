@@ -6,6 +6,7 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{
     DomainError, ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp,
+    WorkerId,
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -59,12 +60,29 @@ pub trait ExternalEffectRepository: Send + Sync {
     ) -> Result<Option<ExternalEffectReceipt>, ApplicationError>;
 
     /// Record the committed boundary immediately before an adapter is called.
+    ///
+    /// The dispatcher supplies both ownership facts. A repository can persist
+    /// who accepted the call and the deadline that process stated; it cannot
+    /// derive either without turning storage into the author of false evidence.
     async fn record_dispatch_started(
         &self,
         context: &RequestContext,
         effect_id: ExternalEffectId,
+        dispatch_owner: WorkerId,
+        dispatch_expires_at: Timestamp,
         recorded_at: Timestamp,
     ) -> Result<(), ApplicationError>;
+
+    /// Legacy dispatch assertions that nobody gave a deadline.
+    ///
+    /// They can never enter machine recovery, because assigning a deadline now
+    /// would fabricate a promise the dispatcher did not make. Counting the
+    /// transition rows per workspace keeps that truthful exemption from turning
+    /// into a silent leak.
+    async fn count_deadline_less_dispatching_transitions(
+        &self,
+        context: &RequestContext,
+    ) -> Result<u64, ApplicationError>;
 
     /// The latest lifecycle evidence recorded for this effect, if any.
     async fn find_lifecycle_status(
@@ -97,11 +115,15 @@ pub trait ExternalEffectRepository: Send + Sync {
     /// about what is still unknown" is a sweep that re-asks every provider on
     /// every tick. The cadence is the caller's to choose, so it is an argument
     /// rather than a constant buried in a query.
+    ///
+    /// `dispatch_expired_before` is different: it is the observer's current
+    /// cutoff, compared directly with each dispatch's stored deadline. A legacy
+    /// transition with no stated deadline never qualifies at any cutoff.
     async fn find_reconciliation_candidates(
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
-        dispatch_considered_lost_before: Timestamp,
+        dispatch_expired_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError>;
 
     /// Settled outcomes whose run has not been told, oldest first.

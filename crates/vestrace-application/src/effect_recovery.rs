@@ -169,9 +169,17 @@ impl ExternalEffectRecoveryReport {
 /// reconciliation, not of any particular loop that drives it.
 pub const RECONCILIATION_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
 
-/// How long an adapter call may remain in flight before recovery treats its
-/// committed `Dispatching` evidence as a process loss.
-pub const DISPATCH_CONSIDERED_LOST_AFTER: chrono::Duration = chrono::Duration::minutes(5);
+/// How long a dispatcher allows its own call, when it has no adapter-specific
+/// duration to state.
+///
+/// This is added to the transition's recorded time and **persisted** as that
+/// dispatch's deadline, so every replica compares a stored promise rather than
+/// applying a threshold of its own. It was once `DISPATCH_CONSIDERED_LOST_AFTER`
+/// and recovery subtracted it from `now` to guess whether a call had been
+/// abandoned — a guess a second replica had no reason to share, and one that
+/// could declare a live call lost inside the adapter's own timeout. The
+/// duration is unchanged; who is entitled to state it is not.
+pub const DEFAULT_DISPATCH_ALLOWANCE: chrono::Duration = chrono::Duration::minutes(5);
 
 pub struct ExternalEffectRecoveryService {
     repository: SharedExternalEffectRepository,
@@ -195,13 +203,13 @@ impl ExternalEffectRecoveryService {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
-        dispatch_considered_lost_before: Timestamp,
+        dispatch_expired_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         self.repository
             .find_reconciliation_candidates(
                 context,
                 retry_unsettled_before,
-                dispatch_considered_lost_before,
+                dispatch_expired_before,
             )
             .await
     }
@@ -251,14 +259,10 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         reconciled_at: Timestamp,
         retry_unsettled_before: Timestamp,
-        dispatch_considered_lost_before: Timestamp,
+        dispatch_expired_before: Timestamp,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
         let candidates = self
-            .discover(
-                context,
-                retry_unsettled_before,
-                dispatch_considered_lost_before,
-            )
+            .discover(context, retry_unsettled_before, dispatch_expired_before)
             .await?;
         let mut reconciliations = Vec::with_capacity(candidates.len());
         let mut runs = Vec::with_capacity(candidates.len());
@@ -295,12 +299,7 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         at: Timestamp,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
-        self.run(
-            context,
-            at,
-            at - RECONCILIATION_RETRY_AFTER,
-            at - DISPATCH_CONSIDERED_LOST_AFTER,
-        )
-        .await
+        self.run(context, at, at - RECONCILIATION_RETRY_AFTER, at)
+            .await
     }
 }

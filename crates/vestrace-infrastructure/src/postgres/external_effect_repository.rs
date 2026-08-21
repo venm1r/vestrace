@@ -11,7 +11,7 @@ use vestrace_domain::external_effects::{
     ReconciliationOutcome,
 };
 use vestrace_domain::{
-    ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp,
+    ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp, WorkerId,
 };
 
 use super::PgStore;
@@ -423,6 +423,8 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         &self,
         context: &RequestContext,
         effect_id: ExternalEffectId,
+        dispatch_owner: WorkerId,
+        dispatch_expires_at: Timestamp,
         recorded_at: Timestamp,
     ) -> Result<(), ApplicationError> {
         let mut scoped = self
@@ -432,13 +434,16 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .map_err(storage_error)?;
         let result = sqlx::query(
             "INSERT INTO external_effect_lifecycle_transitions \
-                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
-             SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $3 \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at, \
+                  dispatch_owner, dispatch_expires_at) \
+             SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $5, $3, $4 \
              FROM external_effect_intents \
              WHERE id = $1 AND workspace_id = $2",
         )
         .bind(effect_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
+        .bind(dispatch_owner.to_string())
+        .bind(dispatch_expires_at)
         .bind(recorded_at)
         .execute(scoped.connection())
         .await
@@ -449,6 +454,30 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             ));
         }
         scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn count_deadline_less_dispatching_transitions(
+        &self,
+        context: &RequestContext,
+    ) -> Result<u64, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE workspace_id = $1 \
+               AND status = 'dispatching' \
+               AND dispatch_expires_at IS NULL",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .fetch_one(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        u64::try_from(count)
+            .map_err(|_| storage_error("external effect lifecycle count was negative"))
     }
 
     async fn find_lifecycle_status(
@@ -712,7 +741,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
-        dispatch_considered_lost_before: Timestamp,
+        dispatch_expired_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let mut scoped = self
             .store
@@ -777,7 +806,8 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                  WHERE dispatch.workspace_id = $1
                    AND i.workspace_id = $1
                    AND dispatch.status = 'dispatching'
-                   AND dispatch.recorded_at < $4
+                   AND dispatch.dispatch_expires_at IS NOT NULL
+                   AND dispatch.dispatch_expires_at < $4
                    AND NOT EXISTS (
                        SELECT 1 FROM external_effect_receipts r
                        WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id
@@ -802,7 +832,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .bind(context.workspace_id.as_uuid())
         .bind(ReconciliationOutcome::settled_names())
         .bind(retry_unsettled_before)
-        .bind(dispatch_considered_lost_before)
+        .bind(dispatch_expired_before)
         .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;

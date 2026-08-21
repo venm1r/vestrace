@@ -241,9 +241,16 @@ async fn a_young_persisted_dispatch_is_not_yet_enrolled_in_reconciliation() {
         .insert_intent(&fixture.context, &intent)
         .await
         .expect("the fixture intent is recorded");
+    let recorded_at = now();
     fixture
         .effects()
-        .record_dispatch_started(&fixture.context, intent.id(), now())
+        .record_dispatch_started(
+            &fixture.context,
+            intent.id(),
+            vestrace_domain::id::WorkerId::new(),
+            recorded_at + vestrace_application::DEFAULT_DISPATCH_ALLOWANCE,
+            recorded_at,
+        )
         .await
         .expect("the dispatch start is recorded");
 

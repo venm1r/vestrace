@@ -9,6 +9,7 @@ use vestrace_application::{
     ConfiguredCapabilityPolicyEngine, DenyAllPolicyEngine, MemoryService, RetrievalService,
     RunService,
 };
+use vestrace_domain::id::WorkerId;
 use vestrace_http::{AppState, MetricsRegistry, build_router};
 use vestrace_infrastructure::{
     AppConfig, LogFormat, ObservabilityConfig, PgAgUiRepository, PgAgentRepository,
@@ -23,7 +24,7 @@ use vestrace_infrastructure::{
     PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
 
-pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
+pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result<()> {
     init_tracing(&config.observability)?;
     tracing::info!(bind = %config.http.bind, "starting vestrace server");
 
@@ -154,6 +155,7 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let external_effects = Arc::new(vestrace_application::PerformExternalEffectService::new(
         Arc::new(PgExternalEffectRepository::new(store_for_effects)),
         vestrace_application::AuthorizationBoundary::new(policy_engine.clone()),
+        dispatch_owner,
     ));
 
     let purge: vestrace_application::SharedPurgeUseCase =

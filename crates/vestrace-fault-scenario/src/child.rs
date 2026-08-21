@@ -18,7 +18,7 @@ use vestrace_domain::external_effects::{
     EffectFaultPoint, EffectPrecondition, EvidenceStrength, ExternalEffectAdapter,
     ExternalEffectIntent, ObservedEffectState, reconcile_effect,
 };
-use vestrace_domain::id::AgentRunId;
+use vestrace_domain::id::{AgentRunId, WorkerId};
 use vestrace_domain::{AuthorizationRequest, PrincipalId, RiskCategory, WorkspaceId, now};
 use vestrace_infrastructure::{
     DatabaseConfig, HttpWebhookEffectAdapter, PgExternalEffectRepository, PgStore,
@@ -182,8 +182,12 @@ pub fn dispatch_url_argument(args: impl Iterator<Item = String>) -> Result<Strin
 /// orderly `exit()` flushes buffers and lets transactions finish, which is a
 /// shutdown path nobody asked a question about. What this scenario measures is
 /// what survives a process that stopped without being asked.
-pub async fn run_child(settings: &ScenarioSettings, dispatch_url: &str) -> ! {
-    match drive(settings, dispatch_url).await {
+pub async fn run_child(
+    settings: &ScenarioSettings,
+    dispatch_url: &str,
+    dispatch_owner: WorkerId,
+) -> ! {
+    match drive(settings, dispatch_url, dispatch_owner).await {
         Ok(stage) => abort_after(stage),
         Err(error) => {
             // A setup failure is not a fault observation, and saying so on
@@ -227,7 +231,11 @@ fn abort_after(stage: ChildStage) -> ! {
 /// could carry honestly. Verified by reading in the meantime, which is weaker
 /// than a test and is recorded as such here and in the delta document's
 /// limitations rather than left to look covered.
-async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildStage, String> {
+async fn drive(
+    settings: &ScenarioSettings,
+    dispatch_url: &str,
+    dispatch_owner: WorkerId,
+) -> Result<ChildStage, String> {
     let stage = aborts_at(settings.point());
 
     let store = PgStore::connect(&DatabaseConfig {
@@ -258,8 +266,12 @@ async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildS
         )
         .map_err(|error| format!("the scenario policy engine is not configurable: {error}"))?,
     ));
-    let perform = PerformExternalEffectService::new(Arc::clone(&effects), authorization.clone());
-    let granular = ExternalEffectService::new(Arc::clone(&effects), authorization);
+    let perform = PerformExternalEffectService::new(
+        Arc::clone(&effects),
+        authorization.clone(),
+        dispatch_owner,
+    );
+    let granular = ExternalEffectService::new(Arc::clone(&effects), authorization, dispatch_owner);
 
     let context = scenario_context();
     let intent = scenario_intent(&context, &adapter, dispatch_url)?;

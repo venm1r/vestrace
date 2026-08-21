@@ -23,9 +23,9 @@ use vestrace_application::{
     ExternalEffectRecoveryService, RequestContext, SharedExternalEffectRepository,
     deliver_effect_outcomes,
 };
-use vestrace_domain::ExternalEffectId;
 use vestrace_domain::external_effects::FaultObservation;
 use vestrace_domain::now;
+use vestrace_domain::{ExternalEffectId, WorkerId};
 use vestrace_fault_scenario::{AdapterStub, ScenarioSettings, child, observe, report};
 use vestrace_infrastructure::{
     DatabaseConfig, HttpExternalEffectReadBackAdapter, PgExternalEffectRepository, PgRunEventStore,
@@ -52,8 +52,21 @@ async fn main() {
                 std::process::exit(2);
             }
         };
+        let dispatch_owner = match argument(std::env::args().skip(1), "--worker-id")
+            .ok_or_else(|| "worker id is required: pass --worker-id".to_owned())
+            .and_then(|value| {
+                value
+                    .parse::<WorkerId>()
+                    .map_err(|error| format!("worker id is invalid: {error}"))
+            }) {
+            Ok(worker_id) => worker_id,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        };
         // Diverges: the child always ends in `abort()`.
-        child::run_child(&settings, &dispatch_url).await;
+        child::run_child(&settings, &dispatch_url, dispatch_owner).await;
     }
 
     match run_parent(&settings).await {
@@ -171,6 +184,10 @@ async fn run_the_child(
         .map_err(|error| format!("this executable's own path is unreadable: {error}"))?;
     let url_file = argument(std::env::args().skip(1), "--database-url-file")
         .ok_or_else(|| "database url file is required: pass --database-url-file".to_owned())?;
+    // The parent names the child process before it starts and passes that
+    // identity explicitly. The repository must never invent an owner after the
+    // child has crossed the dispatch boundary.
+    let dispatch_owner = WorkerId::new();
 
     let output = tokio::process::Command::new(&program)
         .arg("--database-url-file")
@@ -179,6 +196,8 @@ async fn run_the_child(
         // may travel in argv where any process on the host can read it.
         .arg("--dispatch-url")
         .arg(stub.dispatch_url())
+        .arg("--worker-id")
+        .arg(dispatch_owner.to_string())
         .env("VESTRACE_FAULT_CHILD", "1")
         // Restated from the parsed settings rather than left to inheritance, so
         // the child is driven by the point this process actually accepted. The

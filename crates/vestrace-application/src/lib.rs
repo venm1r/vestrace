@@ -86,7 +86,7 @@ pub use effect_outcome_delivery::{
     EffectOutcomeDeliveryService, OutcomeDeliveryReport, deliver_effect_outcomes,
 };
 pub use effect_recovery::{
-    DISPATCH_CONSIDERED_LOST_AFTER, ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry,
+    DEFAULT_DISPATCH_ALLOWANCE, ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry,
     ExternalEffectRecoveryError, ExternalEffectRecoveryReport, ExternalEffectRecoveryService,
     RECONCILIATION_RETRY_AFTER,
 };

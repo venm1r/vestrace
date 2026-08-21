@@ -17,7 +17,7 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{
     AuthorizationRequest, Capability, ExternalEffectId, ExternalEffectReceiptId,
-    ExternalReconciliationId, PrincipalId, RiskCategory, WorkspaceId,
+    ExternalReconciliationId, PrincipalId, RiskCategory, WorkerId, WorkspaceId,
 };
 
 fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
@@ -107,18 +107,21 @@ fn performable_intent(workspace_id: WorkspaceId, actor_id: PrincipalId) -> Exter
 struct MemoryEffectRepository {
     intents: Mutex<Vec<ExternalEffectIntent>>,
     receipts: Mutex<Vec<ExternalEffectReceipt>>,
-    transitions: Mutex<
-        Vec<(
-            WorkspaceId,
-            ExternalEffectId,
-            EffectLifecycleStatus,
-            vestrace_domain::Timestamp,
-        )>,
-    >,
+    transitions: Mutex<Vec<MemoryLifecycleTransition>>,
     reconciled: Mutex<Vec<ExternalReconciliation>>,
     reconciled_keys: Mutex<Vec<(ExternalEffectId, Option<ExternalEffectReceiptId>)>>,
     delivered: Mutex<Vec<ExternalReconciliationId>>,
     dispatch_started_signal: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
+}
+
+#[derive(Clone, Copy)]
+struct MemoryLifecycleTransition {
+    workspace_id: WorkspaceId,
+    effect_id: ExternalEffectId,
+    status: EffectLifecycleStatus,
+    recorded_at: vestrace_domain::Timestamp,
+    dispatch_owner: Option<WorkerId>,
+    dispatch_expires_at: Option<vestrace_domain::Timestamp>,
 }
 
 impl MemoryEffectRepository {
@@ -137,10 +140,70 @@ impl MemoryEffectRepository {
         if let Some(receipt) = candidate.receipt() {
             self.insert_receipt(&context, receipt).await.unwrap();
         } else {
-            self.record_dispatch_started(&context, candidate.intent().id(), at(20))
-                .await
-                .unwrap();
+            self.record_dispatch_started(
+                &context,
+                candidate.intent().id(),
+                WorkerId::new(),
+                at(21),
+                at(20),
+            )
+            .await
+            .unwrap();
         }
+    }
+
+    async fn seed_deadline_less_dispatch(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        recorded_at: vestrace_domain::Timestamp,
+    ) -> Result<(), ApplicationError> {
+        if !self
+            .intents
+            .lock()
+            .await
+            .iter()
+            .any(|intent| intent.id() == effect_id && intent.workspace_id() == context.workspace_id)
+        {
+            return Err(ApplicationError::Storage(
+                "effect evidence not found".into(),
+            ));
+        }
+        self.transitions
+            .lock()
+            .await
+            .push(MemoryLifecycleTransition {
+                workspace_id: context.workspace_id,
+                effect_id,
+                status: EffectLifecycleStatus::Dispatching,
+                recorded_at,
+                dispatch_owner: None,
+                dispatch_expires_at: None,
+            });
+        Ok(())
+    }
+
+    async fn dispatch_evidence(
+        &self,
+        effect_id: ExternalEffectId,
+    ) -> Vec<(
+        WorkerId,
+        vestrace_domain::Timestamp,
+        vestrace_domain::Timestamp,
+    )> {
+        self.transitions
+            .lock()
+            .await
+            .iter()
+            .filter(|transition| transition.effect_id == effect_id)
+            .filter_map(|transition| {
+                Some((
+                    transition.dispatch_owner?,
+                    transition.dispatch_expires_at?,
+                    transition.recorded_at,
+                ))
+            })
+            .collect()
     }
 
     async fn reconciled_count(&self) -> usize {
@@ -178,12 +241,17 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         intents.push(intent.clone());
         drop(intents);
-        self.transitions.lock().await.push((
-            context.workspace_id,
-            intent.id(),
-            EffectLifecycleStatus::Prepared,
-            intent.created_at(),
-        ));
+        self.transitions
+            .lock()
+            .await
+            .push(MemoryLifecycleTransition {
+                workspace_id: context.workspace_id,
+                effect_id: intent.id(),
+                status: EffectLifecycleStatus::Prepared,
+                recorded_at: intent.created_at(),
+                dispatch_owner: None,
+                dispatch_expires_at: None,
+            });
         Ok(())
     }
 
@@ -226,12 +294,17 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         receipts.push(receipt.clone());
         drop(receipts);
-        self.transitions.lock().await.push((
-            context.workspace_id,
-            receipt.effect_id(),
-            receipt.outcome_status(),
-            receipt.recorded_at(),
-        ));
+        self.transitions
+            .lock()
+            .await
+            .push(MemoryLifecycleTransition {
+                workspace_id: context.workspace_id,
+                effect_id: receipt.effect_id(),
+                status: receipt.outcome_status(),
+                recorded_at: receipt.recorded_at(),
+                dispatch_owner: None,
+                dispatch_expires_at: None,
+            });
         Ok(())
     }
 
@@ -284,6 +357,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         &self,
         context: &RequestContext,
         effect_id: ExternalEffectId,
+        dispatch_owner: WorkerId,
+        dispatch_expires_at: vestrace_domain::Timestamp,
         recorded_at: vestrace_domain::Timestamp,
     ) -> Result<(), ApplicationError> {
         if !self
@@ -297,12 +372,17 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                 "effect evidence not found".into(),
             ));
         }
-        self.transitions.lock().await.push((
-            context.workspace_id,
-            effect_id,
-            EffectLifecycleStatus::Dispatching,
-            recorded_at,
-        ));
+        self.transitions
+            .lock()
+            .await
+            .push(MemoryLifecycleTransition {
+                workspace_id: context.workspace_id,
+                effect_id,
+                status: EffectLifecycleStatus::Dispatching,
+                recorded_at,
+                dispatch_owner: Some(dispatch_owner),
+                dispatch_expires_at: Some(dispatch_expires_at),
+            });
         if let Some(signal) = self.dispatch_started_signal.lock().unwrap().as_ref() {
             signal.store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -319,9 +399,28 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             .lock()
             .await
             .iter()
-            .filter(|transition| transition.0 == context.workspace_id && transition.1 == effect_id)
-            .max_by_key(|transition| transition.3)
-            .map(|transition| transition.2))
+            .filter(|transition| {
+                transition.workspace_id == context.workspace_id && transition.effect_id == effect_id
+            })
+            .max_by_key(|transition| transition.recorded_at)
+            .map(|transition| transition.status))
+    }
+
+    async fn count_deadline_less_dispatching_transitions(
+        &self,
+        context: &RequestContext,
+    ) -> Result<u64, ApplicationError> {
+        Ok(self
+            .transitions
+            .lock()
+            .await
+            .iter()
+            .filter(|transition| {
+                transition.workspace_id == context.workspace_id
+                    && transition.status == EffectLifecycleStatus::Dispatching
+                    && transition.dispatch_expires_at.is_none()
+            })
+            .count() as u64)
     }
 
     async fn insert_reconciliation(
@@ -355,12 +454,17 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         {
             self.reconciled.lock().await.push(reconciliation.clone());
             if reconciliation.outcome().is_settled() {
-                self.transitions.lock().await.push((
-                    context.workspace_id,
-                    reconciliation.effect_id(),
-                    EffectLifecycleStatus::Reconciling,
-                    reconciliation.reconciled_at(),
-                ));
+                self.transitions
+                    .lock()
+                    .await
+                    .push(MemoryLifecycleTransition {
+                        workspace_id: context.workspace_id,
+                        effect_id: reconciliation.effect_id(),
+                        status: EffectLifecycleStatus::Reconciling,
+                        recorded_at: reconciliation.reconciled_at(),
+                        dispatch_owner: None,
+                        dispatch_expires_at: None,
+                    });
             }
         }
         Ok(())
@@ -441,12 +545,17 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             _ => return Err(ApplicationError::Storage("outcome is not settled".into())),
         };
         self.delivered.lock().await.push(reconciliation_id);
-        self.transitions.lock().await.push((
-            context.workspace_id,
-            reconciliation.effect_id(),
-            status,
-            at,
-        ));
+        self.transitions
+            .lock()
+            .await
+            .push(MemoryLifecycleTransition {
+                workspace_id: context.workspace_id,
+                effect_id: reconciliation.effect_id(),
+                status,
+                recorded_at: at,
+                dispatch_owner: None,
+                dispatch_expires_at: None,
+            });
         Ok(())
     }
 
@@ -456,7 +565,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         &self,
         context: &RequestContext,
         retry_unsettled_before: vestrace_domain::Timestamp,
-        dispatch_considered_lost_before: vestrace_domain::Timestamp,
+        dispatch_expired_before: vestrace_domain::Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let workspace_id = context.workspace_id;
         let reconciled = self.reconciled.lock().await;
@@ -485,12 +594,16 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                     .collect::<Vec<_>>();
                 let latest_status = transitions
                     .iter()
-                    .filter(|item| item.0 == workspace_id && item.1 == intent.id())
-                    .max_by_key(|item| item.3);
+                    .filter(|item| {
+                        item.workspace_id == workspace_id && item.effect_id == intent.id()
+                    })
+                    .max_by_key(|item| item.recorded_at);
                 if effect_receipts.is_empty()
                     && latest_status.is_some_and(|item| {
-                        item.2 == EffectLifecycleStatus::Dispatching
-                            && item.3 < dispatch_considered_lost_before
+                        item.status == EffectLifecycleStatus::Dispatching
+                            && item
+                                .dispatch_expires_at
+                                .is_some_and(|deadline| deadline < dispatch_expired_before)
                     })
                 {
                     candidates.push(ExternalEffectRecoveryCandidate::new(intent, None).unwrap());
@@ -1027,7 +1140,7 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
     let context = RequestContext::new(workspace_id, actor_id);
     repository.insert_intent(&context, &effect).await.unwrap();
     repository
-        .record_dispatch_started(&context, effect.id(), at(20))
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(21), at(20))
         .await
         .unwrap();
 
@@ -1047,7 +1160,7 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
         repository.clone(),
         read_back_registry("webhook-v1", read_back),
     );
-    let report = service.run(&context, at(30), at(30), at(21)).await.unwrap();
+    let report = service.run(&context, at(30), at(30), at(22)).await.unwrap();
 
     assert_eq!(&*observed_receipts.lock().await, &[None]);
     assert_eq!(report.reconciliations().len(), 1);
@@ -1062,6 +1175,80 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
             .await
             .unwrap(),
         Some(EffectLifecycleStatus::Reconciling)
+    );
+}
+
+#[tokio::test]
+async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemptions_per_workspace() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let other_context = RequestContext::new(WorkspaceId::new(), actor_id);
+    let repository = MemoryEffectRepository::default();
+    let expired = intent(workspace_id, actor_id, &run_ref());
+    let live = intent(workspace_id, actor_id, &run_ref());
+    let legacy = intent(workspace_id, actor_id, &run_ref());
+    for effect in [&expired, &live, &legacy] {
+        repository.insert_intent(&context, effect).await.unwrap();
+    }
+
+    let same_recorded_at = at(20);
+    repository
+        .record_dispatch_started(
+            &context,
+            expired.id(),
+            WorkerId::new(),
+            at(19),
+            same_recorded_at,
+        )
+        .await
+        .unwrap();
+    repository
+        .record_dispatch_started(
+            &context,
+            live.id(),
+            WorkerId::new(),
+            at(21),
+            same_recorded_at,
+        )
+        .await
+        .unwrap();
+    repository
+        .seed_deadline_less_dispatch(&context, legacy.id(), same_recorded_at)
+        .await
+        .unwrap();
+
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(10_000), at(20))
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].intent(), &expired);
+
+    for cutoff in [at(0), at(20), at(10_000)] {
+        assert!(
+            repository
+                .find_reconciliation_candidates(&context, at(10_000), cutoff)
+                .await
+                .unwrap()
+                .iter()
+                .all(|candidate| candidate.intent().id() != legacy.id()),
+            "a dispatch nobody gave a deadline was swept at {cutoff}"
+        );
+    }
+    assert_eq!(
+        repository
+            .count_deadline_less_dispatching_transitions(&context)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        repository
+            .count_deadline_less_dispatching_transitions(&other_context)
+            .await
+            .unwrap(),
+        0
     );
 }
 
@@ -1101,6 +1288,7 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
     let context = RequestContext::new(workspace_id, actor_id);
     let repository = Arc::new(MemoryEffectRepository::default());
     repository.insert_intent(&context, &effect).await.unwrap();
+    let dispatch_owner = WorkerId::new();
     let service = ExternalEffectService::new(
         repository.clone(),
         AuthorizationBoundary::new(Arc::new(
@@ -1111,6 +1299,7 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
             )
             .unwrap(),
         )),
+        dispatch_owner,
     );
     let authorized = service
         .authorize(
@@ -1174,6 +1363,14 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
             .unwrap(),
         Some(EffectLifecycleStatus::Dispatching)
     );
+    let evidence = repository.dispatch_evidence(effect.id()).await;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].0, dispatch_owner);
+    assert_eq!(evidence[0].2, at(21));
+    assert!(
+        evidence[0].1 > evidence[0].2,
+        "the default dispatch deadline was not strictly after the recorded transition"
+    );
 }
 
 #[tokio::test]
@@ -1206,7 +1403,8 @@ async fn perform_commits_dispatching_after_validation_and_before_the_adapter_cal
         )
         .unwrap(),
     ));
-    let service = PerformExternalEffectService::new(repository.clone(), authorization);
+    let service =
+        PerformExternalEffectService::new(repository.clone(), authorization, WorkerId::new());
     let effect = performable_intent(workspace_id, actor_id);
     let effect_id = effect.id();
 

@@ -260,7 +260,13 @@ async fn a_settled_lost_dispatch_with_no_receipt_is_told_to_its_run(pool: PgPool
     let intent = intent_for(&format!("run://{RUN_ID}"));
     repository.insert_intent(&context, &intent).await.unwrap();
     repository
-        .record_dispatch_started(&context, intent.id(), at(20))
+        .record_dispatch_started(
+            &context,
+            intent.id(),
+            vestrace_domain::id::WorkerId::new(),
+            at(320),
+            at(20),
+        )
         .await
         .unwrap();
     let reconciliation = reconcile_effect(

@@ -9,8 +9,8 @@
 //! about instead.
 
 use vestrace_application::{
-    DISPATCH_CONSIDERED_LOST_AFTER, ExternalEffectRecoveryCandidate, ExternalEffectRepository,
-    RECONCILIATION_RETRY_AFTER, RequestContext,
+    ExternalEffectRecoveryCandidate, ExternalEffectRepository, RECONCILIATION_RETRY_AFTER,
+    RequestContext,
 };
 use vestrace_domain::external_effects::{
     EffectFaultPoint, ExternalReconciliation, FaultObservation,
@@ -164,8 +164,8 @@ async fn owed_reconciliation(
 /// and it applies only to an effect that *already* has a reconciliation whose
 /// latest attempt settled nothing: that one comes back only once the attempt is
 /// older than the cutoff. Observation uses the same two cutoffs as the real
-/// sweep: otherwise a young `Dispatching` transition would be reported as
-/// enrolled even though recovery deliberately still treats it as in flight.
+/// sweep: the retry cutoff is derived, while a dispatch is compared directly
+/// against the deadline its owner recorded.
 async fn sweep_candidate(
     effects: &PgExternalEffectRepository,
     context: &RequestContext,
@@ -176,7 +176,7 @@ async fn sweep_candidate(
         .find_reconciliation_candidates(
             context,
             observed_at - RECONCILIATION_RETRY_AFTER,
-            observed_at - DISPATCH_CONSIDERED_LOST_AFTER,
+            observed_at,
         )
         .await
         .map_err(|error| format!("the reconciliation candidates could not be read: {error:?}"))?;

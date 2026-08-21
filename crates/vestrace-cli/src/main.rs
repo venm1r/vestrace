@@ -291,7 +291,12 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     match cli.command {
-        Command::Server => commands::server::run(&config).await,
+        // Process identity is created once at the command boundary and injected
+        // into dispatch. Storage must record the process that actually exists,
+        // never fabricate an owner when the call reaches the repository.
+        Command::Server => {
+            commands::server::run(&config, vestrace_domain::id::WorkerId::new()).await
+        }
         Command::Worker => commands::worker::run(&config).await,
         Command::Mcp => commands::mcp::run(&config).await,
         Command::Migrate => commands::migrate::run(&config).await,

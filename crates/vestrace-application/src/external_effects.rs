@@ -2,8 +2,9 @@ use vestrace_domain::external_effects::{
     AuthorizedExternalEffect, DispatchError, EffectAuthorization, ExternalEffectAdapter,
     ExternalEffectIntent, ExternalEffectReceipt,
 };
-use vestrace_domain::{AuthorizationRequest, Timestamp};
+use vestrace_domain::{AuthorizationRequest, Timestamp, WorkerId};
 
+use crate::effect_recovery::DEFAULT_DISPATCH_ALLOWANCE;
 use crate::{
     ApplicationError, AuthorizationBoundary, RequestContext, SharedExternalEffectRepository,
 };
@@ -11,16 +12,19 @@ use crate::{
 pub struct ExternalEffectService {
     effects: SharedExternalEffectRepository,
     authorization: AuthorizationBoundary,
+    dispatch_owner: WorkerId,
 }
 
 impl ExternalEffectService {
     pub fn new(
         effects: SharedExternalEffectRepository,
         authorization: AuthorizationBoundary,
+        dispatch_owner: WorkerId,
     ) -> Self {
         Self {
             effects,
             authorization,
+            dispatch_owner,
         }
     }
 
@@ -53,8 +57,15 @@ impl ExternalEffectService {
         authorized
             .validate_dispatch(adapter, current_precondition_digest)
             .map_err(map_dispatch_error)?;
+        let dispatch_expires_at = recorded_at + DEFAULT_DISPATCH_ALLOWANCE;
         self.effects
-            .record_dispatch_started(context, authorized.intent().id(), recorded_at)
+            .record_dispatch_started(
+                context,
+                authorized.intent().id(),
+                self.dispatch_owner,
+                dispatch_expires_at,
+                recorded_at,
+            )
             .await?;
         authorized
             .dispatch(adapter, current_precondition_digest, recorded_at)
@@ -89,8 +100,9 @@ impl PerformExternalEffectService {
     pub fn new(
         effects: SharedExternalEffectRepository,
         authorization: AuthorizationBoundary,
+        dispatch_owner: WorkerId,
     ) -> Self {
-        let granular = ExternalEffectService::new(effects.clone(), authorization);
+        let granular = ExternalEffectService::new(effects.clone(), authorization, dispatch_owner);
         Self { effects, granular }
     }
 

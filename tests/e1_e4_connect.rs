@@ -114,6 +114,7 @@ async fn e2_application_external_effects_use_the_shared_default_deny_boundary() 
     let service = ExternalEffectService::new(
         unused_external_effect_repository(),
         AuthorizationBoundary::new(Arc::new(DenyAllPolicyEngine)),
+        vestrace_domain::id::WorkerId::new(),
     );
     let effect = intent();
     let context = RequestContext::new(effect.workspace_id(), effect.actor_id());

@@ -7,7 +7,9 @@ use vestrace_application::run::{
     AdvanceRunHandler, ExecuteStepHandler, ResumeRunHandler, RunWorkHandlerRegistry, RunWorker,
     RunWorkerConfig, SystemClock,
 };
-use vestrace_application::{OutboxDispatcher, QualificationRuntime, RequestContext};
+use vestrace_application::{
+    ExternalEffectRepository, OutboxDispatcher, QualificationRuntime, RequestContext,
+};
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
@@ -172,6 +174,8 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         outbox_topics = outbox.topics().count(),
         "worker started, polling for run work items and outbox messages"
     );
+
+    report_dispatches_without_a_deadline(&store, &run_contexts).await;
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_clone = shutdown_notify.clone();
@@ -344,6 +348,43 @@ async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestCon
 /// It runs beside the outbox drain rather than at startup because an unknown
 /// outcome does not wait for a restart to appear — the timeout that produces
 /// one happens while the system is running.
+/// Say once, at startup, how many dispatches can never be declared lost.
+///
+/// Migration 0154 exempts the `dispatching` transitions written before a
+/// dispatch stated an owner and a deadline: they carry no deadline, so no cutoff
+/// can ever select them and no sweep will ever ask about them. That exemption is
+/// the truthful compatibility state — inventing a deadline for a call that may
+/// already have touched the world would be worse — but an exemption nobody can
+/// count is a leak wearing correctness as a costume, which is why the port
+/// carries the count at all.
+///
+/// Reported here rather than per sweep because nothing creates a deadline-less
+/// transition any more, so the number only ever falls, and repeating it every
+/// tick would bury it. A failure to count is logged and does not stop the
+/// worker: this is disclosure, not a precondition for doing work.
+async fn report_dispatches_without_a_deadline(store: &PgStore, contexts: &[RequestContext]) {
+    let effects = PgExternalEffectRepository::new(store.clone());
+    for context in contexts {
+        match effects
+            .count_deadline_less_dispatching_transitions(context)
+            .await
+        {
+            Ok(0) => {}
+            Ok(count) => tracing::warn!(
+                workspace = %context.workspace_id,
+                dispatches = count,
+                "dispatches predate deadline ownership and can never be declared lost; \
+                 they need an operator decision, not a timeout"
+            ),
+            Err(error) => tracing::warn!(
+                workspace = %context.workspace_id,
+                %error,
+                "the count of dispatches without a deadline could not be read"
+            ),
+        }
+    }
+}
+
 fn build_effect_reconciliation(
     config: &AppConfig,
     store: &PgStore,
