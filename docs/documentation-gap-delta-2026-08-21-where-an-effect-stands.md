@@ -9,7 +9,7 @@ composition, and with a finding about the suite itself.
 
 ```text
 fault suite (real ephemeral deployment): FAILED — 4 failures across 5 points, points 1 and 5 agree
-  point 5 agrees for the first time; point 3 now fails on a true reading rather than an accidental one
+  point 5 agrees for the first time; points 3 and 4 fail against a contract the system breaks
 conformance gate:                        199 passed (190 executed, 8 attested, 1 build-verified), 0 failed, 0 skipped — unchanged
 cargo fmt / clippy:                      clean
 release gate:                            still cannot pass — four evidence families with no producer
@@ -180,27 +180,58 @@ The codebase already has this idea for runs — `run_startup_recovery` at
 `crates/vestrace-cli/src/commands/worker.rs:62` — and has no equivalent for
 effects. Age is a proxy for the question; process generation is the question.
 
-**The suite's expectations are themselves in doubt, and this is the slice's
-sharpest finding.** Following the startup-recovery repair through on paper does
-not turn point 3 green. If the effect is swept, read-back asks the stub, the stub
-answers definitively, the reconciliation settles, and the status becomes
-`Reconciling` — while point 3 demands `Unknown`. Point 4 presses the same way
-from the other side: it crashes with an **acknowledged** receipt and demands
-`Reconciling`, and nothing in this system has any reason to reconcile an effect
-whose dispatch was acknowledged. The sweep excludes acknowledged receipts
-deliberately.
+**The judge was doubted, and the contract says the judge is right.** This
+section first argued that `FaultObservation::expected` encoded *"the system
+should end up not knowing"* where it should encode *"the system should end up
+knowing, having recovered"* — reasoning from what a good deployment ought to look
+like rather than from what this system has already committed to. Checking it
+against the normative contract reverses the conclusion on both points, and the
+correction is left visible rather than quietly rewritten, because the reasoning
+that produced it is the kind worth being able to recognise again.
 
-Read together with point 5 — which passes precisely because its outcome settled
-and had not yet been delivered — `FaultObservation::expected` appears to encode
-*"the system should end up not knowing"* where it should encode *"the system
-should end up knowing, having recovered."* A deployment that recovers and
-confirms the effect is better than one left in `Unknown`, and the suite currently
-scores that as a failure.
+`docs/specs/vestrace-execution-external-effects-contract-v0.2.md` §34 lists the
+forbidden shortcuts, and the first line is:
 
-This is recorded, not acted on. The expectations were not touched, and changing
-them is a decision that needs its own design and its own argument — the one place
-where editing the judge is legitimate is when the judge has been shown to be
-wrong, and showing that properly is not the same as noticing it.
+```text
+HTTP success == business outcome
+```
+
+`HttpWebhookEffectAdapter` maps 2xx to `AdapterOutcome::Acknowledged`,
+`ExternalEffectReceipt::from_dispatch` maps that to
+`EffectLifecycleStatus::Acknowledged`, and the recovery sweep excludes
+acknowledged receipts. The system therefore takes a provider's transport
+acknowledgement as the end of the story, which is the shortcut named above and
+also ADR-0005's rejected alternative 4, *"treat provider ACK as guaranteed
+desired business outcome"*. §11 says the same thing positively — `COMMITTED` in
+the transport sense means request dispatch, not a confirmed business outcome —
+and puts `CONFIRMED / RECONCILING / UNKNOWN` *after* `ACKNOWLEDGED`. **Point 4
+demanding `Reconciling` of an acknowledged effect is that rule expressed as a
+test, and the system is what fails it.**
+
+Point 3 goes the same way. §17 lists "process crash между provider response и
+persistence" as a cause of `UNKNOWN`, and §26 states the boundary verbatim:
+
+```text
+after dispatch / before receipt
+→ UNKNOWN
+→ reconcile
+```
+
+So an effect whose dispatch was lost must **become** `UNKNOWN`. Leaving it in
+`Dispatching` — a transient in-flight phase — is a defect, not the honest
+reading this document credited it as being. The reading is honest about what is
+stored; what is stored is wrong.
+
+That also dissolves the paper argument above. Reconciliation at point 3 has no
+receipt, so §18's evidence ladder cannot reach step 2, "exact external resource
+ID" — the strongest evidence is unavailable by construction, and an outcome that
+settles nothing leaves the effect `UNKNOWN`, which is exactly what point 3
+expects. Whether the adapter stub should answer definitively without that
+evidence is a separate question about the fixture.
+
+None of this was acted on here and the expectations were not touched. The next
+slice has its subject: an acknowledged dispatch is not a confirmed outcome, and
+a lost dispatch must become `UNKNOWN` rather than staying `DISPATCHING`.
 
 **Also unchanged:** only process death is exercised; no container is stopped and
 no network partitions. Postgres is assumed to keep its own promises. The suite
