@@ -52,6 +52,8 @@ fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
 fn descriptor() -> ExternalEffectAdapterDescriptor {
     ExternalEffectAdapterDescriptor::new(
         "webhook-v1",
+        // This fixture models the shipped HTTP webhook contract.
+        Some(chrono::Duration::seconds(15)),
         DeliverySemantics::AtLeastOnce,
         IdempotencyProfile::ProviderKey,
         EffectReversibility::Compensatable,
@@ -165,6 +167,8 @@ fn e1_intent_is_immutable_and_adapter_semantics_are_explicit() {
 
     let invalid = ExternalEffectAdapterDescriptor::new(
         "webhook-v1",
+        // The contract violation under test is idempotency, not timing.
+        Some(chrono::Duration::seconds(15)),
         DeliverySemantics::EffectivelyOnce,
         IdempotencyProfile::None,
         EffectReversibility::Compensatable,

@@ -5483,6 +5483,8 @@ mod effect_fixture {
     ) -> Result<crate::external_effects::ExternalEffectAdapterDescriptor, DomainError> {
         crate::external_effects::ExternalEffectAdapterDescriptor::new(
             name,
+            // This scripted adapter returns an in-process result without I/O.
+            Some(chrono::Duration::seconds(1)),
             delivery,
             idempotency,
             reversibility,
@@ -5845,9 +5847,9 @@ ext_case!(
     "exec-ext-015-adapter-capability-contract",
     15,
     CaseCategory::Behavioral,
-    "An adapter's descriptor declares its delivery semantics, idempotency, reversibility, \
-     dry-run support, read-back support and required capability — including when the answer \
-     is that it cannot",
+    "An adapter's descriptor declares its dispatch timeout, delivery semantics, idempotency, \
+     reversibility, dry-run support, read-back support and required capability — including \
+     when the answer is that it cannot",
     || {
         use crate::Capability;
         use crate::external_effects::{
@@ -5857,6 +5859,7 @@ ext_case!(
 
         if ExternalEffectAdapterDescriptor::new(
             "   ",
+            Some(chrono::Duration::seconds(15)),
             DeliverySemantics::AtLeastOnce,
             IdempotencyProfile::ProviderKey,
             EffectReversibility::Compensatable,
@@ -5876,6 +5879,8 @@ ext_case!(
         // it depends on one.
         let limited = ExternalEffectAdapterDescriptor::new(
             "webhook-v1",
+            // This descriptor models an HTTP webhook with a bounded request.
+            Some(chrono::Duration::seconds(15)),
             DeliverySemantics::AtLeastOnce,
             IdempotencyProfile::None,
             EffectReversibility::Irreversible,
@@ -5888,6 +5893,11 @@ ext_case!(
 
         if limited.dry_run() != DryRunMode::Unsupported {
             return Err("an adapter cannot declare that it does not support a dry run".to_string());
+        }
+        if limited.dispatch_timeout() != Some(chrono::Duration::seconds(15)) {
+            return Err(
+                "an adapter does not declare how long its call may remain in flight".into(),
+            );
         }
         if limited.supports_read_back() {
             return Err("an adapter that cannot read back reported that it can".to_string());
@@ -5902,8 +5912,8 @@ ext_case!(
         }
 
         Ok(
-            "an adapter declares delivery, idempotency, reversibility, dry-run and read-back \
-            support and its required capability, and can say that it supports none of them"
+            "an adapter declares its timeout, delivery, idempotency, reversibility, dry-run and \
+            read-back support and its required capability, and can say when support is absent"
                 .to_string(),
         )
     }
@@ -13988,6 +13998,8 @@ mod effect_case_fixture {
     pub fn descriptor(reversibility: EffectReversibility) -> ExternalEffectAdapterDescriptor {
         ExternalEffectAdapterDescriptor::new(
             ADAPTER,
+            // ScriptedAdapter returns its result in-process without I/O.
+            Some(chrono::Duration::seconds(1)),
             DeliverySemantics::AtLeastOnce,
             IdempotencyProfile::ProviderKey,
             reversibility,
@@ -14267,6 +14279,8 @@ effect_case!(
         ] {
             let mismatched = ExternalEffectAdapterDescriptor::new(
                 ADAPTER,
+                // This is the same in-process ScriptedAdapter as the matching case.
+                Some(chrono::Duration::seconds(1)),
                 semantics,
                 idempotency,
                 reversibility,

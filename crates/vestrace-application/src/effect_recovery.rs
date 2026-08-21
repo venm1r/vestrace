@@ -169,16 +169,17 @@ impl ExternalEffectRecoveryReport {
 /// reconciliation, not of any particular loop that drives it.
 pub const RECONCILIATION_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
 
-/// How long a dispatcher allows its own call, when it has no adapter-specific
-/// duration to state.
+/// Fallback dispatch allowance for an adapter that declares no timeout.
 ///
 /// This is added to the transition's recorded time and **persisted** as that
-/// dispatch's deadline, so every replica compares a stored promise rather than
-/// applying a threshold of its own. It was once `DISPATCH_CONSIDERED_LOST_AFTER`
+/// dispatch's deadline only when the adapter cannot state a duration of its
+/// own. Every replica then compares a stored promise rather than applying a
+/// threshold of its own. It was once `DISPATCH_CONSIDERED_LOST_AFTER`
 /// and recovery subtracted it from `now` to guess whether a call had been
 /// abandoned — a guess a second replica had no reason to share, and one that
 /// could declare a live call lost inside the adapter's own timeout. The
-/// duration is unchanged; who is entitled to state it is not.
+/// duration is unchanged; its use is now explicitly the exceptional fallback
+/// rather than the normal dispatch contract.
 pub const DEFAULT_DISPATCH_ALLOWANCE: chrono::Duration = chrono::Duration::minutes(5);
 
 pub struct ExternalEffectRecoveryService {

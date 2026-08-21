@@ -9,6 +9,15 @@ use crate::{
     ApplicationError, AuthorizationBoundary, RequestContext, SharedExternalEffectRepository,
 };
 
+/// Grace after the adapter returns for committing the receipt that makes the
+/// dispatch visible to the ordinary recovery sweep.
+///
+/// This is deliberately separate from the adapter timeout. The timeout bounds
+/// time spent waiting on the external call; this margin bounds the local
+/// persistence window in which a process can die after learning the result but
+/// before recording it.
+const DISPATCH_RECEIPT_COMMIT_MARGIN: chrono::Duration = chrono::Duration::seconds(5);
+
 pub struct ExternalEffectService {
     effects: SharedExternalEffectRepository,
     authorization: AuthorizationBoundary,
@@ -57,7 +66,11 @@ impl ExternalEffectService {
         authorized
             .validate_dispatch(adapter, current_precondition_digest)
             .map_err(map_dispatch_error)?;
-        let dispatch_expires_at = recorded_at + DEFAULT_DISPATCH_ALLOWANCE;
+        let dispatch_timeout = adapter
+            .descriptor()
+            .dispatch_timeout()
+            .unwrap_or(DEFAULT_DISPATCH_ALLOWANCE);
+        let dispatch_expires_at = recorded_at + dispatch_timeout + DISPATCH_RECEIPT_COMMIT_MARGIN;
         self.effects
             .record_dispatch_started(
                 context,

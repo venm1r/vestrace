@@ -1652,6 +1652,8 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
     let adapter = OrderedAdapter {
         descriptor: ExternalEffectAdapterDescriptor::new(
             "webhook-v1",
+            // OrderedAdapter returns an in-process result without I/O.
+            Some(chrono::Duration::seconds(1)),
             DeliverySemantics::AtLeastOnce,
             IdempotencyProfile::ProviderKey,
             EffectReversibility::Compensatable,
@@ -1700,9 +1702,81 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].0, dispatch_owner);
     assert_eq!(evidence[0].2, at(21));
-    assert!(
-        evidence[0].1 > evidence[0].2,
-        "the default dispatch deadline was not strictly after the recorded transition"
+    assert_eq!(
+        evidence[0].1,
+        at(27),
+        "the persisted deadline did not include the adapter's one-second timeout and the five-second receipt-commit margin"
+    );
+}
+
+#[tokio::test]
+async fn adapter_without_a_dispatch_timeout_uses_the_default_allowance_and_commit_margin() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let effect = performable_intent(workspace_id, actor_id);
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = Arc::new(MemoryEffectRepository::default());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let service = ExternalEffectService::new(
+        repository.clone(),
+        AuthorizationBoundary::new(Arc::new(
+            ConfiguredCapabilityPolicyEngine::new(
+                "policy-v1",
+                [Capability::ExportRead],
+                RiskCategory::High,
+            )
+            .unwrap(),
+        )),
+        WorkerId::new(),
+    );
+    let authorized = service
+        .authorize(
+            &context,
+            &effect,
+            AuthorizationRequest::new(
+                effect.required_capability(),
+                effect.operation().to_owned(),
+                effect.target().to_owned(),
+                effect.risk(),
+            ),
+        )
+        .await
+        .unwrap();
+    let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    repository.signal_dispatch_started_with(Arc::clone(&started));
+    let adapter = OrderedAdapter {
+        descriptor: ExternalEffectAdapterDescriptor::new(
+            "webhook-v1",
+            None,
+            DeliverySemantics::AtLeastOnce,
+            IdempotencyProfile::ProviderKey,
+            EffectReversibility::Compensatable,
+            DryRunMode::Unsupported,
+            true,
+            true,
+            Capability::ExportRead,
+        )
+        .unwrap(),
+        dispatch_started: started,
+    };
+
+    service
+        .dispatch(
+            &context,
+            &authorized,
+            &adapter,
+            effect.precondition_digest(),
+            at(20),
+        )
+        .await
+        .unwrap();
+
+    let evidence = repository.dispatch_evidence(effect.id()).await;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(
+        evidence[0].1,
+        at(325),
+        "the persisted deadline did not include the five-minute fallback and the five-second receipt-commit margin"
     );
 }
 
@@ -1717,6 +1791,7 @@ async fn perform_commits_dispatching_after_validation_and_before_the_adapter_cal
     let adapter = OrderedAdapter {
         descriptor: ExternalEffectAdapterDescriptor::new(
             "webhook-v1",
+            Some(chrono::Duration::seconds(1)),
             DeliverySemantics::AtLeastOnce,
             IdempotencyProfile::ProviderKey,
             EffectReversibility::Compensatable,

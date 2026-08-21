@@ -76,6 +76,7 @@ impl EffectPrecondition {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExternalEffectAdapterDescriptor {
     name: String,
+    dispatch_timeout: Option<chrono::Duration>,
     delivery_semantics: DeliverySemantics,
     idempotency_profile: IdempotencyProfile,
     reversibility: EffectReversibility,
@@ -89,6 +90,7 @@ impl ExternalEffectAdapterDescriptor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: impl Into<String>,
+        dispatch_timeout: Option<chrono::Duration>,
         delivery_semantics: DeliverySemantics,
         idempotency_profile: IdempotencyProfile,
         reversibility: EffectReversibility,
@@ -103,8 +105,14 @@ impl ExternalEffectAdapterDescriptor {
                 "external effect adapter name must not be empty".into(),
             ));
         }
+        if dispatch_timeout.is_some_and(|timeout| timeout <= chrono::Duration::zero()) {
+            return Err(DomainError::InvalidArgument(
+                "external effect adapter dispatch timeout must be positive".into(),
+            ));
+        }
         Ok(Self {
             name,
+            dispatch_timeout,
             delivery_semantics,
             idempotency_profile,
             reversibility,
@@ -117,6 +125,15 @@ impl ExternalEffectAdapterDescriptor {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// How long a call may remain in flight before this adapter gives up.
+    ///
+    /// `None` is retained for adapters that cannot state a bound. Dispatchers
+    /// must apply their documented fallback rather than inventing a duration
+    /// and presenting it as this adapter's contract.
+    pub fn dispatch_timeout(&self) -> Option<chrono::Duration> {
+        self.dispatch_timeout
     }
 
     pub fn delivery_semantics(&self) -> DeliverySemantics {
@@ -1252,6 +1269,7 @@ mod tests {
     fn effectively_once_requires_provider_idempotency() {
         let descriptor = ExternalEffectAdapterDescriptor::new(
             "adapter",
+            Some(chrono::Duration::seconds(1)),
             DeliverySemantics::EffectivelyOnce,
             IdempotencyProfile::None,
             EffectReversibility::Unknown,
@@ -1265,6 +1283,48 @@ mod tests {
             validate_adapter_descriptor(&descriptor),
             Err(AdapterContractError::EffectivelyOnceRequiresProviderIdempotency)
         );
+    }
+
+    #[test]
+    fn adapter_descriptor_refuses_a_non_positive_dispatch_timeout() {
+        for dispatch_timeout in [chrono::Duration::zero(), chrono::Duration::seconds(-1)] {
+            let error = ExternalEffectAdapterDescriptor::new(
+                "adapter",
+                Some(dispatch_timeout),
+                DeliverySemantics::AtLeastOnce,
+                IdempotencyProfile::ProviderKey,
+                EffectReversibility::Unknown,
+                DryRunMode::Unsupported,
+                true,
+                true,
+                Capability::ExportRead,
+            )
+            .unwrap_err();
+
+            assert!(
+                matches!(error, DomainError::InvalidArgument(message) if message.contains("dispatch timeout")),
+                "the invalid field was not named"
+            );
+        }
+    }
+
+    #[test]
+    fn adapter_descriptor_states_its_dispatch_timeout() {
+        let dispatch_timeout = chrono::Duration::seconds(7);
+        let descriptor = ExternalEffectAdapterDescriptor::new(
+            "adapter",
+            Some(dispatch_timeout),
+            DeliverySemantics::AtLeastOnce,
+            IdempotencyProfile::ProviderKey,
+            EffectReversibility::Unknown,
+            DryRunMode::Unsupported,
+            true,
+            true,
+            Capability::ExportRead,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.dispatch_timeout(), Some(dispatch_timeout));
     }
 
     #[test]

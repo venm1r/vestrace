@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectReversibility,
     ExternalEffectAdapter, ExternalEffectAdapterDescriptor, ExternalEffectIntent,
@@ -7,7 +5,7 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{Capability, DomainError};
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_TIMEOUT: chrono::Duration = chrono::Duration::seconds(15);
 
 /// An external effect that is an HTTP request to a configured endpoint.
 ///
@@ -61,6 +59,15 @@ impl HttpWebhookEffectAdapter {
         dispatch_url: impl Into<String>,
         read_back_url: impl Into<String>,
     ) -> Result<Self, DomainError> {
+        Self::with_timeout(name, dispatch_url, read_back_url, DEFAULT_TIMEOUT)
+    }
+
+    fn with_timeout(
+        name: impl Into<String>,
+        dispatch_url: impl Into<String>,
+        read_back_url: impl Into<String>,
+        dispatch_timeout: chrono::Duration,
+    ) -> Result<Self, DomainError> {
         let dispatch_url = dispatch_url.into();
         let read_back_url = read_back_url.into();
         if dispatch_url.trim().is_empty() {
@@ -77,19 +84,9 @@ impl HttpWebhookEffectAdapter {
             ));
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(DEFAULT_TIMEOUT)
-            // Redirects are refused rather than followed: the destination is
-            // configuration, and a 302 would let the far side choose a
-            // different one.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                DomainError::InvalidArgument(format!("webhook client could not be built: {error}"))
-            })?;
-
         let descriptor = ExternalEffectAdapterDescriptor::new(
             name,
+            Some(dispatch_timeout),
             // We may retry, and the far side may already have acted. Anything
             // stronger would be a claim about somebody else's system.
             DeliverySemantics::AtLeastOnce,
@@ -108,6 +105,25 @@ impl HttpWebhookEffectAdapter {
             true,
             Capability::ExecutionWrite,
         )?;
+        let enforced_timeout = descriptor
+            .dispatch_timeout()
+            .expect("the webhook descriptor always declares its dispatch timeout")
+            .to_std()
+            .map_err(|_| {
+                DomainError::InvalidArgument(
+                    "webhook effect adapter dispatch timeout is too large to enforce".into(),
+                )
+            })?;
+        let client = reqwest::Client::builder()
+            .timeout(enforced_timeout)
+            // Redirects are refused rather than followed: the destination is
+            // configuration, and a 302 would let the far side choose a
+            // different one.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| {
+                DomainError::InvalidArgument(format!("webhook client could not be built: {error}"))
+            })?;
 
         Ok(Self {
             client,
@@ -187,6 +203,16 @@ impl ExternalEffectAdapter for HttpWebhookEffectAdapter {
         // which is the right trade for an operation that leaves the process and
         // cannot be recalled.
         let dispatch_url = self.dispatch_url.clone();
+        let dispatch_timeout = self
+            .descriptor
+            .dispatch_timeout()
+            .expect("the webhook descriptor always declares its dispatch timeout")
+            .to_std()
+            .map_err(|_| {
+                AdapterError::Unavailable(
+                    "webhook effect adapter dispatch timeout is too large to enforce".into(),
+                )
+            })?;
         let idempotency_key = intent.id().to_string();
         let evidence = vec![format!("effect://{}/dispatch", intent.id())];
 
@@ -199,7 +225,7 @@ impl ExternalEffectAdapter for HttpWebhookEffectAdapter {
                         .map_err(|error| AdapterError::Unavailable(error.to_string()))?;
                     runtime.block_on(async {
                         let client = reqwest::Client::builder()
-                            .timeout(DEFAULT_TIMEOUT)
+                            .timeout(dispatch_timeout)
                             .redirect(reqwest::redirect::Policy::none())
                             .build()
                             .map_err(|error| AdapterError::Unavailable(error.to_string()))?;
@@ -258,5 +284,95 @@ impl ExternalEffectAdapter for HttpWebhookEffectAdapter {
             }
             Err(error) => Err(AdapterError::Unavailable(error.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    use chrono::Utc;
+    use vestrace_domain::external_effects::{
+        AdapterDispatchResult, DeliverySemantics, EffectPrecondition, EffectReversibility,
+        ExternalEffectAdapter, ExternalEffectIntent, IdempotencyProfile,
+    };
+    use vestrace_domain::id::{PrincipalId, WorkspaceId};
+    use vestrace_domain::{Capability, RiskCategory};
+
+    use super::HttpWebhookEffectAdapter;
+
+    fn intent() -> ExternalEffectIntent {
+        ExternalEffectIntent::new(
+            "run://01900000-0000-7000-8000-000000000001",
+            WorkspaceId::new(),
+            PrincipalId::new(),
+            "webhook-v1",
+            "send",
+            "http://127.0.0.1/dispatch",
+            "sha256:arguments",
+            "deliver notification",
+            vec![EffectPrecondition::new("resource-version", "v1").unwrap()],
+            "sha256:preconditions-v1",
+            RiskCategory::Medium,
+            EffectReversibility::Irreversible,
+            IdempotencyProfile::Unknown,
+            DeliverySemantics::AtLeastOnce,
+            Capability::ExecutionWrite,
+            None::<String>,
+            None::<String>,
+            Utc::now(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn declared_dispatch_timeout_is_the_timeout_the_http_client_enforces() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let delayed_response = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = socket.read(&mut request);
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        });
+
+        let adapter = HttpWebhookEffectAdapter::with_timeout(
+            "webhook-v1",
+            format!("http://{address}/dispatch"),
+            format!("http://{address}/effects"),
+            chrono::Duration::milliseconds(100),
+        )
+        .unwrap();
+        let declared = adapter
+            .descriptor()
+            .dispatch_timeout()
+            .unwrap()
+            .to_std()
+            .unwrap();
+        let intent = intent();
+        let started = Instant::now();
+        let result = adapter.dispatch(&intent).unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            result,
+            AdapterDispatchResult::unknown(
+                "timeout",
+                vec![format!("effect://{}/dispatch", intent.id())],
+            )
+        );
+        assert!(
+            elapsed >= declared.saturating_sub(Duration::from_millis(25)),
+            "client timed out at {elapsed:?}, before its declared {declared:?} timeout"
+        );
+        assert!(
+            elapsed < declared + Duration::from_millis(250),
+            "client was still waiting at {elapsed:?}, after its declared {declared:?} timeout"
+        );
+
+        delayed_response.join().unwrap();
     }
 }
