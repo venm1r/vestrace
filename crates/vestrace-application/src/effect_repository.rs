@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use vestrace_domain::external_effects::{
-    ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
+    EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
 };
 use vestrace_domain::{
     DomainError, ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp,
@@ -51,6 +51,28 @@ pub trait ExternalEffectRepository: Send + Sync {
         id: ExternalEffectReceiptId,
     ) -> Result<Option<ExternalEffectReceipt>, ApplicationError>;
 
+    /// Find the latest persisted receipt reachable from an effect id.
+    async fn find_receipt_by_effect(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+    ) -> Result<Option<ExternalEffectReceipt>, ApplicationError>;
+
+    /// Record the committed boundary immediately before an adapter is called.
+    async fn record_dispatch_started(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        recorded_at: Timestamp,
+    ) -> Result<(), ApplicationError>;
+
+    /// The latest lifecycle evidence recorded for this effect, if any.
+    async fn find_lifecycle_status(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+    ) -> Result<Option<EffectLifecycleStatus>, ApplicationError>;
+
     async fn insert_reconciliation(
         &self,
         context: &RequestContext,
@@ -79,6 +101,7 @@ pub trait ExternalEffectRepository: Send + Sync {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        dispatch_considered_lost_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError>;
 
     /// Settled outcomes whose run has not been told, oldest first.
@@ -132,21 +155,28 @@ impl UndeliveredOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternalEffectRecoveryCandidate {
     intent: ExternalEffectIntent,
-    receipt: ExternalEffectReceipt,
+    receipt: Option<ExternalEffectReceipt>,
 }
 
 impl ExternalEffectRecoveryCandidate {
     pub fn new(
         intent: ExternalEffectIntent,
-        receipt: ExternalEffectReceipt,
+        receipt: impl Into<Option<ExternalEffectReceipt>>,
     ) -> Result<Self, ApplicationError> {
-        if receipt.effect_id() != intent.id() {
+        let receipt = receipt.into();
+        if receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.effect_id() != intent.id())
+        {
             return Err(DomainError::InvalidArgument(
                 "external effect recovery receipt does not belong to intent".into(),
             )
             .into());
         }
-        if !receipt.requires_reconciliation() {
+        if receipt
+            .as_ref()
+            .is_some_and(|receipt| !receipt.requires_reconciliation())
+        {
             return Err(DomainError::PolicyViolation(
                 "external effect recovery requires an UNKNOWN receipt".into(),
             )
@@ -159,7 +189,7 @@ impl ExternalEffectRecoveryCandidate {
         &self.intent
     }
 
-    pub fn receipt(&self) -> &ExternalEffectReceipt {
-        &self.receipt
+    pub fn receipt(&self) -> Option<&ExternalEffectReceipt> {
+        self.receipt.as_ref()
     }
 }

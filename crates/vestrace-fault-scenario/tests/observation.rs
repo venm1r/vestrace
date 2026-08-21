@@ -231,7 +231,7 @@ async fn an_intent_alone_and_nothing_dispatched_reads_back_as_prepared() {
 }
 
 #[tokio::test]
-async fn a_counted_dispatch_with_no_persisted_receipt_reads_back_as_unknown() {
+async fn a_young_persisted_dispatch_is_not_yet_enrolled_in_reconciliation() {
     let Some(fixture) = fixture().await else {
         return;
     };
@@ -241,17 +241,24 @@ async fn a_counted_dispatch_with_no_persisted_receipt_reads_back_as_unknown() {
         .insert_intent(&fixture.context, &intent)
         .await
         .expect("the fixture intent is recorded");
+    fixture
+        .effects()
+        .record_dispatch_started(&fixture.context, intent.id(), now())
+        .await
+        .expect("the dispatch start is recorded");
 
     // The dispatch happened and the record of what came back did not survive.
-    // That is what UNKNOWN means, and the stub's count is the only party that
-    // can say the world was touched at all.
+    // The durable transition, not the stub's count, says where lifecycle got.
     let observed = observe(&fixture.store, &fixture.context, intent.id(), ANY_POINT, 1)
         .await
         .expect("a persisted intent is observable");
 
-    assert_eq!(observed.status, EffectLifecycleStatus::Unknown);
+    assert_eq!(observed.status, EffectLifecycleStatus::Dispatching);
     assert!(!observed.receipt_persisted);
-    assert!(!observed.reconciliation_started);
+    assert!(
+        !observed.reconciliation_started,
+        "the real sweep does not declare a just-started dispatch lost"
+    );
     assert!(!observed.retry_attempted, "one dispatch is not a retry");
 
     fixture.shutdown().await;
@@ -383,24 +390,18 @@ async fn a_reconciled_effect_is_found_through_the_outcome_its_run_is_owed() {
     );
     assert_eq!(
         observed.status,
-        EffectLifecycleStatus::Acknowledged,
-        "the persisted receipt says acknowledged, and the observation says what is persisted"
+        EffectLifecycleStatus::Reconciling,
+        "a settled reconciliation appends the lifecycle evidence the observation reads"
     );
 
     fixture.shutdown().await;
 }
 
-/// A persisted acknowledged receipt with no reconciliation is unreachable from
-/// an effect id through this repository's read surface, and the observation
-/// says so rather than claiming a row it cannot read.
-///
-/// `find_receipt` needs a receipt id nobody kept; `find_reconciliation_candidates`
-/// selects `outcome_status = 'unknown'`; `find_undelivered_outcomes` needs a
-/// reconciliation. This is the state fault point 4 leaves behind, and this case
-/// pins the gap rather than papering over it.
+/// A persisted acknowledged receipt is reachable from its effect id through
+/// the receipt-recorded lifecycle transition.
 /// Multi-threaded for the same reason as the case above.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_acknowledged_receipt_with_no_reconciliation_is_unreachable_by_effect_id() {
+async fn an_acknowledged_receipt_with_no_reconciliation_is_reachable_by_effect_id() {
     let Some(fixture) = fixture().await else {
         return;
     };
@@ -429,13 +430,9 @@ async fn an_acknowledged_receipt_with_no_reconciliation_is_unreachable_by_effect
         .await
         .expect("a persisted intent is observable");
 
-    assert!(
-        !observed.receipt_persisted,
-        "no query on this port reaches an acknowledged receipt from an effect id, and the \
-         observation must not claim a reading it did not make"
-    );
+    assert!(observed.receipt_persisted);
     assert!(!observed.reconciliation_started);
-    assert_eq!(observed.status, EffectLifecycleStatus::Unknown);
+    assert_eq!(observed.status, EffectLifecycleStatus::Acknowledged);
 
     fixture.shutdown().await;
 }
@@ -510,10 +507,8 @@ async fn an_unsettled_reconciliation_is_invisible_to_the_debt_query() {
         "a debt query does not reach an unsettled reconciliation, and the observation must not \
          claim a reading it did not make"
     );
-    assert!(
-        !observed.receipt_persisted,
-        "the receipt was reachable only through that reconciliation"
-    );
+    assert!(observed.receipt_persisted);
+    assert_eq!(observed.status, EffectLifecycleStatus::Acknowledged);
 
     fixture.shutdown().await;
 }
@@ -581,10 +576,8 @@ async fn an_already_notified_reconciliation_is_invisible_to_the_debt_query() {
         "paying the debt removed the only route this observation had to the row, and nothing \
          about the reconciliation itself changed"
     );
-    assert!(
-        !observed.receipt_persisted,
-        "the receipt was reachable only through that reconciliation"
-    );
+    assert!(observed.receipt_persisted);
+    assert_eq!(observed.status, EffectLifecycleStatus::Confirmed);
 
     fixture.shutdown().await;
 }

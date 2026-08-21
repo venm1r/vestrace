@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use vestrace_application::{
     ApplicationError, AuthorizationBoundary, DenyAllPolicyEngine, ExternalEffectService,
-    RequestContext,
+    RequestContext, SharedExternalEffectRepository,
 };
 use vestrace_domain::{
     AuthorizationRequest, Capability, PrincipalId, RiskCategory, WorkspaceId,
@@ -22,6 +22,7 @@ use vestrace_domain::{
         validate_adapter_descriptor,
     },
 };
+use vestrace_infrastructure::postgres::{PgExternalEffectRepository, PgStore};
 
 const CONNECT_FIXTURE: &str = include_str!("fixtures/qualification/e1-e4-connect.json");
 
@@ -98,10 +99,22 @@ fn authorization(effect: &ExternalEffectIntent) -> EffectAuthorization {
     )
 }
 
+/// Supply the service's durable dependency without making this denial test
+/// depend on a live database. Authorization must fail before dispatch can ask
+/// the lazy pool for a connection.
+fn unused_external_effect_repository() -> SharedExternalEffectRepository {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
+        .expect("the fixed unused PostgreSQL URL is valid");
+    Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(pool)))
+}
+
 #[tokio::test]
 async fn e2_application_external_effects_use_the_shared_default_deny_boundary() {
-    let service =
-        ExternalEffectService::new(AuthorizationBoundary::new(Arc::new(DenyAllPolicyEngine)));
+    let service = ExternalEffectService::new(
+        unused_external_effect_repository(),
+        AuthorizationBoundary::new(Arc::new(DenyAllPolicyEngine)),
+    );
     let effect = intent();
     let context = RequestContext::new(effect.workspace_id(), effect.actor_id());
     let request = AuthorizationRequest::new(

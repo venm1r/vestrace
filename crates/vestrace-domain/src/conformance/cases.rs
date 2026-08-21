@@ -14623,7 +14623,7 @@ effect_case!(
         )
         .map_err(|error| format!("reconciliation failed: {error}"))?;
         if confirmed.outcome() != ReconciliationOutcome::Confirmed
-            || confirmed.receipt_id() != receipt.id()
+            || confirmed.receipt_id() != Some(receipt.id())
         {
             return Err(format!(
                 "an authoritative read-back gave {:?}",

@@ -259,7 +259,7 @@ async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildS
         .map_err(|error| format!("the scenario policy engine is not configurable: {error}"))?,
     ));
     let perform = PerformExternalEffectService::new(Arc::clone(&effects), authorization.clone());
-    let granular = ExternalEffectService::new(authorization);
+    let granular = ExternalEffectService::new(Arc::clone(&effects), authorization);
 
     let context = scenario_context();
     let intent = scenario_intent(&context, &adapter, dispatch_url)?;
@@ -298,11 +298,13 @@ async fn drive(settings: &ScenarioSettings, dispatch_url: &str) -> Result<ChildS
             // record of what came back died with the process.
             granular
                 .dispatch(
+                    &context,
                     &authorized,
                     &adapter,
                     authorized.intent().precondition_digest(),
                     now(),
                 )
+                .await
                 .map_err(|error| format!("the effect could not be dispatched: {error}"))?;
         }
         ChildStage::ReceiptPersisted => {

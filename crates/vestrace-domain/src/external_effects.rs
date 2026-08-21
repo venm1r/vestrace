@@ -606,12 +606,11 @@ impl AuthorizedExternalEffect {
         &self.authorization
     }
 
-    pub fn dispatch<A: ExternalEffectAdapter + ?Sized>(
+    pub fn validate_dispatch<A: ExternalEffectAdapter + ?Sized>(
         &self,
         adapter: &A,
         current_precondition_digest: &str,
-        recorded_at: Timestamp,
-    ) -> Result<ExternalEffectReceipt, DispatchError> {
+    ) -> Result<(), DispatchError> {
         validate_adapter_descriptor(adapter.descriptor())
             .map_err(DispatchError::AdapterContractViolation)?;
         if adapter.descriptor().name != self.intent.adapter
@@ -625,6 +624,16 @@ impl AuthorizedExternalEffect {
         if current_precondition_digest != self.intent.precondition_digest {
             return Err(DispatchError::StaleIntent);
         }
+        Ok(())
+    }
+
+    pub fn dispatch<A: ExternalEffectAdapter + ?Sized>(
+        &self,
+        adapter: &A,
+        current_precondition_digest: &str,
+        recorded_at: Timestamp,
+    ) -> Result<ExternalEffectReceipt, DispatchError> {
+        self.validate_dispatch(adapter, current_precondition_digest)?;
         let result = adapter
             .dispatch(&self.intent)
             .map_err(DispatchError::AdapterFailure)?;
@@ -735,6 +744,34 @@ pub enum EffectLifecycleStatus {
     Unknown,
     Confirmed,
     Reconciling,
+}
+
+impl EffectLifecycleStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::Authorized => "authorized",
+            Self::Dispatching => "dispatching",
+            Self::Acknowledged => "acknowledged",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+            Self::Confirmed => "confirmed",
+            Self::Reconciling => "reconciling",
+        }
+    }
+
+    pub const fn all_names() -> [&'static str; 8] {
+        [
+            Self::Prepared.as_str(),
+            Self::Authorized.as_str(),
+            Self::Dispatching.as_str(),
+            Self::Acknowledged.as_str(),
+            Self::Failed.as_str(),
+            Self::Unknown.as_str(),
+            Self::Confirmed.as_str(),
+            Self::Reconciling.as_str(),
+        ]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1006,7 +1043,7 @@ impl ReconciliationOutcome {
 pub struct ExternalReconciliation {
     id: ExternalReconciliationId,
     effect_id: ExternalEffectId,
-    receipt_id: ExternalEffectReceiptId,
+    receipt_id: Option<ExternalEffectReceiptId>,
     evidence_strength: EvidenceStrength,
     observed_state_ref: String,
     outcome: ReconciliationOutcome,
@@ -1035,9 +1072,9 @@ impl ExternalReconciliation {
         self.effect_id
     }
 
-    /// The receipt this reconciliation is about: the dispatch it went looking
-    /// for the outcome of.
-    pub fn receipt_id(&self) -> ExternalEffectReceiptId {
+    /// The receipt this reconciliation is about, when the dispatch returned
+    /// one before the process stopped.
+    pub fn receipt_id(&self) -> Option<ExternalEffectReceiptId> {
         self.receipt_id
     }
 
@@ -1050,13 +1087,14 @@ impl ExternalReconciliation {
     }
 }
 
-pub fn reconcile_effect(
+pub fn reconcile_effect<'a>(
     intent: &ExternalEffectIntent,
-    receipt: &ExternalEffectReceipt,
+    receipt: impl Into<Option<&'a ExternalEffectReceipt>>,
     observations: Vec<ObservedEffectState>,
     reconciled_at: Timestamp,
 ) -> Result<ExternalReconciliation, DomainError> {
-    if receipt.effect_id != intent.id {
+    let receipt = receipt.into();
+    if receipt.is_some_and(|receipt| receipt.effect_id != intent.id) {
         return Err(DomainError::InvalidArgument(
             "receipt does not belong to external effect intent".into(),
         ));
@@ -1077,7 +1115,7 @@ pub fn reconcile_effect(
     Ok(ExternalReconciliation {
         id: ExternalReconciliationId::new(),
         effect_id: intent.id,
-        receipt_id: receipt.id,
+        receipt_id: receipt.map(ExternalEffectReceipt::id),
         evidence_strength: observation.evidence_strength,
         observed_state_ref: observation.state_ref,
         outcome,

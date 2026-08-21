@@ -76,9 +76,8 @@ async fn read_back_maps_a_confirmed_observation() {
     .await;
     let adapter = HttpExternalEffectReadBackAdapter::new(base).unwrap();
     let intent = intent();
-    let receipt = unknown_receipt(&intent);
 
-    let observations = adapter.observe(&intent, &receipt).await.unwrap();
+    let observations = adapter.observe(&intent, None).await.unwrap();
 
     assert_eq!(observations.len(), 1);
     let observed = &observations[0];
@@ -99,7 +98,7 @@ async fn read_back_failure_is_unavailable_not_an_empty_observation() {
     let intent = intent();
     let receipt = unknown_receipt(&intent);
 
-    let error = adapter.observe(&intent, &receipt).await.unwrap_err();
+    let error = adapter.observe(&intent, Some(&receipt)).await.unwrap_err();
 
     assert!(
         matches!(error, ApplicationError::Unavailable(ref message) if message.contains("503")),
@@ -120,7 +119,7 @@ async fn read_back_rejects_observations_without_evidence_references() {
     let intent = intent();
     let receipt = unknown_receipt(&intent);
 
-    let error = adapter.observe(&intent, &receipt).await.unwrap_err();
+    let error = adapter.observe(&intent, Some(&receipt)).await.unwrap_err();
 
     assert!(
         matches!(error, ApplicationError::Domain(_)),
@@ -140,7 +139,7 @@ async fn read_back_preserves_an_unknown_effect_application() {
     let intent = intent();
     let receipt = unknown_receipt(&intent);
 
-    let observations = adapter.observe(&intent, &receipt).await.unwrap();
+    let observations = adapter.observe(&intent, Some(&receipt)).await.unwrap();
 
     assert_eq!(observations[0].effect_applied(), None);
     assert_eq!(
@@ -163,5 +162,5 @@ async fn read_back_adapter_is_usable_as_a_shared_port() {
     let intent = intent();
     let receipt = unknown_receipt(&intent);
 
-    assert!(adapter.observe(&intent, &receipt).await.is_err());
+    assert!(adapter.observe(&intent, Some(&receipt)).await.is_err());
 }

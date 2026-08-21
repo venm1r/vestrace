@@ -123,7 +123,7 @@ pub enum LegacyRunEvent {
     /// is the point: the late answer is exactly the case this exists for.
     ExternalEffectSettled {
         effect_id: ExternalEffectId,
-        receipt_id: ExternalEffectReceiptId,
+        receipt_id: Option<ExternalEffectReceiptId>,
         outcome: ReconciliationOutcome,
         evidence_strength: EvidenceStrength,
     },

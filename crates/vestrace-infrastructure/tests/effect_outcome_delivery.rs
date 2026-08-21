@@ -160,6 +160,12 @@ async fn a_settled_outcome_is_recorded_in_the_run_that_asked_for_it(pool: PgPool
 
     // An effect this run asked for did not happen.
     let intent = settle(&repository, &context, &format!("run://{RUN_ID}"), false).await;
+    let owed = repository
+        .find_undelivered_outcomes(&context, 10)
+        .await
+        .unwrap();
+    assert_eq!(owed.len(), 1);
+    let reconciliation_id = owed[0].reconciliation.id();
 
     let report = service(&pool).deliver_once(&context, at(40)).await.unwrap();
     assert_eq!(report.delivered, 1, "the run was not told");
@@ -181,6 +187,27 @@ async fn a_settled_outcome_is_recorded_in_the_run_that_asked_for_it(pool: PgPool
         vec![(intent.id(), ReconciliationOutcome::NotApplied)],
         "the run's history does not say the effect it asked for never happened"
     );
+    let delivered_transition: (String, String, String) = sqlx::query_as(
+        "SELECT status, cause, cause_ref FROM external_effect_lifecycle_transitions \
+         WHERE effect_id = $1 AND workspace_id = $2 AND cause = 'outcome_delivered'",
+    )
+    .bind(intent.id().as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        delivered_transition,
+        (
+            "failed".into(),
+            "outcome_delivered".into(),
+            reconciliation_id.to_string()
+        )
+    );
+    repository
+        .mark_outcome_delivered(&context, reconciliation_id, at(45))
+        .await
+        .unwrap();
 
     // The debt is paid: a second pass tells the run nothing more.
     let second = service(&pool).deliver_once(&context, at(50)).await.unwrap();
@@ -199,6 +226,72 @@ async fn a_settled_outcome_is_recorded_in_the_run_that_asked_for_it(pool: PgPool
             .count(),
         1
     );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE effect_id = $1 AND workspace_id = $2 AND cause = 'outcome_delivered'"
+        )
+        .bind(intent.id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1,
+        "repeated delivery appended another lifecycle transition"
+    );
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, intent.id())
+            .await
+            .unwrap(),
+        Some(vestrace_domain::external_effects::EffectLifecycleStatus::Failed),
+        "repeated delivery regressed the NotApplied lifecycle outcome"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_settled_lost_dispatch_with_no_receipt_is_told_to_its_run(pool: PgPool) {
+    seed_run(&pool).await;
+    let store = PgStore::from_pool(pool.clone());
+    let repository = PgExternalEffectRepository::new(store.clone());
+    let events = PgRunEventStore::new(store);
+    let context = context();
+    let run_id = AgentRunId::from_str(RUN_ID).unwrap();
+    let intent = intent_for(&format!("run://{RUN_ID}"));
+    repository.insert_intent(&context, &intent).await.unwrap();
+    repository
+        .record_dispatch_started(&context, intent.id(), at(20))
+        .await
+        .unwrap();
+    let reconciliation = reconcile_effect(
+        &intent,
+        None,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:observed",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &reconciliation)
+        .await
+        .unwrap();
+
+    let report = service(&pool).deliver_once(&context, at(40)).await.unwrap();
+    assert_eq!(report.delivered, 1);
+    let stream = events.load_stream(&context, run_id).await.unwrap();
+    assert!(stream.iter().any(|envelope| matches!(
+        envelope.payload,
+        LegacyRunEvent::ExternalEffectSettled {
+            effect_id,
+            receipt_id: None,
+            outcome: ReconciliationOutcome::Confirmed,
+            ..
+        } if effect_id == intent.id()
+    )));
 }
 
 /// An effect nobody can attribute closes its debt without inventing a run.

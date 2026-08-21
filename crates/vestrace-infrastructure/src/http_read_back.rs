@@ -33,6 +33,14 @@ impl HttpExternalEffectReadBackAdapter {
         })?;
         Ok(Self { endpoint, client })
     }
+
+    pub async fn observe<'a>(
+        &self,
+        intent: &ExternalEffectIntent,
+        receipt: impl Into<Option<&'a ExternalEffectReceipt>>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        <Self as ExternalEffectReadBackAdapter>::observe(self, intent, receipt.into()).await
+    }
 }
 
 #[derive(Deserialize)]
@@ -65,9 +73,9 @@ impl ExternalEffectReadBackAdapter for HttpExternalEffectReadBackAdapter {
     async fn observe(
         &self,
         intent: &ExternalEffectIntent,
-        receipt: &ExternalEffectReceipt,
+        _receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
-        let url = format!("{}/{}", self.endpoint, receipt.effect_id());
+        let url = format!("{}/{}", self.endpoint, intent.id());
         let response = self
             .client
             .get(&url)

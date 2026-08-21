@@ -17,7 +17,7 @@ pub trait ExternalEffectReadBackAdapter: Send + Sync {
     async fn observe(
         &self,
         intent: &ExternalEffectIntent,
-        receipt: &ExternalEffectReceipt,
+        receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError>;
 }
 
@@ -102,6 +102,10 @@ impl ExternalEffectRecoveryReport {
 /// reconciliation, not of any particular loop that drives it.
 pub const RECONCILIATION_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
 
+/// How long an adapter call may remain in flight before recovery treats its
+/// committed `Dispatching` evidence as a process loss.
+pub const DISPATCH_CONSIDERED_LOST_AFTER: chrono::Duration = chrono::Duration::minutes(5);
+
 pub struct ExternalEffectRecoveryService {
     repository: SharedExternalEffectRepository,
     read_back: Arc<dyn ExternalEffectReadBackAdapter>,
@@ -124,9 +128,14 @@ impl ExternalEffectRecoveryService {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        dispatch_considered_lost_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         self.repository
-            .find_reconciliation_candidates(context, retry_unsettled_before)
+            .find_reconciliation_candidates(
+                context,
+                retry_unsettled_before,
+                dispatch_considered_lost_before,
+            )
             .await
     }
 
@@ -175,8 +184,15 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         reconciled_at: Timestamp,
         retry_unsettled_before: Timestamp,
+        dispatch_considered_lost_before: Timestamp,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
-        let candidates = self.discover(context, retry_unsettled_before).await?;
+        let candidates = self
+            .discover(
+                context,
+                retry_unsettled_before,
+                dispatch_considered_lost_before,
+            )
+            .await?;
         let mut reconciliations = Vec::with_capacity(candidates.len());
         let mut runs = Vec::with_capacity(candidates.len());
         let mut unreachable = Vec::new();
@@ -212,6 +228,12 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         at: Timestamp,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
-        self.run(context, at, at - RECONCILIATION_RETRY_AFTER).await
+        self.run(
+            context,
+            at,
+            at - RECONCILIATION_RETRY_AFTER,
+            at - DISPATCH_CONSIDERED_LOST_AFTER,
+        )
+        .await
     }
 }

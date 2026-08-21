@@ -7,7 +7,8 @@ use vestrace_application::{
     UndeliveredOutcome,
 };
 use vestrace_domain::external_effects::{
-    ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation, ReconciliationOutcome,
+    EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
+    ReconciliationOutcome,
 };
 use vestrace_domain::{
     ExternalEffectId, ExternalEffectReceiptId, ExternalReconciliationId, Timestamp,
@@ -62,7 +63,7 @@ struct ReceiptRow {
 struct ReconciliationRow {
     id: uuid::Uuid,
     effect_id: uuid::Uuid,
-    receipt_id: uuid::Uuid,
+    receipt_id: Option<uuid::Uuid>,
     outcome: String,
     evidence_strength: String,
     payload: Value,
@@ -80,10 +81,10 @@ struct RecoveryCandidateRow {
     workspace_id: uuid::Uuid,
     adapter: String,
     intent_payload: Value,
-    receipt_id: uuid::Uuid,
-    receipt_effect_id: uuid::Uuid,
-    outcome_status: String,
-    receipt_payload: Value,
+    receipt_id: Option<uuid::Uuid>,
+    receipt_effect_id: Option<uuid::Uuid>,
+    outcome_status: Option<String>,
+    receipt_payload: Option<Value>,
 }
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
@@ -120,6 +121,37 @@ fn indexed_uuid(payload: &Value, field: &str) -> Result<uuid::Uuid, ApplicationE
             ))
         })
         .and_then(|value| uuid::Uuid::parse_str(value).map_err(storage_error))
+}
+
+fn indexed_optional_uuid(
+    payload: &Value,
+    field: &str,
+) -> Result<Option<uuid::Uuid>, ApplicationError> {
+    match payload.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(value)) => uuid::Uuid::parse_str(value)
+            .map(Some)
+            .map_err(storage_error),
+        Some(_) => Err(storage_error(format!(
+            "external reconciliation payload has invalid {field}"
+        ))),
+    }
+}
+
+fn lifecycle_status(value: &str) -> Result<EffectLifecycleStatus, ApplicationError> {
+    match value {
+        "prepared" => Ok(EffectLifecycleStatus::Prepared),
+        "authorized" => Ok(EffectLifecycleStatus::Authorized),
+        "dispatching" => Ok(EffectLifecycleStatus::Dispatching),
+        "acknowledged" => Ok(EffectLifecycleStatus::Acknowledged),
+        "failed" => Ok(EffectLifecycleStatus::Failed),
+        "unknown" => Ok(EffectLifecycleStatus::Unknown),
+        "confirmed" => Ok(EffectLifecycleStatus::Confirmed),
+        "reconciling" => Ok(EffectLifecycleStatus::Reconciling),
+        other => Err(storage_error(format!(
+            "external effect lifecycle contains unknown status {other:?}"
+        ))),
+    }
 }
 
 async fn verify_insert<T, F>(find: F, expected: &T, message: &str) -> Result<(), ApplicationError>
@@ -168,6 +200,21 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        if result.rows_affected() == 1 {
+            sqlx::query(
+                "INSERT INTO external_effect_lifecycle_transitions \
+                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+                 VALUES ($1, $2, 'prepared', 'intent_recorded', $3, $4)",
+            )
+            .bind(intent.id().as_uuid())
+            .bind(context.workspace_id.as_uuid())
+            .bind(intent.id().to_string())
+            .bind(intent.created_at())
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        }
 
         scoped.commit().await.map_err(storage_error)?;
 
@@ -249,11 +296,29 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .bind(receipt.id().as_uuid())
         .bind(receipt.effect_id().as_uuid())
         .bind(context.workspace_id.as_uuid())
-        .bind(outcome_status)
+        .bind(&outcome_status)
         .bind(payload)
         .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        if result.rows_affected() == 1 {
+            sqlx::query(
+                "INSERT INTO external_effect_lifecycle_transitions \
+                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+                 SELECT $1, $2, $3, 'receipt_recorded', $4, $5 \
+                 FROM external_effect_intents \
+                 WHERE id = $1 AND workspace_id = $2",
+            )
+            .bind(receipt.effect_id().as_uuid())
+            .bind(context.workspace_id.as_uuid())
+            .bind(&outcome_status)
+            .bind(receipt.id().to_string())
+            .bind(receipt.recorded_at())
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        }
 
         scoped.commit().await.map_err(storage_error)?;
 
@@ -310,6 +375,106 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .transpose()
     }
 
+    async fn find_receipt_by_effect(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+    ) -> Result<Option<ExternalEffectReceipt>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let row = sqlx::query_as::<_, ReceiptRow>(
+            "SELECT r.id, r.effect_id, r.outcome_status, r.payload \
+             FROM external_effect_receipts r \
+             LEFT JOIN external_effect_lifecycle_transitions t \
+               ON t.effect_id = r.effect_id \
+              AND t.workspace_id = r.workspace_id \
+              AND t.cause = 'receipt_recorded' \
+              AND t.cause_ref = r.id::text \
+             WHERE r.effect_id = $1 AND r.workspace_id = $2 \
+             ORDER BY (t.id IS NOT NULL) DESC, t.recorded_at DESC, t.created_at DESC, t.id DESC, \
+                      r.created_at DESC, r.id DESC \
+             LIMIT 1",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        row.map(|row| {
+            let receipt: ExternalEffectReceipt = decode(row.payload)?;
+            if receipt.id().as_uuid() != row.id
+                || receipt.effect_id().as_uuid() != row.effect_id
+                || enum_name(receipt.outcome_status())? != row.outcome_status
+            {
+                return Err(storage_error(
+                    "external effect receipt indexed metadata does not match payload",
+                ));
+            }
+            Ok(receipt)
+        })
+        .transpose()
+    }
+
+    async fn record_dispatch_started(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        recorded_at: Timestamp,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let result = sqlx::query(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $3 \
+             FROM external_effect_intents \
+             WHERE id = $1 AND workspace_id = $2",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(recorded_at)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        if result.rows_affected() != 1 {
+            return Err(storage_error(
+                "external effect dispatch could not be recorded",
+            ));
+        }
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn find_lifecycle_status(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+    ) -> Result<Option<EffectLifecycleStatus>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM external_effect_lifecycle_transitions \
+             WHERE effect_id = $1 AND workspace_id = $2 \
+             ORDER BY recorded_at DESC, created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        status.as_deref().map(lifecycle_status).transpose()
+    }
+
     async fn insert_reconciliation(
         &self,
         context: &RequestContext,
@@ -318,8 +483,8 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         let outcome = enum_name(reconciliation.outcome())?;
         let evidence_strength = enum_name(reconciliation.evidence_strength())?;
         let payload = json(reconciliation)?;
-        let effect_id = indexed_uuid(&payload, "effect_id")?;
-        let receipt_id = indexed_uuid(&payload, "receipt_id")?;
+        let effect_id = reconciliation.effect_id().as_uuid();
+        let receipt_id = reconciliation.receipt_id().map(|id| id.as_uuid());
         let mut scoped = self
             .store
             .begin_scoped(context)
@@ -347,6 +512,22 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .execute(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        if result.rows_affected() == 1 && reconciliation.outcome().is_settled() {
+            sqlx::query(
+                "INSERT INTO external_effect_lifecycle_transitions \
+                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+                 SELECT $1, $2, 'reconciling', 'outcome_settled', $3, $4 \
+                 FROM external_effect_intents WHERE id = $1 AND workspace_id = $2",
+            )
+            .bind(reconciliation.effect_id().as_uuid())
+            .bind(context.workspace_id.as_uuid())
+            .bind(reconciliation.id().to_string())
+            .bind(reconciliation.reconciled_at())
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        }
 
         scoped.commit().await.map_err(storage_error)?;
 
@@ -390,7 +571,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         row.map(|row| {
             let payload = row.payload;
             let payload_effect_id = indexed_uuid(&payload, "effect_id")?;
-            let payload_receipt_id = indexed_uuid(&payload, "receipt_id")?;
+            let payload_receipt_id = indexed_optional_uuid(&payload, "receipt_id")?;
             let reconciliation: ExternalReconciliation = decode(payload)?;
             let expected_outcome = enum_name(reconciliation.outcome())?;
             let expected_strength = enum_name(reconciliation.evidence_strength())?;
@@ -470,17 +651,44 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         // already paid this debt does not have its timestamp overwritten by a
         // later one — the record says when the run was told, not when somebody
         // last thought about telling it.
-        sqlx::query(
-            "UPDATE external_reconciliations
-                SET notified_at = $3
-              WHERE id = $1 AND workspace_id = $2 AND notified_at IS NULL",
+        let delivered = sqlx::query_as::<_, (uuid::Uuid, String)>(
+            "UPDATE external_reconciliations \
+                SET notified_at = $3 \
+              WHERE id = $1 AND workspace_id = $2 AND notified_at IS NULL \
+              RETURNING effect_id, outcome",
         )
         .bind(reconciliation_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
         .bind(at)
-        .execute(scoped.connection())
+        .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        if let Some((effect_id, outcome)) = delivered {
+            let status = match outcome.as_str() {
+                "confirmed" => "confirmed",
+                "not_applied" => "failed",
+                _ => {
+                    return Err(storage_error(
+                        "only a settled external effect outcome can be delivered",
+                    ));
+                }
+            };
+            sqlx::query(
+                "INSERT INTO external_effect_lifecycle_transitions \
+                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+                 SELECT $1, $2, $3, 'outcome_delivered', $4, $5 \
+                 FROM external_effect_intents WHERE id = $1 AND workspace_id = $2",
+            )
+            .bind(effect_id)
+            .bind(context.workspace_id.as_uuid())
+            .bind(status)
+            .bind(reconciliation_id.to_string())
+            .bind(at)
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        }
 
         scoped.commit().await.map_err(storage_error)?;
         Ok(())
@@ -504,6 +712,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        dispatch_considered_lost_before: Timestamp,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let mut scoped = self
             .store
@@ -512,37 +721,88 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .map_err(storage_error)?;
 
         let rows = sqlx::query_as::<_, RecoveryCandidateRow>(
-            "SELECT i.id AS intent_id,
-                    i.workspace_id,
-                    i.adapter,
-                    i.payload AS intent_payload,
-                    r.id AS receipt_id,
-                    r.effect_id AS receipt_effect_id,
-                    r.outcome_status,
-                    r.payload AS receipt_payload
-             FROM external_effect_intents i
-             JOIN external_effect_receipts r
-               ON r.effect_id = i.id AND r.workspace_id = i.workspace_id
-             LEFT JOIN LATERAL (
-                 SELECT x.outcome, x.reconciled_at
-                 FROM external_reconciliations x
-                 WHERE x.effect_id = r.effect_id
-                   AND x.receipt_id = r.id
-                   AND x.workspace_id = r.workspace_id
-                 ORDER BY x.reconciled_at DESC, x.id DESC
-                 LIMIT 1
-             ) last ON TRUE
-             WHERE i.workspace_id = $1
-               AND r.outcome_status = 'unknown'
-               AND (
-                     last.outcome IS NULL
-                  OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
-               )
-             ORDER BY r.created_at ASC, r.id ASC",
+            "WITH candidates AS (
+                 SELECT i.id AS intent_id,
+                        i.workspace_id,
+                        i.adapter,
+                        i.payload AS intent_payload,
+                        r.id AS receipt_id,
+                        r.effect_id AS receipt_effect_id,
+                        r.outcome_status,
+                        r.payload AS receipt_payload,
+                        r.created_at AS candidate_at
+                 FROM external_effect_receipts r
+                 JOIN external_effect_intents i
+                   ON i.id = r.effect_id AND i.workspace_id = r.workspace_id
+                 LEFT JOIN LATERAL (
+                     SELECT x.outcome, x.reconciled_at
+                     FROM external_reconciliations x
+                     WHERE x.effect_id = i.id
+                       AND x.receipt_id = r.id
+                       AND x.workspace_id = i.workspace_id
+                     ORDER BY x.reconciled_at DESC, x.id DESC
+                     LIMIT 1
+                 ) last ON TRUE
+                 WHERE i.workspace_id = $1
+                   AND r.workspace_id = $1
+                   AND r.outcome_status = 'unknown'
+                   AND (
+                         last.outcome IS NULL
+                      OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
+                   )
+
+                 UNION ALL
+
+                 SELECT i.id AS intent_id,
+                        i.workspace_id,
+                        i.adapter,
+                        i.payload AS intent_payload,
+                        NULL::UUID AS receipt_id,
+                        NULL::UUID AS receipt_effect_id,
+                        NULL::TEXT AS outcome_status,
+                        NULL::JSONB AS receipt_payload,
+                        dispatch.recorded_at AS candidate_at
+                 FROM external_effect_lifecycle_transitions dispatch
+                 JOIN external_effect_intents i
+                   ON i.id = dispatch.effect_id AND i.workspace_id = dispatch.workspace_id
+                 LEFT JOIN LATERAL (
+                     SELECT x.outcome, x.reconciled_at
+                     FROM external_reconciliations x
+                     WHERE x.effect_id = i.id
+                       AND x.receipt_id IS NULL
+                       AND x.workspace_id = i.workspace_id
+                     ORDER BY x.reconciled_at DESC, x.id DESC
+                     LIMIT 1
+                 ) last ON TRUE
+                 WHERE dispatch.workspace_id = $1
+                   AND i.workspace_id = $1
+                   AND dispatch.status = 'dispatching'
+                   AND dispatch.recorded_at < $4
+                   AND NOT EXISTS (
+                       SELECT 1 FROM external_effect_receipts r
+                       WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM external_effect_lifecycle_transitions newer
+                       WHERE newer.effect_id = dispatch.effect_id
+                         AND newer.workspace_id = dispatch.workspace_id
+                         AND (newer.recorded_at, newer.created_at, newer.id)
+                             > (dispatch.recorded_at, dispatch.created_at, dispatch.id)
+                   )
+                   AND (
+                         last.outcome IS NULL
+                      OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
+                   )
+             )
+             SELECT intent_id, workspace_id, adapter, intent_payload,
+                    receipt_id, receipt_effect_id, outcome_status, receipt_payload
+             FROM candidates
+             ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(ReconciliationOutcome::settled_names())
         .bind(retry_unsettled_before)
+        .bind(dispatch_considered_lost_before)
         .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;
@@ -561,14 +821,19 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                     ));
                 }
 
-                let receipt: ExternalEffectReceipt = decode(row.receipt_payload)?;
-                if receipt.id().as_uuid() != row.receipt_id
-                    || receipt.effect_id().as_uuid() != row.receipt_effect_id
-                    || enum_name(receipt.outcome_status())? != row.outcome_status
-                {
-                    return Err(storage_error(
-                        "external effect recovery receipt indexed metadata does not match payload",
-                    ));
+                let receipt = row
+                    .receipt_payload
+                    .map(decode::<ExternalEffectReceipt>)
+                    .transpose()?;
+                if let Some(receipt) = receipt.as_ref() {
+                    if Some(receipt.id().as_uuid()) != row.receipt_id
+                        || Some(receipt.effect_id().as_uuid()) != row.receipt_effect_id
+                        || Some(enum_name(receipt.outcome_status())?) != row.outcome_status
+                    {
+                        return Err(storage_error(
+                            "external effect recovery receipt indexed metadata does not match payload",
+                        ));
+                    }
                 }
 
                 ExternalEffectRecoveryCandidate::new(intent, receipt)

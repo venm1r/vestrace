@@ -9,12 +9,19 @@ use crate::{
 };
 
 pub struct ExternalEffectService {
+    effects: SharedExternalEffectRepository,
     authorization: AuthorizationBoundary,
 }
 
 impl ExternalEffectService {
-    pub fn new(authorization: AuthorizationBoundary) -> Self {
-        Self { authorization }
+    pub fn new(
+        effects: SharedExternalEffectRepository,
+        authorization: AuthorizationBoundary,
+    ) -> Self {
+        Self {
+            effects,
+            authorization,
+        }
     }
 
     pub async fn authorize(
@@ -29,25 +36,29 @@ impl ExternalEffectService {
             .map_err(ApplicationError::from)
     }
 
-    pub fn dispatch<A: ExternalEffectAdapter + ?Sized>(
+    /// Cross the durable boundary shared by composed and granular dispatches.
+    ///
+    /// Validation stays before the write because a rejected dispatch has not
+    /// touched the world. The write stays before the adapter because a process
+    /// that dies during the call must leave enough evidence for recovery to
+    /// distinguish a lost dispatch from an intent that was merely prepared.
+    pub async fn dispatch<A: ExternalEffectAdapter + ?Sized>(
         &self,
+        context: &RequestContext,
         authorized: &AuthorizedExternalEffect,
         adapter: &A,
         current_precondition_digest: &str,
         recorded_at: Timestamp,
     ) -> Result<ExternalEffectReceipt, ApplicationError> {
         authorized
+            .validate_dispatch(adapter, current_precondition_digest)
+            .map_err(map_dispatch_error)?;
+        self.effects
+            .record_dispatch_started(context, authorized.intent().id(), recorded_at)
+            .await?;
+        authorized
             .dispatch(adapter, current_precondition_digest, recorded_at)
-            .map_err(|error| match error {
-                DispatchError::StaleIntent => ApplicationError::Conflict("STALE_INTENT".into()),
-                DispatchError::AdapterDoesNotMatchIntent
-                | DispatchError::AdapterContractViolation(_) => ApplicationError::Policy(format!(
-                    "external adapter contract rejected: {error:?}"
-                )),
-                DispatchError::AdapterFailure(error) => {
-                    ApplicationError::Unavailable(format!("external adapter failed: {error:?}"))
-                }
-            })
+            .map_err(map_dispatch_error)
     }
 }
 
@@ -71,7 +82,7 @@ impl ExternalEffectService {
 /// would be a record fabricated to match what already happened.
 pub struct PerformExternalEffectService {
     effects: SharedExternalEffectRepository,
-    authorization: AuthorizationBoundary,
+    granular: ExternalEffectService,
 }
 
 impl PerformExternalEffectService {
@@ -79,10 +90,8 @@ impl PerformExternalEffectService {
         effects: SharedExternalEffectRepository,
         authorization: AuthorizationBoundary,
     ) -> Self {
-        Self {
-            effects,
-            authorization,
-        }
+        let granular = ExternalEffectService::new(effects.clone(), authorization);
+        Self { effects, granular }
     }
 
     pub async fn perform<A: ExternalEffectAdapter + ?Sized>(
@@ -102,31 +111,33 @@ impl PerformExternalEffectService {
             intent.target().to_owned(),
             intent.risk(),
         );
-        let decision = self.authorization.require(context, request).await?;
-        let authorized = intent
-            .authorize(&EffectAuthorization::from_policy_decision(&decision))
-            .map_err(ApplicationError::from)?;
+        let authorized = self.granular.authorize(context, &intent, request).await?;
 
         // 3. The preconditions as they are now, not as they were when the
         //    intent was written.
         let precondition_digest = authorized.intent().precondition_digest().to_owned();
 
-        // 4. Out.
-        let receipt = authorized
-            .dispatch(adapter, &precondition_digest, at)
-            .map_err(|error| match error {
-                DispatchError::StaleIntent => ApplicationError::Conflict("STALE_INTENT".into()),
-                DispatchError::AdapterDoesNotMatchIntent
-                | DispatchError::AdapterContractViolation(_) => ApplicationError::Policy(format!(
-                    "external adapter contract rejected: {error:?}"
-                )),
-                DispatchError::AdapterFailure(error) => {
-                    ApplicationError::Unavailable(format!("external adapter failed: {error:?}"))
-                }
-            })?;
+        // 4. Cross the same validated, durable boundary the granular fault
+        //    path uses, so neither path can dispatch without recording it.
+        let receipt = self
+            .granular
+            .dispatch(context, &authorized, adapter, &precondition_digest, at)
+            .await?;
 
         // 5. What came back, including "nothing came back".
         self.effects.insert_receipt(context, &receipt).await?;
         Ok(receipt)
+    }
+}
+
+fn map_dispatch_error(error: DispatchError) -> ApplicationError {
+    match error {
+        DispatchError::StaleIntent => ApplicationError::Conflict("STALE_INTENT".into()),
+        DispatchError::AdapterDoesNotMatchIntent | DispatchError::AdapterContractViolation(_) => {
+            ApplicationError::Policy(format!("external adapter contract rejected: {error:?}"))
+        }
+        DispatchError::AdapterFailure(error) => {
+            ApplicationError::Unavailable(format!("external adapter failed: {error:?}"))
+        }
     }
 }
