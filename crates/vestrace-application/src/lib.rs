@@ -88,7 +88,7 @@ pub use effect_outcome_delivery::{
 pub use effect_recovery::{
     DEFAULT_DISPATCH_ALLOWANCE, ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry,
     ExternalEffectRecoveryError, ExternalEffectRecoveryReport, ExternalEffectRecoveryService,
-    RECONCILIATION_BATCH, RECONCILIATION_RETRY_AFTER,
+    FAILED_RECOVERY_ATTEMPT_RETRY_AFTER, RECONCILIATION_BATCH, RECONCILIATION_RETRY_AFTER,
 };
 pub use effect_repository::{
     ExternalEffectRecoveryCandidate, ExternalEffectRepository, LostDispatchAdoption,

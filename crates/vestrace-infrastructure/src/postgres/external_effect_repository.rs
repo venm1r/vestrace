@@ -577,6 +577,40 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         status.as_deref().map(lifecycle_status).transpose()
     }
 
+    async fn record_failed_recovery_attempt(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        attempted_at: Timestamp,
+        failure_reason: &str,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let inserted = sqlx::query(
+            "INSERT INTO external_effect_recovery_attempts \
+                 (effect_id, workspace_id, attempted_at, failure_reason) \
+             SELECT $1, $2, $3, $4 \
+             FROM external_effect_intents \
+             WHERE id = $1 AND workspace_id = $2",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(attempted_at)
+        .bind(failure_reason)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        if inserted.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(storage_error("effect evidence not found"))
+        }
+    }
+
     async fn insert_reconciliation(
         &self,
         context: &RequestContext,
@@ -806,14 +840,17 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
     /// the set it swept.
     ///
     /// The set is now effects whose *most recent* reconciliation settled
-    /// nothing, and whose most recent attempt is older than the caller's cutoff.
-    /// The settled names come from the domain rather than being literals here,
-    /// so renaming a variant cannot leave this matching nothing — which would
-    /// put every already-confirmed effect back in the sweep.
+    /// nothing, whose most recent inconclusive answer is older than its cutoff,
+    /// and whose most recent failed attempt is older than its own cutoff. A
+    /// later reconciliation supersedes a failed attempt without deleting
+    /// evidence. The settled names come from the domain rather than being
+    /// literals here, so renaming a variant cannot leave this matching nothing
+    /// — which would put every already-confirmed effect back in the sweep.
     async fn find_reconciliation_candidates(
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        retry_failed_before: Timestamp,
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
@@ -848,12 +885,26 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                      ORDER BY x.reconciled_at DESC, x.id DESC
                      LIMIT 1
                  ) last ON TRUE
+                 LEFT JOIN LATERAL (
+                     SELECT attempt.attempted_at
+                     FROM external_effect_recovery_attempts attempt
+                     WHERE attempt.effect_id = i.id
+                       AND attempt.workspace_id = i.workspace_id
+                     ORDER BY attempt.attempted_at DESC, attempt.id DESC
+                     LIMIT 1
+                 ) failed ON TRUE
                  WHERE i.workspace_id = $1
                    AND r.workspace_id = $1
                    AND r.outcome_status = 'unknown'
                    AND (
                          last.outcome IS NULL
                       OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
+                   )
+                   AND (
+                         failed.attempted_at IS NULL
+                      OR (last.reconciled_at IS NOT NULL
+                          AND last.reconciled_at > failed.attempted_at)
+                      OR failed.attempted_at < $4
                    )
 
                  UNION ALL
@@ -885,12 +936,20 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                      ORDER BY x.reconciled_at DESC, x.id DESC
                      LIMIT 1
                  ) last ON TRUE
+                 LEFT JOIN LATERAL (
+                     SELECT attempt.attempted_at
+                     FROM external_effect_recovery_attempts attempt
+                     WHERE attempt.effect_id = i.id
+                       AND attempt.workspace_id = i.workspace_id
+                     ORDER BY attempt.attempted_at DESC, attempt.id DESC
+                     LIMIT 1
+                 ) failed ON TRUE
                  WHERE dispatch.workspace_id = $1
                    AND i.workspace_id = $1
                    AND (
                         (dispatch.status = 'dispatching'
                          AND dispatch.dispatch_expires_at IS NOT NULL
-                         AND dispatch.dispatch_expires_at < $4)
+                         AND dispatch.dispatch_expires_at < $5)
                      OR (dispatch.status = 'unknown'
                          AND dispatch.cause = 'dispatch_lost'
                          AND dispatch.recorded_at < $3)
@@ -909,6 +968,12 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                          last.outcome IS NULL
                       OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
                    )
+                   AND (
+                         failed.attempted_at IS NULL
+                      OR (last.reconciled_at IS NOT NULL
+                          AND last.reconciled_at > failed.attempted_at)
+                      OR failed.attempted_at < $4
+                   )
              )
              SELECT intent_id, workspace_id, adapter, intent_payload,
                     receipt_id, receipt_effect_id, outcome_status, receipt_payload,
@@ -917,11 +982,12 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
              -- Oldest-first is the fairness policy once this set is bounded:
              -- a sustained backlog must not starve the effects waiting longest.
              ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST
-             LIMIT $5",
+             LIMIT $6",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(ReconciliationOutcome::settled_names())
         .bind(retry_unsettled_before)
+        .bind(retry_failed_before)
         .bind(dispatch_expired_before)
         .bind(i64::from(limit))
         .fetch_all(scoped.connection())

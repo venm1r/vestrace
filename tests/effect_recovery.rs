@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
@@ -15,6 +18,7 @@ use vestrace_domain::external_effects::{
     EffectPrecondition, EffectReversibility, EvidenceStrength, ExternalEffectAdapter,
     ExternalEffectAdapterDescriptor, ExternalEffectIntent, ExternalEffectReceipt,
     ExternalReconciliation, IdempotencyProfile, ObservedEffectState, ReconciliationOutcome,
+    reconcile_effect,
 };
 use vestrace_domain::{
     AuthorizationRequest, Capability, ExternalEffectId, ExternalEffectLifecycleTransitionId,
@@ -112,8 +116,10 @@ struct MemoryEffectRepository {
     transitions: Mutex<Vec<MemoryLifecycleTransition>>,
     reconciled: Mutex<Vec<ExternalReconciliation>>,
     reconciled_keys: Mutex<Vec<(ExternalEffectId, Option<ExternalEffectReceiptId>)>>,
+    failed_attempts: Mutex<Vec<MemoryFailedRecoveryAttempt>>,
     delivered: Mutex<Vec<ExternalReconciliationId>>,
     dispatch_started_signal: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
+    fail_reconciliation_insert: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -128,6 +134,14 @@ struct MemoryLifecycleTransition {
     recorded_at: vestrace_domain::Timestamp,
     dispatch_owner: Option<WorkerId>,
     dispatch_expires_at: Option<vestrace_domain::Timestamp>,
+}
+
+#[derive(Clone)]
+struct MemoryFailedRecoveryAttempt {
+    workspace_id: WorkspaceId,
+    effect_id: ExternalEffectId,
+    attempted_at: vestrace_domain::Timestamp,
+    failure_reason: String,
 }
 
 impl MemoryEffectRepository {
@@ -242,6 +256,25 @@ impl MemoryEffectRepository {
 
     async fn reconciled_count(&self) -> usize {
         self.reconciled.lock().await.len()
+    }
+
+    async fn failed_attempt_count(&self, effect_id: ExternalEffectId) -> usize {
+        self.failed_attempts
+            .lock()
+            .await
+            .iter()
+            .filter(|attempt| effect_id == attempt.effect_id)
+            .count()
+    }
+
+    async fn failed_attempt_reasons(&self, effect_id: ExternalEffectId) -> Vec<String> {
+        self.failed_attempts
+            .lock()
+            .await
+            .iter()
+            .filter(|attempt| effect_id == attempt.effect_id)
+            .map(|attempt| attempt.failure_reason.clone())
+            .collect()
     }
 
     async fn mark_reconciled(&self, candidate: &ExternalEffectRecoveryCandidate) {
@@ -509,6 +542,41 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             .map(|transition| transition.status))
     }
 
+    async fn record_failed_recovery_attempt(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        attempted_at: vestrace_domain::Timestamp,
+        failure_reason: &str,
+    ) -> Result<(), ApplicationError> {
+        if failure_reason.trim().is_empty() {
+            return Err(ApplicationError::Storage(
+                "failed recovery attempt reason is blank".into(),
+            ));
+        }
+        if !self
+            .intents
+            .lock()
+            .await
+            .iter()
+            .any(|intent| intent.id() == effect_id && intent.workspace_id() == context.workspace_id)
+        {
+            return Err(ApplicationError::Storage(
+                "effect evidence not found".into(),
+            ));
+        }
+        self.failed_attempts
+            .lock()
+            .await
+            .push(MemoryFailedRecoveryAttempt {
+                workspace_id: context.workspace_id,
+                effect_id,
+                attempted_at,
+                failure_reason: failure_reason.to_owned(),
+            });
+        Ok(())
+    }
+
     async fn count_deadline_less_dispatching_transitions(
         &self,
         context: &RequestContext,
@@ -531,6 +599,11 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         context: &RequestContext,
         reconciliation: &ExternalReconciliation,
     ) -> Result<(), ApplicationError> {
+        if self.fail_reconciliation_insert.load(Ordering::SeqCst) {
+            return Err(ApplicationError::Storage(
+                "reconciliation insert failed".into(),
+            ));
+        }
         if !self.intents.lock().await.iter().any(|intent| {
             intent.id() == reconciliation.effect_id()
                 && intent.workspace_id() == context.workspace_id
@@ -674,12 +747,14 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         &self,
         context: &RequestContext,
         retry_unsettled_before: vestrace_domain::Timestamp,
+        retry_failed_before: vestrace_domain::Timestamp,
         dispatch_expired_before: vestrace_domain::Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let workspace_id = context.workspace_id;
         let reconciled = self.reconciled.lock().await;
         let reconciled_keys = self.reconciled_keys.lock().await;
+        let failed_attempts = self.failed_attempts.lock().await;
         let intents = self.intents.lock().await.clone();
         let receipts = self.receipts.lock().await.clone();
         let transitions = self.transitions.lock().await.clone();
@@ -751,7 +826,19 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                             && item.reconciled_at() < retry_unsettled_before
                     }
                 };
+                let latest_failure = failed_attempts
+                    .iter()
+                    .filter(|attempt| {
+                        attempt.workspace_id == workspace_id
+                            && attempt.effect_id == candidate.intent().id()
+                    })
+                    .max_by_key(|attempt| attempt.attempted_at);
+                let failed_attempt_allows_retry = latest_failure.is_none_or(|attempt| {
+                    latest.is_some_and(|item| item.reconciled_at() > attempt.attempted_at)
+                        || attempt.attempted_at < retry_failed_before
+                });
                 still_open
+                    && failed_attempt_allows_retry
                     && !reconciled_keys.contains(&(
                         candidate.intent().id(),
                         candidate.receipt().map(ExternalEffectReceipt::id),
@@ -800,6 +887,142 @@ impl ExternalEffectRepository for MemoryEffectRepository {
     }
 }
 
+#[tokio::test]
+async fn a_reconciliation_insert_failure_is_not_recorded_as_an_unaskable_attempt() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    repository
+        .seed(
+            ExternalEffectRecoveryCandidate::new(effect.clone(), unknown_receipt(&effect)).unwrap(),
+        )
+        .await;
+    repository
+        .fail_reconciliation_insert
+        .store(true, Ordering::SeqCst);
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry(
+            "webhook-v1",
+            Arc::new(MemoryReadBack {
+                endpoint: "https://webhook.effects.test/read-back",
+                requests: Arc::new(Mutex::new(Vec::new())),
+                receipts: Arc::new(Mutex::new(Vec::new())),
+                observations: vec![ObservedEffectState::new(
+                    EvidenceStrength::ProviderIdempotencyLookup,
+                    Some(true),
+                    "external:delivered",
+                    vec!["evidence:provider-lookup".into()],
+                )],
+            }),
+        ),
+    );
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    let error = service
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("reconciliation insert failed"));
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 0);
+}
+
+#[tokio::test]
+async fn an_equal_time_inconclusive_reconciliation_does_not_clear_a_failed_attempt() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = MemoryEffectRepository::default();
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let receipt = unknown_receipt(&effect);
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+    let inconclusive = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            None,
+            "external:indeterminate",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &inconclusive)
+        .await
+        .unwrap();
+    repository
+        .record_failed_recovery_attempt(&context, effect.id(), at(30), "route unavailable")
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(31), at(0), at(31), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an older reconciliation with the same timestamp cleared the later failed attempt"
+    );
+}
+
+#[tokio::test]
+async fn inconclusive_retry_uses_its_own_cutoff_not_the_failed_attempt_cutoff() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = MemoryEffectRepository::default();
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let receipt = unknown_receipt(&effect);
+    let context = RequestContext::new(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+    let inconclusive = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            None,
+            "external:indeterminate",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &inconclusive)
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(30), at(10_000), at(30), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the failed-attempt cutoff incorrectly enabled an inconclusive retry"
+    );
+    assert_eq!(
+        repository
+            .find_reconciliation_candidates(&context, at(31), at(0), at(31), u32::MAX)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the failed-attempt cutoff incorrectly suppressed an inconclusive retry"
+    );
+}
+
 struct MemoryReadBack {
     endpoint: &'static str,
     requests: Arc<Mutex<Vec<&'static str>>>,
@@ -808,6 +1031,10 @@ struct MemoryReadBack {
 }
 
 struct FailingMemoryReadBack;
+
+struct FailOnceMemoryReadBack {
+    calls: Arc<AtomicUsize>,
+}
 
 #[async_trait]
 impl ExternalEffectReadBackAdapter for FailingMemoryReadBack {
@@ -819,6 +1046,27 @@ impl ExternalEffectReadBackAdapter for FailingMemoryReadBack {
         Err(ApplicationError::Unavailable(
             "provider read-back failed".into(),
         ))
+    }
+}
+
+#[async_trait]
+impl ExternalEffectReadBackAdapter for FailOnceMemoryReadBack {
+    async fn observe(
+        &self,
+        _intent: &ExternalEffectIntent,
+        _receipt: Option<&ExternalEffectReceipt>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(ApplicationError::Unavailable(
+                "provider read-back failed".into(),
+            ));
+        }
+        Ok(vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:recovered",
+            vec!["evidence:provider-lookup".into()],
+        )])
     }
 }
 
@@ -900,7 +1148,14 @@ async fn recovery_asks_only_the_adapter_named_by_the_effect() {
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -975,7 +1230,14 @@ async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
     ));
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -996,13 +1258,17 @@ async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
         "no-route reason did not name the adapter: {}",
         report.unreachable()[0].reason
     );
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 1);
+    assert!(repository.failed_attempt_reasons(effect.id()).await[0].contains("missing"));
 
-    let next_report = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
-    assert_eq!(next_report.unreachable().len(), 1);
-    assert_eq!(next_report.unreachable()[0].effect_id, effect.id());
+    let next_report = service.sweep(&context, at(31)).await.unwrap();
+    assert!(next_report.unreachable().is_empty());
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 1);
+
+    let retry_report = service.sweep(&context, at(91)).await.unwrap();
+    assert_eq!(retry_report.unreachable().len(), 1);
+    assert_eq!(retry_report.unreachable()[0].effect_id, effect.id());
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 2);
     assert!(requests.lock().await.is_empty());
 }
 
@@ -1040,7 +1306,14 @@ async fn single_registered_adapter_reconciles_only_its_own_effects() {
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -1106,7 +1379,7 @@ async fn every_unknown_receipt_remains_a_candidate_regardless_of_mixed_receipt_i
         .unwrap();
 
     let mut candidate_receipts = repository
-        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1135,7 +1408,7 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates() {
     repository.insert_receipt(&context, &second).await.unwrap();
 
     let mut candidate_receipts = repository
-        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1171,7 +1444,7 @@ async fn memory_repository_limits_candidates_in_oldest_first_order() {
     }
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(100), at(100), 2)
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), 2)
         .await
         .unwrap();
 
@@ -1265,6 +1538,100 @@ async fn a_full_unreachable_batch_is_still_reported_as_saturated() {
     assert!(report.reconciliations().is_empty());
     assert_eq!(report.unreachable().len(), RECONCILIATION_BATCH as usize);
     assert!(report.saturated());
+}
+
+#[tokio::test]
+async fn eight_unaskable_effects_do_not_starve_the_ninth_askable_effect() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let context = RequestContext::new(workspace_id, actor_id);
+    for offset in 0..RECONCILIATION_BATCH {
+        let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "missing");
+        repository.insert_intent(&context, &effect).await.unwrap();
+        repository
+            .insert_receipt(
+                &context,
+                &receipt_with_status(
+                    &effect,
+                    EffectLifecycleStatus::Unknown,
+                    at(20 + i64::from(offset)),
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let askable = intent_for_adapter(workspace_id, actor_id, &run_ref(), "registered");
+    repository.insert_intent(&context, &askable).await.unwrap();
+    repository
+        .insert_receipt(
+            &context,
+            &receipt_with_status(&askable, EffectLifecycleStatus::Unknown, at(30)),
+        )
+        .await
+        .unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        read_back_registry(
+            "registered",
+            Arc::new(MemoryReadBack {
+                endpoint: "https://registered.effects.test/read-back",
+                requests: Arc::new(Mutex::new(Vec::new())),
+                receipts: Arc::new(Mutex::new(Vec::new())),
+                observations: vec![ObservedEffectState::new(
+                    EvidenceStrength::ProviderIdempotencyLookup,
+                    Some(true),
+                    "external:registered",
+                    vec!["evidence:registered".into()],
+                )],
+            }),
+        ),
+    );
+
+    let first = service.sweep(&context, at(100)).await.unwrap();
+    let second = service.sweep(&context, at(101)).await.unwrap();
+
+    assert_eq!(first.unreachable().len(), RECONCILIATION_BATCH as usize);
+    assert_eq!(second.reconciliations().len(), 1);
+    assert_eq!(second.reconciliations()[0].effect_id(), askable.id());
+}
+
+#[tokio::test]
+async fn a_provider_failure_is_retried_once_then_settled_without_another_delay() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let context = RequestContext::new(workspace_id, actor_id);
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .insert_receipt(&context, &unknown_receipt(&effect))
+        .await
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        read_back_registry(
+            "webhook-v1",
+            Arc::new(FailOnceMemoryReadBack {
+                calls: Arc::clone(&calls),
+            }),
+        ),
+    );
+
+    let failed = service.sweep(&context, at(100)).await.unwrap();
+    let still_backing_off = service.sweep(&context, at(101)).await.unwrap();
+    let recovered = service.sweep(&context, at(161)).await.unwrap();
+    let settled = service.sweep(&context, at(162)).await.unwrap();
+
+    assert_eq!(failed.unreachable().len(), 1);
+    assert!(still_backing_off.unreachable().is_empty());
+    assert!(still_backing_off.reconciliations().is_empty());
+    assert_eq!(recovered.reconciliations().len(), 1);
+    assert_eq!(recovered.reconciliations()[0].effect_id(), effect.id());
+    assert!(settled.reconciliations().is_empty());
+    assert!(settled.unreachable().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -1405,7 +1772,14 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
     assert_eq!(report.reconciliations().len(), 1);
@@ -1416,7 +1790,14 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
     assert_eq!(repository.reconciled_count().await, 1);
 
     let second_report = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(31),
+            at(31),
+            at(31),
+            at(31),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
     assert!(second_report.reconciliations().is_empty());
@@ -1435,7 +1816,8 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
 /// answering. That is the same shape as a drain that stops at its first failed
 /// message.
 ///
-/// The candidate is now reported by identity and reason, and stays a candidate.
+/// The candidate is reported by identity and reason, but yields its place until
+/// the failed-attempt cutoff instead of returning on every bounded sweep.
 #[tokio::test]
 async fn read_back_without_observations_settles_nothing_and_reports_it() {
     let workspace_id = WorkspaceId::new();
@@ -1448,9 +1830,10 @@ async fn read_back_without_observations_settles_nothing_and_reports_it() {
         )
         .await;
 
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let read_back = Arc::new(MemoryReadBack {
         endpoint: "https://webhook.effects.test/read-back",
-        requests: Arc::new(Mutex::new(Vec::new())),
+        requests: Arc::clone(&requests),
         receipts: Arc::new(Mutex::new(Vec::new())),
         observations: Vec::new(),
     });
@@ -1461,7 +1844,14 @@ async fn read_back_without_observations_settles_nothing_and_reports_it() {
     let context = RequestContext::new(workspace_id, actor_id);
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -1479,6 +1869,12 @@ async fn read_back_without_observations_settles_nothing_and_reports_it() {
         "{}",
         report.unreachable()[0].reason
     );
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 1);
+
+    let next_report = service.sweep(&context, at(31)).await.unwrap();
+    assert!(next_report.unreachable().is_empty());
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 1);
+    assert_eq!(requests.lock().await.len(), 1);
 }
 
 #[tokio::test]
@@ -1511,7 +1907,14 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
         read_back_registry("webhook-v1", read_back),
     );
     let report = service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(22),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -1566,7 +1969,14 @@ async fn a_dispatch_before_its_stated_deadline_is_not_adopted() {
     );
 
     let report = service
-        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -1605,7 +2015,14 @@ async fn lost_dispatch_adoption_survives_missing_route_and_is_rediscovered() {
     );
 
     let first = service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(22),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
     assert_eq!(first.unreachable().len(), 1);
@@ -1618,12 +2035,11 @@ async fn lost_dispatch_adoption_survives_missing_route_and_is_rediscovered() {
         )]
     );
 
-    let second = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
-    assert_eq!(second.unreachable().len(), 1);
-    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    let second = service.sweep(&context, at(31)).await.unwrap();
+    assert!(second.unreachable().is_empty());
+    let retry = service.sweep(&context, at(91)).await.unwrap();
+    assert_eq!(retry.unreachable().len(), 1);
+    assert_eq!(retry.unreachable()[0].effect_id, effect.id());
     assert_eq!(
         repository.lost_dispatch_evidence(effect.id()).await.len(),
         1
@@ -1648,16 +2064,22 @@ async fn lost_dispatch_adoption_survives_provider_failure_and_is_rediscovered() 
     );
 
     let first = service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(22),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
-    let second = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
+    let second = service.sweep(&context, at(31)).await.unwrap();
+    let retry = service.sweep(&context, at(91)).await.unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
-    assert_eq!(second.unreachable().len(), 1);
+    assert!(second.unreachable().is_empty());
+    assert_eq!(retry.unreachable().len(), 1);
     assert_eq!(
         repository.lost_dispatch_evidence(effect.id()).await.len(),
         1
@@ -1688,7 +2110,14 @@ async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptles
         ExternalEffectReadBackRegistry::new([]).unwrap(),
     );
     service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(30),
+            at(22),
+            RECONCILIATION_BATCH,
+        )
         .await
         .unwrap();
 
@@ -1705,7 +2134,7 @@ async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptles
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty(),
@@ -1754,7 +2183,7 @@ async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemption
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(20), u32::MAX)
+        .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(20), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1763,7 +2192,7 @@ async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemption
     for cutoff in [at(0), at(20), at(10_000)] {
         assert!(
             repository
-                .find_reconciliation_candidates(&context, at(10_000), cutoff, u32::MAX)
+                .find_reconciliation_candidates(&context, at(10_000), at(10_000), cutoff, u32::MAX,)
                 .await
                 .unwrap()
                 .iter()

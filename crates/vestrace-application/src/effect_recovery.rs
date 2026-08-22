@@ -24,13 +24,19 @@ pub trait ExternalEffectReadBackAdapter: Send + Sync {
 
 /// Why one candidate could not complete its recovery attempt.
 ///
-/// A missing route stays distinct from a provider or storage failure because
-/// nobody was asked in that case; folding those together would once again make
-/// configuration ambiguity look like external evidence.
+/// Failures before a usable provider observation stay distinct from failures
+/// while interpreting or persisting that observation. Only the former are
+/// failed recovery attempts: folding a storage failure into that record would
+/// make an internal write failure look like evidence that the provider could
+/// not be asked.
 #[derive(Debug, thiserror::Error)]
 pub enum ExternalEffectRecoveryError {
     #[error("no external effect read-back route is registered for adapter `{adapter}`")]
     MissingReadBackRoute { adapter: String },
+    #[error(transparent)]
+    ReadBack(ApplicationError),
+    #[error(transparent)]
+    Reconciliation(ApplicationError),
     #[error(transparent)]
     Application(#[from] ApplicationError),
 }
@@ -179,6 +185,14 @@ impl ExternalEffectRecoveryReport {
 /// reconciliation, not of any particular loop that drives it.
 pub const RECONCILIATION_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
 
+/// How long a failed recovery attempt yields its place in the bounded sweep.
+///
+/// A shorter interval notices a transiently unreachable provider sooner; a
+/// longer one lets fewer permanently unroutable effects consume provider-work
+/// budget. One minute matches the existing reconciliation cadence while the
+/// separate constant and query argument keep those two policies independent.
+pub const FAILED_RECOVERY_ATTEMPT_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
+
 /// Maximum provider read-backs one workspace performs in a reconciliation pass.
 ///
 /// This bounds a tick's worst-case duration and provider load at the cost of
@@ -223,6 +237,7 @@ impl ExternalEffectRecoveryService {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        retry_failed_before: Timestamp,
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
@@ -230,6 +245,7 @@ impl ExternalEffectRecoveryService {
             .find_reconciliation_candidates(
                 context,
                 retry_unsettled_before,
+                retry_failed_before,
                 dispatch_expired_before,
                 limit,
             )
@@ -263,14 +279,29 @@ impl ExternalEffectRecoveryService {
         let read_back = self.read_backs.resolve(candidate.intent().adapter())?;
         let observations = read_back
             .observe(candidate.intent(), candidate.receipt())
-            .await?;
-        let reconciliation = self.reconciliation.reconcile(
-            context,
-            candidate.intent(),
-            candidate.receipt(),
-            observations,
-            reconciled_at,
-        )?;
+            .await
+            .map_err(ExternalEffectRecoveryError::ReadBack)?;
+        let obtained_observation = !observations.is_empty();
+        let reconciliation = self
+            .reconciliation
+            .reconcile(
+                context,
+                candidate.intent(),
+                candidate.receipt(),
+                observations,
+                reconciled_at,
+            )
+            .map_err(|error| {
+                if obtained_observation {
+                    ExternalEffectRecoveryError::Reconciliation(error)
+                } else {
+                    // An adapter returning no observation is not evidence about
+                    // the outside world and cannot produce a reconciliation.
+                    // Treat it like a read-back failure so it yields its place
+                    // in the bounded sweep without inventing an inconclusive row.
+                    ExternalEffectRecoveryError::ReadBack(error)
+                }
+            })?;
         self.repository
             .insert_reconciliation(context, &reconciliation)
             .await?;
@@ -290,8 +321,9 @@ impl ExternalEffectRecoveryService {
     /// first failed message: the failure is real and is not a reason to stop
     /// asking about everything else.
     ///
-    /// A candidate that could not be asked is reported and left where it is. It
-    /// stays a candidate, because nothing about it has been settled.
+    /// A candidate that could not be asked is recorded before it is reported.
+    /// It stays unsettled, but yields its place in the bounded sweep until the
+    /// failed-attempt cutoff passes.
     ///
     /// So does one that *was* asked and gave an answer settling nothing — but
     /// only after `retry_unsettled_before`. Both are effects whose outcome
@@ -302,6 +334,7 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         reconciled_at: Timestamp,
         retry_unsettled_before: Timestamp,
+        retry_failed_before: Timestamp,
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
@@ -309,6 +342,7 @@ impl ExternalEffectRecoveryService {
             .discover(
                 context,
                 retry_unsettled_before,
+                retry_failed_before,
                 dispatch_expired_before,
                 limit,
             )
@@ -327,10 +361,28 @@ impl ExternalEffectRecoveryService {
                     runs.push(candidate.intent().execution_run_id());
                 }
                 Ok(None) => {}
-                Err(error) => unreachable.push(UnreconciledEffect {
-                    effect_id: candidate.intent().id(),
-                    reason: error.to_string(),
-                }),
+                Err(ExternalEffectRecoveryError::Application(error)) => return Err(error),
+                Err(ExternalEffectRecoveryError::Reconciliation(error)) => {
+                    unreachable.push(UnreconciledEffect {
+                        effect_id: candidate.intent().id(),
+                        reason: error.to_string(),
+                    });
+                }
+                Err(error) => {
+                    let reason = error.to_string();
+                    self.repository
+                        .record_failed_recovery_attempt(
+                            context,
+                            candidate.intent().id(),
+                            reconciled_at,
+                            &reason,
+                        )
+                        .await?;
+                    unreachable.push(UnreconciledEffect {
+                        effect_id: candidate.intent().id(),
+                        reason,
+                    });
+                }
             }
         }
         Ok(ExternalEffectRecoveryReport {
@@ -355,6 +407,7 @@ impl ExternalEffectRecoveryService {
             context,
             at,
             at - RECONCILIATION_RETRY_AFTER,
+            at - FAILED_RECOVERY_ATTEMPT_RETRY_AFTER,
             at,
             RECONCILIATION_BATCH,
         )

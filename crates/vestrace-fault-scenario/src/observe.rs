@@ -9,8 +9,8 @@
 //! about instead.
 
 use vestrace_application::{
-    ExternalEffectRecoveryCandidate, ExternalEffectRepository, RECONCILIATION_BATCH,
-    RECONCILIATION_RETRY_AFTER, RequestContext,
+    ExternalEffectRecoveryCandidate, ExternalEffectRepository, FAILED_RECOVERY_ATTEMPT_RETRY_AFTER,
+    RECONCILIATION_BATCH, RECONCILIATION_RETRY_AFTER, RequestContext,
 };
 use vestrace_domain::external_effects::{
     EffectFaultPoint, ExternalReconciliation, FaultObservation,
@@ -156,16 +156,16 @@ async fn owed_reconciliation(
 
 /// This effect's place in the reconciliation sweep, if it has one.
 ///
-/// Membership is decided by the receipt: `find_reconciliation_candidates`
-/// selects effects whose receipt is `unknown`, and an effect that has never
-/// been reconciled is in the set regardless of any cutoff.
+/// Membership starts with an `unknown` receipt, then applies independent gates
+/// for the latest inconclusive reconciliation, the latest failed recovery
+/// attempt, and any dispatch deadline.
 ///
 /// `retry_unsettled_before` is narrower than it sounds. It is a re-ask cadence
 /// and it applies only to an effect that *already* has a reconciliation whose
 /// latest attempt settled nothing: that one comes back only once the attempt is
-/// older than the cutoff. Observation uses the same two cutoffs as the real
-/// sweep: the retry cutoff is derived, while a dispatch is compared directly
-/// against the deadline its owner recorded.
+/// older than its cutoff. Observation uses the same three inputs as the real
+/// sweep: the two retry cutoffs are derived independently, while a dispatch is
+/// compared directly against the deadline its owner recorded.
 async fn sweep_candidate(
     effects: &PgExternalEffectRepository,
     context: &RequestContext,
@@ -176,6 +176,7 @@ async fn sweep_candidate(
         .find_reconciliation_candidates(
             context,
             observed_at - RECONCILIATION_RETRY_AFTER,
+            observed_at - FAILED_RECOVERY_ATTEMPT_RETRY_AFTER,
             observed_at,
             RECONCILIATION_BATCH,
         )

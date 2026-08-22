@@ -105,6 +105,20 @@ pub trait ExternalEffectRepository: Send + Sync {
         effect_id: ExternalEffectId,
     ) -> Result<Option<EffectLifecycleStatus>, ApplicationError>;
 
+    /// Record that recovery could not obtain an observation for an effect.
+    ///
+    /// This is deliberately not a reconciliation. A reconciliation means the
+    /// provider was asked; this record says why that question could not be
+    /// completed, so discovery can back off without inventing external
+    /// evidence.
+    async fn record_failed_recovery_attempt(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        attempted_at: Timestamp,
+        failure_reason: &str,
+    ) -> Result<(), ApplicationError>;
+
     async fn insert_reconciliation(
         &self,
         context: &RequestContext,
@@ -130,6 +144,11 @@ pub trait ExternalEffectRepository: Send + Sync {
     /// every tick. The cadence is the caller's to choose, so it is an argument
     /// rather than a constant buried in a query.
     ///
+    /// `retry_failed_before` is separate because it answers a different
+    /// question: when to try again after no provider observation was obtained
+    /// at all. A caller can tune either cadence without silently changing the
+    /// other one.
+    ///
     /// `dispatch_expired_before` is different: it is the observer's current
     /// cutoff, compared directly with each dispatch's stored deadline. A legacy
     /// transition with no stated deadline never qualifies at any cutoff.
@@ -140,6 +159,7 @@ pub trait ExternalEffectRepository: Send + Sync {
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
+        retry_failed_before: Timestamp,
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError>;

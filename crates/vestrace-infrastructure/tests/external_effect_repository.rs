@@ -87,6 +87,10 @@ struct CountingReadBack {
 
 struct FailingReadBack;
 
+struct FailOnceReadBack {
+    calls: Arc<AtomicUsize>,
+}
+
 #[async_trait]
 impl ExternalEffectReadBackAdapter for CountingReadBack {
     async fn observe(
@@ -114,6 +118,27 @@ impl ExternalEffectReadBackAdapter for FailingReadBack {
         Err(ApplicationError::Unavailable(
             "provider read-back failed".into(),
         ))
+    }
+}
+
+#[async_trait]
+impl ExternalEffectReadBackAdapter for FailOnceReadBack {
+    async fn observe(
+        &self,
+        _intent: &ExternalEffectIntent,
+        _receipt: Option<&ExternalEffectReceipt>,
+    ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(ApplicationError::Unavailable(
+                "provider read-back failed".into(),
+            ));
+        }
+        Ok(vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:recovered",
+            vec!["evidence:provider-lookup".into()],
+        )])
     }
 }
 
@@ -637,7 +662,7 @@ async fn dispatch_deadline_migration_preserves_0153_rows_and_enforces_only_new_e
     for cutoff in [at(0), at(20), at(10_000)] {
         assert!(
             repository
-                .find_reconciliation_candidates(&context, at(10_000), cutoff, u32::MAX)
+                .find_reconciliation_candidates(&context, at(10_000), at(10_000), cutoff, u32::MAX,)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -1156,8 +1181,8 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
     // Both sweepers hold the same pre-adoption candidate. The unique
     // dispatch-lost key, not a sequential re-query, decides which may ask.
     let (first_candidates, second_candidates) = tokio::join!(
-        first.discover(&context, at(10), at(22), RECONCILIATION_BATCH),
-        second.discover(&context, at(10), at(22), RECONCILIATION_BATCH),
+        first.discover(&context, at(10), at(10), at(22), RECONCILIATION_BATCH),
+        second.discover(&context, at(10), at(10), at(22), RECONCILIATION_BATCH),
     );
     let first_candidate = first_candidates.unwrap().pop().unwrap();
     let second_candidate = second_candidates.unwrap().pop().unwrap();
@@ -1208,9 +1233,7 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evidence(
-    pool: PgPool,
-) {
+async fn missing_route_after_adoption_backs_off_without_duplicate_adoption_evidence(pool: PgPool) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
         pool.clone(),
     )));
@@ -1226,19 +1249,15 @@ async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evi
         ExternalEffectReadBackRegistry::new([]).unwrap(),
     );
 
-    let first = service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
-    let second = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
+    let first = service.sweep(&context, at(30)).await.unwrap();
+    let second = service.sweep(&context, at(31)).await.unwrap();
+    let retry = service.sweep(&context, at(91)).await.unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
-    assert_eq!(second.unreachable().len(), 1);
+    assert!(second.unreachable().is_empty());
+    assert_eq!(retry.unreachable().len(), 1);
     assert_eq!(first.unreachable()[0].effect_id, effect.id());
-    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    assert_eq!(retry.unreachable()[0].effect_id, effect.id());
     assert!(first.reconciliations().is_empty());
     assert!(second.reconciliations().is_empty());
     assert_eq!(
@@ -1262,6 +1281,18 @@ async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evi
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_recovery_attempts \
+             WHERE workspace_id = $1 AND effect_id = $2"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM external_reconciliations \
              WHERE workspace_id = $1 AND effect_id = $2"
         )
@@ -1275,7 +1306,7 @@ async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evi
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn provider_failure_after_adoption_is_unreachable_again_without_duplicate_evidence(
+async fn provider_failure_after_adoption_backs_off_without_duplicate_adoption_evidence(
     pool: PgPool,
 ) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
@@ -1297,19 +1328,15 @@ async fn provider_failure_after_adoption_is_unreachable_again_without_duplicate_
         .unwrap(),
     );
 
-    let first = service
-        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
-    let second = service
-        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
-        .await
-        .unwrap();
+    let first = service.sweep(&context, at(30)).await.unwrap();
+    let second = service.sweep(&context, at(31)).await.unwrap();
+    let retry = service.sweep(&context, at(91)).await.unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
-    assert_eq!(second.unreachable().len(), 1);
+    assert!(second.unreachable().is_empty());
+    assert_eq!(retry.unreachable().len(), 1);
     assert_eq!(first.unreachable()[0].effect_id, effect.id());
-    assert_eq!(second.unreachable()[0].effect_id, effect.id());
+    assert_eq!(retry.unreachable()[0].effect_id, effect.id());
     assert!(first.reconciliations().is_empty());
     assert!(second.reconciliations().is_empty());
     assert_eq!(
@@ -1330,6 +1357,18 @@ async fn provider_failure_after_adoption_is_unreachable_again_without_duplicate_
         .await
         .unwrap(),
         1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_recovery_attempts \
+             WHERE workspace_id = $1 AND effect_id = $2"
+        )
+        .bind(effect.workspace_id().as_uuid())
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -1375,7 +1414,7 @@ async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_can
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty()
@@ -1454,7 +1493,7 @@ async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: 
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty()
@@ -1485,7 +1524,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(20), u32::MAX)
+        .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(20), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1522,7 +1561,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
     .await
     .unwrap();
     let later_candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(100), u32::MAX)
+        .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(100), u32::MAX)
         .await
         .unwrap();
     assert_eq!(
@@ -1599,7 +1638,7 @@ async fn every_unknown_receipt_is_a_candidate_across_mixed_states_and_insertion_
         .unwrap();
 
     let mut actual = repository
-        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1626,7 +1665,7 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: 
     repository.insert_receipt(&context, &second).await.unwrap();
 
     let mut actual = repository
-        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1677,11 +1716,11 @@ async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(po
     );
 
     let first = service
-        .run(&context, at(100), at(100), at(100), 2)
+        .run(&context, at(100), at(100), at(100), at(100), 2)
         .await
         .unwrap();
     let second = service
-        .run(&context, at(101), at(101), at(101), 2)
+        .run(&context, at(101), at(101), at(101), at(101), 2)
         .await
         .unwrap();
 
@@ -1692,6 +1731,153 @@ async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(po
     assert_eq!(second.reconciliations().len(), 1);
     assert_eq!(second.reconciliations()[0].effect_id(), effects[2].1.id());
     assert!(!second.saturated());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_failed_recovery_attempt_is_durable_not_a_reconciliation_and_backs_off(pool: PgPool) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let effect = intent();
+    let receipt = unknown_receipt(&effect);
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        ExternalEffectReadBackRegistry::new([]).unwrap(),
+    );
+
+    let first = service
+        .run(
+            &context,
+            at(30),
+            at(30),
+            at(0),
+            at(30),
+            RECONCILIATION_BATCH,
+        )
+        .await
+        .unwrap();
+    let second = service
+        .run(
+            &context,
+            at(31),
+            at(31),
+            at(0),
+            at(31),
+            RECONCILIATION_BATCH,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first.unreachable().len(), 1);
+    assert_eq!(first.unreachable()[0].effect_id, effect.id());
+    assert!(second.unreachable().is_empty());
+    assert!(second.reconciliations().is_empty());
+    let stored: (uuid::Uuid, uuid::Uuid, chrono::DateTime<Utc>, String) = sqlx::query_as(
+        "SELECT effect_id, workspace_id, attempted_at, failure_reason \
+         FROM external_effect_recovery_attempts \
+         WHERE effect_id = $1 AND workspace_id = $2",
+    )
+    .bind(effect.id().as_uuid())
+    .bind(effect.workspace_id().as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored.0, effect.id().as_uuid());
+    assert_eq!(stored.1, effect.workspace_id().as_uuid());
+    assert_eq!(stored.2, at(30));
+    assert!(stored.3.contains("webhook-v1"));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_reconciliations \
+             WHERE effect_id = $1 AND workspace_id = $2",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(effect.workspace_id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+
+    let after_cutoff = service
+        .run(
+            &context,
+            at(91),
+            at(91),
+            at(31),
+            at(91),
+            RECONCILIATION_BATCH,
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_cutoff.unreachable().len(), 1);
+    assert_eq!(after_cutoff.unreachable()[0].effect_id, effect.id());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_provider_failure_then_success_reconciles_once_without_another_failed_attempt_delay(
+    pool: PgPool,
+) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let effect = intent();
+    let receipt = unknown_receipt(&effect);
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        ExternalEffectReadBackRegistry::new([(
+            "webhook-v1".to_owned(),
+            Arc::new(FailOnceReadBack {
+                calls: Arc::clone(&calls),
+            }) as Arc<dyn ExternalEffectReadBackAdapter>,
+        )])
+        .unwrap(),
+    );
+
+    let failed = service.sweep(&context, at(100)).await.unwrap();
+    let backing_off = service.sweep(&context, at(101)).await.unwrap();
+    let recovered = service.sweep(&context, at(161)).await.unwrap();
+    let settled = service.sweep(&context, at(162)).await.unwrap();
+
+    assert_eq!(failed.unreachable().len(), 1);
+    assert!(backing_off.unreachable().is_empty());
+    assert!(backing_off.reconciliations().is_empty());
+    assert_eq!(recovered.reconciliations().len(), 1);
+    assert_eq!(recovered.reconciliations()[0].effect_id(), effect.id());
+    assert!(settled.unreachable().is_empty());
+    assert!(settled.reconciliations().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_recovery_attempts \
+             WHERE effect_id = $1 AND workspace_id = $2",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(effect.workspace_id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_reconciliations \
+             WHERE effect_id = $1 AND workspace_id = $2",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(effect.workspace_id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1834,6 +2020,53 @@ async fn a_receipt_cannot_be_filed_against_another_workspaces_effect(pool: PgPoo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn a_failed_recovery_attempt_cannot_be_filed_against_another_workspaces_effect(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let owner = context_for(effect.workspace_id());
+    repository.insert_intent(&owner, &effect).await.unwrap();
+    let stranger = context_for(WorkspaceId::new());
+
+    assert!(
+        repository
+            .record_failed_recovery_attempt(
+                &stranger,
+                effect.id(),
+                at(30),
+                "provider read-back failed",
+            )
+            .await
+            .is_err(),
+        "a failed attempt was filed through a foreign request context"
+    );
+    assert!(
+        sqlx::query(
+            "INSERT INTO external_effect_recovery_attempts \
+                 (effect_id, workspace_id, attempted_at, failure_reason) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(stranger.workspace_id.as_uuid())
+        .bind(at(30))
+        .bind("provider read-back failed")
+        .execute(&pool)
+        .await
+        .is_err(),
+        "the composite intent foreign key accepted a foreign workspace"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_recovery_attempts WHERE effect_id = $1"
+        )
+        .bind(effect.id().as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn external_effect_repository_rejects_conflicting_immutable_intent_id(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let first = intent();
@@ -1878,7 +2111,7 @@ async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
+        .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(10_000), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1904,7 +2137,7 @@ async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_
 
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
+            .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(10_000), u32::MAX,)
             .await
             .unwrap()
             .is_empty()
@@ -1951,17 +2184,18 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
     // Immediately afterwards there is nothing to gain by asking again.
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(30), at(30), u32::MAX)
+            .find_reconciliation_candidates(&context, at(30), at(10_000), at(30), u32::MAX)
             .await
             .unwrap()
             .is_empty(),
-        "an effect was asked about again in the same instant it was asked"
+        "an effect was asked about again in the same instant it was asked, or the failed-attempt \
+         cutoff incorrectly enabled an inconclusive retry"
     );
 
     // Once the attempt is old enough, the effect is still an effect whose
     // outcome nobody knows.
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(90), at(90), u32::MAX)
+        .find_reconciliation_candidates(&context, at(90), at(0), at(90), u32::MAX)
         .await
         .unwrap();
     assert_eq!(
@@ -1992,11 +2226,51 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
 
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
+            .find_reconciliation_candidates(&context, at(10_000), at(10_000), at(10_000), u32::MAX,)
             .await
             .unwrap()
             .is_empty(),
         "a confirmed effect came back as a candidate, so the sweep would ask forever"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_equal_time_inconclusive_reconciliation_does_not_clear_a_failed_attempt(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let workspace_id = WorkspaceId::new();
+    let effect = intent_for(workspace_id, &run_ref());
+    let receipt = unknown_receipt(&effect);
+    let context = context_for(workspace_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+    let inconclusive = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            None,
+            "external:indeterminate",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &inconclusive)
+        .await
+        .unwrap();
+    repository
+        .record_failed_recovery_attempt(&context, effect.id(), at(30), "route unavailable")
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(31), at(0), at(31), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an older reconciliation with the same timestamp cleared the later failed attempt"
     );
 }
 
