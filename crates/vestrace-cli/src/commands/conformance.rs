@@ -10,6 +10,7 @@ use clap::ValueEnum;
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
 use secrecy::ExposeSecret as _;
 use vestrace_application::{
+    CapabilityRestorationDecision, CapabilityRestorationPolicy, CapabilityRestorationService,
     ConfiguredEffectFaultScenarioExecutor, CryptoAdapterQualificationService,
     CryptoAdapterQualificationTarget, CryptoCustody, CryptoQualificationDecision,
     ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget,
@@ -17,8 +18,9 @@ use vestrace_application::{
     FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
     QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
     RecoveryRepository, ReleaseApprovalDecision, ReleaseApprovalFailure, ReleaseApprovalService,
-    ReleaseSignatureEvidence, RuntimeQualificationDecision, RuntimeQualificationEvidence,
-    V1ReleaseEvidenceService, evaluate_runtime_qualification,
+    ReleaseSignatureEvidence, RestorationBlockReason, RestorationEvidence, RestorationStage,
+    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
+    evaluate_runtime_qualification,
 };
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
 use vestrace_domain::conformance::{
@@ -29,10 +31,10 @@ use vestrace_domain::release::VestraceCapabilityManifest;
 use vestrace_domain::trust::{
     KeyProvider, KeyProviderError, KeyPurpose, KeyReference, PostIncidentQualificationEvidence,
     QualificationBaseline, QualificationBundle, QualificationLifecycle, QualificationStatus,
-    ResolvedKeyMaterial, SecretResolutionRequest, SignatureAlgorithm, SignatureRecord,
-    SignerTrustPolicy, SignerTrustRule,
+    ResolvedKeyMaterial, RevalidationRun, SecretResolutionRequest, SignatureAlgorithm,
+    SignatureRecord, SignerTrustPolicy, SignerTrustRule, TrustStateRecord,
 };
-use vestrace_domain::{HealthScope, WorkspaceId};
+use vestrace_domain::{Capability, HealthScope, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationBaselineRepository,
     PgQualificationRepository, PgRecoveryRepository, PgStore, QualificationConfig,
@@ -216,6 +218,7 @@ pub async fn run(
             key_version,
             key_scope,
             release_approval,
+            capability_restoration,
             trusted_signer,
             trust_workspace_id,
             fault_suite_evidence,
@@ -233,6 +236,7 @@ pub async fn run(
                 key_version,
                 key_scope,
                 release_approval,
+                capability_restoration,
                 trusted_signer,
                 trust_workspace_id,
                 fault_suite_evidence,
@@ -1041,6 +1045,73 @@ struct ReleaseGateReport {
     /// needs to know which one.
     #[serde(skip_serializing_if = "Option::is_none")]
     release_approval_failures: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capability_restoration_decisions: Option<Vec<CapabilityRestorationReport>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct CapabilityRestorationEvidenceReport {
+    qualification_bundle: String,
+    revalidation_run: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct CapabilityRestorationReport {
+    capability: String,
+    stage: Option<RestorationStage>,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<CapabilityRestorationEvidenceReport>,
+}
+
+struct CapabilityRestorationCollection {
+    decisions: Vec<CapabilityRestorationDecision>,
+    reports: Vec<CapabilityRestorationReport>,
+}
+
+fn restoration_block_reason_name(reason: RestorationBlockReason) -> &'static str {
+    match reason {
+        RestorationBlockReason::CapabilityNotDeclared => "capability_not_declared",
+        RestorationBlockReason::TrustBarrier => "trust_barrier",
+        RestorationBlockReason::QualificationEvidenceMissing => "qualification_evidence_missing",
+        RestorationBlockReason::RevalidationEvidenceMissing => "revalidation_evidence_missing",
+        RestorationBlockReason::EvidenceReferencesMissing => "evidence_references_missing",
+    }
+}
+
+fn restoration_report(
+    decision: &CapabilityRestorationDecision,
+    detail: Option<String>,
+    evidence: Option<CapabilityRestorationEvidenceReport>,
+) -> CapabilityRestorationReport {
+    match decision {
+        CapabilityRestorationDecision::Allowed { capability, stage } => {
+            CapabilityRestorationReport {
+                capability: capability.to_string(),
+                stage: Some(*stage),
+                status: "allowed",
+                reason: None,
+                detail,
+                evidence,
+            }
+        }
+        CapabilityRestorationDecision::Blocked {
+            capability,
+            stage,
+            reason,
+        } => CapabilityRestorationReport {
+            capability: capability.to_string(),
+            stage: *stage,
+            status: "blocked",
+            reason: Some(restoration_block_reason_name(*reason)),
+            detail,
+            evidence,
+        },
+    }
 }
 
 /// Read the deployment's own account of itself: which role the runtime holds
@@ -1244,6 +1315,231 @@ async fn collect_release_approval(
     ))
 }
 
+fn derive_capability_restoration(
+    bundle: &QualificationBundle,
+    trust_scope: &HealthScope,
+    trust_state: &TrustStateRecord,
+    revalidation_run: Option<&RevalidationRun>,
+    capabilities: &[Capability],
+    policy: &CapabilityRestorationPolicy,
+) -> CapabilityRestorationCollection {
+    let Some(revalidation_run) = revalidation_run else {
+        let missing = match trust_state.revalidation_run_id() {
+            Some(run_id) => {
+                format!("no persisted revalidation run {run_id} for scope {trust_scope:?}")
+            }
+            None => {
+                format!("persisted trust state for scope {trust_scope:?} names no revalidation run")
+            }
+        };
+        let decisions = capabilities
+            .iter()
+            .cloned()
+            .map(|capability| match policy.stage_for(&capability) {
+                Some(stage) => CapabilityRestorationDecision::Blocked {
+                    capability,
+                    stage: Some(stage),
+                    reason: RestorationBlockReason::RevalidationEvidenceMissing,
+                },
+                None => CapabilityRestorationDecision::Blocked {
+                    capability,
+                    stage: None,
+                    reason: RestorationBlockReason::CapabilityNotDeclared,
+                },
+            })
+            .collect::<Vec<_>>();
+        let reports = decisions
+            .iter()
+            .map(|decision| {
+                let detail = match decision {
+                    CapabilityRestorationDecision::Blocked {
+                        capability,
+                        reason: RestorationBlockReason::CapabilityNotDeclared,
+                        ..
+                    } => format!("no restoration stage is configured for capability {capability}"),
+                    _ => missing.clone(),
+                };
+                restoration_report(decision, Some(detail), None)
+            })
+            .collect();
+        return CapabilityRestorationCollection { decisions, reports };
+    };
+
+    let (evidence, evidence_report) = restoration_evidence(bundle, revalidation_run);
+
+    let decisions = capabilities
+        .iter()
+        .cloned()
+        .map(|capability| {
+            CapabilityRestorationService::evaluate(
+                trust_state.state(),
+                capability,
+                policy,
+                &evidence,
+            )
+        })
+        .collect::<Vec<_>>();
+    let reports = decisions
+        .iter()
+        .map(|decision| {
+            let detail = match decision {
+                CapabilityRestorationDecision::Allowed { .. } => None,
+                CapabilityRestorationDecision::Blocked {
+                    capability,
+                    reason: RestorationBlockReason::CapabilityNotDeclared,
+                    ..
+                } => Some(format!(
+                    "no restoration stage is configured for capability {capability}"
+                )),
+                CapabilityRestorationDecision::Blocked {
+                    reason: RestorationBlockReason::TrustBarrier,
+                    ..
+                } => Some(format!(
+                    "persisted trust state {:?} blocks this restoration stage for scope {trust_scope:?}",
+                    trust_state.state()
+                )),
+                CapabilityRestorationDecision::Blocked {
+                    reason: RestorationBlockReason::QualificationEvidenceMissing,
+                    ..
+                } => Some(format!(
+                    "qualification bundle {} has status {:?}",
+                    bundle.id(),
+                    bundle.status()
+                )),
+                CapabilityRestorationDecision::Blocked {
+                    reason: RestorationBlockReason::RevalidationEvidenceMissing,
+                    ..
+                } => Some(format!(
+                    "persisted revalidation run {} for scope {trust_scope:?} has result {:?}",
+                    revalidation_run.id(),
+                    revalidation_run.result()
+                )),
+                CapabilityRestorationDecision::Blocked {
+                    reason: RestorationBlockReason::EvidenceReferencesMissing,
+                    ..
+                } => Some("restoration evidence contains no references".to_owned()),
+            };
+            restoration_report(decision, detail, Some(evidence_report.clone()))
+        })
+        .collect();
+
+    CapabilityRestorationCollection { decisions, reports }
+}
+
+fn restoration_evidence(
+    bundle: &QualificationBundle,
+    revalidation_run: &RevalidationRun,
+) -> (RestorationEvidence, CapabilityRestorationEvidenceReport) {
+    // These two facts come from different durable artifacts. Keeping the reads
+    // adjacent to construction makes it difficult to turn either one into an
+    // asserted literal while leaving plausible-looking evidence behind.
+    let qualification_passed = bundle.status() == QualificationStatus::Passed;
+    let revalidation_passed = revalidation_run.is_successful();
+    let mut evidence_refs = bundle_evidence_refs(bundle);
+    evidence_refs.push(format!("qualification-bundle:{}", bundle.id()));
+    evidence_refs.extend(revalidation_run.evidence_refs().iter().cloned());
+    evidence_refs.push(format!("revalidation-run:{}", revalidation_run.id()));
+    (
+        RestorationEvidence::new(qualification_passed, revalidation_passed, evidence_refs),
+        CapabilityRestorationEvidenceReport {
+            qualification_bundle: bundle.id().to_string(),
+            revalidation_run: revalidation_run.id().to_string(),
+        },
+    )
+}
+
+async fn collect_capability_restoration(
+    bundle: &QualificationBundle,
+    trust_scope: HealthScope,
+    config: &AppConfig,
+) -> anyhow::Result<CapabilityRestorationCollection> {
+    if config.policy.capabilities.is_empty() {
+        anyhow::bail!(
+            "capability restoration could not be collected: policy.capabilities must configure at least one capability"
+        );
+    }
+    if config.policy.capability_restoration.is_empty() {
+        anyhow::bail!(
+            "capability restoration could not be collected: policy.capability_restoration must configure at least one stage"
+        );
+    }
+
+    let capabilities = config
+        .policy
+        .capabilities
+        .iter()
+        .map(|name| {
+            name.trim().parse::<Capability>().map_err(|_| {
+                anyhow::anyhow!(
+                    "capability restoration could not be collected: policy.capabilities names an unknown capability {name:?}"
+                )
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let policy = CapabilityRestorationPolicy::new(
+        config
+            .policy
+            .capability_restoration
+            .iter()
+            .map(|(name, stage)| {
+                name.trim()
+                    .parse::<Capability>()
+                    .map(|capability| (capability, *stage))
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "capability restoration could not be collected: policy.capability_restoration names an unknown capability {name:?}"
+                        )
+                    })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    )
+    .map_err(|error| anyhow::anyhow!("capability restoration policy is invalid: {error}"))?;
+
+    let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!("capability restoration could not be loaded from {redacted}: {error}")
+    })?;
+    let recovery = PgRecoveryRepository::new(store);
+    let trust_state = recovery
+        .find_latest_trust_state(&trust_scope)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("capability restoration trust-state lookup failed: {error}")
+        })?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "capability restoration could not be collected: no persisted trust state for scope {trust_scope:?}"
+            )
+        })?;
+    let revalidation_run = match trust_state.revalidation_run_id() {
+        Some(run_id) => recovery
+            .find_revalidation_run(run_id)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("capability restoration revalidation lookup failed: {error}")
+            })?,
+        None => None,
+    };
+    if let Some(run) = &revalidation_run {
+        if run.scope() != &trust_scope {
+            anyhow::bail!(
+                "capability restoration could not use revalidation run {}: run scope {:?} does not match requested scope {trust_scope:?}",
+                run.id(),
+                run.scope()
+            );
+        }
+    }
+
+    Ok(derive_capability_restoration(
+        bundle,
+        &trust_scope,
+        &trust_state,
+        revalidation_run.as_ref(),
+        &capabilities,
+        &policy,
+    ))
+}
+
 /// Ask the v1.0 release gate about an exact build in an exact environment.
 ///
 /// The target is the capability manifest; the evidence identity is the
@@ -1262,6 +1558,7 @@ pub async fn run_release(
     key_version: String,
     key_scope: String,
     release_approval: bool,
+    capability_restoration: bool,
     trusted_signer: Option<String>,
     trust_workspace_id: Option<uuid::Uuid>,
     fault_suite_evidence: Option<uuid::Uuid>,
@@ -1270,6 +1567,22 @@ pub async fn run_release(
     config_path: Option<&Path>,
     config_overrides: &ConfigOverrides,
 ) -> anyhow::Result<()> {
+    let capability_restoration_config = if capability_restoration {
+        let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "capability restoration could not be collected: configuration failed: {error}"
+                )
+            })?;
+        if config.policy.capability_restoration.is_empty() {
+            anyhow::bail!(
+                "capability restoration could not be collected: policy.capability_restoration must configure at least one stage"
+            );
+        }
+        Some(config)
+    } else {
+        None
+    };
     if !crypto_evidence && !release_approval && (key_store_root.is_some() || key_id.is_some()) {
         anyhow::bail!(
             "--key-store-root and --key-id require --crypto-evidence or --release-approval"
@@ -1290,6 +1603,11 @@ pub async fn run_release(
                 "release approval could not be collected: --trust-workspace-id is required"
             );
         }
+    }
+    if capability_restoration && trust_workspace_id.is_none() {
+        anyhow::bail!(
+            "capability restoration could not be collected: --trust-workspace-id is required"
+        );
     }
     let manifest = VestraceCapabilityManifest::from_json(&std::fs::read(&manifest_file)?).map_err(
         |error| {
@@ -1369,6 +1687,23 @@ pub async fn run_release(
         (None, None)
     };
 
+    let capability_restoration = match capability_restoration_config {
+        Some(config) => {
+            let workspace_id = WorkspaceId::from_uuid(
+                trust_workspace_id.expect("trust workspace presence checked"),
+            );
+            Some(
+                collect_capability_restoration(
+                    &bundle,
+                    HealthScope::workspace(workspace_id),
+                    &config,
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
+
     let fault_suite = match fault_suite_evidence {
         Some(evidence_id) => {
             let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
@@ -1394,8 +1729,8 @@ pub async fn run_release(
         None => None,
     };
 
-    // Recovery qualification and capability restoration remain absent because
-    // this slice adds no producer for them. Fault-suite evidence is different:
+    // Recovery qualification remains absent because this slice adds no producer
+    // for it. Fault-suite evidence is different:
     // when the operator names an immutable observation set above, the current
     // evaluator's decision is the fact handed to the release gate; without an
     // id, nobody looked and `missing` remains true.
@@ -1410,6 +1745,12 @@ pub async fn run_release(
             .map(|failure| format!("{failure:?}"))
             .collect::<Vec<_>>()
     });
+    let capability_restoration_reports = capability_restoration
+        .as_ref()
+        .map(|collection| collection.reports.clone());
+    let capability_restoration_decisions = capability_restoration
+        .map(|collection| collection.decisions)
+        .unwrap_or_default();
 
     let evidence = ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
@@ -1425,7 +1766,7 @@ pub async fn run_release(
         crypto_qualification,
         None,
         fault_suite,
-        Vec::new(),
+        capability_restoration_decisions,
         bundle_evidence_refs(&bundle),
         bundle.known_limitations().to_vec(),
     );
@@ -1455,6 +1796,7 @@ pub async fn run_release(
         // word tells an operator that approval failed and gives them no way to
         // act on it.
         release_approval_failures: approval_failures,
+        capability_restoration_decisions: capability_restoration_reports,
     };
 
     let serialized = serde_json::to_vec_pretty(&report)?;
@@ -1476,6 +1818,27 @@ pub async fn run_release(
         );
         for failure in &report.failures {
             println!("  {failure}");
+        }
+        if let Some(restoration) = &report.capability_restoration_decisions {
+            for blocked in restoration
+                .iter()
+                .filter(|decision| decision.status == "blocked")
+            {
+                println!(
+                    "  capability restoration blocked: capability={} stage={} reason={}{}",
+                    blocked.capability,
+                    blocked
+                        .stage
+                        .map(|stage| format!("{stage:?}"))
+                        .unwrap_or_else(|| "not-declared".to_owned()),
+                    blocked.reason.unwrap_or("unknown"),
+                    blocked
+                        .detail
+                        .as_deref()
+                        .map(|detail| format!(" detail={detail}"))
+                        .unwrap_or_default()
+                );
+            }
         }
     }
 
@@ -2561,17 +2924,249 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use vestrace_application::{QualificationBaselineRepository, QualificationRepository};
+    use vestrace_application::{
+        CapabilityRestorationPolicy, QualificationBaselineRepository, QualificationRepository,
+        RestorationBlockReason, RestorationStage,
+    };
     use vestrace_domain::{
-        QualificationBaseline, QualificationBaselineId, QualificationBundle, QualificationBundleId,
-        QualificationLifecycle, conformance::QualificationProfile,
+        HealthScope, QualificationBaseline, QualificationBaselineId, QualificationBundle,
+        QualificationBundleId, QualificationLifecycle, WorkspaceId,
+        conformance::{CaseOrigin, CaseStatus, ConformanceCaseResult, QualificationProfile},
+        now,
+        security::Capability,
+        trust::{
+            RevalidationCheck, RevalidationLevel, RevalidationResult, RevalidationRun, TrustState,
+            TrustStateRecord,
+        },
     };
     use vestrace_infrastructure::QualificationConfig;
 
     use super::{
-        fault_scenario_args, persist_bundle, publish_baseline_from_file,
+        derive_capability_restoration, fault_scenario_args, persist_bundle,
+        publish_baseline_from_file, restoration_evidence,
         run_automatic_qualification_with_evidence,
     };
+
+    fn passing_bundle() -> QualificationBundle {
+        let profile = QualificationProfile::Core;
+        let results = vestrace_domain::conformance::runner::profile_requirements(profile)
+            .into_iter()
+            .map(|requirement_id| ConformanceCaseResult {
+                case_id: format!("restoration-{requirement_id}"),
+                requirement_ids: vec![requirement_id],
+                status: CaseStatus::Pass,
+                message: "passed".into(),
+                evidence: Some(format!("test://{requirement_id}")),
+                origin: CaseOrigin::Executed,
+            })
+            .collect();
+        QualificationBundle::from_conformance_report(
+            QualificationLifecycle::Release,
+            profile,
+            "manifest://restoration",
+            "source-revision",
+            "sha256:build",
+            "sha256:config",
+            "environment://test",
+            "suite-v1",
+            vestrace_domain::conformance::ConformanceReport::from_results(Some(profile), results),
+            Vec::new(),
+            vec!["test fixture".into()],
+            now(),
+            Some(now()),
+        )
+        .unwrap()
+    }
+
+    fn passing_revalidation(scope: HealthScope) -> RevalidationRun {
+        RevalidationRun::complete(
+            None,
+            scope,
+            RevalidationLevel::Workspace,
+            "state:qualified-release",
+            vec![RevalidationCheck::passing(
+                "release-revalidation",
+                vec!["evidence:revalidation-check".into()],
+            )],
+            vec!["evidence:revalidation-run".into()],
+            RevalidationResult::Passed,
+            now(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn restoration_evidence_reads_a_failed_result_from_the_revalidation_run() {
+        let bundle = passing_bundle();
+        let run = RevalidationRun::complete(
+            None,
+            HealthScope::workspace(WorkspaceId::new()),
+            RevalidationLevel::Workspace,
+            "state:qualified-release",
+            vec![
+                RevalidationCheck::new(
+                    "release-revalidation",
+                    false,
+                    vec!["evidence:revalidation-check".into()],
+                )
+                .unwrap(),
+            ],
+            vec!["evidence:revalidation-run".into()],
+            RevalidationResult::Failed,
+            now(),
+        )
+        .unwrap();
+
+        let (evidence, _) = restoration_evidence(&bundle, &run);
+
+        assert!(evidence.qualification_passed());
+        assert!(!evidence.revalidation_passed());
+    }
+
+    fn trust_for_run(scope: HealthScope, run: &RevalidationRun) -> TrustStateRecord {
+        let mut trust = TrustStateRecord::new(
+            scope,
+            TrustState::Untrusted,
+            "awaiting revalidation",
+            None,
+            now(),
+        )
+        .unwrap();
+        trust.begin_revalidation(run.id(), now()).unwrap();
+        trust.apply_revalidation(run).unwrap();
+        trust
+    }
+
+    #[test]
+    fn restoration_derivation_reads_both_boolean_inputs_from_their_records() {
+        let bundle = passing_bundle();
+        let scope = HealthScope::workspace(WorkspaceId::new());
+        let run = passing_revalidation(scope.clone());
+        let trust = trust_for_run(scope.clone(), &run);
+        let policy = CapabilityRestorationPolicy::new([(
+            Capability::MemoryPurge,
+            RestorationStage::SemanticMutation,
+        )])
+        .unwrap();
+
+        let passed = derive_capability_restoration(
+            &bundle,
+            &scope,
+            &trust,
+            Some(&run),
+            &[Capability::MemoryPurge, Capability::ExportRead],
+            &policy,
+        );
+        let incomplete = QualificationBundle::new(
+            QualificationProfile::Core,
+            "manifest://restoration",
+            "source-revision",
+            "sha256:build",
+            "sha256:config",
+            "environment://test",
+            "suite-v1",
+            Vec::new(),
+            vec!["test fixture".into()],
+            now(),
+            Some(now()),
+        )
+        .unwrap();
+        let failed_qualification = derive_capability_restoration(
+            &incomplete,
+            &scope,
+            &trust,
+            Some(&run),
+            &[Capability::MemoryPurge, Capability::ExportRead],
+            &policy,
+        );
+
+        assert!(passed.decisions[0].is_allowed());
+        assert!(matches!(
+            failed_qualification.decisions[0],
+            vestrace_application::CapabilityRestorationDecision::Blocked {
+                reason: RestorationBlockReason::QualificationEvidenceMissing,
+                ..
+            }
+        ));
+        assert!(matches!(
+            passed.decisions[1],
+            vestrace_application::CapabilityRestorationDecision::Blocked {
+                reason: RestorationBlockReason::CapabilityNotDeclared,
+                stage: None,
+                ..
+            }
+        ));
+        assert_eq!(passed.reports[1].status, "blocked");
+        assert_eq!(passed.reports[1].reason, Some("capability_not_declared"));
+        assert_eq!(
+            passed.reports[0]
+                .evidence
+                .as_ref()
+                .unwrap()
+                .qualification_bundle,
+            bundle.id().to_string()
+        );
+        assert_eq!(
+            passed.reports[0]
+                .evidence
+                .as_ref()
+                .unwrap()
+                .revalidation_run,
+            run.id().to_string()
+        );
+    }
+
+    #[test]
+    fn absent_revalidation_run_is_blocked_without_false_evidence_and_names_scope() {
+        let bundle = passing_bundle();
+        let workspace_id = WorkspaceId::new();
+        let scope = HealthScope::workspace(workspace_id);
+        let missing_run_id = vestrace_domain::RevalidationRunId::new();
+        let mut trust = TrustStateRecord::new(
+            scope.clone(),
+            TrustState::Untrusted,
+            "awaiting revalidation",
+            None,
+            now(),
+        )
+        .unwrap();
+        trust.begin_revalidation(missing_run_id, now()).unwrap();
+        let policy = CapabilityRestorationPolicy::new([(
+            Capability::MemoryPurge,
+            RestorationStage::SemanticMutation,
+        )])
+        .unwrap();
+
+        let collection = derive_capability_restoration(
+            &bundle,
+            &scope,
+            &trust,
+            None,
+            &[Capability::MemoryPurge],
+            &policy,
+        );
+
+        assert!(matches!(
+            collection.decisions[0],
+            vestrace_application::CapabilityRestorationDecision::Blocked {
+                reason: RestorationBlockReason::RevalidationEvidenceMissing,
+                ..
+            }
+        ));
+        assert!(collection.reports[0].evidence.is_none());
+        assert_eq!(
+            collection.reports[0].stage,
+            Some(RestorationStage::SemanticMutation)
+        );
+        assert_eq!(collection.reports[0].status, "blocked");
+        assert_eq!(
+            collection.reports[0].reason,
+            Some("revalidation_evidence_missing")
+        );
+        let detail = collection.reports[0].detail.as_deref().unwrap();
+        assert!(detail.contains(&workspace_id.to_string()));
+        assert!(detail.contains(&missing_run_id.to_string()));
+    }
 
     #[test]
     fn fault_scenario_arguments_carry_a_url_file_path_and_never_the_credential() {

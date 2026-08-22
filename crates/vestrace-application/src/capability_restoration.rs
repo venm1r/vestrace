@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use vestrace_domain::security::Capability;
 use vestrace_domain::trust::TrustState;
 
 use crate::ApplicationError;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RestorationStage {
     DiagnosticsReadOnly,
     InternalDeterministicWrites,

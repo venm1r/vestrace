@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt, fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -7,6 +8,7 @@ use std::{
 use config::{Environment, File, FileFormat};
 use secrecy::SecretString;
 use serde::Deserialize;
+use vestrace_application::RestorationStage;
 use vestrace_domain::{QualificationLifecycle, conformance::QualificationProfile};
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
@@ -114,6 +116,12 @@ impl AppConfig {
         );
         for capability in &self.policy.capabilities {
             field("policy.capability", capability);
+        }
+        for (capability, stage) in &self.policy.capability_restoration {
+            field(
+                "policy.capability_restoration",
+                &format!("{capability}={stage:?}"),
+            );
         }
         field("auth.enabled", &self.auth.is_enabled().to_string());
         field("secrets.key_version", self.secrets.effective_key_version());
@@ -253,6 +261,7 @@ struct FilePolicyConfig {
     engine: Option<PolicyEngineKind>,
     version: Option<String>,
     capabilities: Option<Vec<String>>,
+    capability_restoration: Option<BTreeMap<String, RestorationStage>>,
     risk_ceiling: Option<String>,
 }
 
@@ -485,6 +494,10 @@ pub struct PolicyConfig {
     pub version: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Stages are separate from the configured capability set so a missing
+    /// declaration remains an observable `CapabilityNotDeclared` decision.
+    #[serde(default)]
+    pub capability_restoration: BTreeMap<String, RestorationStage>,
     pub risk_ceiling: String,
 }
 
@@ -670,6 +683,8 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    use vestrace_application::RestorationStage;
 
     use super::AppConfig;
 
@@ -901,6 +916,73 @@ max_connections = 10
                     vec!["memory.read".to_owned(), "execution.read".to_owned()]
                 );
                 assert_eq!(config.policy.risk_ceiling, "medium");
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn capability_restoration_stages_are_typed_configuration() {
+        let path = temp_config(
+            "capability-restoration",
+            "[database]
+max_connections = 10
+
+[policy]
+engine = 'configured-capabilities'
+capabilities = ['audit.read', 'memory.write']
+
+[policy.capability_restoration]
+'audit.read' = 'diagnostics-read-only'
+'memory.write' = 'internal-deterministic-writes'
+",
+        );
+
+        temp_env::with_var(
+            "VESTRACE_DATABASE__URL",
+            Some("postgres://localhost/vestrace"),
+            || {
+                let config = AppConfig::load_from(Some(&path)).unwrap();
+
+                assert_eq!(
+                    config.policy.capability_restoration["audit.read"],
+                    RestorationStage::DiagnosticsReadOnly
+                );
+                assert_eq!(
+                    config.policy.capability_restoration["memory.write"],
+                    RestorationStage::InternalDeterministicWrites
+                );
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unknown_capability_restoration_stage_is_rejected() {
+        let path = temp_config(
+            "capability-restoration-unknown-stage",
+            "[database]
+max_connections = 10
+
+[policy]
+engine = 'configured-capabilities'
+capabilities = ['audit.read']
+
+[policy.capability_restoration]
+'audit.read' = 'quietly-restore-everything'
+",
+        );
+
+        temp_env::with_var(
+            "VESTRACE_DATABASE__URL",
+            Some("postgres://localhost/vestrace"),
+            || {
+                let error = AppConfig::load_from(Some(&path)).unwrap_err();
+
+                assert!(
+                    error.to_string().contains("quietly-restore-everything"),
+                    "unexpected error: {error}"
+                );
             },
         );
         let _ = fs::remove_file(path);

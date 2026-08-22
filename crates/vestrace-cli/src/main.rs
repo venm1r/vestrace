@@ -158,6 +158,9 @@ enum ConformanceAction {
         /// Collect release approval from persisted baseline and trust evidence.
         #[arg(long)]
         release_approval: bool,
+        /// Evaluate progressive restoration for every configured capability.
+        #[arg(long)]
+        capability_restoration: bool,
         /// Independently configured signer identity trusted for release approval.
         #[arg(long)]
         trusted_signer: Option<String>,

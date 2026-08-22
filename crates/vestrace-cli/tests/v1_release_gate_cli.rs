@@ -25,7 +25,8 @@ use vestrace_domain::conformance::{QualificationProfile, RequirementFamily, Requ
 use vestrace_domain::external_effects::{EffectFaultPoint, FaultObservation, evaluate_fault_suite};
 use vestrace_domain::now;
 use vestrace_domain::trust::{
-    QualificationBaseline, QualificationBundle, TrustState, TrustStateRecord,
+    QualificationBaseline, QualificationBundle, RevalidationCheck, RevalidationLevel,
+    RevalidationResult, RevalidationRun, TrustState, TrustStateRecord,
 };
 use vestrace_domain::{HealthScope, WorkspaceId};
 use vestrace_infrastructure::{PgQualificationBaselineRepository, PgRecoveryRepository, PgStore};
@@ -184,6 +185,108 @@ fn run_release(
         ])
         .output()
         .unwrap()
+}
+
+fn run_release_with_capability_restoration(
+    manifest_path: &Path,
+    bundle_path: &Path,
+    config_path: &Path,
+    workspace_id: WorkspaceId,
+    database_url: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--capability-restoration",
+            "--trust-workspace-id",
+            &workspace_id.to_string(),
+            "--json",
+        ])
+        .env("VESTRACE_DATABASE__URL", database_url)
+        .output()
+        .unwrap()
+}
+
+fn write_capability_restoration_config(id: &str, policy: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("vestrace-restoration-config-{id}.toml"));
+    fs::write(
+        &path,
+        format!("[database]\nmax_connections = 10\n\n{policy}"),
+    )
+    .unwrap();
+    path
+}
+
+fn restoration_decisions(output: &std::process::Output) -> Vec<Value> {
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "release report is not JSON: {error}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    report["capability_restoration_decisions"]
+        .as_array()
+        .expect("release report has no capability restoration decisions")
+        .clone()
+}
+
+fn restoration_decision<'a>(decisions: &'a [Value], capability: &str) -> &'a Value {
+    decisions
+        .iter()
+        .find(|decision| decision["capability"] == capability)
+        .unwrap_or_else(|| panic!("no restoration decision for {capability}: {decisions:?}"))
+}
+
+async fn insert_revalidation_state(
+    pool: &PgPool,
+    workspace_id: WorkspaceId,
+    persist_run: bool,
+) -> RevalidationRun {
+    let scope = HealthScope::workspace(workspace_id);
+    let completed_at = now();
+    let run = RevalidationRun::complete(
+        None,
+        scope.clone(),
+        RevalidationLevel::Workspace,
+        "state:qualified-release",
+        vec![RevalidationCheck::passing(
+            "release-revalidation",
+            vec!["evidence:revalidation-check".into()],
+        )],
+        vec!["evidence:revalidation-run".into()],
+        RevalidationResult::Passed,
+        completed_at,
+    )
+    .unwrap();
+    let mut trust = TrustStateRecord::new(
+        scope,
+        TrustState::Untrusted,
+        "awaiting release revalidation",
+        None,
+        completed_at,
+    )
+    .unwrap();
+    trust.begin_revalidation(run.id(), completed_at).unwrap();
+    if persist_run {
+        trust.apply_revalidation(&run).unwrap();
+    }
+
+    let repository = PgRecoveryRepository::new(PgStore::from_pool(pool.clone()));
+    if persist_run {
+        repository.insert_revalidation_run(&run).await.unwrap();
+    }
+    repository.insert_trust_state(&trust).await.unwrap();
+    run
 }
 
 fn mounted_store_root(id: &str) -> PathBuf {
@@ -468,6 +571,181 @@ fn the_release_gate_names_every_evidence_source_that_has_no_producer() {
 
     fs::remove_file(&manifest_path).ok();
     fs::remove_file(&bundle_path).ok();
+}
+
+#[test]
+fn capability_restoration_flag_refuses_an_empty_restoration_policy() {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+    let config_path = std::env::temp_dir().join(format!("vestrace-release-config-{id}.toml"));
+    fs::write(&config_path, "[database]\nmax_connections = 10\n").unwrap();
+
+    let output = run_release_with_capability_restoration(
+        &manifest_path,
+        &bundle_path,
+        &config_path,
+        WorkspaceId::new(),
+        "postgres://localhost/unused",
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("policy.capability_restoration must configure at least one stage"),
+        "unexpected stderr: {stderr}"
+    );
+
+    fs::remove_file(manifest_path).ok();
+    fs::remove_file(bundle_path).ok();
+    fs::remove_file(config_path).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn capability_restoration_reports_each_capability_and_uses_a_passing_persisted_run(
+    pool: PgPool,
+) {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = fully_qualified_bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+    let config_path = write_capability_restoration_config(
+        &id,
+        "[policy]
+engine = 'configured-capabilities'
+capabilities = ['memory.purge', 'export.read']
+
+[policy.capability_restoration]
+'memory.purge' = 'semantic-mutation'
+",
+    );
+    let workspace_id = WorkspaceId::new();
+    let run = insert_revalidation_state(&pool, workspace_id, true).await;
+
+    let output = run_release_with_capability_restoration(
+        &manifest_path,
+        &bundle_path,
+        &config_path,
+        workspace_id,
+        &ephemeral_database_url(&pool).await,
+    );
+
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"capability_restoration_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"capability_restoration_missing".to_owned()),
+        "{observed:?}"
+    );
+    let decisions = restoration_decisions(&output);
+    assert_eq!(decisions.len(), 2, "{decisions:?}");
+    let restored = restoration_decision(&decisions, "memory.purge");
+    assert_eq!(restored["stage"], "semantic-mutation");
+    assert_eq!(restored["status"], "allowed");
+    assert_eq!(
+        restored["evidence"]["qualification_bundle"],
+        bundle.id().to_string()
+    );
+    assert_eq!(
+        restored["evidence"]["revalidation_run"],
+        run.id().to_string()
+    );
+    let undeclared = restoration_decision(&decisions, "export.read");
+    assert!(undeclared["stage"].is_null(), "{undeclared}");
+    assert_eq!(undeclared["status"], "blocked");
+    assert_eq!(undeclared["reason"], "capability_not_declared");
+
+    for path in [manifest_path, bundle_path, config_path] {
+        fs::remove_file(path).ok();
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn absent_revalidation_run_blocks_without_fabricating_failed_evidence_and_names_scope(
+    pool: PgPool,
+) {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = fully_qualified_bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+    let config_path = write_capability_restoration_config(
+        &id,
+        "[policy]
+engine = 'configured-capabilities'
+capabilities = ['memory.purge']
+
+[policy.capability_restoration]
+'memory.purge' = 'semantic-mutation'
+",
+    );
+    let workspace_id = WorkspaceId::new();
+    let missing_run = insert_revalidation_state(&pool, workspace_id, false).await;
+
+    let output = run_release_with_capability_restoration(
+        &manifest_path,
+        &bundle_path,
+        &config_path,
+        workspace_id,
+        &ephemeral_database_url(&pool).await,
+    );
+
+    let decisions = restoration_decisions(&output);
+    let blocked = restoration_decision(&decisions, "memory.purge");
+    assert_eq!(blocked["stage"], "semantic-mutation");
+    assert_eq!(blocked["status"], "blocked");
+    assert_eq!(blocked["reason"], "revalidation_evidence_missing");
+    let detail = blocked["detail"].as_str().unwrap();
+    assert!(detail.contains(&workspace_id.to_string()), "{detail}");
+    assert!(detail.contains(&missing_run.id().to_string()), "{detail}");
+    assert!(
+        blocked.get("evidence").is_none(),
+        "absence must not be serialized as failed evidence: {blocked}"
+    );
+
+    for path in [manifest_path, bundle_path, config_path] {
+        fs::remove_file(path).ok();
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn capability_restoration_reads_qualification_status_from_the_bundle(pool: PgPool) {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let incomplete_bundle = bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &incomplete_bundle);
+    let config_path = write_capability_restoration_config(
+        &id,
+        "[policy]
+engine = 'configured-capabilities'
+capabilities = ['memory.write']
+
+[policy.capability_restoration]
+'memory.write' = 'internal-deterministic-writes'
+",
+    );
+    let workspace_id = WorkspaceId::new();
+    insert_revalidation_state(&pool, workspace_id, true).await;
+
+    let output = run_release_with_capability_restoration(
+        &manifest_path,
+        &bundle_path,
+        &config_path,
+        workspace_id,
+        &ephemeral_database_url(&pool).await,
+    );
+
+    let decisions = restoration_decisions(&output);
+    let blocked = restoration_decision(&decisions, "memory.write");
+    assert_eq!(blocked["stage"], "internal-deterministic-writes");
+    assert_eq!(blocked["status"], "blocked");
+    assert_eq!(blocked["reason"], "qualification_evidence_missing");
+
+    for path in [manifest_path, bundle_path, config_path] {
+        fs::remove_file(path).ok();
+    }
 }
 
 /// The evidence identity is read from the bundle and never from the manifest a
