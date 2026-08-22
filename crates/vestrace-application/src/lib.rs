@@ -145,8 +145,10 @@ pub use outbox::{
 pub use ports::{TransactionManager, UnitOfWork};
 pub use providers::*;
 pub use qualification::{
-    QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
-    RuntimeQualificationEvidence, SharedQualificationRepository, evaluate_runtime_qualification,
+    QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
+    RuntimeQualificationDecision, RuntimeQualificationEvidence,
+    SharedQualificationBaselineRepository, SharedQualificationRepository,
+    evaluate_runtime_qualification,
 };
 pub use recovery::{RecoveryRepository, SharedRecoveryRepository};
 pub use recovery_reconciliation::ExternalEffectReconciliationService;

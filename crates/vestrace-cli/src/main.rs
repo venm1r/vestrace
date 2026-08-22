@@ -88,6 +88,13 @@ enum ConformanceAction {
         #[arg(long, value_enum)]
         isolation: FaultSuiteIsolationArg,
     },
+    /// Publish a durable baseline from an existing qualification bundle.
+    PublishBaseline {
+        #[arg(long)]
+        bundle_file: PathBuf,
+        #[arg(long, value_enum)]
+        profile: ConformanceProfileArg,
+    },
     Bundle {
         #[arg(long, value_enum)]
         profile: ConformanceProfileArg,

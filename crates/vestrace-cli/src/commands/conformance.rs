@@ -15,8 +15,9 @@ use vestrace_application::{
     ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget,
     ExternalEffectFaultGateEvidenceService, ExternalEffectFaultQualificationService,
     FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
-    QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
-    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
+    QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
+    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
+    evaluate_runtime_qualification,
 };
 use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
@@ -27,13 +28,13 @@ use vestrace_domain::now;
 use vestrace_domain::release::VestraceCapabilityManifest;
 use vestrace_domain::trust::{
     KeyProvider, KeyProviderError, KeyPurpose, KeyReference, PostIncidentQualificationEvidence,
-    QualificationBundle, QualificationLifecycle, QualificationStatus, ResolvedKeyMaterial,
-    SecretResolutionRequest, SignatureAlgorithm, SignatureRecord, SignerTrustPolicy,
-    SignerTrustRule,
+    QualificationBaseline, QualificationBundle, QualificationLifecycle, QualificationStatus,
+    ResolvedKeyMaterial, SecretResolutionRequest, SignatureAlgorithm, SignatureRecord,
+    SignerTrustPolicy, SignerTrustRule,
 };
 use vestrace_infrastructure::{
-    AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationRepository, PgStore,
-    QualificationConfig,
+    AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationBaselineRepository,
+    PgQualificationRepository, PgStore, QualificationConfig,
 };
 
 const FAULT_POINT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -122,6 +123,12 @@ pub async fn run(
                 &config_overrides,
             )
             .await
+        }
+        ConformanceAction::PublishBaseline {
+            bundle_file,
+            profile,
+        } => {
+            run_publish_baseline(bundle_file, profile.into(), config_path, &config_overrides).await
         }
         ConformanceAction::Manifest {
             manifest_version,
@@ -346,6 +353,107 @@ async fn run_fault_suite(
 
     println!("Fault-suite evidence: {}", evidence.id());
     Ok(())
+}
+
+async fn run_publish_baseline(
+    bundle_file: PathBuf,
+    profile: QualificationProfile,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<()> {
+    let mut output = std::io::stdout();
+    publish_baseline_from_file(
+        &bundle_file,
+        profile,
+        now(),
+        || baseline_repository(config_path, config_overrides),
+        &mut output,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn baseline_repository(
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<PgQualificationBaselineRepository> {
+    let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+        .map_err(|error| anyhow::anyhow!("baseline publication configuration failed: {error}"))?;
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!("baseline publication database is unavailable: {error}")
+    })?;
+    store
+        .migrate()
+        .await
+        .map_err(|error| anyhow::anyhow!("baseline publication migration failed: {error}"))?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => anyhow::bail!("baseline publication migration history is incompatible"),
+        Err(error) => {
+            anyhow::bail!("baseline publication migration verification failed: {error}")
+        }
+    }
+    Ok(PgQualificationBaselineRepository::new(store))
+}
+
+fn baseline_from_bundle_file(
+    bundle_file: &Path,
+    profile: QualificationProfile,
+    published_at: vestrace_domain::Timestamp,
+) -> anyhow::Result<QualificationBaseline> {
+    let bundle: QualificationBundle = serde_json::from_slice(&std::fs::read(bundle_file)?)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to load qualification bundle {}: {error}",
+                bundle_file.display()
+            )
+        })?;
+    if bundle.profile() != profile {
+        anyhow::bail!("qualification bundle profile does not match requested profile");
+    }
+    QualificationBaseline::from_bundle(&bundle, published_at)
+        .map_err(|error| anyhow::anyhow!("failed to publish qualification baseline: {error}"))
+}
+
+async fn persist_baseline(
+    baseline: &QualificationBaseline,
+    repository: &dyn QualificationBaselineRepository,
+) -> anyhow::Result<()> {
+    repository
+        .insert(baseline)
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to publish qualification baseline: {error}"))?;
+    Ok(())
+}
+
+async fn persist_and_report_baseline<W: std::io::Write>(
+    baseline: &QualificationBaseline,
+    repository: &dyn QualificationBaselineRepository,
+    output: &mut W,
+) -> anyhow::Result<vestrace_domain::QualificationBaselineId> {
+    persist_baseline(baseline, repository).await?;
+    writeln!(output, "Qualification baseline: {}", baseline.id())?;
+    Ok(baseline.id())
+}
+
+async fn publish_baseline_from_file<R, F, Fut, W>(
+    bundle_file: &Path,
+    profile: QualificationProfile,
+    published_at: vestrace_domain::Timestamp,
+    repository_factory: F,
+    output: &mut W,
+) -> anyhow::Result<vestrace_domain::QualificationBaselineId>
+where
+    R: QualificationBaselineRepository,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<R>>,
+    W: std::io::Write,
+{
+    // Resolve and validate the operator artifact before invoking the repository
+    // factory, which keeps malformed requests independent of database setup.
+    let baseline = baseline_from_bundle_file(bundle_file, profile, published_at)?;
+    let repository = repository_factory().await?;
+    persist_and_report_baseline(&baseline, &repository, output).await
 }
 
 /// The process boundary is deliberately narrower than the scenario's settings
@@ -2236,17 +2344,20 @@ fn profile_requirement_ids(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use vestrace_application::QualificationRepository;
+    use vestrace_application::{QualificationBaselineRepository, QualificationRepository};
     use vestrace_domain::{
-        QualificationBundle, QualificationBundleId, QualificationLifecycle,
-        conformance::QualificationProfile,
+        QualificationBaseline, QualificationBaselineId, QualificationBundle, QualificationBundleId,
+        QualificationLifecycle, conformance::QualificationProfile,
     };
     use vestrace_infrastructure::QualificationConfig;
 
-    use super::{fault_scenario_args, persist_bundle, run_automatic_qualification_with_evidence};
+    use super::{
+        fault_scenario_args, persist_bundle, publish_baseline_from_file,
+        run_automatic_qualification_with_evidence,
+    };
 
     #[test]
     fn fault_scenario_arguments_carry_a_url_file_path_and_never_the_credential() {
@@ -2269,6 +2380,36 @@ mod tests {
 
     struct RecordingQualificationRepository {
         inserted: Mutex<Vec<QualificationBundle>>,
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingBaselineRepository {
+        inserted: Arc<Mutex<Vec<QualificationBaseline>>>,
+    }
+
+    #[async_trait]
+    impl QualificationBaselineRepository for RecordingBaselineRepository {
+        async fn insert(
+            &self,
+            baseline: &QualificationBaseline,
+        ) -> Result<(), vestrace_application::ApplicationError> {
+            self.inserted.lock().unwrap().push(baseline.clone());
+            Ok(())
+        }
+
+        async fn find_by_id(
+            &self,
+            _id: QualificationBaselineId,
+        ) -> Result<Option<QualificationBaseline>, vestrace_application::ApplicationError> {
+            Ok(None)
+        }
+
+        async fn find_by_target_digest(
+            &self,
+            _target_digest: &str,
+        ) -> Result<Option<QualificationBaseline>, vestrace_application::ApplicationError> {
+            Ok(None)
+        }
     }
 
     #[async_trait]
@@ -2296,6 +2437,57 @@ mod tests {
         ) -> Result<Option<QualificationBundle>, vestrace_application::ApplicationError> {
             Ok(None)
         }
+    }
+
+    #[tokio::test]
+    async fn baseline_publication_runs_the_exact_file_to_repository_and_output_path() {
+        let completed_at = vestrace_domain::now();
+        let bundle = QualificationBundle::new(
+            QualificationProfile::Core,
+            "manifest://published-target",
+            "source-revision",
+            "sha256:build",
+            "sha256:config",
+            "environment://test",
+            "suite-v1",
+            Vec::new(),
+            vec!["fixture".into()],
+            completed_at,
+            Some(completed_at),
+        )
+        .unwrap();
+        let bundle_path = std::env::temp_dir().join(format!(
+            "vestrace-publish-baseline-unit-{}.json",
+            bundle.id()
+        ));
+        std::fs::write(&bundle_path, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let published_at = vestrace_domain::now();
+        let repository = RecordingBaselineRepository::default();
+        let injected_repository = repository.clone();
+        let mut output = Vec::new();
+
+        let published_id = publish_baseline_from_file(
+            &bundle_path,
+            QualificationProfile::Core,
+            published_at,
+            || async move { Ok::<_, anyhow::Error>(injected_repository) },
+            &mut output,
+        )
+        .await
+        .unwrap();
+        let _ = std::fs::remove_file(bundle_path);
+
+        let inserted = repository.inserted.lock().unwrap();
+        let baseline = inserted.first().expect("one inserted baseline");
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(published_id, baseline.id());
+        assert_eq!(baseline.profile(), QualificationProfile::Core);
+        assert_eq!(baseline.target_digest(), bundle.target_digest());
+        assert_eq!(baseline.published_at(), published_at);
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            format!("Qualification baseline: {}\n", baseline.id())
+        );
     }
 
     #[tokio::test]

@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use vestrace_domain::{
-    QualificationBundle, QualificationBundleId, QualificationLifecycle, VestraceCapabilityManifest,
-    conformance::QualificationProfile,
+    QualificationBaselineId, QualificationBundle, QualificationBundleId, QualificationLifecycle,
+    VestraceCapabilityManifest, conformance::QualificationProfile, trust::QualificationBaseline,
 };
 
 use crate::ApplicationError;
@@ -31,6 +31,27 @@ pub trait QualificationRepository: Send + Sync {
 }
 
 pub type SharedQualificationRepository = Arc<dyn QualificationRepository>;
+
+/// Durable boundary for an operator-published qualification baseline.
+///
+/// Like the bundle it summarizes, a baseline describes a release target rather
+/// than workspace-owned data and therefore has no workspace request context.
+#[async_trait]
+pub trait QualificationBaselineRepository: Send + Sync {
+    async fn insert(&self, baseline: &QualificationBaseline) -> Result<(), ApplicationError>;
+
+    async fn find_by_id(
+        &self,
+        id: QualificationBaselineId,
+    ) -> Result<Option<QualificationBaseline>, ApplicationError>;
+
+    async fn find_by_target_digest(
+        &self,
+        target_digest: &str,
+    ) -> Result<Option<QualificationBaseline>, ApplicationError>;
+}
+
+pub type SharedQualificationBaselineRepository = Arc<dyn QualificationBaselineRepository>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -3320,6 +3320,10 @@ impl QualificationBaseline {
         })
     }
 
+    pub fn id(&self) -> crate::QualificationBaselineId {
+        self.id
+    }
+
     pub fn state(&self) -> QualificationBaselineState {
         self.state
     }
