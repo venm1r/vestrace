@@ -5,7 +5,9 @@ use vestrace_application::{
     RequestContext, RunRecoveryService, StartupRecoveryOutcome, StartupRecoveryService,
 };
 use vestrace_domain::id::{PrincipalId, WorkspaceId};
-use vestrace_infrastructure::{PgRunRecoveryStore, PgStartupRecoverySource, PgStore};
+use vestrace_infrastructure::{
+    PgRecoveryQualificationEvidenceRepository, PgRunRecoveryStore, PgStartupRecoverySource, PgStore,
+};
 
 /// Sweep the given workspaces for runs a previous process left mid-flight.
 ///
@@ -18,9 +20,13 @@ pub async fn run_startup_recovery(
 ) -> anyhow::Result<()> {
     let recovery_store = Arc::new(PgRunRecoveryStore::new(store.clone()));
     let source = Arc::new(PgStartupRecoverySource::new(store.clone()));
+    let evidence = Arc::new(PgRecoveryQualificationEvidenceRepository::new(
+        store.clone(),
+    ));
     let service = StartupRecoveryService::with_candidate_source(
         Arc::new(RunRecoveryService::new(recovery_store)),
         source,
+        evidence,
     );
 
     for workspace in workspaces {

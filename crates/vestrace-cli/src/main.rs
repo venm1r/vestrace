@@ -172,6 +172,12 @@ enum ConformanceAction {
         /// current evaluator derive their release verdict.
         #[arg(long)]
         fault_suite_evidence: Option<uuid::Uuid>,
+        /// Evaluate every persisted startup-recovery observation.
+        ///
+        /// Missing and duplicate targets remain evaluator failures; collection
+        /// does not invent or deduplicate observations.
+        #[arg(long)]
+        recovery_qualification: bool,
         #[arg(long)]
         json: bool,
         #[arg(long)]

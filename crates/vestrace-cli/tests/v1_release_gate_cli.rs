@@ -17,7 +17,9 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use vestrace_application::{
-    FaultSuiteEvidenceRepository, QualificationBaselineRepository, RecoveryRepository,
+    FaultSuiteEvidenceRepository, QualificationBaselineRepository, RecoveryQualificationEvidence,
+    RecoveryQualificationEvidenceRepository, RecoveryRepository, StartupRecoveryOutcome,
+    StartupRecoveryRecord,
 };
 use vestrace_domain::VestraceCapabilityManifest;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, HardGateEvidence};
@@ -25,11 +27,15 @@ use vestrace_domain::conformance::{QualificationProfile, RequirementFamily, Requ
 use vestrace_domain::external_effects::{EffectFaultPoint, FaultObservation, evaluate_fault_suite};
 use vestrace_domain::now;
 use vestrace_domain::trust::{
-    QualificationBaseline, QualificationBundle, RevalidationCheck, RevalidationLevel,
-    RevalidationResult, RevalidationRun, TrustState, TrustStateRecord,
+    QualificationBaseline, QualificationBundle, RecoveryClassification, RecoveryTarget,
+    RevalidationCheck, RevalidationLevel, RevalidationResult, RevalidationRun, TrustState,
+    TrustStateRecord,
 };
-use vestrace_domain::{HealthScope, WorkspaceId};
-use vestrace_infrastructure::{PgQualificationBaselineRepository, PgRecoveryRepository, PgStore};
+use vestrace_domain::{AgentRunId, HealthScope, WorkspaceId};
+use vestrace_infrastructure::{
+    PgQualificationBaselineRepository, PgRecoveryQualificationEvidenceRepository,
+    PgRecoveryRepository, PgStore,
+};
 
 fn test_suffix() -> String {
     format!(
@@ -522,6 +528,29 @@ fn run_release_with_fault_suite_evidence(
         .unwrap()
 }
 
+fn run_release_with_recovery_qualification(
+    manifest_path: &Path,
+    bundle_path: &Path,
+    database_url: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--recovery-qualification",
+            "--json",
+        ])
+        .env("VESTRACE_DATABASE__URL", database_url)
+        .output()
+        .unwrap()
+}
+
 fn failures(output: &std::process::Output) -> Vec<String> {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
@@ -571,6 +600,106 @@ fn the_release_gate_names_every_evidence_source_that_has_no_producer() {
 
     fs::remove_file(&manifest_path).ok();
     fs::remove_file(&bundle_path).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn recovery_qualification_flag_names_duplicate_and_every_unobserved_target(pool: PgPool) {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+    let repository =
+        PgRecoveryQualificationEvidenceRepository::new(PgStore::from_pool(pool.clone()));
+    repository
+        .insert(&RecoveryQualificationEvidence::from_recovery_record(
+            &StartupRecoveryRecord {
+                run_id: AgentRunId::new(),
+                target: RecoveryTarget::RunningExecution,
+                classification: RecoveryClassification::SafeToResume,
+                outcome: StartupRecoveryOutcome::Restored,
+            },
+            now(),
+        ))
+        .await
+        .unwrap();
+    repository
+        .insert(&RecoveryQualificationEvidence::from_recovery_record(
+            &StartupRecoveryRecord {
+                run_id: AgentRunId::new(),
+                target: RecoveryTarget::RunningExecution,
+                classification: RecoveryClassification::SafeToResume,
+                outcome: StartupRecoveryOutcome::Aborted,
+            },
+            now(),
+        ))
+        .await
+        .unwrap();
+
+    let output = run_release_with_recovery_qualification(
+        &manifest_path,
+        &bundle_path,
+        &ephemeral_database_url(&pool).await,
+    );
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"recovery_qualification_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"recovery_qualification_missing".to_owned()),
+        "{observed:?}"
+    );
+    assert_eq!(
+        report["recovery_qualification_failures"],
+        serde_json::json!([
+            "recovery target RunningExecution must have exactly one observation",
+            "recovery target DispatchingExternalEffect must have exactly one observation",
+            "recovery target VerifyingRepair must have exactly one observation",
+            "recovery target StaleLease must have exactly one observation",
+            "recovery target UnfinishedWorkflow must have exactly one observation",
+            "recovery target OrphanTemporaryState must have exactly one observation",
+            "recovery target UnknownOutcome must have exactly one observation",
+            "recovery target DivergentHistory must have exactly one observation"
+        ])
+    );
+
+    fs::remove_file(manifest_path).ok();
+    fs::remove_file(bundle_path).ok();
+}
+
+#[test]
+fn recovery_qualification_flag_is_a_real_collection_path() {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+
+    let output = run_release_with_recovery_qualification(
+        &manifest_path,
+        &bundle_path,
+        "postgres://unreachable:unreachable@127.0.0.1:1/vestrace",
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("recovery qualification evidence could not be loaded"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("unreachable@"),
+        "credential leaked: {stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "a report must not be published when evidence could not be loaded"
+    );
+
+    fs::remove_file(manifest_path).ok();
+    fs::remove_file(bundle_path).ok();
 }
 
 #[test]

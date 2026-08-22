@@ -17,10 +17,10 @@ use vestrace_application::{
     ExternalEffectFaultGateEvidenceService, ExternalEffectFaultQualificationService,
     FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
     QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
-    RecoveryRepository, ReleaseApprovalDecision, ReleaseApprovalFailure, ReleaseApprovalService,
-    ReleaseSignatureEvidence, RestorationBlockReason, RestorationEvidence, RestorationStage,
-    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
-    evaluate_runtime_qualification,
+    RecoveryQualificationEvidenceRepository, RecoveryRepository, ReleaseApprovalDecision,
+    ReleaseApprovalFailure, ReleaseApprovalService, ReleaseSignatureEvidence,
+    RestorationBlockReason, RestorationEvidence, RestorationStage, RuntimeQualificationDecision,
+    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
 };
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
 use vestrace_domain::conformance::{
@@ -33,11 +33,13 @@ use vestrace_domain::trust::{
     QualificationBaseline, QualificationBundle, QualificationLifecycle, QualificationStatus,
     ResolvedKeyMaterial, RevalidationRun, SecretResolutionRequest, SignatureAlgorithm,
     SignatureRecord, SignerTrustPolicy, SignerTrustRule, TrustStateRecord,
+    evaluate_recovery_qualification,
 };
 use vestrace_domain::{Capability, HealthScope, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationBaselineRepository,
-    PgQualificationRepository, PgRecoveryRepository, PgStore, QualificationConfig,
+    PgQualificationRepository, PgRecoveryQualificationEvidenceRepository, PgRecoveryRepository,
+    PgStore, QualificationConfig,
 };
 
 const FAULT_POINT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -222,6 +224,7 @@ pub async fn run(
             trusted_signer,
             trust_workspace_id,
             fault_suite_evidence,
+            recovery_qualification,
             json,
             output,
         } => {
@@ -240,6 +243,7 @@ pub async fn run(
                 trusted_signer,
                 trust_workspace_id,
                 fault_suite_evidence,
+                recovery_qualification,
                 json,
                 output,
                 config_path,
@@ -1045,6 +1049,12 @@ struct ReleaseGateReport {
     /// needs to know which one.
     #[serde(skip_serializing_if = "Option::is_none")]
     release_approval_failures: Option<Vec<String>>,
+    /// Which stored recovery observations failed the evaluator.
+    ///
+    /// Missing and duplicate targets remain named here exactly as the evaluator
+    /// emits them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_qualification_failures: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     capability_restoration_decisions: Option<Vec<CapabilityRestorationReport>>,
 }
@@ -1562,6 +1572,7 @@ pub async fn run_release(
     trusted_signer: Option<String>,
     trust_workspace_id: Option<uuid::Uuid>,
     fault_suite_evidence: Option<uuid::Uuid>,
+    recovery_qualification: bool,
     json: bool,
     output: Option<PathBuf>,
     config_path: Option<&Path>,
@@ -1729,12 +1740,32 @@ pub async fn run_release(
         None => None,
     };
 
-    // Recovery qualification remains absent because this slice adds no producer
-    // for it. Fault-suite evidence is different:
-    // when the operator names an immutable observation set above, the current
-    // evaluator's decision is the fact handed to the release gate; without an
-    // id, nobody looked and `missing` remains true.
-    //
+    let recovery_qualification = if recovery_qualification {
+        let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "recovery qualification evidence could not be loaded: configuration failed: {error}"
+                )
+            })?;
+        let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+        let store = PgStore::connect(&config.database).await.map_err(|error| {
+            anyhow::anyhow!(
+                "recovery qualification evidence could not be loaded from {redacted}: {error}"
+            )
+        })?;
+        let repository = PgRecoveryQualificationEvidenceRepository::new(store);
+        let stored = repository.list().await.map_err(|error| {
+            anyhow::anyhow!("recovery qualification evidence could not be loaded: {error}")
+        })?;
+        let observations = stored
+            .iter()
+            .map(|evidence| evidence.to_observation())
+            .collect::<Vec<_>>();
+        Some(evaluate_recovery_qualification(&observations))
+    } else {
+        None
+    };
+
     // Taken before the decision is moved into the evidence: `release_approval_failed`
     // is one word for nineteen distinct checks, and an operator reading it needs
     // to know which one.
@@ -1751,6 +1782,10 @@ pub async fn run_release(
     let capability_restoration_decisions = capability_restoration
         .map(|collection| collection.decisions)
         .unwrap_or_default();
+    let recovery_qualification_failures = recovery_qualification
+        .as_ref()
+        .map(|decision| decision.failures().to_vec())
+        .filter(|failures| !failures.is_empty());
 
     let evidence = ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
@@ -1764,7 +1799,7 @@ pub async fn run_release(
         release_approval,
         runtime_qualification,
         crypto_qualification,
-        None,
+        recovery_qualification,
         fault_suite,
         capability_restoration_decisions,
         bundle_evidence_refs(&bundle),
@@ -1796,6 +1831,7 @@ pub async fn run_release(
         // word tells an operator that approval failed and gives them no way to
         // act on it.
         release_approval_failures: approval_failures,
+        recovery_qualification_failures,
         capability_restoration_decisions: capability_restoration_reports,
     };
 
@@ -1818,6 +1854,11 @@ pub async fn run_release(
         );
         for failure in &report.failures {
             println!("  {failure}");
+        }
+        if let Some(recovery_failures) = &report.recovery_qualification_failures {
+            for failure in recovery_failures {
+                println!("  recovery qualification: {failure}");
+            }
         }
         if let Some(restoration) = &report.capability_restoration_decisions {
             for blocked in restoration

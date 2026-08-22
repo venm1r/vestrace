@@ -1,13 +1,15 @@
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use std::{fmt::Write as _, sync::Arc};
+use std::{fmt::Write as _, sync::Arc, time::Duration};
 use vestrace_domain::{
     DomainError, classify_recovery,
     id::AgentRunId,
     now,
     run::{AgentRun, RunState, RunVersion, apply, replay},
     time::Timestamp,
-    trust::{RecoveryClassification, RecoveryTarget},
+    trust::{
+        RecoveryAction, RecoveryClassification, RecoveryQualificationObservation, RecoveryTarget,
+    },
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -15,6 +17,7 @@ use crate::{ApplicationError, RequestContext};
 use super::{SharedRunRecoveryStore, project_run};
 
 pub const RUN_CHECKPOINT_FORMAT_VERSION: u16 = 1;
+const DEFAULT_EVIDENCE_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunCheckpoint {
@@ -96,6 +99,104 @@ pub struct StartupRecoveryRecord {
     pub outcome: StartupRecoveryOutcome,
 }
 
+/// Durable evidence of what startup recovery actually did for one run.
+///
+/// The action is deliberately derived from [`StartupRecoveryOutcome`], never
+/// from the classification. Keeping both makes disagreement observable to the
+/// recovery qualification evaluator instead of agreeing by construction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryQualificationEvidence {
+    id: uuid::Uuid,
+    run_id: AgentRunId,
+    target: RecoveryTarget,
+    classification: RecoveryClassification,
+    action: RecoveryAction,
+    observed_at: Timestamp,
+}
+
+impl RecoveryQualificationEvidence {
+    pub fn from_recovery_record(record: &StartupRecoveryRecord, observed_at: Timestamp) -> Self {
+        let action = match record.outcome {
+            StartupRecoveryOutcome::Restored => RecoveryAction::Resume,
+            StartupRecoveryOutcome::RetryReady => RecoveryAction::Retry,
+            StartupRecoveryOutcome::ReconciliationRequired => RecoveryAction::Reconcile,
+            StartupRecoveryOutcome::Aborted => RecoveryAction::Abort,
+            StartupRecoveryOutcome::HumanReviewRequired => RecoveryAction::HumanReview,
+        };
+        Self {
+            id: uuid::Uuid::now_v7(),
+            run_id: record.run_id,
+            target: record.target,
+            classification: record.classification,
+            action,
+            observed_at: Timestamp::from_timestamp_micros(observed_at.timestamp_micros())
+                .expect("an existing timestamp remains valid at database precision"),
+        }
+    }
+
+    pub fn from_persisted(
+        id: uuid::Uuid,
+        run_id: AgentRunId,
+        target: RecoveryTarget,
+        classification: RecoveryClassification,
+        action: RecoveryAction,
+        observed_at: Timestamp,
+    ) -> Self {
+        Self {
+            id,
+            run_id,
+            target,
+            classification,
+            action,
+            observed_at,
+        }
+    }
+
+    pub fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
+    pub fn run_id(&self) -> AgentRunId {
+        self.run_id
+    }
+
+    pub fn target(&self) -> RecoveryTarget {
+        self.target
+    }
+
+    pub fn classification(&self) -> RecoveryClassification {
+        self.classification
+    }
+
+    pub fn action(&self) -> RecoveryAction {
+        self.action
+    }
+
+    pub fn observed_at(&self) -> Timestamp {
+        self.observed_at
+    }
+
+    pub fn to_observation(&self) -> RecoveryQualificationObservation {
+        RecoveryQualificationObservation::new(
+            self.target,
+            self.classification,
+            self.action,
+            format!("recovery-observation://{}", self.id),
+        )
+        .expect("generated recovery observation evidence reference is valid")
+    }
+}
+
+#[async_trait]
+pub trait RecoveryQualificationEvidenceRepository: Send + Sync {
+    async fn insert(
+        &self,
+        evidence: &RecoveryQualificationEvidence,
+    ) -> Result<(), ApplicationError>;
+
+    async fn list(&self) -> Result<Vec<RecoveryQualificationEvidence>, ApplicationError>;
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StartupRecoveryReport {
     records: Vec<StartupRecoveryRecord>,
@@ -121,24 +222,39 @@ pub trait StartupRecoveryCandidateSource: Send + Sync {
 pub struct StartupRecoveryService {
     operations: Arc<dyn RunRecoveryOperations>,
     candidates: Option<Arc<dyn StartupRecoveryCandidateSource>>,
+    evidence: Arc<dyn RecoveryQualificationEvidenceRepository>,
+    evidence_write_timeout: Duration,
 }
 
 impl StartupRecoveryService {
-    pub fn new(operations: Arc<dyn RunRecoveryOperations>) -> Self {
+    pub fn new(
+        operations: Arc<dyn RunRecoveryOperations>,
+        evidence: Arc<dyn RecoveryQualificationEvidenceRepository>,
+    ) -> Self {
         Self {
             operations,
             candidates: None,
+            evidence,
+            evidence_write_timeout: DEFAULT_EVIDENCE_WRITE_TIMEOUT,
         }
     }
 
     pub fn with_candidate_source(
         operations: Arc<dyn RunRecoveryOperations>,
         candidates: Arc<dyn StartupRecoveryCandidateSource>,
+        evidence: Arc<dyn RecoveryQualificationEvidenceRepository>,
     ) -> Self {
         Self {
             operations,
             candidates: Some(candidates),
+            evidence,
+            evidence_write_timeout: DEFAULT_EVIDENCE_WRITE_TIMEOUT,
         }
+    }
+
+    pub fn with_evidence_write_timeout(mut self, timeout: Duration) -> Self {
+        self.evidence_write_timeout = timeout;
+        self
     }
 
     /// Discover interrupted runs durably and recover them. An unconfigured
@@ -175,6 +291,7 @@ impl StartupRecoveryService {
         }
 
         let mut records = Vec::with_capacity(candidates.len());
+        let mut evidence_error = None;
         for candidate in candidates {
             let classification = classify_recovery(candidate.target);
             let outcome = match classification {
@@ -199,12 +316,32 @@ impl StartupRecoveryService {
                 }
             };
 
-            records.push(StartupRecoveryRecord {
+            let record = StartupRecoveryRecord {
                 run_id: candidate.run_id,
                 target: candidate.target,
                 classification,
                 outcome,
-            });
+            };
+            let evidence = RecoveryQualificationEvidence::from_recovery_record(&record, now());
+            records.push(record);
+
+            let insert_result =
+                tokio::time::timeout(self.evidence_write_timeout, self.evidence.insert(&evidence))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(ApplicationError::Storage(
+                            "recovery qualification evidence write timed out".to_owned(),
+                        ))
+                    });
+            if let Err(error) = insert_result {
+                if evidence_error.is_none() {
+                    evidence_error = Some(error);
+                }
+            }
+        }
+
+        if let Some(error) = evidence_error {
+            return Err(error);
         }
 
         Ok(StartupRecoveryReport { records })
