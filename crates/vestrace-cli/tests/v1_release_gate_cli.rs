@@ -8,19 +8,27 @@
 //! have no producer at all.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ring::rand::SystemRandom;
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use vestrace_application::FaultSuiteEvidenceRepository;
+use vestrace_application::{
+    FaultSuiteEvidenceRepository, QualificationBaselineRepository, RecoveryRepository,
+};
 use vestrace_domain::VestraceCapabilityManifest;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, HardGateEvidence};
 use vestrace_domain::conformance::{QualificationProfile, RequirementFamily, RequirementId};
 use vestrace_domain::external_effects::{EffectFaultPoint, FaultObservation, evaluate_fault_suite};
 use vestrace_domain::now;
-use vestrace_domain::trust::QualificationBundle;
-use vestrace_infrastructure::PgStore;
+use vestrace_domain::trust::{
+    QualificationBaseline, QualificationBundle, TrustState, TrustStateRecord,
+};
+use vestrace_domain::{HealthScope, WorkspaceId};
+use vestrace_infrastructure::{PgQualificationBaselineRepository, PgRecoveryRepository, PgStore};
 
 fn test_suffix() -> String {
     format!(
@@ -62,6 +70,67 @@ fn evidence() -> Vec<HardGateEvidence> {
         None,
         EvidenceOrigin::LocalExecutable,
     )]
+}
+
+/// A bundle that genuinely satisfies the profile it names.
+///
+/// `bundle_for` carries one piece of evidence, which is enough for the tests
+/// that exercise refusals and nowhere near enough for one that expects approval
+/// to succeed: `ReleaseApprovalService` checks that the bundle passed and that
+/// the profile's gate is satisfied, and a single ARC-001 result satisfies
+/// neither. Kept separate so the refusal fixtures stay as small as they are.
+fn fully_qualified_bundle_for(
+    manifest: &VestraceCapabilityManifest,
+    profile: QualificationProfile,
+) -> QualificationBundle {
+    let results = vestrace_domain::conformance::runner::profile_requirements(profile)
+        .into_iter()
+        .map(
+            |requirement_id| vestrace_domain::conformance::ConformanceCaseResult {
+                case_id: format!("release-gate-{requirement_id}"),
+                requirement_ids: vec![requirement_id],
+                status: vestrace_domain::conformance::CaseStatus::Pass,
+                message: "passed".into(),
+                evidence: Some(format!("test://{requirement_id}")),
+                origin: vestrace_domain::conformance::CaseOrigin::Executed,
+            },
+        )
+        .collect();
+
+    QualificationBundle::from_conformance_report(
+        vestrace_domain::trust::QualificationLifecycle::Release,
+        profile,
+        manifest.manifest_digest(),
+        manifest.source_revision(),
+        manifest.build_digest(),
+        manifest.configuration_digest(),
+        manifest.environment_manifest(),
+        "suite-v1",
+        vestrace_domain::conformance::ConformanceReport::from_results(Some(profile), results),
+        // The trusted gate evaluates the governance/federation hard gate over
+        // the bundle's evidence once its other four checks pass, so an empty
+        // list fails it however complete the conformance report is.
+        vestrace_domain::conformance::gate::GovernanceFederationGate::required_requirements(
+            profile,
+        )
+        .into_iter()
+        .map(|requirement_id| {
+            HardGateEvidence::pass(
+                requirement_id,
+                format!("test://{requirement_id}"),
+                // Some requirements demand a policy version and the gate
+                // reports a missing one as a failure. Supplying it for all of
+                // them is harmless: the check only looks where it is required.
+                Some("policy-v1".to_owned()),
+                EvidenceOrigin::LocalExecutable,
+            )
+        })
+        .collect(),
+        manifest.known_limitations().to_vec(),
+        now(),
+        Some(now()),
+    )
+    .unwrap()
 }
 
 fn bundle_for(
@@ -115,6 +184,191 @@ fn run_release(
         ])
         .output()
         .unwrap()
+}
+
+fn mounted_store_root(id: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("vestrace-release-approval-store-{id}"));
+    fs::create_dir_all(root.join("release-signing").join("v1")).unwrap();
+    fs::write(root.join("release-signing").join("scope"), "release").unwrap();
+    fs::write(root.join("release-signing").join("purpose"), "signing").unwrap();
+    fs::write(root.join("release-signing").join("algorithm"), "ed25519").unwrap();
+    fs::write(
+        root.join("release-signing").join("v1").join("state"),
+        "active",
+    )
+    .unwrap();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+    let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+    fs::write(
+        root.join("release-signing")
+            .join("v1")
+            .join("private.pkcs8"),
+        pkcs8.as_ref(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("release-signing").join("v1").join("public.bin"),
+        pair.public_key().as_ref(),
+    )
+    .unwrap();
+    root
+}
+
+fn sign_release_artifact(artifact: &str, input: &Path, output: &Path, store_root: &Path) {
+    let signed = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "sign",
+            "--artifact",
+            artifact,
+            "--artifact-file",
+            input.to_str().unwrap(),
+            "--key-provider",
+            "mounted-secret-store",
+            "--key-store-root",
+            store_root.to_str().unwrap(),
+            "--signer-identity",
+            "issuer://release",
+            "--key-id",
+            "release-signing",
+            "--key-version",
+            "v1",
+            "--key-scope",
+            "release",
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        signed.status.success(),
+        "failed to sign {artifact}: {}",
+        String::from_utf8_lossy(&signed.stderr)
+    );
+}
+
+fn signed_release_pair(
+    id: &str,
+    manifest: &VestraceCapabilityManifest,
+    bundle: &QualificationBundle,
+    store_root: &Path,
+) -> (PathBuf, PathBuf) {
+    let (unsigned_manifest, unsigned_bundle) = write_pair(id, manifest, bundle);
+    let signed_manifest =
+        std::env::temp_dir().join(format!("vestrace-release-signed-manifest-{id}.json"));
+    let signed_bundle =
+        std::env::temp_dir().join(format!("vestrace-release-signed-bundle-{id}.json"));
+    sign_release_artifact("manifest", &unsigned_manifest, &signed_manifest, store_root);
+    sign_release_artifact("bundle", &unsigned_bundle, &signed_bundle, store_root);
+    fs::remove_file(unsigned_manifest).ok();
+    fs::remove_file(unsigned_bundle).ok();
+    (signed_manifest, signed_bundle)
+}
+
+fn run_release_with_approval(
+    manifest_path: &Path,
+    bundle_path: &Path,
+    store_root: &Path,
+    workspace_id: WorkspaceId,
+    trusted_signer: &str,
+    database_url: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--release-approval",
+            "--key-store-root",
+            store_root.to_str().unwrap(),
+            "--key-id",
+            "release-signing",
+            "--trust-workspace-id",
+            &workspace_id.to_string(),
+            "--trusted-signer",
+            trusted_signer,
+            "--json",
+        ])
+        .env("VESTRACE_DATABASE__URL", database_url)
+        .output()
+        .unwrap()
+}
+
+fn run_release_approval_without_database(
+    manifest_path: &Path,
+    bundle_path: &Path,
+    store_root: &Path,
+    workspace_id: WorkspaceId,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--release-approval",
+            "--key-store-root",
+            store_root.to_str().unwrap(),
+            "--key-id",
+            "release-signing",
+            "--trust-workspace-id",
+            &workspace_id.to_string(),
+            "--trusted-signer",
+            "issuer://release",
+            "--json",
+        ])
+        .env_remove("DATABASE_URL")
+        .env_remove("VESTRACE_DATABASE__URL")
+        .output()
+        .unwrap()
+}
+
+fn tamper_signature(path: &Path) {
+    let mut artifact: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let signature = artifact["signature"]["signature"].as_str().unwrap();
+    let replacement = if signature.starts_with('A') { 'B' } else { 'A' };
+    artifact["signature"]["signature"] = Value::String(format!("{replacement}{}", &signature[1..]));
+    fs::write(path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+}
+
+async fn insert_release_approval_inputs(
+    pool: &PgPool,
+    bundle: &QualificationBundle,
+    workspace_id: WorkspaceId,
+    insert_baseline: bool,
+    insert_trust: bool,
+) {
+    let store = PgStore::from_pool(pool.clone());
+    if insert_baseline {
+        PgQualificationBaselineRepository::new(store.clone())
+            .insert(&QualificationBaseline::from_bundle(bundle, now()).unwrap())
+            .await
+            .unwrap();
+    }
+    if insert_trust {
+        PgRecoveryRepository::new(store)
+            .insert_trust_state(
+                &TrustStateRecord::new(
+                    HealthScope::workspace(workspace_id),
+                    TrustState::Trusted,
+                    "trusted for release approval test",
+                    None,
+                    now(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
 }
 
 fn run_release_collecting_runtime_evidence(
@@ -504,6 +758,435 @@ async fn release_gate_refuses_fault_evidence_bound_to_another_target(pool: PgPoo
 
     fs::remove_file(&manifest_path).ok();
     fs::remove_file(&bundle_path).ok();
+}
+
+#[test]
+fn release_approval_requires_mounted_key_store_coordinates_before_reporting() {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &released, &bundle);
+    let workspace_id = WorkspaceId::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--release-approval",
+            "--trust-workspace-id",
+            &workspace_id.to_string(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "a refused request must not report a release"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--key-store-root"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_file(manifest_path).ok();
+    fs::remove_file(bundle_path).ok();
+}
+
+#[test]
+fn release_approval_requires_an_independently_configured_trusted_signer_before_reporting() {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "release",
+            "--manifest-file",
+            manifest_path.to_str().unwrap(),
+            "--bundle-file",
+            bundle_path.to_str().unwrap(),
+            "--profile",
+            "trusted",
+            "--release-approval",
+            "--key-store-root",
+            store_root.to_str().unwrap(),
+            "--key-id",
+            "release-signing",
+            "--trust-workspace-id",
+            &workspace_id.to_string(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "a refused request must not report a release"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--trusted-signer"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[test]
+fn release_approval_refuses_a_revoked_mounted_public_key_before_database_access() {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    fs::write(
+        store_root.join("release-signing").join("v1").join("state"),
+        "revoked",
+    )
+    .unwrap();
+
+    let output = run_release_approval_without_database(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        WorkspaceId::new(),
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "a refused request must not report a release"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("mounted signing public key"), "{stderr}");
+    assert!(!stderr.contains("database.url"), "{stderr}");
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[test]
+fn release_approval_verifies_with_public_material_when_private_pkcs8_is_absent() {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    fs::remove_file(
+        store_root
+            .join("release-signing")
+            .join("v1")
+            .join("private.pkcs8"),
+    )
+    .unwrap();
+
+    let output = run_release_approval_without_database(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        WorkspaceId::new(),
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "a refused request must not report a release"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing configuration field \"database.url\""),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("private"), "{stderr}");
+    assert!(!stderr.contains("key material is unreadable"), "{stderr}");
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_uses_signed_artifacts_and_persisted_matching_inputs(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = fully_qualified_bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, true, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    // The report carries `release_approval_reason`; printing only the failure
+    // names would say "approval failed" about nineteen distinct checks and
+    // leave whoever reads it no way to act.
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}\n{report}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}\n{report}"
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_marks_a_missing_baseline_as_failed_and_names_the_lookup(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, false, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let reason = report["release_approval_reason"].as_str().unwrap();
+    // The lookup is by the bundle's target digest, which is what
+    // `QualificationBaseline::from_bundle` records — not by the manifest
+    // digest, which is a different value and which no published baseline is
+    // ever keyed on.
+    assert!(reason.contains(bundle.target_digest()), "{reason}");
+    assert!(reason.contains("trusted"), "{reason}");
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_does_not_use_another_profiles_baseline_for_the_same_target(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let trusted_bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let core_bundle = bundle_for(&released, QualificationProfile::Core);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) =
+        signed_release_pair(&id, &released, &trusted_bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &core_bundle, workspace_id, true, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["release_approval_reason"]
+            .as_str()
+            .unwrap()
+            .contains("trusted")
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_marks_a_missing_trust_state_as_failed_and_names_the_scope(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, true, false).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["release_approval_reason"]
+            .as_str()
+            .unwrap()
+            .contains(&workspace_id.to_string())
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_uses_mounted_store_verification_for_a_manifest_signature(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    tamper_signature(&manifest_path);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, true, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}"
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_uses_mounted_store_verification_for_a_bundle_signature(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    tamper_signature(&bundle_path);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, true, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://release",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}"
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_approval_rejects_a_valid_signature_from_an_untrusted_identity(pool: PgPool) {
+    let id = test_suffix();
+    let released = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&released, QualificationProfile::Trusted);
+    let store_root = mounted_store_root(&id);
+    let (manifest_path, bundle_path) = signed_release_pair(&id, &released, &bundle, &store_root);
+    let workspace_id = WorkspaceId::new();
+    insert_release_approval_inputs(&pool, &bundle, workspace_id, true, true).await;
+
+    let output = run_release_with_approval(
+        &manifest_path,
+        &bundle_path,
+        &store_root,
+        workspace_id,
+        "issuer://untrusted",
+        &ephemeral_database_url(&pool).await,
+    );
+    let observed = failures(&output);
+    assert!(
+        observed.contains(&"release_approval_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"release_approval_missing".to_owned()),
+        "{observed:?}"
+    );
+
+    for path in [manifest_path, bundle_path] {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir_all(store_root).ok();
 }
 
 /// This is the qualification path operators run deliberately: it needs a real

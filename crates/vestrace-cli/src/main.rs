@@ -145,16 +145,26 @@ enum ConformanceAction {
         /// Collect crypto adapter qualification from a mounted secret store.
         #[arg(long)]
         crypto_evidence: bool,
-        /// Requires `--crypto-evidence`: naming a store without asking to
-        /// collect from it is a request this build cannot honour silently.
-        #[arg(long, requires = "crypto_evidence")]
+        /// Requires `--crypto-evidence` or `--release-approval`: naming a
+        /// store without collecting evidence from it is not meaningful.
+        #[arg(long)]
         key_store_root: Option<PathBuf>,
-        #[arg(long, requires = "crypto_evidence")]
+        #[arg(long)]
         key_id: Option<String>,
         #[arg(long, default_value = "v1")]
         key_version: String,
         #[arg(long, default_value = "release")]
         key_scope: String,
+        /// Collect release approval from persisted baseline and trust evidence.
+        #[arg(long)]
+        release_approval: bool,
+        /// Independently configured signer identity trusted for release approval.
+        #[arg(long)]
+        trusted_signer: Option<String>,
+        /// Explicit workspace scope for the persisted trust-state lookup.
+        /// Release artifacts themselves do not determine a health scope.
+        #[arg(long)]
+        trust_workspace_id: Option<uuid::Uuid>,
         /// Load target-bound persisted fault-suite observations and let the
         /// current evaluator derive their release verdict.
         #[arg(long)]

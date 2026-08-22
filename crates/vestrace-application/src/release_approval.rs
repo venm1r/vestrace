@@ -51,6 +51,15 @@ pub struct ReleaseApprovalDecision {
 }
 
 impl ReleaseApprovalDecision {
+    /// A requested approval whose required persisted input could not be found
+    /// is still an approval decision: it is explicitly non-approved, rather
+    /// than an absent producer that the release gate would label `missing`.
+    pub fn rejected(failure: ReleaseApprovalFailure) -> Self {
+        Self {
+            failures: vec![failure],
+        }
+    }
+
     pub fn is_approved(&self) -> bool {
         self.failures.is_empty()
     }

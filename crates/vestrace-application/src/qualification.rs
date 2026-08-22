@@ -45,9 +45,10 @@ pub trait QualificationBaselineRepository: Send + Sync {
         id: QualificationBaselineId,
     ) -> Result<Option<QualificationBaseline>, ApplicationError>;
 
-    async fn find_by_target_digest(
+    async fn find_by_target_digest_and_profile(
         &self,
         target_digest: &str,
+        profile: QualificationProfile,
     ) -> Result<Option<QualificationBaseline>, ApplicationError>;
 }
 

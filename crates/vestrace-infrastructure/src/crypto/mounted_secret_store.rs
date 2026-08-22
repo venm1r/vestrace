@@ -138,26 +138,27 @@ impl MountedSecretStoreKeyProvider {
             KeyProviderError::Unavailable(format!("public key is unreadable: {error}"))
         })
     }
-}
 
-/// The serde name of a purpose, which is what a store declaration writes.
-fn purpose_name(purpose: KeyPurpose) -> &'static str {
-    match purpose {
-        KeyPurpose::Storage => "storage",
-        KeyPurpose::Export => "export",
-        KeyPurpose::Signing => "signing",
-        KeyPurpose::Federation => "federation",
-        KeyPurpose::Backup => "backup",
-        KeyPurpose::Provider => "provider",
-    }
-}
-
-impl KeyProvider for MountedSecretStoreKeyProvider {
-    fn resolve(
+    /// Read a public key only after applying the same custody validation as a
+    /// private-key resolution. Callers verifying signatures must not need to
+    /// read PKCS#8 material, but they still need provider, declaration,
+    /// authorization, and lifecycle enforcement.
+    pub fn resolve_public_key(
         &self,
         key: &KeyReference,
         request: &SecretResolutionRequest,
-    ) -> Result<ResolvedKeyMaterial, KeyProviderError> {
+    ) -> Result<Vec<u8>, KeyProviderError> {
+        let version_dir = self.validate_resolution(key, request)?;
+        std::fs::read(version_dir.join("public.bin")).map_err(|error| {
+            KeyProviderError::Unavailable(format!("public key is unreadable: {error}"))
+        })
+    }
+
+    fn validate_resolution(
+        &self,
+        key: &KeyReference,
+        request: &SecretResolutionRequest,
+    ) -> Result<PathBuf, KeyProviderError> {
         if key.provider() != MOUNTED_SECRET_STORE_PROVIDER {
             return Err(KeyProviderError::Denied(format!(
                 "provider '{}' is not implemented by the mounted store adapter",
@@ -223,6 +224,29 @@ impl KeyProvider for MountedSecretStoreKeyProvider {
         if state != "active" && state != "rotating" {
             return Err(KeyProviderError::NotUsable);
         }
+        Ok(version_dir)
+    }
+}
+
+/// The serde name of a purpose, which is what a store declaration writes.
+fn purpose_name(purpose: KeyPurpose) -> &'static str {
+    match purpose {
+        KeyPurpose::Storage => "storage",
+        KeyPurpose::Export => "export",
+        KeyPurpose::Signing => "signing",
+        KeyPurpose::Federation => "federation",
+        KeyPurpose::Backup => "backup",
+        KeyPurpose::Provider => "provider",
+    }
+}
+
+impl KeyProvider for MountedSecretStoreKeyProvider {
+    fn resolve(
+        &self,
+        key: &KeyReference,
+        request: &SecretResolutionRequest,
+    ) -> Result<ResolvedKeyMaterial, KeyProviderError> {
+        let version_dir = self.validate_resolution(key, request)?;
 
         let bytes = std::fs::read(version_dir.join("private.pkcs8")).map_err(|error| {
             KeyProviderError::Unavailable(format!("key material is unreadable: {error}"))

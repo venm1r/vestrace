@@ -94,7 +94,7 @@ async fn published_baseline_round_trips_by_id_at_column_precision(pool: PgPool) 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn published_baseline_is_found_by_exact_target_digest(pool: PgPool) {
+async fn published_baseline_is_found_by_exact_target_digest_and_profile(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool));
     let baseline = baseline(&bundle("target-manifest-a"));
 
@@ -102,7 +102,7 @@ async fn published_baseline_is_found_by_exact_target_digest(pool: PgPool) {
 
     assert_eq!(
         repository
-            .find_by_target_digest(baseline.target_digest())
+            .find_by_target_digest_and_profile(baseline.target_digest(), baseline.profile())
             .await
             .unwrap(),
         Some(baseline)
@@ -272,7 +272,7 @@ async fn stored_baseline_for_bundle_a_does_not_match_bundle_b(pool: PgPool) {
     repository.insert(&baseline).await.unwrap();
 
     let stored = repository
-        .find_by_target_digest(bundle_a.target_digest())
+        .find_by_target_digest_and_profile(bundle_a.target_digest(), bundle_a.profile())
         .await
         .unwrap()
         .expect("published baseline for bundle A");

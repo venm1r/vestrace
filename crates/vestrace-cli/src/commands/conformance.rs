@@ -16,10 +16,10 @@ use vestrace_application::{
     ExternalEffectFaultGateEvidenceService, ExternalEffectFaultQualificationService,
     FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
     QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
-    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
-    evaluate_runtime_qualification,
+    RecoveryRepository, ReleaseApprovalDecision, ReleaseApprovalFailure, ReleaseApprovalService,
+    ReleaseSignatureEvidence, RuntimeQualificationDecision, RuntimeQualificationEvidence,
+    V1ReleaseEvidenceService, evaluate_runtime_qualification,
 };
-use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
 use vestrace_domain::conformance::{
     CaseOrigin, CaseStatus, ConformanceReport, QualificationProfile, registry,
@@ -32,9 +32,10 @@ use vestrace_domain::trust::{
     ResolvedKeyMaterial, SecretResolutionRequest, SignatureAlgorithm, SignatureRecord,
     SignerTrustPolicy, SignerTrustRule,
 };
+use vestrace_domain::{HealthScope, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationBaselineRepository,
-    PgQualificationRepository, PgStore, QualificationConfig,
+    PgQualificationRepository, PgRecoveryRepository, PgStore, QualificationConfig,
 };
 
 const FAULT_POINT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -214,6 +215,9 @@ pub async fn run(
             key_id,
             key_version,
             key_scope,
+            release_approval,
+            trusted_signer,
+            trust_workspace_id,
             fault_suite_evidence,
             json,
             output,
@@ -228,6 +232,9 @@ pub async fn run(
                 key_id,
                 key_version,
                 key_scope,
+                release_approval,
+                trusted_signer,
+                trust_workspace_id,
                 fault_suite_evidence,
                 json,
                 output,
@@ -1025,6 +1032,15 @@ struct ReleaseGateReport {
     manifest_digest: String,
     status: &'static str,
     failures: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_approval_reason: Option<String>,
+    /// Which of the approval's own checks failed.
+    ///
+    /// Absent when approval was not collected or passed. `release_approval_failed`
+    /// alone names nineteen different conditions, and an operator reading it
+    /// needs to know which one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_approval_failures: Option<Vec<String>>,
 }
 
 /// Read the deployment's own account of itself: which role the runtime holds
@@ -1101,6 +1117,133 @@ fn collect_crypto_qualification(
         .map_err(|error| anyhow::anyhow!("crypto evidence could not be collected: {error}"))
 }
 
+/// Collect the evidence that makes release approval an actual decision rather
+/// than a missing evidence family. The release artifacts identify a target,
+/// not a health scope, so the operator must name the workspace trust scope.
+#[allow(clippy::too_many_arguments)]
+async fn collect_release_approval(
+    manifest: &VestraceCapabilityManifest,
+    bundle: &QualificationBundle,
+    profile: QualificationProfile,
+    trust_workspace_id: WorkspaceId,
+    trust_scope: HealthScope,
+    key_store_root: Option<PathBuf>,
+    key_id: Option<String>,
+    key_version: &str,
+    key_scope: &str,
+    trusted_signer: String,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<(ReleaseApprovalDecision, Option<String>)> {
+    let root = key_store_root.ok_or_else(|| {
+        anyhow::anyhow!("release approval could not be collected: --key-store-root is required")
+    })?;
+    let key_id = key_id.ok_or_else(|| {
+        anyhow::anyhow!("release approval could not be collected: --key-id is required")
+    })?;
+    let key_ref = KeyReference::new(
+        vestrace_infrastructure::crypto::MOUNTED_SECRET_STORE_PROVIDER,
+        key_id,
+        key_version,
+        KeyPurpose::Signing,
+        key_scope,
+        SignatureAlgorithm::Ed25519.as_str(),
+    )
+    .map_err(|error| anyhow::anyhow!("release approval could not be collected: {error}"))?;
+    let provider = vestrace_infrastructure::crypto::MountedSecretStoreKeyProvider::new(root);
+    let request = SecretResolutionRequest::new(
+        trust_workspace_id,
+        key_ref.scope(),
+        "conformance://release-approval",
+    );
+    let public_key = provider
+        .resolve_public_key(&key_ref, &request)
+        .map_err(|error| {
+            anyhow::anyhow!("release approval could not read mounted signing public key: {error}")
+        })?;
+    let signer_policy = build_signer_trust_policy(
+        Some(trusted_signer),
+        Some(vestrace_infrastructure::crypto::MOUNTED_SECRET_STORE_PROVIDER.to_owned()),
+        Some(key_ref.key_id().to_owned()),
+        Some(key_ref.version().to_owned()),
+        Some(key_ref.scope().to_owned()),
+        true,
+    )?
+    .expect("release approval always configures an exact signer policy");
+    let signature_evidence = ReleaseSignatureEvidence::new(
+        verify_manifest_signature(manifest, &public_key).is_ok(),
+        verify_bundle_signature(bundle, &public_key).is_ok(),
+    );
+
+    let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+        .map_err(|error| {
+            anyhow::anyhow!("release approval could not be loaded: configuration failed: {error}")
+        })?;
+    let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!("release approval could not be loaded from {redacted}: {error}")
+    })?;
+    let baselines = PgQualificationBaselineRepository::new(store.clone());
+    let recovery = PgRecoveryRepository::new(store);
+    // Look up by the bundle's target digest, which is what
+    // `QualificationBaseline::from_bundle` records as the baseline's target.
+    //
+    // This asked by the manifest digest, and the two are different values, so
+    // no release would ever have found a baseline that `publish-baseline` had
+    // actually published. It survived review because the test that exercises a
+    // missing baseline passes whether the lookup key is right or wrong — an
+    // assertion about absence is satisfied by asking the wrong question.
+    let baseline = baselines
+        .find_by_target_digest_and_profile(bundle.target_digest(), profile)
+        .await
+        .map_err(|error| anyhow::anyhow!("release approval baseline lookup failed: {error}"))?;
+    let trust_state = recovery
+        .find_latest_trust_state(&trust_scope)
+        .await
+        .map_err(|error| anyhow::anyhow!("release approval trust-state lookup failed: {error}"))?;
+
+    let profile_name = serde_json::to_string(&profile)
+        .expect("qualification profiles serialize")
+        .trim_matches('"')
+        .to_owned();
+    let mut unavailable = Vec::new();
+    if baseline.is_none() {
+        unavailable.push(format!(
+            "no published baseline for target {} and profile {profile_name}",
+            bundle.target_digest()
+        ));
+    }
+    if trust_state.is_none() {
+        unavailable.push(format!(
+            "no persisted trust state for scope {trust_scope:?}"
+        ));
+    }
+    if !unavailable.is_empty() {
+        let failure = if baseline.is_none() {
+            ReleaseApprovalFailure::BaselineNotQualified
+        } else {
+            ReleaseApprovalFailure::TrustStateNotTrusted
+        };
+        return Ok((
+            ReleaseApprovalDecision::rejected(failure),
+            Some(unavailable.join("; ")),
+        ));
+    }
+
+    Ok((
+        ReleaseApprovalService::evaluate(
+            &trust_scope,
+            manifest,
+            bundle,
+            &baseline.expect("baseline presence checked"),
+            &trust_state.expect("trust-state presence checked"),
+            &signer_policy,
+            signature_evidence,
+        ),
+        None,
+    ))
+}
+
 /// Ask the v1.0 release gate about an exact build in an exact environment.
 ///
 /// The target is the capability manifest; the evidence identity is the
@@ -1118,12 +1261,36 @@ pub async fn run_release(
     key_id: Option<String>,
     key_version: String,
     key_scope: String,
+    release_approval: bool,
+    trusted_signer: Option<String>,
+    trust_workspace_id: Option<uuid::Uuid>,
     fault_suite_evidence: Option<uuid::Uuid>,
     json: bool,
     output: Option<PathBuf>,
     config_path: Option<&Path>,
     config_overrides: &ConfigOverrides,
 ) -> anyhow::Result<()> {
+    if !crypto_evidence && !release_approval && (key_store_root.is_some() || key_id.is_some()) {
+        anyhow::bail!(
+            "--key-store-root and --key-id require --crypto-evidence or --release-approval"
+        );
+    }
+    if release_approval {
+        if key_store_root.is_none() {
+            anyhow::bail!("release approval could not be collected: --key-store-root is required");
+        }
+        if key_id.is_none() {
+            anyhow::bail!("release approval could not be collected: --key-id is required");
+        }
+        if trusted_signer.is_none() {
+            anyhow::bail!("release approval could not be collected: --trusted-signer is required");
+        }
+        if trust_workspace_id.is_none() {
+            anyhow::bail!(
+                "release approval could not be collected: --trust-workspace-id is required"
+            );
+        }
+    }
     let manifest = VestraceCapabilityManifest::from_json(&std::fs::read(&manifest_file)?).map_err(
         |error| {
             anyhow::anyhow!(
@@ -1166,13 +1333,40 @@ pub async fn run_release(
 
     let crypto_qualification = if crypto_evidence {
         Some(collect_crypto_qualification(
-            key_store_root,
-            key_id,
+            key_store_root.clone(),
+            key_id.clone(),
             &key_version,
             &key_scope,
         )?)
     } else {
         None
+    };
+
+    let (release_approval, release_approval_reason) = if release_approval {
+        let workspace_id = trust_workspace_id.ok_or_else(|| {
+            anyhow::anyhow!(
+                "release approval could not be collected: --trust-workspace-id is required"
+            )
+        })?;
+        let trust_workspace_id = WorkspaceId::from_uuid(workspace_id);
+        let (decision, reason) = collect_release_approval(
+            &manifest,
+            &bundle,
+            profile,
+            trust_workspace_id,
+            HealthScope::workspace(trust_workspace_id),
+            key_store_root,
+            key_id,
+            &key_version,
+            &key_scope,
+            trusted_signer.expect("trusted signer presence checked"),
+            config_path,
+            config_overrides,
+        )
+        .await?;
+        (Some(decision), reason)
+    } else {
+        (None, None)
     };
 
     let fault_suite = match fault_suite_evidence {
@@ -1200,11 +1394,23 @@ pub async fn run_release(
         None => None,
     };
 
-    // Release approval, recovery qualification and capability restoration
-    // remain absent because this slice adds no producer for them. Fault-suite
-    // evidence is different: when the operator names an immutable observation
-    // set above, the current evaluator's decision is the fact handed to the
-    // release gate; without an id, nobody looked and `missing` remains true.
+    // Recovery qualification and capability restoration remain absent because
+    // this slice adds no producer for them. Fault-suite evidence is different:
+    // when the operator names an immutable observation set above, the current
+    // evaluator's decision is the fact handed to the release gate; without an
+    // id, nobody looked and `missing` remains true.
+    //
+    // Taken before the decision is moved into the evidence: `release_approval_failed`
+    // is one word for nineteen distinct checks, and an operator reading it needs
+    // to know which one.
+    let approval_failure_names = release_approval.as_ref().map(|approval| {
+        approval
+            .failures()
+            .iter()
+            .map(|failure| format!("{failure:?}"))
+            .collect::<Vec<_>>()
+    });
+
     let evidence = ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
         bundle.source_revision(),
@@ -1214,7 +1420,7 @@ pub async fn run_release(
         bundle.target_manifest(),
         manifest.schema_versions().to_vec(),
         bundle.profile(),
-        None,
+        release_approval,
         runtime_qualification,
         crypto_qualification,
         None,
@@ -1225,6 +1431,7 @@ pub async fn run_release(
     );
 
     let decision = V1ReleaseEvidenceService::evaluate(&target, &evidence);
+    let approval_failures = approval_failure_names.filter(|failures| !failures.is_empty());
     let failures: Vec<&'static str> = decision
         .failures()
         .iter()
@@ -1241,6 +1448,13 @@ pub async fn run_release(
             "failed"
         },
         failures,
+        release_approval_reason,
+        // `release_approval_failed` is one word for nineteen distinct checks —
+        // an unsigned manifest, a baseline that does not match, a trust state
+        // that is not trusted, a blank known limitation. Reporting only the
+        // word tells an operator that approval failed and gives them no way to
+        // act on it.
+        release_approval_failures: approval_failures,
     };
 
     let serialized = serde_json::to_vec_pretty(&report)?;
@@ -2404,9 +2618,10 @@ mod tests {
             Ok(None)
         }
 
-        async fn find_by_target_digest(
+        async fn find_by_target_digest_and_profile(
             &self,
             _target_digest: &str,
+            _profile: QualificationProfile,
         ) -> Result<Option<QualificationBaseline>, vestrace_application::ApplicationError> {
             Ok(None)
         }

@@ -135,6 +135,76 @@ fn a_rotating_version_still_resolves() {
     fs::remove_dir_all(&root).ok();
 }
 
+#[test]
+fn validated_public_resolution_accepts_active_and_rotating_signing_keys() {
+    for state in ["active", "rotating"] {
+        let root = store_root(&format!("{}-{state}", suffix()));
+        write_key(&root, "release-signing", "release", "v1", state);
+        let expected =
+            fs::read(root.join("release-signing").join("v1").join("public.bin")).unwrap();
+        let provider = MountedSecretStoreKeyProvider::new(&root);
+
+        let actual = provider
+            .resolve_public_key(
+                &key_ref("release-signing", "v1", "release"),
+                &request("release"),
+            )
+            .expect("usable signing key public material");
+
+        assert_eq!(actual, expected, "state {state}");
+        fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[test]
+fn validated_public_resolution_refuses_inactive_versions() {
+    for state in ["revoked", "retired"] {
+        let root = store_root(&format!("{}-{state}", suffix()));
+        write_key(&root, "release-signing", "release", "v1", state);
+        let provider = MountedSecretStoreKeyProvider::new(&root);
+
+        let error = provider
+            .resolve_public_key(
+                &key_ref("release-signing", "v1", "release"),
+                &request("release"),
+            )
+            .expect_err("inactive key public material must be refused");
+
+        assert!(
+            matches!(error, KeyProviderError::NotUsable),
+            "state {state}: {error:?}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[test]
+fn validated_public_resolution_refuses_declaration_mismatches() {
+    for (field, value) in [
+        ("purpose", "storage"),
+        ("algorithm", "p256"),
+        ("scope", "other-scope"),
+    ] {
+        let root = store_root(&format!("{}-{field}", suffix()));
+        write_key(&root, "release-signing", "release", "v1", "active");
+        fs::write(root.join("release-signing").join(field), value).unwrap();
+        let provider = MountedSecretStoreKeyProvider::new(&root);
+
+        let error = provider
+            .resolve_public_key(
+                &key_ref("release-signing", "v1", "release"),
+                &request("release"),
+            )
+            .expect_err("mismatched declaration public material must be refused");
+
+        assert!(
+            matches!(error, KeyProviderError::Denied(_)),
+            "{field}: {error:?}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+}
+
 /// The resolution's own purpose is checked against the declaration separately
 /// from the reference's scope, because they are two different claims.
 #[test]

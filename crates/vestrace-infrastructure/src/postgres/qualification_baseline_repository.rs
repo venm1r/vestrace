@@ -5,6 +5,7 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use vestrace_application::{ApplicationError, QualificationBaselineRepository};
 use vestrace_domain::QualificationBaselineId;
+use vestrace_domain::conformance::QualificationProfile;
 use vestrace_domain::trust::QualificationBaseline;
 
 use super::PgStore;
@@ -140,17 +141,20 @@ impl QualificationBaselineRepository for PgQualificationBaselineRepository {
         row.map(decode_row).transpose()
     }
 
-    async fn find_by_target_digest(
+    async fn find_by_target_digest_and_profile(
         &self,
         target_digest: &str,
+        profile: QualificationProfile,
     ) -> Result<Option<QualificationBaseline>, ApplicationError> {
+        let profile = enum_name(profile)?;
         let row = sqlx::query_as::<_, QualificationBaselineRow>(
             "SELECT id, profile, target_digest, state, published_at,
                     invalidation_reason, payload
              FROM qualification_baselines
-             WHERE target_digest = $1",
+             WHERE target_digest = $1 AND profile = $2",
         )
         .bind(target_digest)
+        .bind(profile)
         .fetch_optional(&self.pool)
         .await
         .map_err(storage_error)?;
