@@ -266,6 +266,12 @@ where
     .execute(admin_pool)
     .await
     .map_err(|error| format!("grant lifecycle SELECT failed: {error}"))?;
+    sqlx::query(&format!(
+        "GRANT SELECT ON TABLE external_effect_worker_presence TO {quoted}"
+    ))
+    .execute(admin_pool)
+    .await
+    .map_err(|error| format!("grant worker-presence SELECT failed: {error}"))?;
 
     let options = admin_pool
         .connect_options()
@@ -290,6 +296,10 @@ async fn cleanup_lifecycle_runtime_role(
 ) -> Vec<String> {
     let quoted = role.quoted();
     let statements = [
+        (
+            "revoke worker-presence table privileges",
+            format!("REVOKE ALL PRIVILEGES ON TABLE external_effect_worker_presence FROM {quoted}"),
+        ),
         (
             "revoke lifecycle table privileges",
             format!(
@@ -1848,6 +1858,155 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
             .unwrap(),
         Some(EffectLifecycleStatus::Reconciling)
     );
+}
+
+/// Mutant caught: removing the owner-presence arm, reversing the lapse
+/// comparison, or allowing a fresh owner through makes the equal-age pair agree
+/// when only the lapsed owner is evidence that its dispatch was lost.
+#[sqlx::test(migrations = "../../migrations")]
+async fn equal_age_dispatches_split_only_on_lapsed_and_fresh_owner_presence(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let workspace_id = WorkspaceId::new();
+    let context = context_for(workspace_id);
+    let lapsed = intent_for(workspace_id, &run_ref());
+    let fresh = intent_for(workspace_id, &run_ref());
+    let lapsed_owner = WorkerId::new();
+    let fresh_owner = WorkerId::new();
+
+    for effect in [&lapsed, &fresh] {
+        repository.insert_intent(&context, effect).await.unwrap();
+    }
+    repository
+        .record_worker_presence(&context, lapsed_owner, at(0), at(39))
+        .await
+        .unwrap();
+    repository
+        .record_worker_presence(&context, fresh_owner, at(0), at(40))
+        .await
+        .unwrap();
+    for (effect, owner) in [(&lapsed, lapsed_owner), (&fresh, fresh_owner)] {
+        repository
+            .record_dispatch_started(&context, effect.id(), owner, at(200), at(20))
+            .await
+            .unwrap();
+    }
+
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+        .await
+        .unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].intent(), &lapsed);
+    assert_eq!(candidates[0].receipt(), None);
+}
+
+/// Mutant caught: a LEFT JOIN whose NULL arm is accepted treats historical
+/// dispatches, and workers that died before their first heartbeat, as proof of
+/// death rather than preserving their stated deadline.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatch_without_owner_presence_uses_its_deadline_and_not_absence(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), WorkerId::new(), at(200), at(20))
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "absence of owner presence was treated as death before the dispatch deadline"
+    );
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(201), at(201), at(201), u32::MAX)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].intent(), &effect);
+}
+
+/// Mutant caught: physically deleting the row on clean shutdown collapses an
+/// explicit stop into the no-row compatibility state and makes recovery wait
+/// for either the lapse window or the dispatch deadline.
+#[sqlx::test(migrations = "../../migrations")]
+async fn clean_shutdown_is_immediate_lost_owner_evidence(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    let owner = WorkerId::new();
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository
+        .record_worker_presence(&context, owner, at(90), at(100))
+        .await
+        .unwrap();
+    repository
+        .record_dispatch_started(&context, effect.id(), owner, at(200), at(100))
+        .await
+        .unwrap();
+    repository
+        .clear_worker_presence(&context, owner, at(101))
+        .await
+        .unwrap();
+
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(101), at(101), at(101), u32::MAX)
+        .await
+        .unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].intent(), &effect);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn restricted_runtime_role_reads_presence_only_in_its_workspace(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let own_workspace = WorkspaceId::new();
+    let foreign_workspace = WorkspaceId::new();
+    let worker_id = WorkerId::new();
+    repository
+        .record_worker_presence(&context_for(own_workspace), worker_id, at(0), at(20))
+        .await
+        .unwrap();
+    repository
+        .record_worker_presence(&context_for(foreign_workspace), worker_id, at(0), at(20))
+        .await
+        .unwrap();
+
+    with_lifecycle_runtime_role(&pool, move |runtime_pool, role| async move {
+        let flags: (bool, bool) = sqlx::query_as(
+            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
+        )
+        .fetch_one(&runtime_pool)
+        .await
+        .unwrap();
+        assert_eq!(flags, (false, false), "{} can bypass RLS", role.name);
+
+        let mut transaction = runtime_pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('vestrace.workspace_id', $1, true)")
+            .bind(own_workspace.to_string())
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        let visible: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT workspace_id FROM external_effect_worker_presence \
+             WHERE workspace_id IN ($1, $2) AND worker_id = $3 ORDER BY workspace_id",
+        )
+        .bind(own_workspace.as_uuid())
+        .bind(foreign_workspace.as_uuid())
+        .bind(worker_id.to_string())
+        .fetch_all(&mut *transaction)
+        .await
+        .unwrap();
+
+        assert_eq!(visible, vec![own_workspace.as_uuid()]);
+    })
+    .await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]

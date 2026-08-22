@@ -9,6 +9,7 @@ use vestrace_application::run::{
 };
 use vestrace_application::{
     ExternalEffectRepository, OutboxDispatcher, QualificationRuntime, RequestContext,
+    WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
 use vestrace_domain::external_effects::ExternalEffectAdapter;
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
@@ -83,12 +84,17 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let lease_port = Arc::new(PgRunLeasePort::new(&store));
     let queue_port = Arc::new(PgWorkQueuePort::new(&store));
     let clock = Arc::new(SystemClock::new());
+    let worker_id = WorkerId::new();
 
     let run_worker_config = RunWorkerConfig {
-        worker_id: WorkerId::new(),
+        worker_id,
         poll_interval: Duration::from_millis(500),
-        lease_ttl: Duration::from_secs(60),
-        heartbeat_interval: Duration::from_secs(20),
+        lease_ttl: WORKER_PRESENCE_LAPSE_AFTER
+            .to_std()
+            .expect("the worker presence lapse window is positive"),
+        heartbeat_interval: WORKER_PRESENCE_HEARTBEAT_INTERVAL
+            .to_std()
+            .expect("the worker presence heartbeat interval is positive"),
         max_concurrency: 1,
     };
 
@@ -170,13 +176,31 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         );
     }
 
+    report_dispatches_without_a_deadline(&store, &run_contexts).await;
+
+    let presence = Arc::new(PgExternalEffectRepository::new(store.clone()));
+    let presence_started_at = vestrace_domain::now();
+    register_worker_presence(
+        presence.as_ref(),
+        &run_contexts,
+        worker_id,
+        presence_started_at,
+    )
+    .await?;
+    let (presence_shutdown, presence_shutdown_rx) = tokio::sync::watch::channel(false);
+    let presence_heartbeat = tokio::spawn(refresh_worker_presence_until_shutdown(
+        presence.clone(),
+        run_contexts.clone(),
+        worker_id,
+        presence_started_at,
+        presence_shutdown_rx,
+    ));
+
     tracing::info!(
         workspaces = run_contexts.len(),
         outbox_topics = outbox.topics().count(),
         "worker started, polling for run work items and outbox messages"
     );
-
-    report_dispatches_without_a_deadline(&store, &run_contexts).await;
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_clone = shutdown_notify.clone();
@@ -198,31 +222,156 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     //
     // Only shutdown is raced, and cancelling a poll at shutdown is exactly what
     // is wanted there.
-    loop {
-        let outcome = tokio::select! {
-            biased;
+    let run_result = async {
+        loop {
+            let outcome = tokio::select! {
+                biased;
 
-            _ = shutdown_notify.notified() => {
-                tracing::info!("worker shutdown requested, draining current work");
-                break;
+                _ = shutdown_notify.notified() => {
+                    tracing::info!("worker shutdown requested, draining current work");
+                    break;
+                }
+
+                outcome = async {
+                    let runs = poll_run_work(&run_worker, &run_contexts).await;
+                    let messages = drain_outbox(&outbox, &run_contexts).await;
+                    let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
+                    let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
+                    Ok::<_, anyhow::Error>(runs || messages || reconciled || delivered)
+                } => outcome?,
+            };
+
+            if !outcome {
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
-
-            outcome = async {
-                let runs = poll_run_work(&run_worker, &run_contexts).await;
-                let messages = drain_outbox(&outbox, &run_contexts).await;
-                let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
-                let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
-                Ok::<_, anyhow::Error>(runs || messages || reconciled || delivered)
-            } => outcome?,
-        };
-
-        if !outcome {
-            tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        Ok::<(), anyhow::Error>(())
     }
+    .await;
+
+    let _ = presence_shutdown.send(true);
+    let heartbeat_result = presence_heartbeat
+        .await
+        .map_err(|error| anyhow::anyhow!("worker presence heartbeat task failed: {error}"));
+    let clear_result = clear_worker_presence(presence.as_ref(), &run_contexts, worker_id).await;
+
+    run_result?;
+    heartbeat_result?;
+    clear_result?;
 
     tracing::info!("worker stopped gracefully");
     Ok(())
+}
+
+/// Register every workspace before the worker starts polling.
+///
+/// If one registration fails, previously registered workspaces are explicitly
+/// stopped before startup is refused. Leaving them active would make a process
+/// that never started look healthy until the lapse window elapsed.
+async fn register_worker_presence(
+    repository: &dyn ExternalEffectRepository,
+    contexts: &[RequestContext],
+    worker_id: WorkerId,
+    started_at: vestrace_domain::Timestamp,
+) -> anyhow::Result<()> {
+    for (index, context) in contexts.iter().enumerate() {
+        if let Err(error) = repository
+            .record_worker_presence(context, worker_id, started_at, started_at)
+            .await
+        {
+            let stopped_at = vestrace_domain::now();
+            for registered in &contexts[..index] {
+                if let Err(clear_error) = repository
+                    .clear_worker_presence(registered, worker_id, stopped_at)
+                    .await
+                {
+                    tracing::warn!(
+                        workspace = %registered.workspace_id,
+                        error = %clear_error,
+                        "worker presence could not be cleared after startup registration failed"
+                    );
+                }
+            }
+            return Err(anyhow::anyhow!(
+                "worker presence registration failed for workspace {}: {error}",
+                context.workspace_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Refresh presence independently of the poll loop.
+///
+/// The poll future must not be raced with a timer: losing a `select!` cancels it
+/// at an arbitrary await point, which previously stranded leased work. A small
+/// background task lets a long-running handler keep reporting without changing
+/// the run-work cancellation boundary.
+async fn refresh_worker_presence_until_shutdown(
+    repository: Arc<dyn ExternalEffectRepository>,
+    contexts: Vec<RequestContext>,
+    worker_id: WorkerId,
+    started_at: vestrace_domain::Timestamp,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let heartbeat_interval = WORKER_PRESENCE_HEARTBEAT_INTERVAL
+        .to_std()
+        .expect("the worker presence heartbeat interval is positive");
+    let mut heartbeat = tokio::time::interval(heartbeat_interval);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    heartbeat.tick().await;
+
+    loop {
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            _ = heartbeat.tick() => {
+                let reported_at = vestrace_domain::now();
+                for context in &contexts {
+                    if let Err(error) = repository
+                        .record_worker_presence(context, worker_id, started_at, reported_at)
+                        .await
+                    {
+                        tracing::warn!(
+                            workspace = %context.workspace_id,
+                            error = %error,
+                            "worker presence heartbeat failed"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Stop every workspace presence and report all failures together.
+async fn clear_worker_presence(
+    repository: &dyn ExternalEffectRepository,
+    contexts: &[RequestContext],
+    worker_id: WorkerId,
+) -> anyhow::Result<()> {
+    let stopped_at = vestrace_domain::now();
+    let mut failures = Vec::new();
+    for context in contexts {
+        if let Err(error) = repository
+            .clear_worker_presence(context, worker_id, stopped_at)
+            .await
+        {
+            failures.push(format!("{}: {error}", context.workspace_id));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "worker presence shutdown failed for {}",
+            failures.join(", ")
+        ))
+    }
 }
 
 /// Poll each configured workspace once, returning whether any of them had work.

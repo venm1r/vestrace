@@ -11,6 +11,20 @@ use vestrace_domain::{
 
 use crate::{ApplicationError, RequestContext};
 
+/// Worker presence refresh cadence, shared with the run-lease heartbeat.
+///
+/// Twenty seconds is the deployment's existing run-lease cadence. Reusing it
+/// keeps one answer to how often a healthy worker is expected to report rather
+/// than creating an external-effect-specific clock.
+pub const WORKER_PRESENCE_HEARTBEAT_INTERVAL: chrono::Duration = chrono::Duration::seconds(20);
+
+/// How long silence must last before a worker's presence is lapsed.
+///
+/// Sixty seconds is the existing run-lease TTL. Presence uses the same tolerance
+/// for a silent worker so dispatch recovery and lease ownership do not encode
+/// different meanings for the same process-level failure signal.
+pub const WORKER_PRESENCE_LAPSE_AFTER: chrono::Duration = chrono::Duration::seconds(60);
+
 /// Durable external-effect evidence.
 ///
 /// # Why every method takes a context
@@ -78,6 +92,33 @@ pub trait ExternalEffectRepository: Send + Sync {
         context: &RequestContext,
         effect_id: ExternalEffectId,
     ) -> Result<Option<ExternalEffectReceipt>, ApplicationError>;
+
+    /// Register or refresh this worker's presence in one workspace.
+    ///
+    /// `started_at` stays fixed for one process lifetime while
+    /// `last_reported_at` advances on the shared run-lease heartbeat cadence.
+    /// Recording again also reactivates an explicitly stopped row for the same
+    /// identity, though command boundaries normally mint a fresh `WorkerId`.
+    async fn record_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        started_at: Timestamp,
+        last_reported_at: Timestamp,
+    ) -> Result<(), ApplicationError>;
+
+    /// Clear active presence while retaining explicit shutdown evidence.
+    ///
+    /// A physical delete would be indistinguishable from the no-row
+    /// compatibility state, which is not evidence of death. Implementations
+    /// therefore retain a stopped tombstone that candidate discovery can
+    /// distinguish from absence.
+    async fn clear_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        stopped_at: Timestamp,
+    ) -> Result<(), ApplicationError>;
 
     /// Record the committed boundary immediately before an adapter is called.
     ///

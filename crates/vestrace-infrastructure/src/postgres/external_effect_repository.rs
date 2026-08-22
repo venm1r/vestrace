@@ -4,7 +4,7 @@ use serde_json::Value;
 use sqlx::FromRow;
 use vestrace_application::{
     ApplicationError, ExternalEffectRecoveryCandidate, ExternalEffectRepository,
-    LostDispatchAdoption, RequestContext, UndeliveredOutcome,
+    LostDispatchAdoption, RequestContext, UndeliveredOutcome, WORKER_PRESENCE_LAPSE_AFTER,
 };
 use vestrace_domain::external_effects::{
     EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
@@ -51,6 +51,9 @@ const RECONCILIATION_CANDIDATES_SQL: &str = r#"WITH candidates AS (
            dispatch.recorded_at AS candidate_at
     FROM external_effect_lifecycle_transitions dispatch
     JOIN external_effect_intents i ON i.id = dispatch.effect_id AND i.workspace_id = dispatch.workspace_id
+    LEFT JOIN external_effect_worker_presence owner_presence
+      ON owner_presence.workspace_id = dispatch.workspace_id
+     AND owner_presence.worker_id = dispatch.dispatch_owner
     LEFT JOIN LATERAL (
         SELECT x.outcome, x.reconciled_at FROM external_reconciliations x
         WHERE x.effect_id = i.id AND x.receipt_id IS NULL AND x.workspace_id = i.workspace_id
@@ -62,7 +65,11 @@ const RECONCILIATION_CANDIDATES_SQL: &str = r#"WITH candidates AS (
         ORDER BY attempt.attempted_at DESC, attempt.id DESC LIMIT 1
     ) failed ON TRUE
     WHERE dispatch.workspace_id = $1 AND i.workspace_id = $1
-      AND ((dispatch.status = 'dispatching' AND dispatch.dispatch_expires_at IS NOT NULL AND dispatch.dispatch_expires_at < $5)
+      AND ((dispatch.status = 'dispatching' AND dispatch.dispatch_expires_at IS NOT NULL
+            AND (dispatch.dispatch_expires_at < $5
+                 OR (owner_presence.worker_id IS NOT NULL
+                     AND (owner_presence.stopped_at IS NOT NULL
+                          OR owner_presence.last_reported_at < $6))))
            OR (dispatch.status = 'unknown' AND dispatch.cause = 'dispatch_lost' AND dispatch.recorded_at < $3))
       AND NOT EXISTS (SELECT 1 FROM external_effect_receipts r WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id)
       AND NOT EXISTS (SELECT 1 FROM external_effect_lifecycle_transitions newer WHERE newer.effect_id = dispatch.effect_id AND newer.workspace_id = dispatch.workspace_id AND newer.ordinal > dispatch.ordinal)
@@ -76,7 +83,7 @@ SELECT intent_id, workspace_id, adapter, intent_payload, receipt_id,
        dispatch_already_adopted
 FROM candidates
 ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST
-LIMIT $6"#;
+LIMIT $7"#;
 
 /// Durable external-effect intents, receipts and reconciliations.
 ///
@@ -684,6 +691,71 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         .transpose()
     }
 
+    async fn record_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        started_at: Timestamp,
+        last_reported_at: Timestamp,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        sqlx::query(
+            "INSERT INTO external_effect_worker_presence \
+                 (workspace_id, worker_id, started_at, last_reported_at, stopped_at) \
+             VALUES ($1, $2, $3, $4, NULL) \
+             ON CONFLICT (workspace_id, worker_id) DO UPDATE \
+             SET started_at = EXCLUDED.started_at, \
+                 last_reported_at = EXCLUDED.last_reported_at, \
+                 stopped_at = NULL \
+             WHERE external_effect_worker_presence.workspace_id = $1 \
+               AND external_effect_worker_presence.worker_id = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(worker_id.to_string())
+        .bind(started_at)
+        .bind(last_reported_at)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn clear_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        stopped_at: Timestamp,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let cleared = sqlx::query_scalar::<_, String>(
+            "UPDATE external_effect_worker_presence \
+             SET stopped_at = $3 \
+             WHERE workspace_id = $1 AND worker_id = $2 \
+             RETURNING worker_id",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(worker_id.to_string())
+        .bind(stopped_at)
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        if cleared.is_none() {
+            scoped.rollback().await.map_err(storage_error)?;
+            return Err(storage_error(
+                "external effect worker presence could not be cleared",
+            ));
+        }
+        scoped.commit().await.map_err(storage_error)
+    }
+
     async fn record_dispatch_started(
         &self,
         context: &RequestContext,
@@ -1109,6 +1181,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
+        let worker_lapsed_before = dispatch_expired_before - WORKER_PRESENCE_LAPSE_AFTER;
         let mut scoped = self
             .store
             .begin_scoped(context)
@@ -1121,6 +1194,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .bind(retry_unsettled_before)
             .bind(retry_failed_before)
             .bind(dispatch_expired_before)
+            .bind(worker_lapsed_before)
             .bind(i64::from(limit))
             .fetch_all(scoped.connection())
             .await
@@ -1179,7 +1253,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
 
 #[cfg(test)]
 mod planner_tests {
-    use super::RECONCILIATION_CANDIDATES_SQL;
+    use super::{RECONCILIATION_CANDIDATES_SQL, WORKER_PRESENCE_LAPSE_AFTER};
     use sqlx::PgPool;
     use vestrace_domain::external_effects::ReconciliationOutcome;
     use vestrace_domain::time::now;
@@ -1296,6 +1370,7 @@ mod planner_tests {
         .bind(cutoff)
         .bind(cutoff)
         .bind(cutoff)
+        .bind(cutoff - WORKER_PRESENCE_LAPSE_AFTER)
         .bind(8_i64)
         .fetch_one(&pool)
         .await

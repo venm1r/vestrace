@@ -93,6 +93,7 @@ pub use effect_recovery::{
 pub use effect_repository::{
     ExternalEffectRecoveryCandidate, ExternalEffectRepository, LostDispatchAdoption,
     LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
+    WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
 pub use error::ApplicationError;
 pub use execution_ports::{

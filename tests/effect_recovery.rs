@@ -11,7 +11,7 @@ use vestrace_application::{
     ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry, ExternalEffectRecoveryCandidate,
     ExternalEffectRecoveryError, ExternalEffectRecoveryService, ExternalEffectRepository,
     ExternalEffectService, LostDispatchAdoption, PerformExternalEffectService,
-    PolicyDecisionEngine, RECONCILIATION_BATCH, RequestContext,
+    PolicyDecisionEngine, RECONCILIATION_BATCH, RequestContext, WORKER_PRESENCE_LAPSE_AFTER,
 };
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectLifecycleStatus,
@@ -178,6 +178,7 @@ impl PolicyDecisionEngine for FixedDecisionEngine {
 struct MemoryEffectRepository {
     intents: Mutex<Vec<ExternalEffectIntent>>,
     evidence: Mutex<MemoryEffectEvidence>,
+    worker_presence: Mutex<Vec<MemoryWorkerPresence>>,
     receipts: Mutex<Vec<ExternalEffectReceipt>>,
     reconciled: Mutex<Vec<ExternalReconciliation>>,
     reconciled_keys: Mutex<Vec<(ExternalEffectId, Option<ExternalEffectReceiptId>)>>,
@@ -215,6 +216,15 @@ struct MemoryFailedRecoveryAttempt {
     effect_id: ExternalEffectId,
     attempted_at: vestrace_domain::Timestamp,
     failure_reason: String,
+}
+
+#[derive(Clone)]
+struct MemoryWorkerPresence {
+    workspace_id: WorkspaceId,
+    worker_id: WorkerId,
+    started_at: vestrace_domain::Timestamp,
+    last_reported_at: vestrace_domain::Timestamp,
+    stopped_at: Option<vestrace_domain::Timestamp>,
 }
 
 impl MemoryEffectRepository {
@@ -672,6 +682,62 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }))
     }
 
+    async fn record_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        started_at: vestrace_domain::Timestamp,
+        last_reported_at: vestrace_domain::Timestamp,
+    ) -> Result<(), ApplicationError> {
+        if last_reported_at < started_at {
+            return Err(ApplicationError::Storage(
+                "worker presence report predates its start".into(),
+            ));
+        }
+        let mut presence = self.worker_presence.lock().await;
+        if let Some(existing) = presence
+            .iter_mut()
+            .find(|item| item.workspace_id == context.workspace_id && item.worker_id == worker_id)
+        {
+            existing.started_at = started_at;
+            existing.last_reported_at = last_reported_at;
+            existing.stopped_at = None;
+        } else {
+            presence.push(MemoryWorkerPresence {
+                workspace_id: context.workspace_id,
+                worker_id,
+                started_at,
+                last_reported_at,
+                stopped_at: None,
+            });
+        }
+        Ok(())
+    }
+
+    async fn clear_worker_presence(
+        &self,
+        context: &RequestContext,
+        worker_id: WorkerId,
+        stopped_at: vestrace_domain::Timestamp,
+    ) -> Result<(), ApplicationError> {
+        let mut presence = self.worker_presence.lock().await;
+        let existing = presence
+            .iter_mut()
+            .find(|item| item.workspace_id == context.workspace_id && item.worker_id == worker_id)
+            .ok_or_else(|| {
+                ApplicationError::Storage(
+                    "external effect worker presence could not be cleared".into(),
+                )
+            })?;
+        if stopped_at < existing.started_at {
+            return Err(ApplicationError::Storage(
+                "worker presence stop predates its start".into(),
+            ));
+        }
+        existing.stopped_at = Some(stopped_at);
+        Ok(())
+    }
+
     async fn record_dispatch_started(
         &self,
         context: &RequestContext,
@@ -999,6 +1065,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         let intents = self.intents.lock().await.clone();
         let receipts = self.receipts.lock().await.clone();
         let transitions = self.evidence.lock().await.transitions.clone();
+        let worker_presence = self.worker_presence.lock().await.clone();
+        let worker_lapsed_before = dispatch_expired_before - WORKER_PRESENCE_LAPSE_AFTER;
         let mut candidates = intents
             .into_iter()
             .filter(|intent| intent.workspace_id() == workspace_id)
@@ -1027,10 +1095,22 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                 if effect_receipts.is_empty() {
                     if let Some(latest) = latest_status {
                         let recovery = if latest.status == EffectLifecycleStatus::Dispatching
-                            && latest
-                                .dispatch_expires_at
-                                .is_some_and(|deadline| deadline < dispatch_expired_before)
-                        {
+                            && latest.dispatch_expires_at.is_some_and(|deadline| {
+                                deadline < dispatch_expired_before
+                                    || latest.dispatch_owner.is_some_and(|owner| {
+                                        worker_presence
+                                            .iter()
+                                            .find(|presence| {
+                                                presence.workspace_id == workspace_id
+                                                    && presence.worker_id == owner
+                                            })
+                                            .is_some_and(|presence| {
+                                                presence.stopped_at.is_some()
+                                                    || presence.last_reported_at
+                                                        < worker_lapsed_before
+                                            })
+                                    })
+                            }) {
                             Some((latest.id, false))
                         } else if latest.status == EffectLifecycleStatus::Unknown
                             && latest.cause == "dispatch_lost"
@@ -2815,6 +2895,70 @@ async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemption
             .unwrap(),
         0
     );
+}
+
+/// Mutant caught: the in-memory port cannot keep deadline-only behavior after
+/// PostgreSQL learns that an explicit lapsed or stopped owner is evidence.
+#[tokio::test]
+async fn memory_recovery_matches_lapsed_stopped_and_absent_owner_rules() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = MemoryEffectRepository::default();
+    let lapsed = intent(workspace_id, actor_id, &run_ref());
+    let fresh = intent(workspace_id, actor_id, &run_ref());
+    let absent = intent(workspace_id, actor_id, &run_ref());
+    let stopped = intent(workspace_id, actor_id, &run_ref());
+    let lapsed_owner = WorkerId::new();
+    let fresh_owner = WorkerId::new();
+    let absent_owner = WorkerId::new();
+    let stopped_owner = WorkerId::new();
+    for effect in [&lapsed, &fresh, &absent, &stopped] {
+        repository.insert_intent(&context, effect).await.unwrap();
+    }
+    repository
+        .record_worker_presence(&context, lapsed_owner, at(0), at(39))
+        .await
+        .unwrap();
+    repository
+        .record_worker_presence(&context, fresh_owner, at(0), at(40))
+        .await
+        .unwrap();
+    repository
+        .record_worker_presence(&context, stopped_owner, at(90), at(100))
+        .await
+        .unwrap();
+    repository
+        .clear_worker_presence(&context, stopped_owner, at(100))
+        .await
+        .unwrap();
+    for (effect, owner) in [
+        (&lapsed, lapsed_owner),
+        (&fresh, fresh_owner),
+        (&absent, absent_owner),
+        (&stopped, stopped_owner),
+    ] {
+        repository
+            .record_dispatch_started(&context, effect.id(), owner, at(200), at(20))
+            .await
+            .unwrap();
+    }
+
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+        .await
+        .unwrap();
+    let mut ids = candidates
+        .iter()
+        .map(|candidate| candidate.intent().id())
+        .collect::<Vec<_>>();
+    ids.sort_by_key(|id| id.as_uuid());
+    let mut expected = vec![lapsed.id(), stopped.id()];
+    expected.sort_by_key(|id| id.as_uuid());
+
+    assert_eq!(ids, expected);
+    assert!(!ids.contains(&fresh.id()));
+    assert!(!ids.contains(&absent.id()));
 }
 
 struct OrderedAdapter {
