@@ -12,7 +12,7 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{
     ExternalEffectId, ExternalEffectLifecycleTransitionId, ExternalEffectReceiptId,
-    ExternalReconciliationId, Timestamp, WorkerId,
+    ExternalReconciliationId, PolicyDecision, PolicyDecisionId, Timestamp, WorkerId,
 };
 
 use super::PgStore;
@@ -122,6 +122,24 @@ struct ReceiptRow {
 }
 
 #[derive(Debug, FromRow)]
+struct AuthorizationRow {
+    id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    policy_id: Option<uuid::Uuid>,
+    policy_version: String,
+    subject_id: uuid::Uuid,
+    capability: String,
+    operation: String,
+    resource_scope: String,
+    result: String,
+    reason: String,
+    input_state: Value,
+    matched_grant_id: Option<uuid::Uuid>,
+    decided_at: Timestamp,
+    payload: Value,
+}
+
+#[derive(Debug, FromRow)]
 struct ReconciliationRow {
     id: uuid::Uuid,
     effect_id: uuid::Uuid,
@@ -223,6 +241,74 @@ fn lifecycle_status(value: &str) -> Result<EffectLifecycleStatus, ApplicationErr
             "external effect lifecycle contains unknown status {other:?}"
         ))),
     }
+}
+
+fn decode_authorization(row: AuthorizationRow) -> Result<PolicyDecision, ApplicationError> {
+    let decision: PolicyDecision = decode(row.payload)?;
+    // Named rather than one long disjunction: a projection that disagrees with
+    // its payload is a storage fault somebody has to find, and "does not match"
+    // without saying which column costs whoever reads it an afternoon.
+    let disagreement = [
+        ("id", decision.id.as_uuid() != row.id),
+        (
+            "workspace_id",
+            decision.workspace_id.as_uuid() != row.workspace_id,
+        ),
+        (
+            "policy_id",
+            decision.policy_id.map(|id| id.as_uuid()) != row.policy_id,
+        ),
+        (
+            "policy_version",
+            decision.policy_version != row.policy_version,
+        ),
+        (
+            "subject_id",
+            decision.subject_id.as_uuid() != row.subject_id,
+        ),
+        (
+            "capability",
+            decision.capability.to_string() != row.capability,
+        ),
+        ("operation", decision.operation != row.operation),
+        (
+            "resource_scope",
+            decision.resource_scope != row.resource_scope,
+        ),
+        ("result", enum_name(decision.result)? != row.result),
+        ("reason", enum_name(decision.reason)? != row.reason),
+        (
+            "input_state",
+            json(&decision.input_state)? != row.input_state,
+        ),
+        (
+            "matched_grant_id",
+            decision.matched_grant_id.map(|id| id.as_uuid()) != row.matched_grant_id,
+        ),
+        // PostgreSQL TIMESTAMPTZ stores microseconds while chrono carries
+        // nanoseconds, and it **rounds** rather than truncating: a decision
+        // made at .123456789 is stored as .123457, whereas `timestamp_micros`
+        // on the payload truncates to .123456. Comparing the two directly
+        // rejects a faithfully persisted decision one time in two.
+        //
+        // A microsecond is exactly the granularity the column has, so a
+        // difference within it is the storage boundary and anything larger is
+        // a projection describing a different decision — which is what this
+        // check exists to catch.
+        (
+            "decided_at",
+            (decision.decided_at.timestamp_micros() - row.decided_at.timestamp_micros()).abs() > 1,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(field, differs)| differs.then_some(field));
+
+    if let Some(field) = disagreement {
+        return Err(storage_error(format!(
+            "external effect authorization column `{field}` does not match its payload"
+        )));
+    }
+    Ok(decision)
 }
 
 async fn verify_insert<T, F>(find: F, expected: &T, message: &str) -> Result<(), ApplicationError>
@@ -339,6 +425,114 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             Ok(intent)
         })
         .transpose()
+    }
+
+    async fn record_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        decision: &PolicyDecision,
+    ) -> Result<(), ApplicationError> {
+        if decision.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "an external effect authorization cannot be recorded into another workspace".into(),
+            ));
+        }
+
+        let policy_id = decision.policy_id.map(|id| id.as_uuid());
+        let capability = decision.capability.to_string();
+        let result = enum_name(decision.result)?;
+        let reason = enum_name(decision.reason)?;
+        let input_state = json(&decision.input_state)?;
+        let matched_grant_id = decision.matched_grant_id.map(|id| id.as_uuid());
+        let payload = json(decision)?;
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
+        let inserted = sqlx::query(
+            "INSERT INTO external_effect_authorizations ( \
+                 id, effect_id, workspace_id, policy_id, policy_version, subject_id, \
+                 capability, operation, resource_scope, result, reason, input_state, \
+                 matched_grant_id, decided_at, payload \
+             ) \
+             SELECT $1, id, workspace_id, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+                    $13, $14, $15 \
+             FROM external_effect_intents \
+             WHERE id = $2 AND workspace_id = $3",
+        )
+        .bind(decision.id.as_uuid())
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(policy_id)
+        .bind(&decision.policy_version)
+        .bind(decision.subject_id.as_uuid())
+        .bind(capability)
+        .bind(&decision.operation)
+        .bind(&decision.resource_scope)
+        .bind(&result)
+        .bind(&reason)
+        .bind(input_state)
+        .bind(matched_grant_id)
+        .bind(decision.decided_at)
+        .bind(payload)
+        .execute(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        if inserted.rows_affected() != 1 {
+            scoped.rollback().await.map_err(storage_error)?;
+            return Err(storage_error(
+                "external effect authorization could not be recorded",
+            ));
+        }
+
+        if decision.is_allowed() {
+            sqlx::query(
+                "INSERT INTO external_effect_lifecycle_transitions \
+                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+                 VALUES ($1, $2, 'authorized', 'authorization_recorded', $3, $4)",
+            )
+            .bind(effect_id.as_uuid())
+            .bind(context.workspace_id.as_uuid())
+            .bind(decision.id.to_string())
+            .bind(decision.decided_at)
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        }
+
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn find_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        id: PolicyDecisionId,
+    ) -> Result<Option<PolicyDecision>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let row = sqlx::query_as::<_, AuthorizationRow>(
+            "SELECT id, workspace_id, policy_id, policy_version, subject_id, \
+                    capability, operation, resource_scope, result, reason, input_state, \
+                    matched_grant_id, decided_at, payload \
+             FROM external_effect_authorizations \
+             WHERE id = $1 AND effect_id = $2 AND workspace_id = $3",
+        )
+        .bind(id.as_uuid())
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        row.map(decode_authorization).transpose()
     }
 
     async fn insert_receipt(

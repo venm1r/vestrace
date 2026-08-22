@@ -11,7 +11,7 @@ use vestrace_application::{
     ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry, ExternalEffectRecoveryCandidate,
     ExternalEffectRecoveryError, ExternalEffectRecoveryService, ExternalEffectRepository,
     ExternalEffectService, LostDispatchAdoption, PerformExternalEffectService,
-    RECONCILIATION_BATCH, RequestContext,
+    PolicyDecisionEngine, RECONCILIATION_BATCH, RequestContext,
 };
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectLifecycleStatus,
@@ -21,9 +21,10 @@ use vestrace_domain::external_effects::{
     reconcile_effect,
 };
 use vestrace_domain::{
-    AuthorizationRequest, Capability, ExternalEffectId, ExternalEffectLifecycleTransitionId,
-    ExternalEffectReceiptId, ExternalReconciliationId, PrincipalId, RiskCategory, WorkerId,
-    WorkspaceId,
+    AuthorizationRequest, Capability, CapabilityGrantId, ExternalEffectId,
+    ExternalEffectLifecycleTransitionId, ExternalEffectReceiptId, ExternalReconciliationId,
+    PolicyDecision, PolicyDecisionId, PolicyDecisionReason, PolicyDecisionResult, PolicyId,
+    PolicyInputState, PrincipalId, RiskCategory, WorkerId, WorkspaceId,
 };
 
 fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
@@ -122,17 +123,76 @@ fn performable_intent(workspace_id: WorkspaceId, actor_id: PrincipalId) -> Exter
     serde_json::from_value(payload).unwrap()
 }
 
+fn authorization_request(effect: &ExternalEffectIntent) -> AuthorizationRequest {
+    AuthorizationRequest::new(
+        effect.required_capability(),
+        effect.operation().to_owned(),
+        effect.target().to_owned(),
+        effect.risk(),
+    )
+}
+
+fn policy_decision(
+    context: &RequestContext,
+    request: &AuthorizationRequest,
+    result: PolicyDecisionResult,
+    reason: PolicyDecisionReason,
+    matched_grant_id: Option<CapabilityGrantId>,
+) -> PolicyDecision {
+    PolicyDecision {
+        id: PolicyDecisionId::new(),
+        policy_id: Some(PolicyId::new()),
+        policy_version: "policy-v7".into(),
+        workspace_id: context.workspace_id,
+        subject_id: context.principal_id,
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        resource_scope: request.resource_scope.clone(),
+        result,
+        reason,
+        input_state: PolicyInputState::from_request(
+            context.workspace_id,
+            context.principal_id,
+            request,
+        ),
+        matched_grant_id,
+        decided_at: at(17),
+    }
+}
+
+#[derive(Clone)]
+struct FixedDecisionEngine(PolicyDecision);
+
+#[async_trait]
+impl PolicyDecisionEngine for FixedDecisionEngine {
+    async fn decide(
+        &self,
+        _context: &RequestContext,
+        _request: AuthorizationRequest,
+    ) -> Result<PolicyDecision, ApplicationError> {
+        Ok(self.0.clone())
+    }
+}
+
 #[derive(Default)]
 struct MemoryEffectRepository {
     intents: Mutex<Vec<ExternalEffectIntent>>,
+    evidence: Mutex<MemoryEffectEvidence>,
     receipts: Mutex<Vec<ExternalEffectReceipt>>,
-    transitions: Mutex<Vec<MemoryLifecycleTransition>>,
     reconciled: Mutex<Vec<ExternalReconciliation>>,
     reconciled_keys: Mutex<Vec<(ExternalEffectId, Option<ExternalEffectReceiptId>)>>,
     failed_attempts: Mutex<Vec<MemoryFailedRecoveryAttempt>>,
     delivered: Mutex<Vec<ExternalReconciliationId>>,
     dispatch_started_signal: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
+    authorization_transition_pause:
+        std::sync::Mutex<Option<(Arc<tokio::sync::Barrier>, Arc<tokio::sync::Barrier>)>>,
     fail_reconciliation_insert: AtomicBool,
+}
+
+#[derive(Default)]
+struct MemoryEffectEvidence {
+    authorizations: Vec<(ExternalEffectId, PolicyDecision)>,
+    transitions: Vec<MemoryLifecycleTransition>,
 }
 
 #[derive(Clone)]
@@ -158,6 +218,78 @@ struct MemoryFailedRecoveryAttempt {
 }
 
 impl MemoryEffectRepository {
+    fn pause_authorization_before_transition(
+        &self,
+        reached: Arc<tokio::sync::Barrier>,
+        release: Arc<tokio::sync::Barrier>,
+    ) {
+        *self.authorization_transition_pause.lock().unwrap() = Some((reached, release));
+    }
+
+    async fn authorization_state(
+        &self,
+        effect_id: ExternalEffectId,
+    ) -> (
+        Vec<PolicyDecision>,
+        Vec<(EffectLifecycleStatus, String, String)>,
+    ) {
+        let evidence = self.evidence.lock().await;
+        let decisions = evidence
+            .authorizations
+            .iter()
+            .filter(|(recorded_effect_id, _)| *recorded_effect_id == effect_id)
+            .map(|(_, decision)| decision.clone())
+            .collect();
+        let transitions = evidence
+            .transitions
+            .iter()
+            .filter(|transition| {
+                transition.effect_id == effect_id && transition.cause == "authorization_recorded"
+            })
+            .map(|transition| {
+                (
+                    transition.status,
+                    transition.cause.clone(),
+                    transition.cause_ref.clone(),
+                )
+            })
+            .collect();
+        (decisions, transitions)
+    }
+
+    async fn authorization_evidence(&self, effect_id: ExternalEffectId) -> Vec<PolicyDecision> {
+        self.evidence
+            .lock()
+            .await
+            .authorizations
+            .iter()
+            .filter(|(recorded_effect_id, _)| *recorded_effect_id == effect_id)
+            .map(|(_, decision)| decision.clone())
+            .collect()
+    }
+
+    async fn authorization_transitions(
+        &self,
+        effect_id: ExternalEffectId,
+    ) -> Vec<(EffectLifecycleStatus, String, String)> {
+        self.evidence
+            .lock()
+            .await
+            .transitions
+            .iter()
+            .filter(|transition| {
+                transition.effect_id == effect_id && transition.cause == "authorization_recorded"
+            })
+            .map(|transition| {
+                (
+                    transition.status,
+                    transition.cause.clone(),
+                    transition.cause_ref.clone(),
+                )
+            })
+            .collect()
+    }
+
     fn signal_dispatch_started_with(&self, signal: Arc<std::sync::atomic::AtomicBool>) {
         *self.dispatch_started_signal.lock().unwrap() = Some(signal);
     }
@@ -202,7 +334,8 @@ impl MemoryEffectRepository {
                 "effect evidence not found".into(),
             ));
         }
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let ordinal = transitions.len() as u64 + 1;
         transitions.push(MemoryLifecycleTransition {
             id: ExternalEffectLifecycleTransitionId::new(),
@@ -227,9 +360,10 @@ impl MemoryEffectRepository {
         vestrace_domain::Timestamp,
         vestrace_domain::Timestamp,
     )> {
-        self.transitions
+        self.evidence
             .lock()
             .await
+            .transitions
             .iter()
             .filter(|transition| transition.effect_id == effect_id)
             .filter_map(|transition| {
@@ -250,9 +384,10 @@ impl MemoryEffectRepository {
         String,
         ExternalEffectLifecycleTransitionId,
     )> {
-        self.transitions
+        self.evidence
             .lock()
             .await
+            .transitions
             .iter()
             .filter(|transition| {
                 transition.effect_id == effect_id && transition.cause == "dispatch_lost"
@@ -321,7 +456,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         intents.push(intent.clone());
         drop(intents);
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let ordinal = transitions.len() as u64 + 1;
         transitions.push(MemoryLifecycleTransition {
             id: ExternalEffectLifecycleTransitionId::new(),
@@ -352,6 +488,90 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             .cloned())
     }
 
+    async fn record_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        decision: &PolicyDecision,
+    ) -> Result<(), ApplicationError> {
+        if decision.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "an external effect authorization cannot be recorded into another workspace".into(),
+            ));
+        }
+        if !self
+            .intents
+            .lock()
+            .await
+            .iter()
+            .any(|intent| intent.id() == effect_id && intent.workspace_id() == context.workspace_id)
+        {
+            return Err(ApplicationError::Storage(
+                "effect evidence not found".into(),
+            ));
+        }
+
+        let mut evidence = self.evidence.lock().await;
+        let authorizations = &mut evidence.authorizations;
+        if let Some(existing) = authorizations
+            .iter()
+            .find(|(_, recorded)| recorded.id == decision.id)
+        {
+            return if existing == &(effect_id, decision.clone()) {
+                Ok(())
+            } else {
+                Err(ApplicationError::Conflict(format!(
+                    "external effect authorization id {} already contains different evidence",
+                    decision.id
+                )))
+            };
+        }
+        authorizations.push((effect_id, decision.clone()));
+
+        if decision.is_allowed() {
+            let pause = self.authorization_transition_pause.lock().unwrap().clone();
+            if let Some((reached, release)) = pause {
+                reached.wait().await;
+                release.wait().await;
+            }
+            let transitions = &mut evidence.transitions;
+            let ordinal = transitions.len() as u64 + 1;
+            transitions.push(MemoryLifecycleTransition {
+                id: ExternalEffectLifecycleTransitionId::new(),
+                ordinal,
+                workspace_id: context.workspace_id,
+                effect_id,
+                status: EffectLifecycleStatus::Authorized,
+                cause: "authorization_recorded".into(),
+                cause_ref: decision.id.to_string(),
+                recorded_at: decision.decided_at,
+                dispatch_owner: None,
+                dispatch_expires_at: None,
+            });
+        }
+        Ok(())
+    }
+
+    async fn find_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        id: PolicyDecisionId,
+    ) -> Result<Option<PolicyDecision>, ApplicationError> {
+        Ok(self
+            .evidence
+            .lock()
+            .await
+            .authorizations
+            .iter()
+            .find(|(recorded_effect_id, decision)| {
+                *recorded_effect_id == effect_id
+                    && decision.id == id
+                    && decision.workspace_id == context.workspace_id
+            })
+            .map(|(_, decision)| decision.clone()))
+    }
+
     async fn insert_receipt(
         &self,
         context: &RequestContext,
@@ -377,7 +597,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         }
         receipts.push(receipt.clone());
         drop(receipts);
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let ordinal = transitions.len() as u64 + 1;
         transitions.push(MemoryLifecycleTransition {
             id: ExternalEffectLifecycleTransitionId::new(),
@@ -430,9 +651,10 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             return Ok(None);
         }
         let receipt_id = self
-            .transitions
+            .evidence
             .lock()
             .await
+            .transitions
             .iter()
             .filter(|transition| {
                 transition.workspace_id == context.workspace_id
@@ -470,7 +692,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             ));
         }
         let transition_id = ExternalEffectLifecycleTransitionId::new();
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let ordinal = transitions.len() as u64 + 1;
         transitions.push(MemoryLifecycleTransition {
             id: transition_id,
@@ -484,7 +707,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             dispatch_owner: Some(dispatch_owner),
             dispatch_expires_at: Some(dispatch_expires_at),
         });
-        drop(transitions);
+        drop(evidence);
         if let Some(signal) = self.dispatch_started_signal.lock().unwrap().as_ref() {
             signal.store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -498,7 +721,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         dispatch_transition_id: ExternalEffectLifecycleTransitionId,
         recorded_at: vestrace_domain::Timestamp,
     ) -> Result<LostDispatchAdoption, ApplicationError> {
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let cause_ref = dispatch_transition_id.to_string();
         if transitions.iter().any(|transition| {
             transition.workspace_id == context.workspace_id
@@ -539,7 +763,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         context: &RequestContext,
         effect_id: ExternalEffectId,
     ) -> Result<Option<EffectLifecycleStatus>, ApplicationError> {
-        let transitions = self.transitions.lock().await;
+        let evidence = self.evidence.lock().await;
+        let transitions = &evidence.transitions;
         let has_receipt = transitions.iter().any(|transition| {
             transition.workspace_id == context.workspace_id
                 && transition.effect_id == effect_id
@@ -595,9 +820,10 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         context: &RequestContext,
     ) -> Result<u64, ApplicationError> {
         Ok(self
-            .transitions
+            .evidence
             .lock()
             .await
+            .transitions
             .iter()
             .filter(|transition| {
                 transition.workspace_id == context.workspace_id
@@ -643,7 +869,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         {
             self.reconciled.lock().await.push(reconciliation.clone());
             if reconciliation.outcome().is_settled() {
-                let mut transitions = self.transitions.lock().await;
+                let mut evidence = self.evidence.lock().await;
+                let transitions = &mut evidence.transitions;
                 let ordinal = transitions.len() as u64 + 1;
                 transitions.push(MemoryLifecycleTransition {
                     id: ExternalEffectLifecycleTransitionId::new(),
@@ -737,7 +964,8 @@ impl ExternalEffectRepository for MemoryEffectRepository {
             _ => return Err(ApplicationError::Storage("outcome is not settled".into())),
         };
         self.delivered.lock().await.push(reconciliation_id);
-        let mut transitions = self.transitions.lock().await;
+        let mut evidence = self.evidence.lock().await;
+        let transitions = &mut evidence.transitions;
         let ordinal = transitions.len() as u64 + 1;
         transitions.push(MemoryLifecycleTransition {
             id: ExternalEffectLifecycleTransitionId::new(),
@@ -770,7 +998,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         let failed_attempts = self.failed_attempts.lock().await;
         let intents = self.intents.lock().await.clone();
         let receipts = self.receipts.lock().await.clone();
-        let transitions = self.transitions.lock().await.clone();
+        let transitions = self.evidence.lock().await.transitions.clone();
         let mut candidates = intents
             .into_iter()
             .filter(|intent| intent.workspace_id() == workspace_id)
@@ -2022,7 +2250,7 @@ async fn memory_repository_rejects_conflicting_duplicate_intent_and_receipt_evid
             .await,
         Err(ApplicationError::Conflict(_))
     ));
-    assert_eq!(repository.transitions.lock().await.len(), 2);
+    assert_eq!(repository.evidence.lock().await.transitions.len(), 2);
 }
 
 #[tokio::test]
@@ -2054,7 +2282,52 @@ async fn memory_repository_rejects_cross_workspace_reconciliation_before_append(
             .is_err()
     );
     assert_eq!(repository.reconciled_count().await, 0);
-    assert_eq!(repository.transitions.lock().await.len(), 1);
+    assert_eq!(repository.evidence.lock().await.transitions.len(), 1);
+}
+
+#[tokio::test]
+async fn memory_repository_rejects_cross_workspace_authorization_before_append() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = MemoryEffectRepository::default();
+    let owner = RequestContext::new(workspace_id, actor_id);
+    let stranger = RequestContext::new(WorkspaceId::new(), actor_id);
+    let effect = performable_intent(workspace_id, actor_id);
+    repository.insert_intent(&owner, &effect).await.unwrap();
+    let request = authorization_request(&effect);
+    let decision = policy_decision(
+        &owner,
+        &request,
+        PolicyDecisionResult::Allow,
+        PolicyDecisionReason::GrantMatched,
+        Some(CapabilityGrantId::new()),
+    );
+
+    assert!(
+        repository
+            .record_authorization(&stranger, effect.id(), &decision)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .authorization_evidence(effect.id())
+            .await
+            .is_empty()
+    );
+    assert!(
+        repository
+            .authorization_transitions(effect.id())
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .find_authorization(&stranger, effect.id(), decision.id)
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
@@ -2573,6 +2846,146 @@ impl ExternalEffectAdapter for OrderedAdapter {
 }
 
 #[tokio::test]
+async fn granular_authorize_records_the_permitted_decision_and_authorized_transition() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = performable_intent(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let request = authorization_request(&effect);
+    let decision = policy_decision(
+        &context,
+        &request,
+        PolicyDecisionResult::Allow,
+        PolicyDecisionReason::GrantMatched,
+        Some(CapabilityGrantId::new()),
+    );
+    let service = ExternalEffectService::new(
+        repository.clone(),
+        AuthorizationBoundary::new(Arc::new(FixedDecisionEngine(decision.clone()))),
+        WorkerId::new(),
+    );
+
+    service.authorize(&context, &effect, request).await.unwrap();
+
+    assert_eq!(
+        repository.authorization_evidence(effect.id()).await,
+        vec![decision.clone()],
+        "the granular authorization boundary dropped the policy decision"
+    );
+    assert_eq!(
+        repository.authorization_transitions(effect.id()).await,
+        vec![(
+            EffectLifecycleStatus::Authorized,
+            "authorization_recorded".into(),
+            decision.id.to_string(),
+        )]
+    );
+}
+
+#[tokio::test]
+async fn permitted_authorization_evidence_is_never_observable_without_its_transition() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = performable_intent(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let request = authorization_request(&effect);
+    let decision = policy_decision(
+        &context,
+        &request,
+        PolicyDecisionResult::Allow,
+        PolicyDecisionReason::GrantMatched,
+        Some(CapabilityGrantId::new()),
+    );
+    let reached = Arc::new(tokio::sync::Barrier::new(2));
+    let release = Arc::new(tokio::sync::Barrier::new(2));
+    repository.pause_authorization_before_transition(reached.clone(), release.clone());
+
+    let record_repository = repository.clone();
+    let record_context = context.clone();
+    let record_decision = decision.clone();
+    let effect_id = effect.id();
+    let record = tokio::spawn(async move {
+        record_repository
+            .record_authorization(&record_context, effect_id, &record_decision)
+            .await
+    });
+    reached.wait().await;
+
+    let read_repository = repository.clone();
+    let read = tokio::spawn(async move { read_repository.authorization_state(effect_id).await });
+    tokio::task::yield_now().await;
+    assert!(
+        !read.is_finished(),
+        "authorization evidence became readable before its Authorized transition"
+    );
+
+    release.wait().await;
+    record.await.unwrap().unwrap();
+    let (decisions, transitions) = read.await.unwrap();
+    assert_eq!(decisions, vec![decision.clone()]);
+    assert_eq!(
+        transitions,
+        vec![(
+            EffectLifecycleStatus::Authorized,
+            "authorization_recorded".into(),
+            decision.id.to_string(),
+        )]
+    );
+}
+
+#[tokio::test]
+async fn granular_authorize_records_a_denial_without_an_authorized_transition() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = performable_intent(workspace_id, actor_id);
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let request = authorization_request(&effect);
+    let decision = policy_decision(
+        &context,
+        &request,
+        PolicyDecisionResult::Deny,
+        PolicyDecisionReason::ResourceMismatch,
+        None,
+    );
+    let service = ExternalEffectService::new(
+        repository.clone(),
+        AuthorizationBoundary::new(Arc::new(FixedDecisionEngine(decision.clone()))),
+        WorkerId::new(),
+    );
+
+    assert!(matches!(
+        service.authorize(&context, &effect, request).await,
+        Err(ApplicationError::Policy(message))
+            if message.contains("ResourceMismatch")
+    ));
+    assert_eq!(
+        repository.authorization_evidence(effect.id()).await,
+        vec![decision],
+        "the refused decision was dropped"
+    );
+    assert!(
+        repository
+            .authorization_transitions(effect.id())
+            .await
+            .is_empty(),
+        "a refusal was represented as Authorized"
+    );
+    assert_eq!(
+        repository
+            .find_lifecycle_status(&context, effect.id())
+            .await
+            .unwrap(),
+        Some(EffectLifecycleStatus::Prepared)
+    );
+}
+
+#[tokio::test]
 async fn granular_service_validates_then_commits_dispatching_before_calling_the_adapter() {
     let workspace_id = WorkspaceId::new();
     let actor_id = PrincipalId::new();
@@ -2636,8 +3049,8 @@ async fn granular_service_validates_then_commits_dispatching_before_calling_the_
             .find_lifecycle_status(&context, effect.id())
             .await
             .unwrap(),
-        Some(EffectLifecycleStatus::Prepared),
-        "failed validation committed a dispatch start"
+        Some(EffectLifecycleStatus::Authorized),
+        "failed validation either hid the authorization or committed a dispatch start"
     );
 
     service
@@ -2779,6 +3192,16 @@ async fn perform_commits_dispatching_after_validation_and_before_the_adapter_cal
         .perform(&context, effect, &adapter, at(20))
         .await
         .unwrap();
+    assert_eq!(
+        repository.authorization_evidence(effect_id).await.len(),
+        1,
+        "perform bypassed the granular authorization evidence boundary"
+    );
+    assert_eq!(
+        repository.authorization_transitions(effect_id).await.len(),
+        1,
+        "perform did not leave an Authorized transition"
+    );
     assert_eq!(
         repository
             .find_lifecycle_status(&context, effect_id)

@@ -6,7 +6,7 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{
     DomainError, ExternalEffectId, ExternalEffectLifecycleTransitionId, ExternalEffectReceiptId,
-    ExternalReconciliationId, Timestamp, WorkerId,
+    ExternalReconciliationId, PolicyDecision, PolicyDecisionId, Timestamp, WorkerId,
 };
 
 use crate::{ApplicationError, RequestContext};
@@ -39,6 +39,26 @@ pub trait ExternalEffectRepository: Send + Sync {
         context: &RequestContext,
         id: ExternalEffectId,
     ) -> Result<Option<ExternalEffectIntent>, ApplicationError>;
+
+    /// Record the authority decision made specifically for one external effect.
+    ///
+    /// Storage appends the `Authorized` lifecycle transition in the same
+    /// transaction when the decision permits the effect. Refusals remain
+    /// durable without that transition.
+    async fn record_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        decision: &PolicyDecision,
+    ) -> Result<(), ApplicationError>;
+
+    /// Read one effect authorization by its policy-decision identity.
+    async fn find_authorization(
+        &self,
+        context: &RequestContext,
+        effect_id: ExternalEffectId,
+        id: PolicyDecisionId,
+    ) -> Result<Option<PolicyDecision>, ApplicationError>;
 
     async fn insert_receipt(
         &self,

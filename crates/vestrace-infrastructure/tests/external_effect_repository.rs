@@ -21,6 +21,10 @@ use vestrace_domain::external_effects::{
     FaultObservation, IdempotencyProfile, ObservedEffectState, ReconciliationOutcome,
     reconcile_effect,
 };
+use vestrace_domain::{
+    AuthorizationRequest, CapabilityGrantId, PolicyDecision, PolicyDecisionId,
+    PolicyDecisionReason, PolicyDecisionResult, PolicyId, PolicyInputState,
+};
 use vestrace_domain::{Capability, PrincipalId, RiskCategory, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{PgExternalEffectRepository, PgStore};
 
@@ -360,6 +364,40 @@ fn intent() -> ExternalEffectIntent {
 /// id alone across every tenant.
 fn context_for(workspace_id: WorkspaceId) -> RequestContext {
     RequestContext::new(workspace_id, PrincipalId::new())
+}
+
+fn authorization_decision(
+    context: &RequestContext,
+    effect: &ExternalEffectIntent,
+    result: PolicyDecisionResult,
+    reason: PolicyDecisionReason,
+    matched_grant_id: Option<CapabilityGrantId>,
+) -> PolicyDecision {
+    let request = AuthorizationRequest::new(
+        effect.required_capability(),
+        effect.operation().to_owned(),
+        effect.target().to_owned(),
+        effect.risk(),
+    );
+    PolicyDecision {
+        id: PolicyDecisionId::new(),
+        policy_id: Some(PolicyId::new()),
+        policy_version: "policy-v7".into(),
+        workspace_id: context.workspace_id,
+        subject_id: context.principal_id,
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        resource_scope: request.resource_scope.clone(),
+        result,
+        reason,
+        input_state: PolicyInputState::from_request(
+            context.workspace_id,
+            context.principal_id,
+            &request,
+        ),
+        matched_grant_id,
+        decided_at: Utc.timestamp_opt(17, 123_456_789).single().unwrap(),
+    }
 }
 
 fn unknown_receipt(intent: &ExternalEffectIntent) -> ExternalEffectReceipt {
@@ -918,6 +956,193 @@ async fn external_effect_repository_round_trips_unknown_and_reconciliation_evide
             .await
             .unwrap(),
         Some(reconciliation)
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn permitted_external_effect_authorization_round_trips_and_names_its_transition(
+    pool: PgPool,
+) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    let decision = authorization_decision(
+        &context,
+        &effect,
+        PolicyDecisionResult::Allow,
+        PolicyDecisionReason::GrantMatched,
+        Some(CapabilityGrantId::new()),
+    );
+    repository.insert_intent(&context, &effect).await.unwrap();
+
+    repository
+        .record_authorization(&context, effect.id(), &decision)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .find_authorization(&context, effect.id(), decision.id)
+            .await
+            .unwrap(),
+        Some(decision.clone())
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT status, cause, cause_ref \
+             FROM external_effect_lifecycle_transitions \
+             WHERE effect_id = $1 AND workspace_id = $2 \
+             ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        (
+            "authorized".into(),
+            "authorization_recorded".into(),
+            decision.id.to_string(),
+        )
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn refused_external_effect_authorization_round_trips_without_authorized_transition(
+    pool: PgPool,
+) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    let decision = authorization_decision(
+        &context,
+        &effect,
+        PolicyDecisionResult::Deny,
+        PolicyDecisionReason::ResourceMismatch,
+        None,
+    );
+    repository.insert_intent(&context, &effect).await.unwrap();
+
+    repository
+        .record_authorization(&context, effect.id(), &decision)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .find_authorization(&context, effect.id(), decision.id)
+            .await
+            .unwrap(),
+        Some(decision)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM external_effect_lifecycle_transitions \
+             WHERE effect_id = $1 AND workspace_id = $2 \
+               AND status = 'authorized'",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0,
+        "a refusal was represented as Authorized"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn authorized_lifecycle_status_refuses_every_unqualified_cause(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+
+    for cause in [
+        "intent_recorded",
+        "dispatch_started",
+        "receipt_recorded",
+        "dispatch_lost",
+        "outcome_settled",
+        "outcome_delivered",
+    ] {
+        let inserted = sqlx::query(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             VALUES ($1, $2, 'authorized', $3, $4, $5)",
+        )
+        .bind(effect.id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(cause)
+        .bind(PolicyDecisionId::new().to_string())
+        .bind(at(17))
+        .execute(&pool)
+        .await;
+        assert!(
+            inserted.is_err(),
+            "an Authorized transition accepted the unqualified cause {cause}"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn external_effect_authorization_cannot_cross_a_workspace_boundary(pool: PgPool) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
+    let effect = intent();
+    let owner = context_for(effect.workspace_id());
+    let stranger = context_for(WorkspaceId::new());
+    let decision = authorization_decision(
+        &owner,
+        &effect,
+        PolicyDecisionResult::Allow,
+        PolicyDecisionReason::GrantMatched,
+        Some(CapabilityGrantId::new()),
+    );
+    repository.insert_intent(&owner, &effect).await.unwrap();
+
+    let payload = serde_json::to_value(&decision).unwrap();
+    let filed_from_another_workspace = sqlx::query(
+        "INSERT INTO external_effect_authorizations ( \
+             id, effect_id, workspace_id, policy_id, policy_version, subject_id, \
+             capability, operation, resource_scope, result, reason, input_state, \
+             matched_grant_id, decided_at, payload \
+         ) VALUES ( \
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15 \
+         )",
+    )
+    .bind(decision.id.as_uuid())
+    .bind(effect.id().as_uuid())
+    .bind(stranger.workspace_id.as_uuid())
+    .bind(decision.policy_id.map(|id| id.as_uuid()))
+    .bind(&decision.policy_version)
+    .bind(decision.subject_id.as_uuid())
+    .bind(decision.capability.to_string())
+    .bind(&decision.operation)
+    .bind(&decision.resource_scope)
+    .bind("allow")
+    .bind("grant_matched")
+    .bind(serde_json::to_value(&decision.input_state).unwrap())
+    .bind(decision.matched_grant_id.map(|id| id.as_uuid()))
+    .bind(decision.decided_at)
+    .bind(payload)
+    .execute(&pool)
+    .await;
+    assert!(
+        filed_from_another_workspace.is_err(),
+        "the composite effect/workspace foreign key accepted foreign evidence"
+    );
+
+    repository
+        .record_authorization(&owner, effect.id(), &decision)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .find_authorization(&stranger, effect.id(), decision.id)
+            .await
+            .unwrap(),
+        None,
+        "the repository read an authorization through another workspace"
     );
 }
 

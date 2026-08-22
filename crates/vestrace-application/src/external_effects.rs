@@ -43,10 +43,24 @@ impl ExternalEffectService {
         intent: &ExternalEffectIntent,
         request: AuthorizationRequest,
     ) -> Result<AuthorizedExternalEffect, ApplicationError> {
-        let decision = self.authorization.require(context, request).await?;
-        intent
-            .authorize(&EffectAuthorization::from_policy_decision(&decision))
-            .map_err(ApplicationError::from)
+        let decision = self.authorization.evaluate(context, request).await?;
+        let authorized = if decision.is_allowed() {
+            Some(
+                intent
+                    .authorize(&EffectAuthorization::from_policy_decision(&decision))
+                    .map_err(ApplicationError::from)?,
+            )
+        } else {
+            None
+        };
+
+        self.effects
+            .record_authorization(context, intent.id(), &decision)
+            .await?;
+
+        authorized.ok_or_else(|| {
+            ApplicationError::Policy(format!("authorization denied: {:?}", decision.reason))
+        })
     }
 
     /// Cross the durable boundary shared by composed and granular dispatches.

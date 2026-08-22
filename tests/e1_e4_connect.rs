@@ -101,20 +101,21 @@ fn authorization(effect: &ExternalEffectIntent) -> EffectAuthorization {
     )
 }
 
-/// Supply the service's durable dependency without making this denial test
-/// depend on a live database. Authorization must fail before dispatch can ask
-/// the lazy pool for a connection.
-fn unused_external_effect_repository() -> SharedExternalEffectRepository {
+/// Supply an unavailable durable dependency without making this denial test
+/// depend on a live database. A denial may no longer be returned before the
+/// repository is asked: doing so would drop the refusal evidence.
+fn unavailable_external_effect_repository() -> SharedExternalEffectRepository {
     let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(50))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
         .expect("the fixed unused PostgreSQL URL is valid");
     Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(pool)))
 }
 
 #[tokio::test]
-async fn e2_application_external_effects_use_the_shared_default_deny_boundary() {
+async fn e2_application_external_effects_do_not_report_a_denial_they_could_not_record() {
     let service = ExternalEffectService::new(
-        unused_external_effect_repository(),
+        unavailable_external_effect_repository(),
         AuthorizationBoundary::new(Arc::new(DenyAllPolicyEngine)),
         vestrace_domain::id::WorkerId::new(),
     );
@@ -131,7 +132,7 @@ async fn e2_application_external_effects_use_the_shared_default_deny_boundary() 
         .authorize(&context, &effect, request)
         .await
         .unwrap_err();
-    assert!(matches!(error, ApplicationError::Policy(message) if message.contains("DefaultDeny")));
+    assert!(matches!(error, ApplicationError::Storage(_)));
 }
 
 struct FakeAdapter {
