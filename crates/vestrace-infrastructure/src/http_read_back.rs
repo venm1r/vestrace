@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use vestrace_application::{ApplicationError, ExternalEffectReadBackAdapter};
 use vestrace_domain::DomainError;
 use vestrace_domain::external_effects::{
@@ -52,6 +52,20 @@ struct ReadBackResponse {
     evidence_strength: String,
 }
 
+/// Provider evidence already present in the receipt, named by the matching
+/// rung of the reconciliation ladder rather than by Vestrace's storage fields.
+/// An absent value is omitted: sending a default would claim evidence the
+/// provider never gave us.
+#[derive(Serialize)]
+struct ReadBackEvidence<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact_external_resource_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    etag_version_revision: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_hash: Option<&'a str>,
+}
+
 fn parse_evidence_strength(value: &str) -> Result<EvidenceStrength, ApplicationError> {
     match value {
         "response_digest" => Ok(EvidenceStrength::ResponseDigest),
@@ -73,12 +87,19 @@ impl ExternalEffectReadBackAdapter for HttpExternalEffectReadBackAdapter {
     async fn observe(
         &self,
         intent: &ExternalEffectIntent,
-        _receipt: Option<&ExternalEffectReceipt>,
+        receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
         let url = format!("{}/{}", self.endpoint, intent.id());
+        let evidence = ReadBackEvidence {
+            exact_external_resource_id: receipt
+                .and_then(ExternalEffectReceipt::external_resource_id),
+            etag_version_revision: receipt.and_then(ExternalEffectReceipt::external_version),
+            content_hash: receipt.and_then(ExternalEffectReceipt::response_digest),
+        };
         let response = self
             .client
             .get(&url)
+            .query(&evidence)
             .header("x-vestrace-adapter", intent.adapter())
             .send()
             .await
@@ -112,6 +133,9 @@ impl ExternalEffectReadBackAdapter for HttpExternalEffectReadBackAdapter {
             .into());
         }
 
+        // The outbound identifiers are lookup hints, not proof of which lookup
+        // the provider performed. Only the provider's answer can state the
+        // strength of the observation we record.
         let evidence_strength = parse_evidence_strength(&body.evidence_strength)?;
         Ok(vec![ObservedEffectState::new(
             evidence_strength,

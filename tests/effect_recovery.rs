@@ -85,6 +85,19 @@ fn unknown_receipt(intent: &ExternalEffectIntent) -> ExternalEffectReceipt {
     .unwrap()
 }
 
+fn receipt_with_provider_evidence(
+    intent: &ExternalEffectIntent,
+    external_resource_id: Option<&str>,
+    external_version: Option<&str>,
+    response_digest: Option<&str>,
+) -> ExternalEffectReceipt {
+    let mut payload = serde_json::to_value(unknown_receipt(intent)).unwrap();
+    payload["external_resource_id"] = serde_json::json!(external_resource_id);
+    payload["external_version"] = serde_json::json!(external_version);
+    payload["response_digest"] = serde_json::json!(response_digest);
+    serde_json::from_value(payload).unwrap()
+}
+
 fn receipt_with_status(
     intent: &ExternalEffectIntent,
     status: EffectLifecycleStatus,
@@ -1026,7 +1039,7 @@ async fn inconclusive_retry_uses_its_own_cutoff_not_the_failed_attempt_cutoff() 
 struct MemoryReadBack {
     endpoint: &'static str,
     requests: Arc<Mutex<Vec<&'static str>>>,
-    receipts: Arc<Mutex<Vec<Option<ExternalEffectReceiptId>>>>,
+    receipts: Arc<Mutex<Vec<Option<ExternalEffectReceipt>>>>,
     observations: Vec<ObservedEffectState>,
 }
 
@@ -1078,10 +1091,7 @@ impl ExternalEffectReadBackAdapter for MemoryReadBack {
         receipt: Option<&ExternalEffectReceipt>,
     ) -> Result<Vec<ObservedEffectState>, ApplicationError> {
         self.requests.lock().await.push(self.endpoint);
-        self.receipts
-            .lock()
-            .await
-            .push(receipt.map(ExternalEffectReceipt::id));
+        self.receipts.lock().await.push(receipt.cloned());
         Ok(self.observations.clone())
     }
 }
@@ -1170,6 +1180,52 @@ async fn recovery_asks_only_the_adapter_named_by_the_effect() {
     assert_eq!(
         report.reconciliations()[0].observed_state_ref(),
         "external:second"
+    );
+}
+
+#[tokio::test]
+async fn recovery_records_the_provider_strength_even_when_the_receipt_has_stronger_evidence() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let receipt = receipt_with_provider_evidence(
+        &effect,
+        Some("provider-order-9001"),
+        Some("v17"),
+        Some("sha256:deadbeef"),
+    );
+    repository
+        .seed(ExternalEffectRecoveryCandidate::new(effect, receipt.clone()).unwrap())
+        .await;
+    let supplied_receipts = Arc::new(Mutex::new(Vec::new()));
+    let read_back = Arc::new(MemoryReadBack {
+        endpoint: "https://webhook.effects.test/read-back",
+        requests: Arc::new(Mutex::new(Vec::new())),
+        receipts: Arc::clone(&supplied_receipts),
+        observations: vec![ObservedEffectState::new(
+            EvidenceStrength::MarkerSearch,
+            Some(true),
+            "external:found-by-marker",
+            vec!["evidence:marker-search".into()],
+        )],
+    });
+    let service = ExternalEffectRecoveryService::new(
+        repository.clone(),
+        read_back_registry("webhook-v1", read_back),
+    );
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    let report = service.sweep(&context, at(30)).await.unwrap();
+
+    assert_eq!(&*supplied_receipts.lock().await, &[Some(receipt)]);
+    assert_eq!(
+        report.reconciliations()[0].evidence_strength(),
+        EvidenceStrength::MarkerSearch
+    );
+    assert_eq!(
+        repository.reconciled.lock().await[0].evidence_strength(),
+        EvidenceStrength::MarkerSearch
     );
 }
 
