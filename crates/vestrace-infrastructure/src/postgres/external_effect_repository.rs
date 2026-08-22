@@ -17,6 +17,67 @@ use vestrace_domain::{
 
 use super::PgStore;
 
+// The recovery query is deliberately one shared artifact: planner evidence must
+// explain the same CTE, joins, predicates, union and ordering production runs.
+const RECONCILIATION_CANDIDATES_SQL: &str = r#"WITH candidates AS (
+    SELECT i.id AS intent_id, i.workspace_id, i.adapter, i.payload AS intent_payload,
+           r.id AS receipt_id, r.effect_id AS receipt_effect_id, r.outcome_status,
+           r.payload AS receipt_payload, NULL::UUID AS dispatch_transition_id,
+           FALSE AS dispatch_already_adopted, r.created_at AS candidate_at
+    FROM external_effect_receipts r
+    JOIN external_effect_intents i ON i.id = r.effect_id AND i.workspace_id = r.workspace_id
+    LEFT JOIN LATERAL (
+        SELECT x.outcome, x.reconciled_at FROM external_reconciliations x
+        WHERE x.effect_id = i.id AND x.receipt_id = r.id AND x.workspace_id = i.workspace_id
+        ORDER BY x.reconciled_at DESC, x.id DESC LIMIT 1
+    ) last ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT attempt.attempted_at FROM external_effect_recovery_attempts attempt
+        WHERE attempt.effect_id = i.id AND attempt.workspace_id = i.workspace_id
+        ORDER BY attempt.attempted_at DESC, attempt.id DESC LIMIT 1
+    ) failed ON TRUE
+    WHERE i.workspace_id = $1 AND r.workspace_id = $1
+      AND r.outcome_status IN ('unknown', 'acknowledged')
+      AND (last.outcome IS NULL OR (last.outcome <> ALL($2) AND last.reconciled_at < $3))
+      AND (failed.attempted_at IS NULL
+           OR (last.reconciled_at IS NOT NULL AND last.reconciled_at > failed.attempted_at)
+           OR failed.attempted_at < $4)
+    UNION ALL
+    SELECT i.id AS intent_id, i.workspace_id, i.adapter, i.payload AS intent_payload,
+           NULL::UUID AS receipt_id, NULL::UUID AS receipt_effect_id,
+           NULL::TEXT AS outcome_status, NULL::JSONB AS receipt_payload,
+           CASE WHEN dispatch.cause = 'dispatch_lost' THEN dispatch.cause_ref::UUID ELSE dispatch.id END AS dispatch_transition_id,
+           dispatch.cause = 'dispatch_lost' AS dispatch_already_adopted,
+           dispatch.recorded_at AS candidate_at
+    FROM external_effect_lifecycle_transitions dispatch
+    JOIN external_effect_intents i ON i.id = dispatch.effect_id AND i.workspace_id = dispatch.workspace_id
+    LEFT JOIN LATERAL (
+        SELECT x.outcome, x.reconciled_at FROM external_reconciliations x
+        WHERE x.effect_id = i.id AND x.receipt_id IS NULL AND x.workspace_id = i.workspace_id
+        ORDER BY x.reconciled_at DESC, x.id DESC LIMIT 1
+    ) last ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT attempt.attempted_at FROM external_effect_recovery_attempts attempt
+        WHERE attempt.effect_id = i.id AND attempt.workspace_id = i.workspace_id
+        ORDER BY attempt.attempted_at DESC, attempt.id DESC LIMIT 1
+    ) failed ON TRUE
+    WHERE dispatch.workspace_id = $1 AND i.workspace_id = $1
+      AND ((dispatch.status = 'dispatching' AND dispatch.dispatch_expires_at IS NOT NULL AND dispatch.dispatch_expires_at < $5)
+           OR (dispatch.status = 'unknown' AND dispatch.cause = 'dispatch_lost' AND dispatch.recorded_at < $3))
+      AND NOT EXISTS (SELECT 1 FROM external_effect_receipts r WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id)
+      AND NOT EXISTS (SELECT 1 FROM external_effect_lifecycle_transitions newer WHERE newer.effect_id = dispatch.effect_id AND newer.workspace_id = dispatch.workspace_id AND newer.ordinal > dispatch.ordinal)
+      AND (last.outcome IS NULL OR (last.outcome <> ALL($2) AND last.reconciled_at < $3))
+      AND (failed.attempted_at IS NULL
+           OR (last.reconciled_at IS NOT NULL AND last.reconciled_at > failed.attempted_at)
+           OR failed.attempted_at < $4)
+)
+SELECT intent_id, workspace_id, adapter, intent_payload, receipt_id,
+       receipt_effect_id, outcome_status, receipt_payload, dispatch_transition_id,
+       dispatch_already_adopted
+FROM candidates
+ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST
+LIMIT $6"#;
+
 /// Durable external-effect intents, receipts and reconciliations.
 ///
 /// # Why this holds a store and not a pool
@@ -860,139 +921,16 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .await
             .map_err(storage_error)?;
 
-        let rows = sqlx::query_as::<_, RecoveryCandidateRow>(
-            "WITH candidates AS (
-                 SELECT i.id AS intent_id,
-                        i.workspace_id,
-                        i.adapter,
-                        i.payload AS intent_payload,
-                        r.id AS receipt_id,
-                        r.effect_id AS receipt_effect_id,
-                        r.outcome_status,
-                        r.payload AS receipt_payload,
-                        NULL::UUID AS dispatch_transition_id,
-                        FALSE AS dispatch_already_adopted,
-                        r.created_at AS candidate_at
-                 FROM external_effect_receipts r
-                 JOIN external_effect_intents i
-                   ON i.id = r.effect_id AND i.workspace_id = r.workspace_id
-                 LEFT JOIN LATERAL (
-                     SELECT x.outcome, x.reconciled_at
-                     FROM external_reconciliations x
-                     WHERE x.effect_id = i.id
-                       AND x.receipt_id = r.id
-                       AND x.workspace_id = i.workspace_id
-                     ORDER BY x.reconciled_at DESC, x.id DESC
-                     LIMIT 1
-                 ) last ON TRUE
-                 LEFT JOIN LATERAL (
-                     SELECT attempt.attempted_at
-                     FROM external_effect_recovery_attempts attempt
-                     WHERE attempt.effect_id = i.id
-                       AND attempt.workspace_id = i.workspace_id
-                     ORDER BY attempt.attempted_at DESC, attempt.id DESC
-                     LIMIT 1
-                 ) failed ON TRUE
-                 WHERE i.workspace_id = $1
-                   AND r.workspace_id = $1
-                   AND r.outcome_status = 'unknown'
-                   AND (
-                         last.outcome IS NULL
-                      OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
-                   )
-                   AND (
-                         failed.attempted_at IS NULL
-                      OR (last.reconciled_at IS NOT NULL
-                          AND last.reconciled_at > failed.attempted_at)
-                      OR failed.attempted_at < $4
-                   )
-
-                 UNION ALL
-
-                 SELECT i.id AS intent_id,
-                        i.workspace_id,
-                        i.adapter,
-                        i.payload AS intent_payload,
-                        NULL::UUID AS receipt_id,
-                        NULL::UUID AS receipt_effect_id,
-                        NULL::TEXT AS outcome_status,
-                        NULL::JSONB AS receipt_payload,
-                        CASE
-                            WHEN dispatch.cause = 'dispatch_lost'
-                                THEN dispatch.cause_ref::UUID
-                            ELSE dispatch.id
-                        END AS dispatch_transition_id,
-                        dispatch.cause = 'dispatch_lost' AS dispatch_already_adopted,
-                        dispatch.recorded_at AS candidate_at
-                 FROM external_effect_lifecycle_transitions dispatch
-                 JOIN external_effect_intents i
-                   ON i.id = dispatch.effect_id AND i.workspace_id = dispatch.workspace_id
-                 LEFT JOIN LATERAL (
-                     SELECT x.outcome, x.reconciled_at
-                     FROM external_reconciliations x
-                     WHERE x.effect_id = i.id
-                       AND x.receipt_id IS NULL
-                       AND x.workspace_id = i.workspace_id
-                     ORDER BY x.reconciled_at DESC, x.id DESC
-                     LIMIT 1
-                 ) last ON TRUE
-                 LEFT JOIN LATERAL (
-                     SELECT attempt.attempted_at
-                     FROM external_effect_recovery_attempts attempt
-                     WHERE attempt.effect_id = i.id
-                       AND attempt.workspace_id = i.workspace_id
-                     ORDER BY attempt.attempted_at DESC, attempt.id DESC
-                     LIMIT 1
-                 ) failed ON TRUE
-                 WHERE dispatch.workspace_id = $1
-                   AND i.workspace_id = $1
-                   AND (
-                        (dispatch.status = 'dispatching'
-                         AND dispatch.dispatch_expires_at IS NOT NULL
-                         AND dispatch.dispatch_expires_at < $5)
-                     OR (dispatch.status = 'unknown'
-                         AND dispatch.cause = 'dispatch_lost'
-                         AND dispatch.recorded_at < $3)
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM external_effect_receipts r
-                       WHERE r.effect_id = i.id AND r.workspace_id = i.workspace_id
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM external_effect_lifecycle_transitions newer
-                       WHERE newer.effect_id = dispatch.effect_id
-                         AND newer.workspace_id = dispatch.workspace_id
-                         AND newer.ordinal > dispatch.ordinal
-                   )
-                   AND (
-                         last.outcome IS NULL
-                      OR (last.outcome <> ALL($2) AND last.reconciled_at < $3)
-                   )
-                   AND (
-                         failed.attempted_at IS NULL
-                      OR (last.reconciled_at IS NOT NULL
-                          AND last.reconciled_at > failed.attempted_at)
-                      OR failed.attempted_at < $4
-                   )
-             )
-             SELECT intent_id, workspace_id, adapter, intent_payload,
-                    receipt_id, receipt_effect_id, outcome_status, receipt_payload,
-                    dispatch_transition_id, dispatch_already_adopted
-             FROM candidates
-             -- Oldest-first is the fairness policy once this set is bounded:
-             -- a sustained backlog must not starve the effects waiting longest.
-             ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST
-             LIMIT $6",
-        )
-        .bind(context.workspace_id.as_uuid())
-        .bind(ReconciliationOutcome::settled_names())
-        .bind(retry_unsettled_before)
-        .bind(retry_failed_before)
-        .bind(dispatch_expired_before)
-        .bind(i64::from(limit))
-        .fetch_all(scoped.connection())
-        .await
-        .map_err(storage_error)?;
+        let rows = sqlx::query_as::<_, RecoveryCandidateRow>(RECONCILIATION_CANDIDATES_SQL)
+            .bind(context.workspace_id.as_uuid())
+            .bind(ReconciliationOutcome::settled_names())
+            .bind(retry_unsettled_before)
+            .bind(retry_failed_before)
+            .bind(dispatch_expired_before)
+            .bind(i64::from(limit))
+            .fetch_all(scoped.connection())
+            .await
+            .map_err(storage_error)?;
 
         scoped.commit().await.map_err(storage_error)?;
 
@@ -1042,5 +980,139 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod planner_tests {
+    use super::RECONCILIATION_CANDIDATES_SQL;
+    use sqlx::PgPool;
+    use vestrace_domain::external_effects::ReconciliationOutcome;
+    use vestrace_domain::time::now;
+
+    /// Whether the plan reaches `external_effect_receipts` through the widened
+    /// partial index.
+    ///
+    /// # Why the two names are not looked for on one node
+    ///
+    /// They were, and the assertion could never hold. An index scan carries both
+    /// `Relation Name` and `Index Name`, but a **bitmap** scan splits them: the
+    /// `Bitmap Heap Scan` names the relation and its child `Bitmap Index Scan`
+    /// names the index. PostgreSQL chose the bitmap shape here, so a conjunction
+    /// on one node reported "no index" about a plan whose first line is
+    /// `Index Name: idx_external_effect_receipts_reconciliation_candidates`.
+    ///
+    /// So the relation is found first and the index looked for beneath it, which
+    /// is where the planner actually puts it. Matching the index name alone
+    /// would also pass today — the name belongs to one table — but it would stop
+    /// checking the thing the test is named for the moment an index of that name
+    /// existed elsewhere.
+    fn plan_uses_receipt_index(value: &serde_json::Value) -> bool {
+        fn names_the_index(value: &serde_json::Value) -> bool {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    fields
+                        .get("Index Name")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|index| {
+                            index == "idx_external_effect_receipts_reconciliation_candidates"
+                        })
+                        || fields.values().any(names_the_index)
+                }
+                serde_json::Value::Array(values) => values.iter().any(names_the_index),
+                _ => false,
+            }
+        }
+
+        match value {
+            serde_json::Value::Object(fields) => {
+                let reaches_receipts = fields
+                    .get("Relation Name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|relation| relation == "external_effect_receipts")
+                    && names_the_index(value);
+                reaches_receipts || fields.values().any(plan_uses_receipt_index)
+            }
+            serde_json::Value::Array(values) => values.iter().any(plan_uses_receipt_index),
+            _ => false,
+        }
+    }
+
+    fn has_receipt_seq_scan(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                let is_receipt_scan = fields
+                    .get("Node Type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|node| node == "Seq Scan")
+                    && fields
+                        .get("Relation Name")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|relation| relation == "external_effect_receipts");
+                is_receipt_scan || fields.values().any(has_receipt_seq_scan)
+            }
+            serde_json::Value::Array(values) => values.iter().any(has_receipt_seq_scan),
+            _ => false,
+        }
+    }
+
+    /// Mutant caught: changing the actual recovery CTE so its receipt branch
+    /// cannot use the widened partial index forces a workspace receipt scan.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn recovery_candidate_query_uses_the_widened_receipt_partial_index(pool: PgPool) {
+        let workspace_id = uuid::Uuid::now_v7();
+        sqlx::query("SELECT set_config('vestrace.workspace_id', $1, false)")
+            .bind(workspace_id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "WITH inserted AS (
+                 INSERT INTO external_effect_intents (id, workspace_id, adapter, payload)
+                 SELECT gen_random_uuid(), $1, 'planner', '{}'::JSONB
+                 FROM generate_series(1, 4000)
+                 RETURNING id, workspace_id
+             )
+             INSERT INTO external_effect_receipts
+                 (id, effect_id, workspace_id, outcome_status, payload, created_at)
+             SELECT gen_random_uuid(), id, workspace_id,
+                    CASE WHEN row_number() OVER () % 8 = 0 THEN 'acknowledged' ELSE 'failed' END,
+                    '{}'::JSONB, NOW()
+             FROM inserted",
+        )
+        .bind(workspace_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("ANALYZE external_effect_receipts")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ANALYZE external_effect_intents")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let cutoff = now();
+        let plan = sqlx::query_scalar::<_, serde_json::Value>(&format!(
+            "EXPLAIN (FORMAT JSON, COSTS OFF) {RECONCILIATION_CANDIDATES_SQL}"
+        ))
+        .bind(workspace_id)
+        .bind(ReconciliationOutcome::settled_names())
+        .bind(cutoff)
+        .bind(cutoff)
+        .bind(cutoff)
+        .bind(8_i64)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            plan_uses_receipt_index(&plan),
+            "the exact recovery query did not use its receipt partial index: {plan}"
+        );
+        assert!(
+            !has_receipt_seq_scan(&plan),
+            "the exact recovery query scanned external_effect_receipts: {plan}"
+        );
     }
 }

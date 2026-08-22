@@ -884,7 +884,10 @@ impl ExternalEffectReceipt {
     }
 
     pub fn requires_reconciliation(&self) -> bool {
-        self.outcome_status == EffectLifecycleStatus::Unknown
+        matches!(
+            self.outcome_status,
+            EffectLifecycleStatus::Acknowledged | EffectLifecycleStatus::Unknown
+        )
     }
 
     pub fn is_business_confirmation(&self) -> bool {

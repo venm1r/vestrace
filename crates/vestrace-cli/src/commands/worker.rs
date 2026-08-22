@@ -10,6 +10,7 @@ use vestrace_application::run::{
 use vestrace_application::{
     ExternalEffectRepository, OutboxDispatcher, QualificationRuntime, RequestContext,
 };
+use vestrace_domain::external_effects::ExternalEffectAdapter;
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
@@ -425,6 +426,20 @@ fn build_effect_read_back_registry(
 ) -> anyhow::Result<vestrace_application::ExternalEffectReadBackRegistry> {
     let mut adapters = Vec::with_capacity(configured.len());
     for adapter in configured {
+        // Recovery must use the same descriptor the configured dispatch adapter
+        // publishes; copying a capability bit here would create a second truth
+        // that could drift from the adapter we actually send through.
+        let dispatch = vestrace_infrastructure::HttpWebhookEffectAdapter::new(
+            &adapter.name,
+            &adapter.dispatch_url,
+            &adapter.read_back_url,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "effect adapter `{}` is not configurable: {error}",
+                adapter.name
+            )
+        })?;
         let read_back =
             vestrace_infrastructure::HttpExternalEffectReadBackAdapter::new(&adapter.read_back_url)
                 .map_err(|error| {
@@ -435,6 +450,7 @@ fn build_effect_read_back_registry(
                 })?;
         adapters.push((
             adapter.name.clone(),
+            dispatch.descriptor().clone(),
             Arc::new(read_back) as Arc<dyn vestrace_application::ExternalEffectReadBackAdapter>,
         ));
     }

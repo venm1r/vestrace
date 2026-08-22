@@ -4,7 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use vestrace_domain::Timestamp;
 use vestrace_domain::external_effects::{
-    ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation, ObservedEffectState,
+    ExternalEffectAdapterDescriptor, ExternalEffectIntent, ExternalEffectReceipt,
+    ExternalReconciliation, ObservedEffectState,
 };
 use vestrace_domain::id::AgentRunId;
 
@@ -33,6 +34,8 @@ pub trait ExternalEffectReadBackAdapter: Send + Sync {
 pub enum ExternalEffectRecoveryError {
     #[error("no external effect read-back route is registered for adapter `{adapter}`")]
     MissingReadBackRoute { adapter: String },
+    #[error("external effect read-back route for adapter `{adapter}` does not support read-back")]
+    ReadBackUnsupported { adapter: String },
     #[error(transparent)]
     ReadBack(ApplicationError),
     #[error(transparent)]
@@ -49,23 +52,46 @@ pub enum ExternalEffectRecoveryError {
 /// name beside the endpoint makes an absent route explicit and refuses the
 /// equally unsafe ambiguity of two endpoints claiming the same name.
 pub struct ExternalEffectReadBackRegistry {
-    adapters: BTreeMap<String, Arc<dyn ExternalEffectReadBackAdapter>>,
+    adapters: BTreeMap<String, ExternalEffectReadBackRoute>,
+}
+
+struct ExternalEffectReadBackRoute {
+    descriptor: ExternalEffectAdapterDescriptor,
+    adapter: Arc<dyn ExternalEffectReadBackAdapter>,
 }
 
 impl ExternalEffectReadBackRegistry {
     pub fn new(
-        adapters: impl IntoIterator<Item = (String, Arc<dyn ExternalEffectReadBackAdapter>)>,
+        adapters: impl IntoIterator<
+            Item = (
+                String,
+                ExternalEffectAdapterDescriptor,
+                Arc<dyn ExternalEffectReadBackAdapter>,
+            ),
+        >,
     ) -> Result<Self, ApplicationError> {
         let mut registry = Self {
             adapters: BTreeMap::new(),
         };
-        for (name, adapter) in adapters {
+        for (name, descriptor, adapter) in adapters {
             if registry.adapters.contains_key(&name) {
                 return Err(ApplicationError::InvalidConfiguration(format!(
                     "external effect read-back adapter name `{name}` is registered more than once"
                 )));
             }
-            registry.adapters.insert(name, adapter);
+            if descriptor.name() != name {
+                return Err(ApplicationError::InvalidConfiguration(format!(
+                    "external effect read-back route name `{name}` does not match descriptor `{}`",
+                    descriptor.name()
+                )));
+            }
+            registry.adapters.insert(
+                name,
+                ExternalEffectReadBackRoute {
+                    descriptor,
+                    adapter,
+                },
+            );
         }
         Ok(registry)
     }
@@ -82,15 +108,27 @@ impl ExternalEffectReadBackRegistry {
         self.adapters.keys().map(String::as_str)
     }
 
+    fn is_actionable(&self, adapter: &str) -> bool {
+        self.adapters
+            .get(adapter)
+            .is_some_and(|route| route.descriptor.supports_read_back())
+    }
+
     fn resolve(
         &self,
         adapter: &str,
     ) -> Result<&Arc<dyn ExternalEffectReadBackAdapter>, ExternalEffectRecoveryError> {
-        self.adapters.get(adapter).ok_or_else(|| {
+        let route = self.adapters.get(adapter).ok_or_else(|| {
             ExternalEffectRecoveryError::MissingReadBackRoute {
                 adapter: adapter.to_owned(),
             }
-        })
+        })?;
+        if !route.descriptor.supports_read_back() {
+            return Err(ExternalEffectRecoveryError::ReadBackUnsupported {
+                adapter: adapter.to_owned(),
+            });
+        }
+        Ok(&route.adapter)
     }
 }
 
@@ -241,6 +279,32 @@ impl ExternalEffectRecoveryService {
         dispatch_expired_before: Timestamp,
         limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
+        Ok(self
+            .discover_raw(
+                context,
+                retry_unsettled_before,
+                retry_failed_before,
+                dispatch_expired_before,
+                limit,
+            )
+            .await?
+            .into_iter()
+            .filter(|candidate| self.read_backs.is_actionable(candidate.intent().adapter()))
+            .collect())
+    }
+
+    /// The persisted work set. `run` deliberately retains unsupported and
+    /// missing routes here so its existing failed-attempt record yields their
+    /// bounded-sweep place; public discovery exposes only candidates a caller
+    /// could actually ask right now.
+    async fn discover_raw(
+        &self,
+        context: &RequestContext,
+        retry_unsettled_before: Timestamp,
+        retry_failed_before: Timestamp,
+        dispatch_expired_before: Timestamp,
+        limit: u32,
+    ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         self.repository
             .find_reconciliation_candidates(
                 context,
@@ -339,7 +403,7 @@ impl ExternalEffectRecoveryService {
         limit: u32,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
         let candidates = self
-            .discover(
+            .discover_raw(
                 context,
                 retry_unsettled_before,
                 retry_failed_before,

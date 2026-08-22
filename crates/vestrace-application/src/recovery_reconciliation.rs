@@ -31,7 +31,7 @@ impl ExternalEffectReconciliationService {
         }
         if receipt.is_some_and(|receipt| !receipt.requires_reconciliation()) {
             return Err(DomainError::PolicyViolation(
-                "external effect reconciliation requires an UNKNOWN receipt".into(),
+                "external effect reconciliation requires an acknowledged or unknown receipt".into(),
             )
             .into());
         }

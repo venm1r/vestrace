@@ -438,8 +438,15 @@ async fn an_acknowledged_receipt_with_no_reconciliation_is_reachable_by_effect_i
         .expect("a persisted intent is observable");
 
     assert!(observed.receipt_persisted);
-    assert!(!observed.reconciliation_started);
     assert_eq!(observed.status, EffectLifecycleStatus::Acknowledged);
+    // This asserted `!reconciliation_started` until an acknowledged receipt
+    // stopped being treated as a settled outcome. §34 of the external-effects
+    // contract forbids `HTTP success == business outcome`, so an acknowledged
+    // effect with no reconciliation is now a sweep candidate, and `observe`
+    // reports that it is enrolled — which is a change in what the stored state
+    // means, not in what `observe` reads. Inverted rather than deleted, so the
+    // property stays pinned from the side it now falls on.
+    assert!(observed.reconciliation_started);
 
     fixture.shutdown().await;
 }

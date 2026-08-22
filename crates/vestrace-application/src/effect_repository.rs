@@ -263,7 +263,7 @@ impl ExternalEffectRecoveryCandidate {
             .is_some_and(|receipt| !receipt.requires_reconciliation())
         {
             return Err(DomainError::PolicyViolation(
-                "external effect recovery requires an UNKNOWN receipt".into(),
+                "external effect recovery requires an acknowledged or unknown receipt".into(),
             )
             .into());
         }

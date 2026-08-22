@@ -91,6 +91,23 @@ struct FailOnceReadBack {
     calls: Arc<AtomicUsize>,
 }
 
+fn read_back_descriptor(
+    name: &str,
+) -> vestrace_domain::external_effects::ExternalEffectAdapterDescriptor {
+    vestrace_domain::external_effects::ExternalEffectAdapterDescriptor::new(
+        name,
+        None,
+        DeliverySemantics::AtLeastOnce,
+        IdempotencyProfile::ProviderKey,
+        EffectReversibility::Compensatable,
+        vestrace_domain::external_effects::DryRunMode::Unsupported,
+        true,
+        true,
+        Capability::ExportRead,
+    )
+    .unwrap()
+}
+
 #[async_trait]
 impl ExternalEffectReadBackAdapter for CountingReadBack {
     async fn observe(
@@ -1161,6 +1178,7 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
         repository.clone(),
         ExternalEffectReadBackRegistry::new([(
             "webhook-v1".to_owned(),
+            read_back_descriptor("webhook-v1"),
             Arc::new(CountingReadBack {
                 calls: Arc::clone(&calls),
             }) as Arc<dyn ExternalEffectReadBackAdapter>,
@@ -1171,6 +1189,7 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
         repository.clone(),
         ExternalEffectReadBackRegistry::new([(
             "webhook-v1".to_owned(),
+            read_back_descriptor("webhook-v1"),
             Arc::new(CountingReadBack {
                 calls: Arc::clone(&calls),
             }) as Arc<dyn ExternalEffectReadBackAdapter>,
@@ -1323,6 +1342,7 @@ async fn provider_failure_after_adoption_backs_off_without_duplicate_adoption_ev
         repository.clone(),
         ExternalEffectReadBackRegistry::new([(
             "webhook-v1".to_owned(),
+            read_back_descriptor("webhook-v1"),
             Arc::new(FailingReadBack) as Arc<dyn ExternalEffectReadBackAdapter>,
         )])
         .unwrap(),
@@ -1412,13 +1432,12 @@ async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_can
         Some(EffectLifecycleStatus::Acknowledged),
         "recorded_at incorrectly outranked a real receipt"
     );
-    assert!(
-        repository
-            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].receipt(), Some(&receipt));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1491,13 +1510,18 @@ async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: 
             .unwrap(),
         Some(EffectLifecycleStatus::Acknowledged)
     );
-    assert!(
-        repository
-            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    // This asserted the candidate set was empty until §34 stopped an
+    // acknowledged receipt from counting as a settled outcome. The effect is a
+    // candidate again — but through the *receipt* branch, which is what this
+    // test is about: the late real receipt retired the lost-dispatch guess, so
+    // the candidate carries a receipt rather than arriving from the
+    // receipt-less path the adoption had put it on.
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].receipt().is_some());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1602,7 +1626,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn every_unknown_receipt_is_a_candidate_across_mixed_states_and_insertion_orders(
+async fn every_unsettled_receipt_is_a_candidate_across_mixed_states_and_insertion_orders(
     pool: PgPool,
 ) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
@@ -1647,10 +1671,94 @@ async fn every_unknown_receipt_is_a_candidate_across_mixed_states_and_insertion_
     actual.sort();
     let mut expected = vec![
         first_unknown.id().to_string(),
+        first_acknowledged.id().to_string(),
+        second_acknowledged.id().to_string(),
         second_unknown.id().to_string(),
     ];
     expected.sort();
     assert_eq!(actual, expected);
+}
+
+/// Mutant caught: widening only the in-memory double or only the service leaves
+/// acknowledged evidence permanently outside the PostgreSQL sweep, despite the
+/// provider having merely accepted the request rather than confirmed its effect.
+#[sqlx::test(migrations = "../../migrations")]
+async fn acknowledged_receipts_follow_the_existing_unsettled_and_settled_candidate_rules(
+    pool: PgPool,
+) {
+    let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
+    let effect = intent();
+    let context = context_for(effect.workspace_id());
+    repository.insert_intent(&context, &effect).await.unwrap();
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(20));
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+            .await
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate.receipt())
+            .collect::<Vec<_>>(),
+        vec![Some(&receipt)]
+    );
+
+    let inconclusive = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            None,
+            "external:inconclusive",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &inconclusive)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(30), at(100), at(100), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .find_reconciliation_candidates(&context, at(31), at(100), at(100), u32::MAX)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let settled = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:confirmed",
+            vec!["evidence:provider-lookup".into()],
+        )],
+        at(32),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &settled)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1708,6 +1816,7 @@ async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(po
         repository,
         ExternalEffectReadBackRegistry::new([(
             "webhook-v1".to_owned(),
+            read_back_descriptor("webhook-v1"),
             Arc::new(CountingReadBack {
                 calls: Arc::new(AtomicUsize::new(0)),
             }) as Arc<dyn ExternalEffectReadBackAdapter>,
@@ -1834,6 +1943,7 @@ async fn a_provider_failure_then_success_reconciles_once_without_another_failed_
         repository,
         ExternalEffectReadBackRegistry::new([(
             "webhook-v1".to_owned(),
+            read_back_descriptor("webhook-v1"),
             Arc::new(FailOnceReadBack {
                 calls: Arc::clone(&calls),
             }) as Arc<dyn ExternalEffectReadBackAdapter>,

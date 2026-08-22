@@ -1043,6 +1043,30 @@ struct MemoryReadBack {
     observations: Vec<ObservedEffectState>,
 }
 
+struct CountingAcknowledgingAdapter {
+    descriptor: ExternalEffectAdapterDescriptor,
+    dispatches: Arc<AtomicUsize>,
+}
+
+impl ExternalEffectAdapter for CountingAcknowledgingAdapter {
+    fn descriptor(&self) -> &ExternalEffectAdapterDescriptor {
+        &self.descriptor
+    }
+
+    fn dispatch(
+        &self,
+        _intent: &ExternalEffectIntent,
+    ) -> Result<AdapterDispatchResult, AdapterError> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
+        Ok(AdapterDispatchResult::acknowledged(
+            "accepted",
+            Some("provider-effect-1".into()),
+            Some("sha256:response".into()),
+            vec!["evidence:adapter".into()],
+        ))
+    }
+}
+
 struct FailingMemoryReadBack;
 
 struct FailOnceMemoryReadBack {
@@ -1100,7 +1124,27 @@ fn read_back_registry(
     name: &str,
     adapter: Arc<dyn ExternalEffectReadBackAdapter>,
 ) -> ExternalEffectReadBackRegistry {
-    ExternalEffectReadBackRegistry::new([(name.to_owned(), adapter)]).unwrap()
+    ExternalEffectReadBackRegistry::new([(
+        name.to_owned(),
+        read_back_descriptor(name, true),
+        adapter,
+    )])
+    .unwrap()
+}
+
+fn read_back_descriptor(name: &str, supports_read_back: bool) -> ExternalEffectAdapterDescriptor {
+    ExternalEffectAdapterDescriptor::new(
+        name,
+        None,
+        DeliverySemantics::AtLeastOnce,
+        IdempotencyProfile::ProviderKey,
+        EffectReversibility::Compensatable,
+        DryRunMode::Unsupported,
+        true,
+        supports_read_back,
+        Capability::ExportRead,
+    )
+    .unwrap()
 }
 
 /// An adapter's answer is evidence only about effects that adapter owns.
@@ -1146,10 +1190,12 @@ async fn recovery_asks_only_the_adapter_named_by_the_effect() {
     let registry = ExternalEffectReadBackRegistry::new([
         (
             "first".to_owned(),
+            read_back_descriptor("first", true),
             first_read_back as Arc<dyn ExternalEffectReadBackAdapter>,
         ),
         (
             "second".to_owned(),
+            read_back_descriptor("second", true),
             second_read_back as Arc<dyn ExternalEffectReadBackAdapter>,
         ),
     ])
@@ -1229,6 +1275,82 @@ async fn recovery_records_the_provider_strength_even_when_the_receipt_has_strong
     );
 }
 
+/// Mutant caught: accepting acknowledged receipts in discovery but still
+/// treating their read-back as transport success loses the provider's actual
+/// answer and its evidence strength.
+#[tokio::test]
+async fn acknowledged_receipt_sweeps_preserve_each_provider_answer_and_evidence_strength() {
+    for (applied, expected) in [
+        (Some(true), ReconciliationOutcome::Confirmed),
+        (Some(false), ReconciliationOutcome::NotApplied),
+        (None, ReconciliationOutcome::Inconclusive),
+    ] {
+        let workspace_id = WorkspaceId::new();
+        let actor_id = PrincipalId::new();
+        let repository = Arc::new(MemoryEffectRepository::default());
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let adapter = CountingAcknowledgingAdapter {
+            descriptor: read_back_descriptor("webhook-v1", true),
+            dispatches: Arc::clone(&dispatches),
+        };
+        let performer = PerformExternalEffectService::new(
+            repository.clone(),
+            AuthorizationBoundary::new(Arc::new(
+                ConfiguredCapabilityPolicyEngine::new(
+                    "policy-v1",
+                    [Capability::ExportRead],
+                    RiskCategory::High,
+                )
+                .unwrap(),
+            )),
+            WorkerId::new(),
+        );
+        let context = RequestContext::new(workspace_id, actor_id);
+        performer
+            .perform(
+                &context,
+                performable_intent(workspace_id, actor_id),
+                &adapter,
+                at(20),
+            )
+            .await
+            .unwrap();
+        let dispatches_before_sweep = dispatches.load(Ordering::SeqCst);
+        assert_eq!(dispatches_before_sweep, 1);
+        let service = ExternalEffectRecoveryService::new(
+            repository,
+            read_back_registry(
+                "webhook-v1",
+                Arc::new(MemoryReadBack {
+                    endpoint: "https://webhook.effects.test/read-back",
+                    requests: Arc::new(Mutex::new(Vec::new())),
+                    receipts: Arc::new(Mutex::new(Vec::new())),
+                    observations: vec![ObservedEffectState::new(
+                        EvidenceStrength::MarkerSearch,
+                        applied,
+                        "external:acknowledged-read-back",
+                        vec!["evidence:marker-search".into()],
+                    )],
+                }),
+            ),
+        );
+
+        let report = service.sweep(&context, at(30)).await.unwrap();
+
+        assert_eq!(report.reconciliations().len(), 1);
+        assert_eq!(report.reconciliations()[0].outcome(), expected);
+        assert_eq!(
+            report.reconciliations()[0].evidence_strength(),
+            EvidenceStrength::MarkerSearch
+        );
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            dispatches_before_sweep,
+            "reconciliation dispatched the acknowledged effect again"
+        );
+    }
+}
+
 #[test]
 fn read_back_registry_rejects_duplicate_adapter_names() {
     let adapter: Arc<dyn ExternalEffectReadBackAdapter> = Arc::new(MemoryReadBack {
@@ -1239,8 +1361,16 @@ fn read_back_registry_rejects_duplicate_adapter_names() {
     });
 
     let error = match ExternalEffectReadBackRegistry::new([
-        ("duplicate".to_owned(), Arc::clone(&adapter)),
-        ("duplicate".to_owned(), adapter),
+        (
+            "duplicate".to_owned(),
+            read_back_descriptor("duplicate", true),
+            Arc::clone(&adapter),
+        ),
+        (
+            "duplicate".to_owned(),
+            read_back_descriptor("duplicate", true),
+            adapter,
+        ),
     ]) {
         Ok(_) => panic!("duplicate adapter names were accepted"),
         Err(error) => error,
@@ -1328,6 +1458,64 @@ async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
     assert!(requests.lock().await.is_empty());
 }
 
+/// Mutant caught: ignoring a route's `supports_read_back` declaration asks a
+/// provider that the deployment says cannot answer, then lets that head item
+/// consume every bounded sweep instead of taking the existing failed-attempt
+/// backoff path.
+#[tokio::test]
+async fn an_unsupported_read_back_route_is_not_called_and_is_durably_backed_off() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "unsupported");
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(20));
+    repository
+        .seed(ExternalEffectRecoveryCandidate::new(effect.clone(), receipt).unwrap())
+        .await;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let registry = ExternalEffectReadBackRegistry::new([(
+        "unsupported".to_owned(),
+        read_back_descriptor("unsupported", false),
+        Arc::new(MemoryReadBack {
+            endpoint: "https://unsupported.effects.test/read-back",
+            requests: Arc::clone(&requests),
+            receipts: Arc::new(Mutex::new(Vec::new())),
+            observations: vec![ObservedEffectState::new(
+                EvidenceStrength::ProviderIdempotencyLookup,
+                Some(true),
+                "external:must-not-be-asked",
+                vec!["evidence:must-not-be-asked".into()],
+            )],
+        }) as Arc<dyn ExternalEffectReadBackAdapter>,
+    )])
+    .unwrap();
+    let service = ExternalEffectRecoveryService::new(repository.clone(), registry);
+    let context = RequestContext::new(workspace_id, actor_id);
+
+    assert!(
+        service
+            .discover(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an unsupported descriptor was exposed as an actionable service candidate"
+    );
+    let first = service.sweep(&context, at(30)).await.unwrap();
+    let backing_off = service.sweep(&context, at(31)).await.unwrap();
+
+    assert!(requests.lock().await.is_empty());
+    assert!(first.reconciliations().is_empty());
+    assert_eq!(first.unreachable().len(), 1);
+    assert!(
+        first.unreachable()[0]
+            .reason
+            .contains("does not support read-back")
+    );
+    assert_eq!(repository.failed_attempt_count(effect.id()).await, 1);
+    assert!(backing_off.unreachable().is_empty());
+    assert!(backing_off.reconciliations().is_empty());
+}
+
 #[tokio::test]
 async fn single_registered_adapter_reconciles_only_its_own_effects() {
     let workspace_id = WorkspaceId::new();
@@ -1385,7 +1573,7 @@ async fn single_registered_adapter_reconciles_only_its_own_effects() {
 }
 
 #[tokio::test]
-async fn every_unknown_receipt_remains_a_candidate_regardless_of_mixed_receipt_insertion_order() {
+async fn every_unsettled_receipt_remains_a_candidate_regardless_of_mixed_receipt_insertion_order() {
     let workspace_id = WorkspaceId::new();
     let actor_id = PrincipalId::new();
     let repository = MemoryEffectRepository::default();
@@ -1444,10 +1632,92 @@ async fn every_unknown_receipt_remains_a_candidate_regardless_of_mixed_receipt_i
     candidate_receipts.sort();
     let mut expected = vec![
         first_unknown.id().to_string(),
+        first_acknowledged.id().to_string(),
+        second_acknowledged.id().to_string(),
         second_unknown.id().to_string(),
     ];
     expected.sort();
     assert_eq!(candidate_receipts, expected);
+}
+
+/// Mutant caught: treating acknowledgement as final either drops it before the
+/// first read-back or fails to apply the settled and inconclusive retry rules
+/// that already govern unknown receipts.
+#[tokio::test]
+async fn acknowledged_memory_candidate_obeys_initial_settled_and_unsettled_retry_rules() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let repository = MemoryEffectRepository::default();
+    let effect = intent(workspace_id, actor_id, &run_ref());
+    let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(20));
+    repository.insert_intent(&context, &effect).await.unwrap();
+    repository.insert_receipt(&context, &receipt).await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), 1)
+            .await
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate.receipt())
+            .collect::<Vec<_>>(),
+        vec![Some(&receipt)]
+    );
+    let inconclusive = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            None,
+            "external:inconclusive",
+            vec!["evidence:provider".into()],
+        )],
+        at(30),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &inconclusive)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(30), at(100), at(100), 1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .find_reconciliation_candidates(&context, at(31), at(100), at(100), 1)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let settled = reconcile_effect(
+        &effect,
+        &receipt,
+        vec![ObservedEffectState::new(
+            EvidenceStrength::ProviderIdempotencyLookup,
+            Some(true),
+            "external:confirmed",
+            vec!["evidence:provider".into()],
+        )],
+        at(32),
+    )
+    .unwrap();
+    repository
+        .insert_reconciliation(&context, &settled)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .find_reconciliation_candidates(&context, at(100), at(100), at(100), 1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -2188,14 +2458,16 @@ async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptles
         Some(EffectLifecycleStatus::Acknowledged),
         "recorded-time ordering hid a real receipt behind dispatch_lost"
     );
-    assert!(
-        repository
-            .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
-            .await
-            .unwrap()
-            .is_empty(),
-        "a real receipt did not retire receipt-less recovery"
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), at(100), u32::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "the real receipt did not replace receipt-less recovery"
     );
+    assert_eq!(candidates[0].receipt(), Some(&receipt));
 }
 
 #[tokio::test]

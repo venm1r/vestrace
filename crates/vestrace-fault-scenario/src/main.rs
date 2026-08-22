@@ -23,13 +23,13 @@ use vestrace_application::{
     ExternalEffectRecoveryService, RequestContext, SharedExternalEffectRepository,
     deliver_effect_outcomes,
 };
-use vestrace_domain::external_effects::FaultObservation;
+use vestrace_domain::external_effects::{ExternalEffectAdapter, FaultObservation};
 use vestrace_domain::now;
 use vestrace_domain::{ExternalEffectId, WorkerId};
 use vestrace_fault_scenario::{AdapterStub, ScenarioSettings, child, observe, report};
 use vestrace_infrastructure::{
-    DatabaseConfig, HttpExternalEffectReadBackAdapter, PgExternalEffectRepository, PgRunEventStore,
-    PgRunRecoveryStore, PgStore,
+    DatabaseConfig, HttpExternalEffectReadBackAdapter, HttpWebhookEffectAdapter,
+    PgExternalEffectRepository, PgRunEventStore, PgRunRecoveryStore, PgStore,
 };
 
 #[tokio::main]
@@ -267,8 +267,15 @@ async fn reconcile(
         Arc::new(PgExternalEffectRepository::new(store.clone()));
     let read_back = HttpExternalEffectReadBackAdapter::new(stub.read_back_url())
         .map_err(|error| format!("effect read-back is not configurable: {error}"))?;
+    let dispatch = HttpWebhookEffectAdapter::new(
+        "fault-scenario-webhook",
+        stub.dispatch_url(),
+        stub.read_back_url(),
+    )
+    .map_err(|error| format!("effect adapter is not configurable: {error}"))?;
     let read_backs = ExternalEffectReadBackRegistry::new([(
         "fault-scenario-webhook".to_owned(),
+        dispatch.descriptor().clone(),
         Arc::new(read_back) as Arc<dyn ExternalEffectReadBackAdapter>,
     )])
     .map_err(|error| format!("effect read-back is not configurable: {error}"))?;
