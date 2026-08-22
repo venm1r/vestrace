@@ -7,7 +7,10 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use commands::{
-    conformance::{ConformanceArtifactArg, ConformanceLifecycleArg, ConformanceProfileArg},
+    conformance::{
+        ConformanceArtifactArg, ConformanceLifecycleArg, ConformanceProfileArg,
+        FaultSuiteIsolationArg,
+    },
     rebuild::RebuildTarget,
     schema::SchemaFormat,
 };
@@ -71,6 +74,20 @@ enum ConformanceAction {
         #[arg(long)]
         json: bool,
     },
+    /// Run the destructive external-effect qualification against an ephemeral
+    /// deployment and persist exactly what it observed.
+    FaultSuite {
+        /// Path to the separately built fault-scenario program.
+        #[arg(long)]
+        program: PathBuf,
+        /// Digest of the exact deployment target being observed.
+        #[arg(long)]
+        target_digest: String,
+        /// This program aborts processes mid-transaction, so the CLI exposes
+        /// only the isolation the scenario can prove.
+        #[arg(long, value_enum)]
+        isolation: FaultSuiteIsolationArg,
+    },
     Bundle {
         #[arg(long, value_enum)]
         profile: ConformanceProfileArg,
@@ -131,6 +148,10 @@ enum ConformanceAction {
         key_version: String,
         #[arg(long, default_value = "release")]
         key_scope: String,
+        /// Load target-bound persisted fault-suite observations and let the
+        /// current evaluator derive their release verdict.
+        #[arg(long)]
+        fault_suite_evidence: Option<uuid::Uuid>,
         #[arg(long)]
         json: bool,
         #[arg(long)]

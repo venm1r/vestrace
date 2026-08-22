@@ -2832,6 +2832,35 @@ async fn fault_suite_evidence_repository_preserves_failed_evidence(pool: PgPool)
     assert!(!stored.failures().is_empty());
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn fault_suite_evidence_rows_cannot_be_edited_or_deleted(pool: PgPool) {
+    let repository = vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(
+        PgStore::from_pool(pool.clone()),
+    );
+    let evidence = fault_evidence(false);
+    repository.insert(&evidence).await.unwrap();
+
+    let update = sqlx::query(
+        "UPDATE external_effect_fault_suite_evidence
+         SET passed = TRUE
+         WHERE id = $1",
+    )
+    .bind(evidence.id())
+    .execute(&pool)
+    .await;
+    assert!(update.is_err(), "persisted evidence was editable");
+
+    let delete = sqlx::query("DELETE FROM external_effect_fault_suite_evidence WHERE id = $1")
+        .bind(evidence.id())
+        .execute(&pool)
+        .await;
+    assert!(delete.is_err(), "persisted evidence was deletable");
+    assert_eq!(
+        repository.find_by_id(evidence.id()).await.unwrap(),
+        Some(evidence)
+    );
+}
+
 fn fault_evidence(passed: bool) -> ExternalEffectFaultSuiteEvidence {
     let observations = EffectFaultPoint::required_points()
         .into_iter()

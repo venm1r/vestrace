@@ -46,6 +46,18 @@ impl From<&FaultObservation> for ExternalEffectFaultObservationEvidence {
     }
 }
 
+impl From<&ExternalEffectFaultObservationEvidence> for FaultObservation {
+    fn from(observation: &ExternalEffectFaultObservationEvidence) -> Self {
+        Self {
+            point: observation.point,
+            status: observation.status,
+            retry_attempted: observation.retry_attempted,
+            reconciliation_started: observation.reconciliation_started,
+            receipt_persisted: observation.receipt_persisted,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExternalEffectFaultSuiteEvidence {
     id: Uuid,

@@ -119,6 +119,36 @@ async fn gate_adapter_preserves_failed_evidence_as_fail() {
     );
 }
 
+/// The stored verdict records what the evaluator concluded when the suite ran;
+/// it is not the enduring contract. The observations are. If the evaluator
+/// later tightens, a once-passing row must fail under the evaluator that is
+/// deciding whether this release may proceed now.
+#[tokio::test]
+async fn gate_adapter_rederives_a_stale_passing_verdict_from_persisted_observations() {
+    let repository = Arc::new(MemoryEvidenceRepository::default());
+    let evidence = create_evidence(repository.clone(), false).await;
+    let mut payload = serde_json::to_value(&evidence).unwrap();
+    payload["observations"][0]["retry_attempted"] = serde_json::json!(true);
+    let stale_evidence: ExternalEffectFaultSuiteEvidence = serde_json::from_value(payload).unwrap();
+    assert!(
+        stale_evidence.is_passed(),
+        "the fixture must carry the deliberately stale stored verdict"
+    );
+    repository
+        .evidence
+        .lock()
+        .unwrap()
+        .insert(stale_evidence.id(), stale_evidence.clone());
+    let service = ExternalEffectFaultGateEvidenceService::new(repository);
+
+    let gate_evidence = service
+        .load(stale_evidence.id(), "sha256:deployment-target")
+        .await
+        .unwrap();
+
+    assert_eq!(gate_evidence.status(), GateEvidenceStatus::Fail);
+}
+
 #[tokio::test]
 async fn gate_adapter_rejects_target_mismatch_and_missing_evidence() {
     let repository = Arc::new(MemoryEvidenceRepository::default());

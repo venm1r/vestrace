@@ -1,16 +1,22 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine as _;
 use clap::ValueEnum;
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
 use secrecy::ExposeSecret as _;
 use vestrace_application::{
-    CryptoAdapterQualificationService, CryptoAdapterQualificationTarget, CryptoCustody,
-    CryptoQualificationDecision, ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure,
-    ExactEnvironmentReleaseTarget, QualificationRepository, QualificationRuntime,
-    RuntimeQualificationDecision, RuntimeQualificationEvidence, V1ReleaseEvidenceService,
-    evaluate_runtime_qualification,
+    ConfiguredEffectFaultScenarioExecutor, CryptoAdapterQualificationService,
+    CryptoAdapterQualificationTarget, CryptoCustody, CryptoQualificationDecision,
+    ExactEnvironmentReleaseEvidence, ExactEnvironmentReleaseFailure, ExactEnvironmentReleaseTarget,
+    ExternalEffectFaultGateEvidenceService, ExternalEffectFaultQualificationService,
+    FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
+    QualificationRepository, QualificationRuntime, RuntimeQualificationDecision,
+    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
 };
 use vestrace_domain::WorkspaceId;
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
@@ -26,8 +32,11 @@ use vestrace_domain::trust::{
     SignerTrustRule,
 };
 use vestrace_infrastructure::{
-    AppConfig, ConfigOverrides, PgQualificationRepository, PgStore, QualificationConfig,
+    AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationRepository, PgStore,
+    QualificationConfig,
 };
+
+const FAULT_POINT_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum ConformanceProfileArg {
@@ -67,6 +76,19 @@ pub enum ConformanceArtifactArg {
     Bundle,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum FaultSuiteIsolationArg {
+    Ephemeral,
+}
+
+impl From<FaultSuiteIsolationArg> for FaultInjectionEnvironment {
+    fn from(arg: FaultSuiteIsolationArg) -> Self {
+        match arg {
+            FaultSuiteIsolationArg::Ephemeral => Self::Ephemeral,
+        }
+    }
+}
+
 impl From<ConformanceLifecycleArg> for QualificationLifecycle {
     fn from(arg: ConformanceLifecycleArg) -> Self {
         match arg {
@@ -87,6 +109,20 @@ pub async fn run(
     match action {
         ConformanceAction::List { profile } => run_list(profile.map(|p| p.into())),
         ConformanceAction::Check { profile, json } => run_check(profile.map(|p| p.into()), json),
+        ConformanceAction::FaultSuite {
+            program,
+            target_digest,
+            isolation,
+        } => {
+            run_fault_suite(
+                program,
+                target_digest,
+                isolation.into(),
+                config_path,
+                &config_overrides,
+            )
+            .await
+        }
         ConformanceAction::Manifest {
             manifest_version,
             product,
@@ -171,6 +207,7 @@ pub async fn run(
             key_id,
             key_version,
             key_scope,
+            fault_suite_evidence,
             json,
             output,
         } => {
@@ -184,6 +221,7 @@ pub async fn run(
                 key_id,
                 key_version,
                 key_scope,
+                fault_suite_evidence,
                 json,
                 output,
                 config_path,
@@ -269,6 +307,100 @@ pub async fn run(
             trusted_key_scope,
             require_trusted_signer,
         ),
+    }
+}
+
+async fn run_fault_suite(
+    program: PathBuf,
+    target_digest: String,
+    isolation: FaultInjectionEnvironment,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<()> {
+    let settings = FaultInjectionSettings::new(true, target_digest.clone(), isolation)
+        .map_err(|error| anyhow::anyhow!("invalid fault-suite settings: {error}"))?;
+    let program = program
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("fault-suite scenario program path is not valid Unicode"))?;
+    let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+        .map_err(|error| anyhow::anyhow!("fault-suite configuration failed: {error}"))?;
+    let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!("fault-suite evidence database is unavailable at {redacted}: {error}")
+    })?;
+    store.migrate().await.map_err(|error| {
+        anyhow::anyhow!("fault-suite evidence database migration failed: {error}")
+    })?;
+
+    let database_url_file = DatabaseUrlFile::new(config.database.url.expose_secret())?;
+    let runtime = ProcessFaultInjectionRuntime::new(
+        settings.clone(),
+        program,
+        fault_scenario_args(database_url_file.path()),
+        FAULT_POINT_TIMEOUT,
+    )?;
+    let executor = ConfiguredEffectFaultScenarioExecutor::new(settings, Arc::new(runtime));
+    let repository = Arc::new(PgFaultSuiteEvidenceRepository::new(store));
+    let service = ExternalEffectFaultQualificationService::new(Arc::new(executor), repository);
+    let evidence = service.run(target_digest, now()).await?;
+
+    println!("Fault-suite evidence: {}", evidence.id());
+    Ok(())
+}
+
+/// The process boundary is deliberately narrower than the scenario's settings
+/// object: argv can identify the credential file, but it cannot carry the
+/// credential. Keeping the builder unable to accept a URL makes that property
+/// structural rather than a convention at the call site.
+fn fault_scenario_args(database_url_file: &Path) -> [String; 2] {
+    [
+        "--database-url-file".to_owned(),
+        database_url_file.to_string_lossy().into_owned(),
+    ]
+}
+
+/// A credential is written only long enough for the scenario process to read
+/// it. The child receives this path in argv; the URL itself never appears in a
+/// process argument or inherited environment, and the guard removes the file
+/// on every return path after construction.
+struct DatabaseUrlFile {
+    path: PathBuf,
+}
+
+impl DatabaseUrlFile {
+    fn new(database_url: &str) -> anyhow::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "vestrace-fault-{}-{}.url",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path).map_err(|error| {
+            anyhow::anyhow!("fault-suite database URL file could not be created: {error}")
+        })?;
+        if let Err(error) = file.write_all(database_url.as_bytes()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(anyhow::anyhow!(
+                "fault-suite database URL file could not be written: {error}"
+            ));
+        }
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for DatabaseUrlFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -878,6 +1010,7 @@ pub async fn run_release(
     key_id: Option<String>,
     key_version: String,
     key_scope: String,
+    fault_suite_evidence: Option<uuid::Uuid>,
     json: bool,
     output: Option<PathBuf>,
     config_path: Option<&Path>,
@@ -934,10 +1067,36 @@ pub async fn run_release(
         None
     };
 
-    // Release approval, recovery qualification, the fault suite and capability
-    // restoration remain `None` because nothing in this build produces one.
-    // That is the answer the gate is being asked for, so it is reported rather
-    // than filled in with something that was not collected.
+    let fault_suite = match fault_suite_evidence {
+        Some(evidence_id) => {
+            let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "fault-suite evidence could not be loaded: configuration failed: {error}"
+                    )
+                })?;
+            let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+            let store = PgStore::connect(&config.database).await.map_err(|error| {
+                anyhow::anyhow!("fault-suite evidence could not be loaded from {redacted}: {error}")
+            })?;
+            let repository = Arc::new(PgFaultSuiteEvidenceRepository::new(store));
+            Some(
+                ExternalEffectFaultGateEvidenceService::new(repository)
+                    .load_decision(evidence_id, manifest.manifest_digest())
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("fault-suite evidence could not be loaded: {error}")
+                    })?,
+            )
+        }
+        None => None,
+    };
+
+    // Release approval, recovery qualification and capability restoration
+    // remain absent because this slice adds no producer for them. Fault-suite
+    // evidence is different: when the operator names an immutable observation
+    // set above, the current evaluator's decision is the fact handed to the
+    // release gate; without an id, nobody looked and `missing` remains true.
     let evidence = ExactEnvironmentReleaseEvidence::new(
         manifest.product_version(),
         bundle.source_revision(),
@@ -951,7 +1110,7 @@ pub async fn run_release(
         runtime_qualification,
         crypto_qualification,
         None,
-        None,
+        fault_suite,
         Vec::new(),
         bundle_evidence_refs(&bundle),
         bundle.known_limitations().to_vec(),
@@ -2087,7 +2246,26 @@ mod tests {
     };
     use vestrace_infrastructure::QualificationConfig;
 
-    use super::{persist_bundle, run_automatic_qualification_with_evidence};
+    use super::{fault_scenario_args, persist_bundle, run_automatic_qualification_with_evidence};
+
+    #[test]
+    fn fault_scenario_arguments_carry_a_url_file_path_and_never_the_credential() {
+        let path = PathBuf::from("qualification-database.url");
+
+        let args = fault_scenario_args(&path);
+
+        assert_eq!(
+            args,
+            [
+                "--database-url-file".to_owned(),
+                "qualification-database.url".to_owned(),
+            ]
+        );
+        assert!(
+            args.iter()
+                .all(|argument| !argument.contains("postgres://"))
+        );
+    }
 
     struct RecordingQualificationRepository {
         inserted: Mutex<Vec<QualificationBundle>>,

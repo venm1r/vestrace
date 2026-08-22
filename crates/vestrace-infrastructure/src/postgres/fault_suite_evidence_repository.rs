@@ -44,14 +44,38 @@ fn decode(
 ) -> Result<ExternalEffectFaultSuiteEvidence, ApplicationError> {
     let evidence: ExternalEffectFaultSuiteEvidence =
         serde_json::from_value(row.payload).map_err(storage_error)?;
-    if evidence.id() != row.id
-        || evidence.target_digest() != row.target_digest
-        || evidence.is_passed() != row.passed
-        || evidence.created_at() != row.created_at
-    {
-        return Err(storage_error(
-            "fault-suite evidence indexed metadata does not match payload",
-        ));
+    // Named rather than one disjunction: a projection disagreeing with its
+    // payload is a storage fault somebody has to find, and "does not match"
+    // without saying which column costs whoever reads it an afternoon.
+    let disagreement = [
+        ("id", evidence.id() != row.id),
+        (
+            "target_digest",
+            evidence.target_digest() != row.target_digest,
+        ),
+        ("passed", evidence.is_passed() != row.passed),
+        // PostgreSQL TIMESTAMPTZ stores microseconds while chrono carries
+        // nanoseconds, and it **rounds** rather than truncating. An exact
+        // comparison therefore rejected any evidence whose creation time had a
+        // sub-microsecond remainder — most of them — and nothing noticed
+        // because until now nothing in production ever read this table.
+        //
+        // A microsecond is exactly the column's granularity, so a difference
+        // within it is the storage boundary; anything larger is a projection
+        // describing different evidence, which is what this check is for.
+        (
+            "created_at",
+            (evidence.created_at().timestamp_micros() - row.created_at.timestamp_micros()).abs()
+                > 1,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(field, differs)| differs.then_some(field));
+
+    if let Some(field) = disagreement {
+        return Err(storage_error(format!(
+            "fault-suite evidence column `{field}` does not match its payload"
+        )));
     }
     Ok(evidence)
 }
