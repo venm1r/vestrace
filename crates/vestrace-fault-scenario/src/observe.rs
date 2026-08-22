@@ -9,8 +9,8 @@
 //! about instead.
 
 use vestrace_application::{
-    ExternalEffectRecoveryCandidate, ExternalEffectRepository, RECONCILIATION_RETRY_AFTER,
-    RequestContext,
+    ExternalEffectRecoveryCandidate, ExternalEffectRepository, RECONCILIATION_BATCH,
+    RECONCILIATION_RETRY_AFTER, RequestContext,
 };
 use vestrace_domain::external_effects::{
     EffectFaultPoint, ExternalReconciliation, FaultObservation,
@@ -177,6 +177,7 @@ async fn sweep_candidate(
             context,
             observed_at - RECONCILIATION_RETRY_AFTER,
             observed_at,
+            RECONCILIATION_BATCH,
         )
         .await
         .map_err(|error| format!("the reconciliation candidates could not be read: {error:?}"))?;

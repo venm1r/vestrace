@@ -815,6 +815,7 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
         dispatch_expired_before: Timestamp,
+        limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let mut scoped = self
             .store
@@ -913,12 +914,16 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
                     receipt_id, receipt_effect_id, outcome_status, receipt_payload,
                     dispatch_transition_id, dispatch_already_adopted
              FROM candidates
-             ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST",
+             -- Oldest-first is the fairness policy once this set is bounded:
+             -- a sustained backlog must not starve the effects waiting longest.
+             ORDER BY candidate_at ASC, intent_id ASC, receipt_id ASC NULLS FIRST
+             LIMIT $5",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(ReconciliationOutcome::settled_names())
         .bind(retry_unsettled_before)
         .bind(dispatch_expired_before)
+        .bind(i64::from(limit))
         .fetch_all(scoped.connection())
         .await
         .map_err(storage_error)?;

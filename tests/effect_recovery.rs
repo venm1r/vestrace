@@ -7,7 +7,8 @@ use vestrace_application::{
     ApplicationError, AuthorizationBoundary, ConfiguredCapabilityPolicyEngine,
     ExternalEffectReadBackAdapter, ExternalEffectReadBackRegistry, ExternalEffectRecoveryCandidate,
     ExternalEffectRecoveryError, ExternalEffectRecoveryService, ExternalEffectRepository,
-    ExternalEffectService, LostDispatchAdoption, PerformExternalEffectService, RequestContext,
+    ExternalEffectService, LostDispatchAdoption, PerformExternalEffectService,
+    RECONCILIATION_BATCH, RequestContext,
 };
 use vestrace_domain::external_effects::{
     AdapterDispatchResult, AdapterError, DeliverySemantics, DryRunMode, EffectLifecycleStatus,
@@ -674,6 +675,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         context: &RequestContext,
         retry_unsettled_before: vestrace_domain::Timestamp,
         dispatch_expired_before: vestrace_domain::Timestamp,
+        limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         let workspace_id = context.workspace_id;
         let reconciled = self.reconciled.lock().await;
@@ -681,7 +683,7 @@ impl ExternalEffectRepository for MemoryEffectRepository {
         let intents = self.intents.lock().await.clone();
         let receipts = self.receipts.lock().await.clone();
         let transitions = self.transitions.lock().await.clone();
-        let candidates = intents
+        let mut candidates = intents
             .into_iter()
             .filter(|intent| intent.workspace_id() == workspace_id)
             .flat_map(|intent| {
@@ -756,6 +758,44 @@ impl ExternalEffectRepository for MemoryEffectRepository {
                     ))
             })
             .collect::<Vec<_>>();
+        candidates.sort_by_key(|candidate| {
+            // PostgreSQL orders receipt candidates by the row's `created_at`,
+            // not by the provider-supplied receipt time. This fake has no
+            // storage clock, so its append-only transition ordinal is the
+            // persistence-order equivalent and keeps adverse payload clocks
+            // from changing which candidates enter a bounded batch.
+            let candidate_ordinal = candidate.receipt().map_or_else(
+                || {
+                    transitions
+                        .iter()
+                        .filter(|transition| {
+                            transition.workspace_id == workspace_id
+                                && transition.effect_id == candidate.intent().id()
+                        })
+                        .max_by_key(|transition| transition.ordinal)
+                        .expect("a receipt-less candidate came from a lifecycle transition")
+                        .ordinal
+                },
+                |receipt| {
+                    transitions
+                        .iter()
+                        .find(|transition| {
+                            transition.workspace_id == workspace_id
+                                && transition.effect_id == candidate.intent().id()
+                                && transition.cause == "receipt_recorded"
+                                && transition.cause_ref == receipt.id().to_string()
+                        })
+                        .expect("a receipt candidate came from a persisted receipt")
+                        .ordinal
+                },
+            );
+            (
+                candidate_ordinal,
+                candidate.intent().id().as_uuid(),
+                candidate.receipt().map(|receipt| receipt.id().as_uuid()),
+            )
+        });
+        candidates.truncate(limit as usize);
         Ok(candidates)
     }
 }
@@ -859,7 +899,10 @@ async fn recovery_asks_only_the_adapter_named_by_the_effect() {
     let service = ExternalEffectRecoveryService::new(repository, registry);
     let context = RequestContext::new(workspace_id, actor_id);
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     let requests = requests.lock().await;
     assert!(!requests.contains(&"https://first.effects.test/read-back"));
@@ -931,7 +974,10 @@ async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
             if adapter == "missing"
     ));
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert!(report.reconciliations().is_empty());
     assert_eq!(repository.reconciled_count().await, 0);
@@ -951,7 +997,10 @@ async fn unregistered_adapter_is_unreachable_without_settling_the_effect() {
         report.unreachable()[0].reason
     );
 
-    let next_report = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let next_report = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
     assert_eq!(next_report.unreachable().len(), 1);
     assert_eq!(next_report.unreachable()[0].effect_id, effect.id());
     assert!(requests.lock().await.is_empty());
@@ -990,7 +1039,10 @@ async fn single_registered_adapter_reconciles_only_its_own_effects() {
     let service = ExternalEffectRecoveryService::new(repository.clone(), registry);
     let context = RequestContext::new(workspace_id, actor_id);
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert_eq!(
         &*requests.lock().await,
@@ -1054,7 +1106,7 @@ async fn every_unknown_receipt_remains_a_candidate_regardless_of_mixed_receipt_i
         .unwrap();
 
     let mut candidate_receipts = repository
-        .find_reconciliation_candidates(&context, at(100), at(100))
+        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1083,7 +1135,7 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates() {
     repository.insert_receipt(&context, &second).await.unwrap();
 
     let mut candidate_receipts = repository
-        .find_reconciliation_candidates(&context, at(100), at(100))
+        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1093,6 +1145,126 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates() {
     let mut expected = vec![first.id().to_string(), second.id().to_string()];
     expected.sort();
     assert_eq!(candidate_receipts, expected);
+}
+
+#[tokio::test]
+async fn memory_repository_limits_candidates_in_oldest_first_order() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = MemoryEffectRepository::default();
+    let context = RequestContext::new(workspace_id, actor_id);
+    let first_intent = intent(workspace_id, actor_id, &run_ref());
+    let second_intent = intent(workspace_id, actor_id, &run_ref());
+    let third_intent = intent(workspace_id, actor_id, &run_ref());
+    for effect in [&first_intent, &second_intent, &third_intent] {
+        repository.insert_intent(&context, effect).await.unwrap();
+    }
+
+    // Persistence order conflicts with both intent order and payload time. A
+    // fake that uses either instead of storage order, or ignores the limit,
+    // fails here.
+    let oldest = receipt_with_status(&third_intent, EffectLifecycleStatus::Unknown, at(30));
+    let middle = receipt_with_status(&first_intent, EffectLifecycleStatus::Unknown, at(10));
+    let newest = receipt_with_status(&second_intent, EffectLifecycleStatus::Unknown, at(20));
+    for receipt in [&oldest, &middle, &newest] {
+        repository.insert_receipt(&context, receipt).await.unwrap();
+    }
+
+    let candidates = repository
+        .find_reconciliation_candidates(&context, at(100), at(100), 2)
+        .await
+        .unwrap();
+
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].receipt(), Some(&oldest));
+    assert_eq!(candidates[1].receipt(), Some(&middle));
+}
+
+#[tokio::test]
+async fn successive_default_sweeps_drain_the_backlog_and_report_saturation() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let context = RequestContext::new(workspace_id, actor_id);
+    let mut effects = Vec::new();
+    for offset in 0..=RECONCILIATION_BATCH {
+        let effect = intent(workspace_id, actor_id, &run_ref());
+        repository.insert_intent(&context, &effect).await.unwrap();
+        repository
+            .insert_receipt(
+                &context,
+                &receipt_with_status(
+                    &effect,
+                    EffectLifecycleStatus::Unknown,
+                    at(20 + i64::from(offset)),
+                ),
+            )
+            .await
+            .unwrap();
+        effects.push(effect);
+    }
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        read_back_registry(
+            "webhook-v1",
+            Arc::new(MemoryReadBack {
+                endpoint: "https://webhook.effects.test/read-back",
+                requests: Arc::new(Mutex::new(Vec::new())),
+                receipts: Arc::new(Mutex::new(Vec::new())),
+                observations: vec![ObservedEffectState::new(
+                    EvidenceStrength::ProviderIdempotencyLookup,
+                    Some(true),
+                    "external:resolved",
+                    vec!["evidence:provider".into()],
+                )],
+            }),
+        ),
+    );
+
+    let first = service.sweep(&context, at(100)).await.unwrap();
+    let second = service.sweep(&context, at(101)).await.unwrap();
+
+    assert_eq!(first.reconciliations().len(), RECONCILIATION_BATCH as usize);
+    assert!(first.saturated());
+    assert_eq!(second.reconciliations().len(), 1);
+    assert_eq!(
+        second.reconciliations()[0].effect_id(),
+        effects.last().unwrap().id()
+    );
+    assert!(!second.saturated());
+}
+
+#[tokio::test]
+async fn a_full_unreachable_batch_is_still_reported_as_saturated() {
+    let workspace_id = WorkspaceId::new();
+    let actor_id = PrincipalId::new();
+    let repository = Arc::new(MemoryEffectRepository::default());
+    let context = RequestContext::new(workspace_id, actor_id);
+    for offset in 0..RECONCILIATION_BATCH {
+        let effect = intent_for_adapter(workspace_id, actor_id, &run_ref(), "missing");
+        repository.insert_intent(&context, &effect).await.unwrap();
+        repository
+            .insert_receipt(
+                &context,
+                &receipt_with_status(
+                    &effect,
+                    EffectLifecycleStatus::Unknown,
+                    at(20 + i64::from(offset)),
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        ExternalEffectReadBackRegistry::new([]).unwrap(),
+    );
+
+    let report = service.sweep(&context, at(100)).await.unwrap();
+
+    assert!(report.reconciliations().is_empty());
+    assert_eq!(report.unreachable().len(), RECONCILIATION_BATCH as usize);
+    assert!(report.saturated());
 }
 
 #[tokio::test]
@@ -1232,7 +1404,10 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
     );
     let context = RequestContext::new(workspace_id, actor_id);
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
     assert_eq!(report.reconciliations().len(), 1);
     assert_eq!(
         report.reconciliations()[0].outcome(),
@@ -1240,7 +1415,10 @@ async fn discovery_is_workspace_scoped_and_excludes_already_reconciled_records()
     );
     assert_eq!(repository.reconciled_count().await, 1);
 
-    let second_report = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let second_report = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
     assert!(second_report.reconciliations().is_empty());
 }
 
@@ -1282,7 +1460,10 @@ async fn read_back_without_observations_settles_nothing_and_reports_it() {
     );
     let context = RequestContext::new(workspace_id, actor_id);
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     // Nothing was concluded, and nothing was written.
     assert!(report.reconciliations().is_empty());
@@ -1329,7 +1510,10 @@ async fn a_lost_dispatch_without_a_receipt_reconciles_end_to_end() {
         repository.clone(),
         read_back_registry("webhook-v1", read_back),
     );
-    let report = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert_eq!(&*observed_receipts.lock().await, &[None]);
     assert_eq!(
@@ -1381,7 +1565,10 @@ async fn a_dispatch_before_its_stated_deadline_is_not_adopted() {
         ),
     );
 
-    let report = service.run(&context, at(30), at(30), at(30)).await.unwrap();
+    let report = service
+        .run(&context, at(30), at(30), at(30), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert!(report.reconciliations().is_empty());
     assert!(report.unreachable().is_empty());
@@ -1417,7 +1604,10 @@ async fn lost_dispatch_adoption_survives_missing_route_and_is_rediscovered() {
         ExternalEffectReadBackRegistry::new([]).unwrap(),
     );
 
-    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    let first = service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
     assert_eq!(first.unreachable().len(), 1);
     assert_eq!(
         repository.lost_dispatch_evidence(effect.id()).await,
@@ -1428,7 +1618,10 @@ async fn lost_dispatch_adoption_survives_missing_route_and_is_rediscovered() {
         )]
     );
 
-    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let second = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
     assert_eq!(second.unreachable().len(), 1);
     assert_eq!(second.unreachable()[0].effect_id, effect.id());
     assert_eq!(
@@ -1454,8 +1647,14 @@ async fn lost_dispatch_adoption_survives_provider_failure_and_is_rediscovered() 
         read_back_registry("webhook-v1", Arc::new(FailingMemoryReadBack)),
     );
 
-    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
-    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let first = service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
+    let second = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
     assert_eq!(second.unreachable().len(), 1);
@@ -1488,7 +1687,10 @@ async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptles
         repository.clone(),
         ExternalEffectReadBackRegistry::new([]).unwrap(),
     );
-    service.run(&context, at(30), at(30), at(22)).await.unwrap();
+    service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     let receipt = receipt_with_status(&effect, EffectLifecycleStatus::Acknowledged, at(15));
     repository.insert_receipt(&context, &receipt).await.unwrap();
@@ -1503,7 +1705,7 @@ async fn a_real_receipt_after_adoption_outranks_the_guess_and_retires_receiptles
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100))
+            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty(),
@@ -1552,7 +1754,7 @@ async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemption
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(20))
+        .find_reconciliation_candidates(&context, at(10_000), at(20), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1561,7 +1763,7 @@ async fn memory_recovery_uses_each_dispatch_deadline_and_counts_legacy_exemption
     for cutoff in [at(0), at(20), at(10_000)] {
         assert!(
             repository
-                .find_reconciliation_candidates(&context, at(10_000), cutoff)
+                .find_reconciliation_candidates(&context, at(10_000), cutoff, u32::MAX)
                 .await
                 .unwrap()
                 .iter()

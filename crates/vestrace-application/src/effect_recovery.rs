@@ -98,6 +98,7 @@ pub struct ExternalEffectRecoveryReport {
     /// for them.
     runs: Vec<Option<AgentRunId>>,
     unreachable: Vec<UnreconciledEffect>,
+    saturated: bool,
 }
 
 /// A candidate the sweep could not ask about.
@@ -154,6 +155,15 @@ impl ExternalEffectRecoveryReport {
     pub fn unreachable(&self) -> &[UnreconciledEffect] {
         &self.unreachable
     }
+
+    /// Whether discovery spent the whole candidate budget for this pass.
+    ///
+    /// A full batch does not prove more work remains, but a partial batch proves
+    /// the sweep did not stop because of its budget. Keeping that distinction in
+    /// the report lets a driver expose persistent backlog pressure.
+    pub const fn saturated(&self) -> bool {
+        self.saturated
+    }
 }
 
 /// How long to leave an effect alone after asking about it and learning nothing.
@@ -168,6 +178,15 @@ impl ExternalEffectRecoveryReport {
 /// This lives here rather than in the worker because it is a property of
 /// reconciliation, not of any particular loop that drives it.
 pub const RECONCILIATION_RETRY_AFTER: chrono::Duration = chrono::Duration::minutes(1);
+
+/// Maximum provider read-backs one workspace performs in a reconciliation pass.
+///
+/// This bounds a tick's worst-case duration and provider load at the cost of
+/// taking more ticks to drain a backlog. Eight is deliberately smaller than the
+/// delivery batch: these operations are sequential network calls, while outcome
+/// delivery is local persistence. The constants stay separate because those
+/// costs need to remain independently tunable.
+pub const RECONCILIATION_BATCH: u32 = 8;
 
 /// Fallback dispatch allowance for an adapter that declares no timeout.
 ///
@@ -205,12 +224,14 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
         dispatch_expired_before: Timestamp,
+        limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError> {
         self.repository
             .find_reconciliation_candidates(
                 context,
                 retry_unsettled_before,
                 dispatch_expired_before,
+                limit,
             )
             .await
     }
@@ -256,7 +277,10 @@ impl ExternalEffectRecoveryService {
         Ok(Some(reconciliation))
     }
 
-    /// Reconcile every effect whose outcome nobody knows.
+    /// Reconcile the oldest eligible effects, up to `limit` candidates.
+    ///
+    /// The report is saturated when discovery fills that budget, which means
+    /// another bounded pass may still have work to do.
     ///
     /// # Why one failure does not end the sweep
     ///
@@ -279,10 +303,17 @@ impl ExternalEffectRecoveryService {
         reconciled_at: Timestamp,
         retry_unsettled_before: Timestamp,
         dispatch_expired_before: Timestamp,
+        limit: u32,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
         let candidates = self
-            .discover(context, retry_unsettled_before, dispatch_expired_before)
+            .discover(
+                context,
+                retry_unsettled_before,
+                dispatch_expired_before,
+                limit,
+            )
             .await?;
+        let saturated = candidates.len() == limit as usize;
         let mut reconciliations = Vec::with_capacity(candidates.len());
         let mut runs = Vec::with_capacity(candidates.len());
         let mut unreachable = Vec::new();
@@ -306,6 +337,7 @@ impl ExternalEffectRecoveryService {
             reconciliations,
             runs,
             unreachable,
+            saturated,
         })
     }
 
@@ -319,7 +351,13 @@ impl ExternalEffectRecoveryService {
         context: &RequestContext,
         at: Timestamp,
     ) -> Result<ExternalEffectRecoveryReport, ApplicationError> {
-        self.run(context, at, at - RECONCILIATION_RETRY_AFTER, at)
-            .await
+        self.run(
+            context,
+            at,
+            at - RECONCILIATION_RETRY_AFTER,
+            at,
+            RECONCILIATION_BATCH,
+        )
+        .await
     }
 }

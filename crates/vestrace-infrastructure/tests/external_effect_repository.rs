@@ -13,7 +13,7 @@ use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use vestrace_application::{
     ApplicationError, ExternalEffectFaultSuiteEvidence, ExternalEffectReadBackAdapter,
     ExternalEffectReadBackRegistry, ExternalEffectRecoveryService, ExternalEffectRepository,
-    FaultSuiteEvidenceRepository, RequestContext,
+    FaultSuiteEvidenceRepository, RECONCILIATION_BATCH, RequestContext,
 };
 use vestrace_domain::external_effects::{
     DeliverySemantics, EffectFaultPoint, EffectLifecycleStatus, EffectPrecondition,
@@ -637,7 +637,7 @@ async fn dispatch_deadline_migration_preserves_0153_rows_and_enforces_only_new_e
     for cutoff in [at(0), at(20), at(10_000)] {
         assert!(
             repository
-                .find_reconciliation_candidates(&context, at(10_000), cutoff)
+                .find_reconciliation_candidates(&context, at(10_000), cutoff, u32::MAX)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -1156,8 +1156,8 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
     // Both sweepers hold the same pre-adoption candidate. The unique
     // dispatch-lost key, not a sequential re-query, decides which may ask.
     let (first_candidates, second_candidates) = tokio::join!(
-        first.discover(&context, at(10), at(22)),
-        second.discover(&context, at(10), at(22)),
+        first.discover(&context, at(10), at(22), RECONCILIATION_BATCH),
+        second.discover(&context, at(10), at(22), RECONCILIATION_BATCH),
     );
     let first_candidate = first_candidates.unwrap().pop().unwrap();
     let second_candidate = second_candidates.unwrap().pop().unwrap();
@@ -1226,8 +1226,14 @@ async fn missing_route_after_adoption_is_unreachable_again_without_duplicate_evi
         ExternalEffectReadBackRegistry::new([]).unwrap(),
     );
 
-    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
-    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let first = service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
+    let second = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
     assert_eq!(second.unreachable().len(), 1);
@@ -1291,8 +1297,14 @@ async fn provider_failure_after_adoption_is_unreachable_again_without_duplicate_
         .unwrap(),
     );
 
-    let first = service.run(&context, at(30), at(30), at(22)).await.unwrap();
-    let second = service.run(&context, at(31), at(31), at(31)).await.unwrap();
+    let first = service
+        .run(&context, at(30), at(30), at(22), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
+    let second = service
+        .run(&context, at(31), at(31), at(31), RECONCILIATION_BATCH)
+        .await
+        .unwrap();
 
     assert_eq!(first.unreachable().len(), 1);
     assert_eq!(second.unreachable().len(), 1);
@@ -1363,7 +1375,7 @@ async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_can
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100))
+            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty()
@@ -1442,7 +1454,7 @@ async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: 
     );
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(100), at(100))
+            .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
             .await
             .unwrap()
             .is_empty()
@@ -1473,7 +1485,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(20))
+        .find_reconciliation_candidates(&context, at(10_000), at(20), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1510,7 +1522,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
     .await
     .unwrap();
     let later_candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(100))
+        .find_reconciliation_candidates(&context, at(10_000), at(100), u32::MAX)
         .await
         .unwrap();
     assert_eq!(
@@ -1587,7 +1599,7 @@ async fn every_unknown_receipt_is_a_candidate_across_mixed_states_and_insertion_
         .unwrap();
 
     let mut actual = repository
-        .find_reconciliation_candidates(&context, at(100), at(100))
+        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1614,7 +1626,7 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: 
     repository.insert_receipt(&context, &second).await.unwrap();
 
     let mut actual = repository
-        .find_reconciliation_candidates(&context, at(100), at(100))
+        .find_reconciliation_candidates(&context, at(100), at(100), u32::MAX)
         .await
         .unwrap()
         .into_iter()
@@ -1624,6 +1636,62 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: 
     let mut expected = vec![first.id().to_string(), second.id().to_string()];
     expected.sort();
     assert_eq!(actual, expected);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(pool: PgPool) {
+    let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
+        pool.clone(),
+    )));
+    let workspace_id = WorkspaceId::new();
+    let context = context_for(workspace_id);
+    let mut effects = Vec::new();
+    for candidate_at in [at(30), at(10), at(20)] {
+        let effect = intent_for(workspace_id, &run_ref());
+        let receipt = unknown_receipt(&effect);
+        repository.insert_intent(&context, &effect).await.unwrap();
+        repository.insert_receipt(&context, &receipt).await.unwrap();
+        sqlx::query(
+            "UPDATE external_effect_receipts SET created_at = $3 \
+             WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(workspace_id.as_uuid())
+        .bind(receipt.id().as_uuid())
+        .bind(candidate_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+        effects.push((candidate_at, effect));
+    }
+    effects.sort_by_key(|(candidate_at, _)| *candidate_at);
+
+    let service = ExternalEffectRecoveryService::new(
+        repository,
+        ExternalEffectReadBackRegistry::new([(
+            "webhook-v1".to_owned(),
+            Arc::new(CountingReadBack {
+                calls: Arc::new(AtomicUsize::new(0)),
+            }) as Arc<dyn ExternalEffectReadBackAdapter>,
+        )])
+        .unwrap(),
+    );
+
+    let first = service
+        .run(&context, at(100), at(100), at(100), 2)
+        .await
+        .unwrap();
+    let second = service
+        .run(&context, at(101), at(101), at(101), 2)
+        .await
+        .unwrap();
+
+    assert_eq!(first.reconciliations().len(), 2);
+    assert_eq!(first.reconciliations()[0].effect_id(), effects[0].1.id());
+    assert_eq!(first.reconciliations()[1].effect_id(), effects[1].1.id());
+    assert!(first.saturated());
+    assert_eq!(second.reconciliations().len(), 1);
+    assert_eq!(second.reconciliations()[0].effect_id(), effects[2].1.id());
+    assert!(!second.saturated());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1810,7 +1878,7 @@ async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_
         .unwrap();
 
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(10_000), at(10_000))
+        .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -1836,7 +1904,7 @@ async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_
 
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(10_000), at(10_000))
+            .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
             .await
             .unwrap()
             .is_empty()
@@ -1883,7 +1951,7 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
     // Immediately afterwards there is nothing to gain by asking again.
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(30), at(30))
+            .find_reconciliation_candidates(&context, at(30), at(30), u32::MAX)
             .await
             .unwrap()
             .is_empty(),
@@ -1893,7 +1961,7 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
     // Once the attempt is old enough, the effect is still an effect whose
     // outcome nobody knows.
     let candidates = repository
-        .find_reconciliation_candidates(&context, at(90), at(90))
+        .find_reconciliation_candidates(&context, at(90), at(90), u32::MAX)
         .await
         .unwrap();
     assert_eq!(
@@ -1924,7 +1992,7 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
 
     assert!(
         repository
-            .find_reconciliation_candidates(&context, at(10_000), at(10_000))
+            .find_reconciliation_candidates(&context, at(10_000), at(10_000), u32::MAX)
             .await
             .unwrap()
             .is_empty(),

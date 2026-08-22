@@ -498,6 +498,13 @@ async fn reconcile_effects(
                         "an unknown external effect could not be asked about and stays unknown"
                     );
                 }
+                if report.saturated() {
+                    tracing::warn!(
+                        workspace = %context.workspace_id,
+                        batch_size = vestrace_application::RECONCILIATION_BATCH,
+                        "effect reconciliation used its full candidate budget; more work may remain"
+                    );
+                }
             }
             Err(error) => {
                 tracing::warn!(

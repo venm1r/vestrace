@@ -133,11 +133,15 @@ pub trait ExternalEffectRepository: Send + Sync {
     /// `dispatch_expired_before` is different: it is the observer's current
     /// cutoff, compared directly with each dispatch's stored deadline. A legacy
     /// transition with no stated deadline never qualifies at any cutoff.
+    ///
+    /// `limit` is applied by storage, not after discovery. A caller bounding
+    /// provider work must also bound the rows loaded to decide that work.
     async fn find_reconciliation_candidates(
         &self,
         context: &RequestContext,
         retry_unsettled_before: Timestamp,
         dispatch_expired_before: Timestamp,
+        limit: u32,
     ) -> Result<Vec<ExternalEffectRecoveryCandidate>, ApplicationError>;
 
     /// Settled outcomes whose run has not been told, oldest first.
