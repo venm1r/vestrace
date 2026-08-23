@@ -29,6 +29,7 @@ pub mod idempotency;
 pub mod identity;
 pub mod jobs;
 pub mod memory;
+pub mod model_data_policy;
 pub mod models;
 mod null_execution_history;
 pub mod operator;
@@ -130,6 +131,10 @@ pub use identity::{
 };
 pub use jobs::*;
 pub use memory::*;
+pub use model_data_policy::{
+    ModelDataPolicyDecisionRecord, ModelDataPolicyDecisionRepository, ModelDataPolicyMode,
+    ModelDataPolicySettings, SharedModelDataPolicyDecisionRepository,
+};
 pub use models::{
     ModelExecutionRecord, ModelExecutionRepository, ModelRecord, ModelRepository, ProviderRecord,
     ProviderRepository, RoutingDecisionRecord, RoutingDecisionRepository,

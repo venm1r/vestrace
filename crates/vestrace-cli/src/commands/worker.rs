@@ -15,9 +15,9 @@ use vestrace_domain::external_effects::ExternalEffectAdapter;
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
-    PgMemoryTextSource, PgModelExecutionRepository, PgModelRepository, PgOutboxRepository,
-    PgRunLeasePort, PgSecretStore, PgStore, PgWorkQueuePort, PostgresRunStore,
-    SecretBackedProviderFactory,
+    PgMemoryTextSource, PgModelDataPolicyDecisionRepository, PgModelExecutionRepository,
+    PgModelRepository, PgOutboxRepository, PgRunLeasePort, PgSecretStore, PgStore, PgWorkQueuePort,
+    PostgresRunStore, SecretBackedProviderFactory,
 };
 
 /// How many messages one drain pass claims per workspace.
@@ -782,6 +782,29 @@ fn build_model_executor(
         secrets,
         config.model.secret_name.clone(),
     ));
+    let Some(data_policy) = config.policy.data.as_ref() else {
+        // Configuration loading already refuses this. Keep the constructor
+        // fail-closed for callers that assemble AppConfig directly.
+        return Err(anyhow::anyhow!(
+            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
+        ));
+    };
+    let policy = vestrace_domain::trust::DataPolicy::new(
+        vestrace_domain::DataPolicyId::new(),
+        config.policy.version.clone(),
+        data_policy.maximum_sensitivity,
+        data_policy.allowed_destinations.clone(),
+        None,
+    )
+    .map_err(|error| anyhow::anyhow!("policy.data is invalid: {error}"))?;
+    let mode = match data_policy.mode {
+        vestrace_infrastructure::DataPolicyMode::Enforce => {
+            vestrace_application::ModelDataPolicyMode::Enforce
+        }
+        vestrace_infrastructure::DataPolicyMode::Observe => {
+            vestrace_application::ModelDataPolicyMode::Observe
+        }
+    };
 
     Ok(Some(Arc::new(
         vestrace_application::run::ProviderStepModelExecutor::new(
@@ -789,9 +812,15 @@ fn build_model_executor(
             Arc::new(PgModelRepository::new(store.clone())),
             Arc::new(PgArtifactRepository::new(store.clone())),
             Arc::new(PgModelExecutionRepository::new(store.clone())),
+            Arc::new(PgModelDataPolicyDecisionRepository::new(store.clone())),
             vestrace_application::run::StepModelSettings {
                 model_name: config.model.model_name.clone(),
                 max_tokens: config.model.max_tokens,
+            },
+            vestrace_application::ModelDataPolicySettings {
+                policy,
+                classification: data_policy.classification,
+                mode,
             },
         ),
     )))

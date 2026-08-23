@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt, fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -9,7 +9,9 @@ use config::{Environment, File, FileFormat};
 use secrecy::SecretString;
 use serde::Deserialize;
 use vestrace_application::RestorationStage;
-use vestrace_domain::{QualificationLifecycle, conformance::QualificationProfile};
+use vestrace_domain::{
+    DataDestination, QualificationLifecycle, Sensitivity, conformance::QualificationProfile,
+};
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
 const DEFAULT_DATABASE_MAX_CONNECTIONS: u32 = 10;
@@ -93,7 +95,7 @@ impl AppConfig {
     ///
     /// What is deliberately absent: bind address and log filter (they change
     /// where output goes, not what the system does), and every credential.
-    pub fn identity_digest(&self) -> String {
+    pub fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
@@ -123,6 +125,30 @@ impl AppConfig {
                 &format!("{capability}={stage:?}"),
             );
         }
+        match &self.policy.data {
+            None => field("policy.data", "absent"),
+            Some(data) => {
+                field("policy.data.mode", &format!("{:?}", data.mode));
+                field(
+                    "policy.data.classification",
+                    &format!("{:?}", data.classification),
+                );
+                field(
+                    "policy.data.maximum_sensitivity",
+                    &format!("{:?}", data.maximum_sensitivity),
+                );
+                for destination in &data.allowed_destinations {
+                    field(
+                        "policy.data.allowed_destination",
+                        &format!("{destination:?}"),
+                    );
+                }
+                field(
+                    "policy.data.required_capability",
+                    data.required_capability.as_deref().unwrap_or("absent"),
+                );
+            }
+        }
         field("auth.enabled", &self.auth.is_enabled().to_string());
         field("secrets.key_version", self.secrets.effective_key_version());
         field(
@@ -151,6 +177,12 @@ impl AppConfig {
         }
 
         format!("sha256:{:x}", hasher.finalize())
+    }
+
+    /// Existing release-identity name retained for callers that bind the
+    /// configuration fingerprint into qualification evidence.
+    pub fn identity_digest(&self) -> String {
+        self.fingerprint()
     }
 
     /// What this deployment is running against, in a form a human can read.
@@ -262,7 +294,19 @@ struct FilePolicyConfig {
     version: Option<String>,
     capabilities: Option<Vec<String>>,
     capability_restoration: Option<BTreeMap<String, RestorationStage>>,
+    data: Option<FileDataPolicyConfig>,
     risk_ceiling: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileDataPolicyConfig {
+    mode: Option<DataPolicyMode>,
+    classification: Option<Sensitivity>,
+    maximum_sensitivity: Option<Sensitivity>,
+    allowed_destinations: Option<BTreeSet<DataDestination>>,
+    required_capability: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -498,7 +542,33 @@ pub struct PolicyConfig {
     /// declaration remains an observable `CapabilityNotDeclared` decision.
     #[serde(default)]
     pub capability_restoration: BTreeMap<String, RestorationStage>,
+    /// The model-call data boundary. Absent is permitted only while model
+    /// execution itself is disabled; enabling a model requires all of these
+    /// decisions to be operator-authored.
+    #[serde(default)]
+    pub data: Option<DataPolicyConfig>,
     pub risk_ceiling: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DataPolicyMode {
+    Enforce,
+    Observe,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DataPolicyConfig {
+    pub mode: DataPolicyMode,
+    /// A conservative floor applied to every run objective. It is a channel
+    /// declaration, not a claim that the individual objective was classified.
+    pub classification: Sensitivity,
+    pub maximum_sensitivity: Sensitivity,
+    pub allowed_destinations: BTreeSet<DataDestination>,
+    /// Parsed only so startup can explicitly refuse this unsafe configuration.
+    /// The worker has a workspace identity here, not the originating subject.
+    #[serde(default)]
+    pub required_capability: Option<String>,
 }
 
 /// Startup recovery is workspace-scoped like every other query in the system.
@@ -591,7 +661,8 @@ impl AppConfig {
                 // environment, so it accepts a comma-separated list there.
                 .list_separator(",")
                 .with_list_parse_key("workspaces")
-                .with_list_parse_key("policy.capabilities"),
+                .with_list_parse_key("policy.capabilities")
+                .with_list_parse_key("policy.data.allowed_destinations"),
         );
 
         if let Some(http_bind) = overrides.http_bind {
@@ -654,6 +725,12 @@ impl AppConfig {
                     )));
                 }
             }
+            if config.policy.data.is_none() {
+                return Err(config::ConfigError::Message(
+                    "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
+                        .into(),
+                ));
+            }
             if !config.secrets.is_enabled() {
                 // The provider credential lives in the secret store, so model
                 // execution without secret storage could never authenticate.
@@ -662,6 +739,22 @@ impl AppConfig {
                         .into(),
                 ));
             }
+        }
+        if config
+            .policy
+            .data
+            .as_ref()
+            .and_then(|data| data.required_capability.as_ref())
+            .is_some()
+        {
+            // A worker request context carries a workspace-derived principal,
+            // not the subject that created the run. Evaluating a subject grant
+            // here would authorize the wrong party, so this configuration is
+            // refused rather than answered inaccurately.
+            return Err(config::ConfigError::Message(
+                "policy.data.required_capability cannot be configured because model-step execution does not carry the originating principal"
+                    .into(),
+            ));
         }
         if config.policy.engine == PolicyEngineKind::ConfiguredCapabilities
             && config.policy.capabilities.is_empty()
@@ -685,8 +778,9 @@ mod tests {
     use std::fs;
 
     use vestrace_application::RestorationStage;
+    use vestrace_domain::{DataDestination, Sensitivity};
 
-    use super::AppConfig;
+    use super::{AppConfig, DataPolicyMode};
 
     #[test]
     fn qualification_is_disabled_by_default() {
@@ -1262,6 +1356,162 @@ max_connections = 10
                 assert_eq!(
                     config.qualification.suite_version.as_deref(),
                     Some("runtime-v1")
+                );
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_enabled_model_requires_an_explicit_data_policy() {
+        let path = temp_config(
+            "model-without-data-policy",
+            "[database]\nmax_connections = 10\n\n[model]\nenabled = true\nbase_url = 'http://localhost:12345/v1'\nmodel_name = 'prism-ml/bonsai-27b'\nsecret_name = 'lm-studio'\n",
+        );
+
+        temp_env::with_vars(
+            [(
+                "VESTRACE_DATABASE__URL",
+                Some("postgres://localhost/vestrace"),
+            )],
+            || {
+                let error = AppConfig::load_from(Some(&path)).unwrap_err();
+                let message = error.to_string();
+                for key in [
+                    "policy.data.mode",
+                    "policy.data.classification",
+                    "policy.data.maximum_sensitivity",
+                    "policy.data.allowed_destinations",
+                ] {
+                    assert!(message.contains(key), "{key} missing from {message:?}");
+                }
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_required_data_capability_is_refused_at_startup() {
+        let path = temp_config(
+            "data-policy-required-capability",
+            "[database]\nmax_connections = 10\n\n[policy.data]\nmode = 'enforce'\nclassification = 'confidential'\nmaximum_sensitivity = 'confidential'\nallowed_destinations = ['local_model']\nrequired_capability = 'model.invoke'\n",
+        );
+
+        temp_env::with_var(
+            "VESTRACE_DATABASE__URL",
+            Some("postgres://localhost/vestrace"),
+            || {
+                let error = AppConfig::load_from(Some(&path)).unwrap_err();
+                let message = error.to_string();
+                assert!(
+                    message.contains("policy.data.required_capability"),
+                    "{message}"
+                );
+                assert!(message.contains("cannot be configured"), "{message}");
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn every_data_policy_field_changes_the_configuration_identity() {
+        let path = temp_config(
+            "data-policy-fingerprint",
+            "[database]\nmax_connections = 10\n\n[policy.data]\nmode = 'enforce'\nclassification = 'confidential'\nmaximum_sensitivity = 'confidential'\nallowed_destinations = ['local_model']\n",
+        );
+
+        temp_env::with_var(
+            "VESTRACE_DATABASE__URL",
+            Some("postgres://localhost/vestrace"),
+            || {
+                let config = AppConfig::load_from(Some(&path)).unwrap();
+                let baseline = config.fingerprint();
+
+                let mut changed = config.clone();
+                changed.policy.data.as_mut().unwrap().mode = DataPolicyMode::Observe;
+                assert_ne!(baseline, changed.fingerprint(), "mode was not hashed");
+
+                let mut changed = config.clone();
+                changed.policy.data.as_mut().unwrap().classification = Sensitivity::Restricted;
+                assert_ne!(
+                    baseline,
+                    changed.fingerprint(),
+                    "classification was not hashed"
+                );
+
+                let mut changed = config.clone();
+                changed.policy.data.as_mut().unwrap().maximum_sensitivity = Sensitivity::Restricted;
+                assert_ne!(
+                    baseline,
+                    changed.fingerprint(),
+                    "maximum_sensitivity was not hashed"
+                );
+
+                let mut changed = config.clone();
+                changed
+                    .policy
+                    .data
+                    .as_mut()
+                    .unwrap()
+                    .allowed_destinations
+                    .insert(DataDestination::RemoteProvider);
+                assert_ne!(
+                    baseline,
+                    changed.fingerprint(),
+                    "allowed_destinations was not hashed"
+                );
+
+                let mut changed = config.clone();
+                changed.policy.data.as_mut().unwrap().required_capability =
+                    Some("model.invoke".into());
+                assert_ne!(
+                    baseline,
+                    changed.fingerprint(),
+                    "required_capability was not hashed"
+                );
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn data_policy_destinations_can_be_supplied_as_an_environment_list() {
+        let path = temp_config(
+            "data-policy-environment-list",
+            "[database]\nmax_connections = 10\n",
+        );
+
+        temp_env::with_vars(
+            [
+                (
+                    "VESTRACE_DATABASE__URL",
+                    Some("postgres://localhost/vestrace"),
+                ),
+                ("VESTRACE_POLICY__DATA__MODE", Some("observe")),
+                (
+                    "VESTRACE_POLICY__DATA__CLASSIFICATION",
+                    Some("confidential"),
+                ),
+                (
+                    "VESTRACE_POLICY__DATA__MAXIMUM_SENSITIVITY",
+                    Some("restricted"),
+                ),
+                (
+                    "VESTRACE_POLICY__DATA__ALLOWED_DESTINATIONS",
+                    Some("local_model,remote_provider"),
+                ),
+            ],
+            || {
+                let config = AppConfig::load_from(Some(&path)).unwrap();
+                let data = config.policy.data.unwrap();
+                assert_eq!(data.mode, DataPolicyMode::Observe);
+                assert_eq!(data.classification, Sensitivity::Confidential);
+                assert_eq!(data.maximum_sensitivity, Sensitivity::Restricted);
+                assert_eq!(
+                    data.allowed_destinations,
+                    [DataDestination::LocalModel, DataDestination::RemoteProvider]
+                        .into_iter()
+                        .collect()
                 );
             },
         );

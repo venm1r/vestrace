@@ -4,8 +4,9 @@ use serde_json::json;
 use std::time::Duration;
 use vestrace_application::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse,
-    ProviderError, TextGenerationProvider,
+    ProviderError, TextGenerationProvider, TextGenerationProviderEgress,
 };
+use vestrace_domain::DataDestination;
 
 /// How long to wait for a provider before treating it as unavailable.
 ///
@@ -16,6 +17,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct OpenAiCompatibleClient {
     client: Client,
+    egress: TextGenerationProviderEgress,
     base_url: String,
     api_key: Option<String>,
 }
@@ -26,7 +28,7 @@ impl std::fmt::Debug for OpenAiCompatibleClient {
         // struct holding this client cannot start printing the key.
         formatter
             .debug_struct("OpenAiCompatibleClient")
-            .field("base_url", &self.base_url)
+            .field("egress", &self.egress)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
@@ -50,18 +52,47 @@ impl OpenAiCompatibleClient {
         api_key: Option<String>,
         timeout: Duration,
     ) -> Result<Self, ProviderError> {
+        let base_url = base_url.into().trim_end_matches('/').to_string();
+        let parsed = reqwest::Url::parse(&base_url).map_err(|error| {
+            ProviderError::Unavailable(format!(
+                "model provider endpoint {base_url:?} is not a valid URL: {error}"
+            ))
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(ProviderError::Unavailable(format!(
+                "model provider endpoint {base_url:?} must use http or https"
+            )));
+        }
+
+        // Redirects and ambient system proxies are both disabled. A request
+        // classified as loopback must not acquire a second egress path after
+        // the decision has been persisted, and API credentials must never be
+        // forwarded to a redirect target.
+        let redirects_disabled = true;
+        let proxy_disabled = true;
         let client = Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .build()
             .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
+        let destination = destination_for_endpoint(&parsed, redirects_disabled, proxy_disabled);
 
         Ok(Self {
             client,
-            // Trailing slashes would otherwise produce `//chat/completions`,
-            // which some gateways route differently.
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            egress: TextGenerationProviderEgress::new(
+                format!("{base_url}/chat/completions"),
+                destination,
+                redirects_disabled,
+                proxy_disabled,
+            ),
+            base_url,
             api_key,
         })
+    }
+
+    pub fn egress(&self) -> &TextGenerationProviderEgress {
+        &self.egress
     }
 
     fn map_status(status: reqwest::StatusCode) -> ProviderError {
@@ -80,6 +111,67 @@ impl OpenAiCompatibleClient {
             // may be the very data a caller is careful about.
             _ => ProviderError::InvalidResponse(format!("provider returned {status}")),
         }
+    }
+}
+
+fn destination_for_endpoint(
+    endpoint: &reqwest::Url,
+    redirects_disabled: bool,
+    proxy_disabled: bool,
+) -> DataDestination {
+    use std::net::ToSocketAddrs;
+
+    destination_for_endpoint_with_resolver(
+        endpoint,
+        redirects_disabled,
+        proxy_disabled,
+        |host, port| {
+            (host, port)
+                .to_socket_addrs()
+                .map(|addresses| addresses.map(|address| address.ip()).collect())
+        },
+    )
+}
+
+fn destination_for_endpoint_with_resolver<F>(
+    endpoint: &reqwest::Url,
+    redirects_disabled: bool,
+    proxy_disabled: bool,
+    resolve: F,
+) -> DataDestination
+where
+    F: FnOnce(&str, u16) -> std::io::Result<Vec<std::net::IpAddr>>,
+{
+    let loopback = endpoint.host_str().is_some_and(|host| {
+        let unbracketed = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        match unbracketed.parse::<std::net::IpAddr>() {
+            Ok(address) => address.is_loopback(),
+            Err(_)
+                if unbracketed.eq_ignore_ascii_case("localhost")
+                    || unbracketed.eq_ignore_ascii_case("localhost.") =>
+            {
+                let Some(port) = endpoint.port_or_known_default() else {
+                    return false;
+                };
+                // The name alone is not a locality proof: a hosts-file entry
+                // can point `localhost` elsewhere. Refuse LocalModel when
+                // resolution fails, yields nothing, or exposes even one
+                // non-loopback route. DNS rebinding after this construction
+                // check remains the separately stated non-goal in PLAN.md.
+                resolve(unbracketed, port).is_ok_and(|addresses| {
+                    !addresses.is_empty() && addresses.iter().all(|a| a.is_loopback())
+                })
+            }
+            Err(_) => false,
+        }
+    });
+    if loopback && redirects_disabled && proxy_disabled {
+        DataDestination::LocalModel
+    } else {
+        DataDestination::RemoteProvider
     }
 }
 
@@ -103,14 +195,14 @@ impl TextGenerationProvider for OpenAiCompatibleClient {
         &self,
         request: GenerationRequest,
     ) -> Result<GenerationResponse, ProviderError> {
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = self.egress.endpoint();
         let payload = json!({
             "model": request.model,
             "messages": [{"role": "user", "content": request.prompt}],
             "max_tokens": request.max_tokens,
         });
 
-        let mut http_request = self.client.post(&url).json(&payload);
+        let mut http_request = self.client.post(url).json(&payload);
         if let Some(key) = &self.api_key {
             http_request = http_request.bearer_auth(key);
         }
@@ -227,7 +319,10 @@ impl EmbeddingProvider for OpenAiCompatibleClient {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use super::*;
+    use vestrace_domain::DataDestination;
 
     #[test]
     fn the_api_key_is_never_rendered() {
@@ -242,7 +337,10 @@ mod tests {
     #[test]
     fn a_trailing_slash_does_not_produce_a_doubled_path() {
         let client = OpenAiCompatibleClient::new("https://api.example.com/v1/", None).unwrap();
-        assert_eq!(client.base_url, "https://api.example.com/v1");
+        assert_eq!(
+            client.egress.endpoint(),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 
     #[test]
@@ -318,5 +416,99 @@ mod tests {
             rendered,
             "Invalid response: provider returned 400 Bad Request"
         );
+    }
+
+    #[test]
+    fn loopback_is_local_only_with_redirects_and_proxies_disabled() {
+        let client = OpenAiCompatibleClient::new("http://[::1]:12345/v1", None).unwrap();
+        let egress = client.egress();
+
+        assert_eq!(egress.endpoint(), "http://[::1]:12345/v1/chat/completions");
+        assert_eq!(egress.destination(), DataDestination::LocalModel);
+        assert!(egress.redirects_disabled());
+        assert!(egress.proxy_disabled());
+    }
+
+    #[test]
+    fn private_network_hosts_are_remote_providers() {
+        for endpoint in [
+            "http://10.0.0.4:12345/v1",
+            "http://172.16.0.4:12345/v1",
+            "http://192.168.0.4:12345/v1",
+        ] {
+            let client = OpenAiCompatibleClient::new(endpoint, None).unwrap();
+            assert_eq!(
+                client.egress().destination(),
+                DataDestination::RemoteProvider,
+                "{endpoint} was mistaken for a local model"
+            );
+        }
+    }
+
+    #[test]
+    fn localhost_requires_every_resolved_address_to_be_loopback() {
+        let endpoint = reqwest::Url::parse("http://localhost:12345/v1").unwrap();
+        let mixed_addresses = vec!["127.0.0.1".parse().unwrap(), "203.0.113.7".parse().unwrap()];
+
+        let destination =
+            destination_for_endpoint_with_resolver(&endpoint, true, true, |host, port| {
+                assert_eq!(host, "localhost");
+                assert_eq!(port, 12345);
+                Ok(mixed_addresses)
+            });
+
+        assert_eq!(destination, DataDestination::RemoteProvider);
+    }
+
+    #[test]
+    fn loopback_without_either_transport_guard_is_remote() {
+        let endpoint = reqwest::Url::parse("http://localhost:12345/v1").unwrap();
+        assert_eq!(
+            destination_for_endpoint(&endpoint, false, true),
+            DataDestination::RemoteProvider
+        );
+        assert_eq!(
+            destination_for_endpoint(&endpoint, true, false),
+            DataDestination::RemoteProvider
+        );
+    }
+
+    #[tokio::test]
+    async fn a_completion_redirect_to_a_remote_host_is_refused() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let received = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8192];
+            let count = socket.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..count]).into_owned();
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/collect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            request
+        });
+
+        let client = OpenAiCompatibleClient::with_timeout(
+            format!("http://{address}/v1"),
+            Some("credential-that-must-not-be-forwarded".into()),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let result = client
+            .generate(GenerationRequest {
+                model: "test-model".into(),
+                prompt: "prompt-that-must-not-leave-loopback".into(),
+                max_tokens: Some(1),
+            })
+            .await;
+
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse(ref message)) if message.contains("302 Found")),
+            "redirect was not returned to the caller: {result:?}"
+        );
+        let request = received.join().unwrap();
+        assert!(request.contains("prompt-that-must-not-leave-loopback"));
     }
 }

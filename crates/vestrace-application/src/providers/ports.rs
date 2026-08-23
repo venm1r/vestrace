@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use vestrace_domain::DataDestination;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenerationRequest {
@@ -55,6 +56,56 @@ pub trait TextGenerationProvider: Send + Sync {
     ) -> Result<GenerationResponse, ProviderError>;
 }
 
+/// Immutable network facts supplied by the adapter that owns the client.
+///
+/// The executor must not infer locality from deployment configuration: this
+/// descriptor describes the endpoint and transport policy of the client that
+/// will actually carry the prompt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextGenerationProviderEgress {
+    endpoint: String,
+    destination: DataDestination,
+    redirects_disabled: bool,
+    proxy_disabled: bool,
+}
+
+impl TextGenerationProviderEgress {
+    pub fn new(
+        endpoint: impl Into<String>,
+        destination: DataDestination,
+        redirects_disabled: bool,
+        proxy_disabled: bool,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            destination,
+            redirects_disabled,
+            proxy_disabled,
+        }
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    pub fn destination(&self) -> DataDestination {
+        self.destination
+    }
+
+    pub fn redirects_disabled(&self) -> bool {
+        self.redirects_disabled
+    }
+
+    pub fn proxy_disabled(&self) -> bool {
+        self.proxy_disabled
+    }
+}
+
+pub struct ResolvedTextGenerationProvider {
+    pub provider: std::sync::Arc<dyn TextGenerationProvider>,
+    pub egress: TextGenerationProviderEgress,
+}
+
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
     async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError>;
@@ -73,7 +124,7 @@ pub trait TextGenerationProviderFactory: Send + Sync {
     async fn provider_for(
         &self,
         context: &crate::RequestContext,
-    ) -> Result<std::sync::Arc<dyn TextGenerationProvider>, crate::ApplicationError>;
+    ) -> Result<ResolvedTextGenerationProvider, crate::ApplicationError>;
 }
 
 pub type SharedTextGenerationProviderFactory = std::sync::Arc<dyn TextGenerationProviderFactory>;

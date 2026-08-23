@@ -16,11 +16,15 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use vestrace_domain::id::{AgentRunId, ArtifactId, ModelExecutionId, ModelId, RunStepId};
+use vestrace_domain::trust::{DataClassification, evaluate_model_boundary};
 
 use crate::artifacts::{ArtifactContent, SharedArtifactRepository};
 use crate::models::{ModelExecutionRecord, SharedModelExecutionRepository, SharedModelRepository};
 use crate::providers::{GenerationRequest, ProviderError, SharedTextGenerationProviderFactory};
-use crate::{ApplicationError, RequestContext};
+use crate::{
+    ApplicationError, ModelDataPolicyDecisionRecord, ModelDataPolicyMode, ModelDataPolicySettings,
+    RequestContext, SharedModelDataPolicyDecisionRepository,
+};
 
 /// Which model a step's invocation uses.
 ///
@@ -79,7 +83,9 @@ pub struct ProviderStepModelExecutor {
     models: SharedModelRepository,
     artifacts: SharedArtifactRepository,
     executions: SharedModelExecutionRepository,
+    data_policy_decisions: SharedModelDataPolicyDecisionRepository,
     settings: StepModelSettings,
+    data_policy: ModelDataPolicySettings,
 }
 
 impl ProviderStepModelExecutor {
@@ -88,14 +94,18 @@ impl ProviderStepModelExecutor {
         models: SharedModelRepository,
         artifacts: SharedArtifactRepository,
         executions: SharedModelExecutionRepository,
+        data_policy_decisions: SharedModelDataPolicyDecisionRepository,
         settings: StepModelSettings,
+        data_policy: ModelDataPolicySettings,
     ) -> Self {
         Self {
             providers,
             models,
             artifacts,
             executions,
+            data_policy_decisions,
             settings,
+            data_policy,
         }
     }
 
@@ -185,8 +195,53 @@ impl StepModelExecutor for ProviderStepModelExecutor {
         let model_id = self.model_id(context).await?;
         let provider = self.providers.provider_for(context).await?;
 
+        let classification = DataClassification::source(
+            self.data_policy.classification,
+            "run-objective-channel",
+            "deployment configuration policy.data.classification",
+        )?;
+        let destination = provider.egress.destination();
+        // Required capabilities are refused during configuration loading: the
+        // worker context does not carry the originating subject, so `false` is
+        // the only honest value at this boundary and is unreachable for a
+        // configured required capability.
+        let decision = evaluate_model_boundary(
+            &self.data_policy.policy,
+            &classification,
+            destination,
+            false,
+        );
+        let reason = if decision.is_allowed() {
+            decision.reason().to_owned()
+        } else {
+            format!("{}; destination {destination:?}", decision.reason())
+        };
+        let record = ModelDataPolicyDecisionRecord {
+            id: uuid::Uuid::now_v7(),
+            run_id: request.run_id,
+            step_id: request.step_id,
+            destination,
+            classification: self.data_policy.classification,
+            allowed: decision.is_allowed(),
+            reason,
+            policy_version: decision.policy_version().to_owned(),
+            mode: self.data_policy.mode,
+            decided_at: vestrace_domain::time::now(),
+        };
+        // This commit is the disclosure boundary. If it fails, the provider is
+        // not called: a crash or storage fault must never leave an unrecorded
+        // disclosure behind.
+        self.data_policy_decisions.record(&record).await?;
+        if !record.allowed && self.data_policy.mode == ModelDataPolicyMode::Enforce {
+            return Err(ApplicationError::Policy(format!(
+                "model data policy denied destination {destination:?}: {}",
+                decision.reason()
+            )));
+        }
+
         let started = Instant::now();
         let generation = provider
+            .provider
             .generate(GenerationRequest {
                 model: self.settings.model_name.clone(),
                 prompt: request.objective,

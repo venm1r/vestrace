@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use vestrace_application::{
-    ApplicationError, RequestContext, SharedSecretStore, TextGenerationProvider,
+    ApplicationError, RequestContext, ResolvedTextGenerationProvider, SharedSecretStore,
     TextGenerationProviderFactory,
 };
 use vestrace_domain::trust::SecretResolutionRequest;
@@ -60,7 +60,7 @@ impl TextGenerationProviderFactory for SecretBackedProviderFactory {
     async fn provider_for(
         &self,
         context: &RequestContext,
-    ) -> Result<Arc<dyn TextGenerationProvider>, ApplicationError> {
+    ) -> Result<ResolvedTextGenerationProvider, ApplicationError> {
         let reference = self
             .secrets
             .find(context, &self.secret_name, PROVIDER_API_KEY_PURPOSE)
@@ -88,13 +88,70 @@ impl TextGenerationProviderFactory for SecretBackedProviderFactory {
 
         let client = OpenAiCompatibleClient::new(&self.base_url, Some(api_key))
             .map_err(|error| ApplicationError::Unavailable(error.to_string()))?;
-        Ok(Arc::new(client))
+        let egress = client.egress().clone();
+        Ok(ResolvedTextGenerationProvider {
+            provider: Arc::new(client),
+            egress,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    struct OneSecret {
+        reference: vestrace_domain::trust::SecretRef,
+    }
+
+    #[async_trait]
+    impl vestrace_application::SecretStore for OneSecret {
+        async fn put(
+            &self,
+            _: &RequestContext,
+            _: &str,
+            _: &str,
+            _: vestrace_application::SecretMaterial,
+        ) -> Result<vestrace_domain::trust::SecretRef, ApplicationError> {
+            unreachable!()
+        }
+
+        async fn list(
+            &self,
+            _: &RequestContext,
+        ) -> Result<Vec<vestrace_application::SecretDescriptor>, ApplicationError> {
+            Ok(vec![])
+        }
+
+        async fn find(
+            &self,
+            _: &RequestContext,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<vestrace_domain::trust::SecretRef>, ApplicationError> {
+            Ok(Some(self.reference.clone()))
+        }
+
+        async fn resolve(
+            &self,
+            _: &RequestContext,
+            _: &vestrace_domain::trust::SecretLease,
+        ) -> Result<vestrace_application::SecretMaterial, ApplicationError> {
+            Ok(vestrace_application::SecretMaterial::new(
+                b"local-development-key".to_vec(),
+            ))
+        }
+
+        async fn delete(
+            &self,
+            _: &RequestContext,
+            _: vestrace_domain::SecretRefId,
+        ) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn the_factory_never_renders_a_credential() {
@@ -213,5 +270,40 @@ mod tests {
 
         assert!(matches!(error, ApplicationError::InvalidConfiguration(_)));
         assert!(error.to_string().contains("openai"));
+    }
+
+    #[tokio::test]
+    async fn the_factory_returns_the_descriptor_of_its_actual_client() {
+        let context = RequestContext::new(
+            vestrace_domain::WorkspaceId::new(),
+            vestrace_domain::PrincipalId::new(),
+        );
+        let reference = vestrace_domain::trust::SecretRef::new(
+            "secret://mounted/lm-studio",
+            "test",
+            context.workspace_id,
+            PROVIDER_API_KEY_PURPOSE,
+            BTreeMap::new(),
+            Some("v1".into()),
+        )
+        .unwrap();
+        let factory = SecretBackedProviderFactory::new(
+            "http://localhost:12345/v1/",
+            Arc::new(OneSecret { reference }),
+            "lm-studio",
+        );
+
+        let resolved = factory.provider_for(&context).await.unwrap();
+
+        assert_eq!(
+            resolved.egress.endpoint(),
+            "http://localhost:12345/v1/chat/completions"
+        );
+        assert_eq!(
+            resolved.egress.destination(),
+            vestrace_domain::DataDestination::LocalModel
+        );
+        assert!(resolved.egress.redirects_disabled());
+        assert!(resolved.egress.proxy_disabled());
     }
 }
