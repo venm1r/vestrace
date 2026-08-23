@@ -60,16 +60,16 @@ pub trait TextGenerationProvider: Send + Sync {
 ///
 /// The executor must not infer locality from deployment configuration: this
 /// descriptor describes the endpoint and transport policy of the client that
-/// will actually carry the prompt.
+/// will actually carry provider input.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TextGenerationProviderEgress {
+pub struct ProviderEgress {
     endpoint: String,
     destination: DataDestination,
     redirects_disabled: bool,
     proxy_disabled: bool,
 }
 
-impl TextGenerationProviderEgress {
+impl ProviderEgress {
     pub fn new(
         endpoint: impl Into<String>,
         destination: DataDestination,
@@ -103,7 +103,7 @@ impl TextGenerationProviderEgress {
 
 pub struct ResolvedTextGenerationProvider {
     pub provider: std::sync::Arc<dyn TextGenerationProvider>,
-    pub egress: TextGenerationProviderEgress,
+    pub egress: ProviderEgress,
 }
 
 #[async_trait]

@@ -14,9 +14,9 @@ use vestrace_application::run::{
 };
 use vestrace_application::{
     ApplicationError, GenerationRequest, GenerationResponse, ModelDataPolicyMode,
-    ModelDataPolicySettings, ModelRecord, ModelRepository, ProviderError, ProviderRepository,
-    RequestContext, ResolvedTextGenerationProvider, TextGenerationProvider,
-    TextGenerationProviderEgress, TextGenerationProviderFactory,
+    ModelDataPolicySettings, ModelRecord, ModelRepository, ProviderEgress, ProviderError,
+    ProviderRepository, RequestContext, ResolvedTextGenerationProvider, TextGenerationProvider,
+    TextGenerationProviderFactory,
 };
 use vestrace_domain::id::{AgentRunId, ModelId, ProviderId, RunStepId};
 use vestrace_domain::trust::DataPolicy;
@@ -65,7 +65,7 @@ impl TextGenerationProvider for PersistedBeforeLiveCall {
 
 struct LiveFactory {
     provider: Arc<dyn TextGenerationProvider>,
-    egress: TextGenerationProviderEgress,
+    egress: ProviderEgress,
 }
 
 #[async_trait]

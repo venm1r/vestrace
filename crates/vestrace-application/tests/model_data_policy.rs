@@ -9,8 +9,8 @@ use vestrace_application::{
     ApplicationError, ArtifactContent, ArtifactListing, ArtifactRepository, GenerationRequest,
     GenerationResponse, ModelDataPolicyDecisionRecord, ModelDataPolicyDecisionRepository,
     ModelDataPolicyMode, ModelDataPolicySettings, ModelExecutionRecord, ModelExecutionRepository,
-    ModelRecord, ModelRepository, ProviderError, RequestContext, ResolvedTextGenerationProvider,
-    StoredArtifact, TextGenerationProvider, TextGenerationProviderEgress,
+    ModelRecord, ModelRepository, ProviderEgress, ProviderError, RequestContext,
+    ResolvedTextGenerationProvider, StoredArtifact, TextGenerationProvider,
     TextGenerationProviderFactory,
 };
 use vestrace_domain::id::{
@@ -43,7 +43,7 @@ impl TextGenerationProvider for RecordingProvider {
 
 struct Factory {
     provider: Arc<dyn TextGenerationProvider>,
-    egress: TextGenerationProviderEgress,
+    egress: ProviderEgress,
 }
 
 #[async_trait]
@@ -182,7 +182,7 @@ fn executor(destination: DataDestination, mode: ModelDataPolicyMode) -> Executor
     });
     let factory = Arc::new(Factory {
         provider,
-        egress: TextGenerationProviderEgress::new(
+        egress: ProviderEgress::new(
             if destination == DataDestination::LocalModel {
                 "http://localhost:12345/v1"
             } else {

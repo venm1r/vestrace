@@ -1,3 +1,4 @@
+mod egress;
 pub mod embeddings;
 pub mod openai_compatible;
 pub mod secret_backed;
