@@ -130,3 +130,32 @@ authentication cannot work while the configuration says it can.
 **The four compose smoke tests cannot run in parallel** — each runs
 `docker compose up` on the same project. Their first collective failure looked
 like a verdict and was a race.
+
+## Correction, written the day after, before this was pushed
+
+**The section "The gap" above overstates, and the sentence to distrust is this
+one:** "A revision that retrieval withheld travelled out of the building by the
+adjacent route."
+
+No revision has ever been withheld by label, because no revision has ever
+carried one. `MemoryRevision.classification` is written in exactly two places
+in `memory/services.rs`, and both write `None`. The column has existed since
+migration 0116 as unconstrained `TEXT`, and nothing in any production path has
+ever put a value in it.
+
+So the label leg of `ClassificationPolicy` has never fired on real data, in
+retrieval or now in embedding. What carries weight today is the explicit
+unclassified flag and the destination check. Both are real, both were verified,
+and the gate refuses on them.
+
+What is not true is the picture the section above paints: two paths disagreeing
+about a labelled revision. The paths do differ in code. They have never differed
+in effect, because the input that would separate them does not exist.
+
+This is the same error the rest of this document is about, committed while
+describing it: a mechanism written up as though it were operating. It is left
+above rather than edited away, because the correction is the more useful
+artifact.
+
+**The next slice is therefore not a vocabulary for the field. It is a writer for
+it.** Constraining what may be written is worth doing after something writes.
