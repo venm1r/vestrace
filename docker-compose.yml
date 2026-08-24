@@ -98,12 +98,14 @@ services:
       # not pass production crypto qualification, by design. A real deployment
       # replaces this with a KMS-backed adapter and must generate its own key
       # (`openssl rand -base64 32`); this fixed value is public.
-      # The embedding model that gives retrieval a vector channel. Local, so
-      # the vector index does not depend on an external provider being up, and
+      # The embedding model that gives retrieval a vector channel. Host-served,
+      # so the vector index does not depend on an internet provider being up, and
       # separate from the completion model because the two have different widths
       # and different failure modes.
       #
-      # host.docker.internal reaches the host from inside the container; the
+      # host.docker.internal reaches the host gateway from inside the container;
+      # it is not loopback and therefore derives as RemoteProvider. The explicit
+      # embedding policy below names that fact instead of calling it local. The
       # space name pins which geometry these vectors belong to, and changing the
       # model without changing the space is refused rather than silently mixing
       # two of them.
@@ -111,6 +113,15 @@ services:
       VESTRACE_EMBEDDING__BASE_URL: http://host.docker.internal:12345/v1
       VESTRACE_EMBEDDING__MODEL_NAME: text-embedding-nomic-embed-text-v1.5
       VESTRACE_EMBEDDING__SPACE_NAME: nomic-768
+      # This is a permissive local-development policy, not a recommended
+      # deployment policy. A deployment should first narrow admitted labels and
+      # unclassified input, then narrow the sensitivity and destination bounds.
+      VESTRACE_POLICY__DATA__EMBEDDING__MODE: enforce
+      VESTRACE_POLICY__DATA__EMBEDDING__ADMISSIBLE_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__ALLOW_UNCLASSIFIED: "true"
+      VESTRACE_POLICY__DATA__EMBEDDING__CLASSIFICATION: restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__MAXIMUM_SENSITIVITY: restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__ALLOWED_DESTINATIONS: remote_provider
       VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
       VESTRACE_SECRETS__KEY_VERSION: local-dev-v1
       # An external effect adapter. The destination is configuration and never a
@@ -184,6 +195,14 @@ services:
       VESTRACE_MODEL__MODEL_NAME: ${VESTRACE_MODEL_NAME:-gpt-4o-mini}
       VESTRACE_MODEL__SECRET_NAME: ${VESTRACE_MODEL_SECRET_NAME:-openai}
       VESTRACE_MODEL__MAX_TOKENS: ${VESTRACE_MODEL_MAX_TOKENS:-2048}
+      # This is a permissive local-development completion policy, not a
+      # recommended deployment policy. A deployment should first set the
+      # classification and sensitivity ceiling to its actual data boundary,
+      # then narrow the allowed destinations.
+      VESTRACE_POLICY__DATA__MODE: enforce
+      VESTRACE_POLICY__DATA__CLASSIFICATION: restricted
+      VESTRACE_POLICY__DATA__MAXIMUM_SENSITIVITY: restricted
+      VESTRACE_POLICY__DATA__ALLOWED_DESTINATIONS: remote_provider
       # The worker needs the same master key as the server to resolve that
       # secret. Same custody caveat as above.
       VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
@@ -200,6 +219,18 @@ services:
       # way to exercise dead-lettering without waiting for a real outage.
       VESTRACE_EMBEDDING__MODEL_NAME: ${VESTRACE_EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
       VESTRACE_EMBEDDING__SPACE_NAME: nomic-768
+      # The host gateway is RemoteProvider even when LM Studio is running on
+      # this developer's machine. Every active revision label is admitted in
+      # this local-development deployment, and NULL remains an explicit choice.
+      # This is a permissive local-development policy, not a recommended
+      # deployment policy. A deployment should first narrow admitted labels and
+      # unclassified input, then narrow the sensitivity and destination bounds.
+      VESTRACE_POLICY__DATA__EMBEDDING__MODE: enforce
+      VESTRACE_POLICY__DATA__EMBEDDING__ADMISSIBLE_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__ALLOW_UNCLASSIFIED: "true"
+      VESTRACE_POLICY__DATA__EMBEDDING__CLASSIFICATION: restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__MAXIMUM_SENSITIVITY: restricted
+      VESTRACE_POLICY__DATA__EMBEDDING__ALLOWED_DESTINATIONS: remote_provider
       # The worker reconciles unknown effect outcomes, so it needs the same
       # read-back destination the server dispatches to. An effect that timed out
       # can only be settled by asking the far side, and nothing else asks.

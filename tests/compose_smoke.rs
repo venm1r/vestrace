@@ -88,6 +88,20 @@ fn wait_for_ready(base_url: &str, timeout_secs: u32) -> bool {
     false
 }
 
+fn assert_worker_is_still_running() {
+    let output = compose(&["ps", "--status", "running", "--services", "vestrace-worker"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "docker compose could not inspect worker state: {stderr}"
+    );
+    assert!(
+        stdout.lines().any(|service| service == "vestrace-worker"),
+        "vestrace-worker exited after compose startup; running services: {stdout}"
+    );
+}
+
 #[test]
 fn compose_base_url_defaults_to_port_8080() {
     assert_eq!(
@@ -128,6 +142,7 @@ fn compose_smoke_health_ready() {
 
     let ready = wait_for_ready(&base_url, 60);
     assert!(ready, "server did not become ready within 60 seconds");
+    assert_worker_is_still_running();
 
     let (ok, body) = curl(&format!("{base_url}/health/ready"));
     assert!(ok, "health/ready returned non-2xx: {body}");

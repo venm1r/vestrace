@@ -180,8 +180,7 @@ async fn rebuild_embeddings(
     store: &PgStore,
     context: &RequestContext,
 ) -> Result<usize, anyhow::Error> {
-    let Some(provider) = crate::commands::server::build_embedding_provider(&config.embedding)?
-    else {
+    let Some(provider) = crate::commands::server::build_embedding_provider(config, store)? else {
         // Nothing configured is not a failure. It is the deployment saying it
         // has no vector channel, which the retrieval journal also records.
         println!();

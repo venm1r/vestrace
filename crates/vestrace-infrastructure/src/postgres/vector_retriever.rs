@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use sqlx::Row;
-use vestrace_application::retrieval::{EmbeddingSpace, SharedEmbeddingProvider};
+use vestrace_application::retrieval::EmbeddingSpace;
 use vestrace_application::{
-    ApplicationError, NormalizedRetrievalRequest, RequestContext, VectorRetriever,
+    ApplicationError, NormalizedRetrievalRequest, RequestContext, SharedGovernedEmbeddingProvider,
+    VectorRetriever,
 };
 use vestrace_domain::{MemoryKind, MemoryStatus, RetrievalCandidate, id::MemoryId};
 
@@ -25,16 +26,25 @@ use super::PgStore;
 /// distance is turned into `1 - distance`. Storing the distance in a field named
 /// score would leave every consumer — fusion, ranking, the context pack — sorting
 /// the wrong way while looking correct.
+///
+/// ```compile_fail
+/// use vestrace_application::retrieval::SharedEmbeddingProvider;
+/// use vestrace_infrastructure::{PgStore, PgVectorRetriever};
+///
+/// let store: PgStore = todo!();
+/// let raw: SharedEmbeddingProvider = todo!();
+/// let _ = PgVectorRetriever::new(store, raw, "space");
+/// ```
 pub struct PgVectorRetriever {
     store: PgStore,
-    provider: SharedEmbeddingProvider,
+    provider: SharedGovernedEmbeddingProvider,
     space_name: String,
 }
 
 impl PgVectorRetriever {
     pub fn new(
         store: PgStore,
-        provider: SharedEmbeddingProvider,
+        provider: SharedGovernedEmbeddingProvider,
         space_name: impl Into<String>,
     ) -> Self {
         Self {
@@ -105,7 +115,7 @@ impl VectorRetriever for PgVectorRetriever {
         // another gives distances that are arithmetically valid and meaningless.
         let embedded = self
             .provider
-            .embed(std::slice::from_ref(&request.query))
+            .embed_retrieval_query(request.request_id, &request.query)
             .await?;
         let query_vector = embedded.into_iter().next().ok_or_else(|| {
             ApplicationError::Unavailable("the embedding provider returned nothing".into())

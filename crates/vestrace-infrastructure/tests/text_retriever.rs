@@ -103,6 +103,7 @@ async fn seed_workspace(pool: &PgPool) -> RequestContext {
 
 fn request(context: &RequestContext, query: &str) -> NormalizedRetrievalRequest {
     NormalizedRetrievalRequest {
+        request_id: vestrace_domain::id::RetrievalRunId::new(),
         query: query.to_owned(),
         intent: RetrievalIntent::SemanticRecall,
         time_perspective: TimePerspective::Current,

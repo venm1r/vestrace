@@ -24,11 +24,12 @@
 //! already been bitten by twice.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use vestrace_domain::id::{EmbeddingSpaceId, MemoryId};
 
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, EmbeddingInput, RequestContext, SharedGovernedEmbeddingProvider};
 
 /// One embedding space: a model, its output width, and the name a deployment
 /// knows it by.
@@ -103,13 +104,26 @@ pub type SharedEmbeddingStore = Arc<dyn EmbeddingStore>;
 pub struct PendingEmbedding {
     pub memory_id: MemoryId,
     pub content: String,
+    pub classification: Option<String>,
 }
 
 /// Fills in missing embeddings.
+///
+/// ```compile_fail
+/// use vestrace_application::retrieval::{
+///     EmbeddingBackfillService, SharedEmbeddingProvider, SharedEmbeddingStore,
+/// };
+///
+/// let raw: SharedEmbeddingProvider = todo!();
+/// let store: SharedEmbeddingStore = todo!();
+/// let _ = EmbeddingBackfillService::new(raw, store, "space");
+/// ```
 pub struct EmbeddingBackfillService {
-    provider: SharedEmbeddingProvider,
+    provider: SharedGovernedEmbeddingProvider,
     store: SharedEmbeddingStore,
     space_name: String,
+    rebuild_invocation_id: uuid::Uuid,
+    next_batch_ordinal: AtomicU32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -120,7 +134,7 @@ pub struct BackfillReport {
 
 impl EmbeddingBackfillService {
     pub fn new(
-        provider: SharedEmbeddingProvider,
+        provider: SharedGovernedEmbeddingProvider,
         store: SharedEmbeddingStore,
         space_name: impl Into<String>,
     ) -> Self {
@@ -128,6 +142,8 @@ impl EmbeddingBackfillService {
             provider,
             store,
             space_name: space_name.into(),
+            rebuild_invocation_id: uuid::Uuid::now_v7(),
+            next_batch_ordinal: AtomicU32::new(1),
         }
     }
 
@@ -140,9 +156,15 @@ impl EmbeddingBackfillService {
         // The space is derived from the provider rather than configured
         // separately: a space whose declared model differs from the one actually
         // embedding into it is the failure this type exists to prevent.
+        let batch_ordinal = self
+            .next_batch_ordinal
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(1))
+            })
+            .unwrap_or(u32::MAX);
         let probe = self
             .provider
-            .embed(&["dimension probe".to_string()])
+            .probe_dimensions(self.rebuild_invocation_id, batch_ordinal)
             .await?;
         let dimensions = probe.first().map(|vector| vector.len()).ok_or_else(|| {
             ApplicationError::Unavailable("the embedding provider returned nothing".into())
@@ -163,8 +185,14 @@ impl EmbeddingBackfillService {
 
         let mut embedded = 0usize;
         if !pending.is_empty() {
-            let inputs: Vec<String> = pending.iter().map(|item| item.content.clone()).collect();
-            let vectors = self.provider.embed(&inputs).await?;
+            let inputs = pending
+                .iter()
+                .map(|item| EmbeddingInput::new(item.content.clone(), item.classification.clone()))
+                .collect::<Vec<_>>();
+            let vectors = self
+                .provider
+                .embed_backfill(self.rebuild_invocation_id, batch_ordinal, &inputs)
+                .await?;
             if vectors.len() != pending.len() {
                 return Err(ApplicationError::Unavailable(format!(
                     "the embedding provider returned {} vectors for {} inputs, so which \
@@ -203,8 +231,20 @@ impl EmbeddingBackfillService {
 /// Idempotent because it must be — outbox delivery is at-least-once, and the
 /// store upserts on `(workspace, memory, space)`, so a redelivered message
 /// re-embeds rather than duplicating.
+///
+/// ```compile_fail
+/// use vestrace_application::retrieval::{
+///     EmbedMemoryHandler, SharedEmbeddingProvider, SharedEmbeddingStore,
+///     SharedMemoryTextSource,
+/// };
+///
+/// let raw: SharedEmbeddingProvider = todo!();
+/// let store: SharedEmbeddingStore = todo!();
+/// let memories: SharedMemoryTextSource = todo!();
+/// let _ = EmbedMemoryHandler::new(raw, store, memories, "space", "memory.created");
+/// ```
 pub struct EmbedMemoryHandler {
-    provider: SharedEmbeddingProvider,
+    provider: SharedGovernedEmbeddingProvider,
     store: SharedEmbeddingStore,
     memories: SharedMemoryTextSource,
     space_name: String,
@@ -213,7 +253,7 @@ pub struct EmbedMemoryHandler {
 
 impl EmbedMemoryHandler {
     pub fn new(
-        provider: SharedEmbeddingProvider,
+        provider: SharedGovernedEmbeddingProvider,
         store: SharedEmbeddingStore,
         memories: SharedMemoryTextSource,
         space_name: impl Into<String>,
@@ -238,7 +278,7 @@ pub trait MemoryTextSource: Send + Sync {
         &self,
         context: &RequestContext,
         memory_id: MemoryId,
-    ) -> Result<Option<String>, ApplicationError>;
+    ) -> Result<Option<EmbeddingInput>, ApplicationError>;
 }
 
 pub type SharedMemoryTextSource = Arc<dyn MemoryTextSource>;
@@ -267,14 +307,17 @@ impl crate::OutboxHandler for EmbedMemoryHandler {
                 ))
             })?;
 
-        let Some(text) = self.memories.active_text(context, memory_id).await? else {
+        let Some(input) = self.memories.active_text(context, memory_id).await? else {
             // The memory was superseded or removed between the write and the
             // delivery. There is nothing to embed and nothing wrong; the message
             // is acknowledged so it does not retry forever.
             return Ok(());
         };
 
-        let vectors = self.provider.embed(std::slice::from_ref(&text)).await?;
+        let vectors = self
+            .provider
+            .embed_delivery(message.id, message.attempts.saturating_add(1), &input)
+            .await?;
         let vector = vectors.into_iter().next().ok_or_else(|| {
             ApplicationError::Unavailable("the embedding provider returned nothing".into())
         })?;

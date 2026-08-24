@@ -14,6 +14,7 @@ pub mod diagnostics;
 pub mod effect_outcome_delivery;
 pub mod effect_recovery;
 pub mod effect_repository;
+pub mod embedding_data_policy;
 mod error;
 pub mod execution_ports;
 pub mod external_effects;
@@ -95,6 +96,12 @@ pub use effect_repository::{
     ExternalEffectRecoveryCandidate, ExternalEffectRepository, LostDispatchAdoption,
     LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
     WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
+};
+pub use embedding_data_policy::{
+    EmbeddingDataPolicyDecisionRecord, EmbeddingDataPolicyDecisionRepository,
+    EmbeddingDataPolicyGate, EmbeddingDataPolicyMode, EmbeddingDataPolicySettings, EmbeddingInput,
+    EmbeddingPurpose, GovernedEmbeddingProvider, SharedEmbeddingDataPolicyDecisionRepository,
+    SharedGovernedEmbeddingProvider,
 };
 pub use error::ApplicationError;
 pub use execution_ports::{

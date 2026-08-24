@@ -136,7 +136,7 @@ impl EmbeddingStore for PgEmbeddingStore {
         // search document holds too — one memory, one meaning, whichever channel
         // is asked.
         let rows = sqlx::query(
-            "SELECT m.id AS memory_id, r.content
+            "SELECT m.id AS memory_id, r.content, r.classification
              FROM memories m
              JOIN memory_revisions r ON r.id = m.active_revision_id
              LEFT JOIN memory_embeddings e
@@ -165,6 +165,7 @@ impl EmbeddingStore for PgEmbeddingStore {
                         row.try_get("memory_id").map_err(storage_error)?,
                     ),
                     content: row.try_get("content").map_err(storage_error)?,
+                    classification: row.try_get("classification").map_err(storage_error)?,
                 })
             })
             .collect()

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use vestrace_application::RestorationStage;
 use vestrace_domain::{
     DataDestination, QualificationLifecycle, Sensitivity, conformance::QualificationProfile,
+    retrieval::ClassificationPolicy,
 };
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
@@ -37,6 +38,7 @@ struct FileConfig {
     auth: Option<FileAuthConfig>,
     secrets: Option<FileSecretsConfig>,
     model: Option<FileModelConfig>,
+    embedding: Option<FileEmbeddingConfig>,
     workspaces: Option<Vec<uuid::Uuid>>,
 }
 
@@ -137,16 +139,48 @@ impl AppConfig {
                     "policy.data.maximum_sensitivity",
                     &format!("{:?}", data.maximum_sensitivity),
                 );
-                for destination in &data.allowed_destinations {
-                    field(
-                        "policy.data.allowed_destination",
-                        &format!("{destination:?}"),
-                    );
+                if let Some(destinations) = &data.allowed_destinations {
+                    for destination in destinations {
+                        field(
+                            "policy.data.allowed_destination",
+                            &format!("{destination:?}"),
+                        );
+                    }
                 }
                 field(
                     "policy.data.required_capability",
                     data.required_capability.as_deref().unwrap_or("absent"),
                 );
+                match &data.embedding {
+                    None => field("policy.data.embedding", "absent"),
+                    Some(embedding) => {
+                        field(
+                            "policy.data.embedding.mode",
+                            &format!("{:?}", embedding.mode),
+                        );
+                        for label in &embedding.admissible_labels {
+                            field("policy.data.embedding.admissible_label", label);
+                        }
+                        field(
+                            "policy.data.embedding.allow_unclassified",
+                            &embedding.allow_unclassified.to_string(),
+                        );
+                        field(
+                            "policy.data.embedding.classification",
+                            &format!("{:?}", embedding.classification),
+                        );
+                        field(
+                            "policy.data.embedding.maximum_sensitivity",
+                            &format!("{:?}", embedding.maximum_sensitivity),
+                        );
+                        for destination in &embedding.allowed_destinations {
+                            field(
+                                "policy.data.embedding.allowed_destination",
+                                &format!("{destination:?}"),
+                            );
+                        }
+                    }
+                }
             }
         }
         field("auth.enabled", &self.auth.is_enabled().to_string());
@@ -307,6 +341,19 @@ struct FileDataPolicyConfig {
     maximum_sensitivity: Option<Sensitivity>,
     allowed_destinations: Option<BTreeSet<DataDestination>>,
     required_capability: Option<String>,
+    embedding: Option<FileEmbeddingDataPolicyConfig>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileEmbeddingDataPolicyConfig {
+    mode: Option<DataPolicyMode>,
+    admissible_labels: Option<BTreeSet<String>>,
+    allow_unclassified: Option<bool>,
+    classification: Option<Sensitivity>,
+    maximum_sensitivity: Option<Sensitivity>,
+    allowed_destinations: Option<BTreeSet<DataDestination>>,
 }
 
 #[allow(dead_code)]
@@ -414,6 +461,17 @@ struct FileModelConfig {
     model_name: Option<String>,
     secret_name: Option<String>,
     max_tokens: Option<u32>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileEmbeddingConfig {
+    enabled: Option<bool>,
+    base_url: Option<String>,
+    model_name: Option<String>,
+    space_name: Option<String>,
+    secret_name: Option<String>,
 }
 
 /// The model an agent-assigned run step invokes.
@@ -559,16 +617,30 @@ pub enum DataPolicyMode {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct DataPolicyConfig {
-    pub mode: DataPolicyMode,
+    pub mode: Option<DataPolicyMode>,
     /// A conservative floor applied to every run objective. It is a channel
     /// declaration, not a claim that the individual objective was classified.
-    pub classification: Sensitivity,
-    pub maximum_sensitivity: Sensitivity,
-    pub allowed_destinations: BTreeSet<DataDestination>,
+    pub classification: Option<Sensitivity>,
+    pub maximum_sensitivity: Option<Sensitivity>,
+    pub allowed_destinations: Option<BTreeSet<DataDestination>>,
     /// Parsed only so startup can explicitly refuse this unsafe configuration.
     /// The worker has a workspace identity here, not the originating subject.
     #[serde(default)]
     pub required_capability: Option<String>,
+    /// A separate disclosure decision for the embedding channel. Completion
+    /// consent in the fields above never satisfies this declaration.
+    #[serde(default)]
+    pub embedding: Option<EmbeddingDataPolicyConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EmbeddingDataPolicyConfig {
+    pub mode: DataPolicyMode,
+    pub admissible_labels: BTreeSet<String>,
+    pub allow_unclassified: bool,
+    pub classification: Sensitivity,
+    pub maximum_sensitivity: Sensitivity,
+    pub allowed_destinations: BTreeSet<DataDestination>,
 }
 
 /// Startup recovery is workspace-scoped like every other query in the system.
@@ -662,7 +734,9 @@ impl AppConfig {
                 .list_separator(",")
                 .with_list_parse_key("workspaces")
                 .with_list_parse_key("policy.capabilities")
-                .with_list_parse_key("policy.data.allowed_destinations"),
+                .with_list_parse_key("policy.data.allowed_destinations")
+                .with_list_parse_key("policy.data.embedding.admissible_labels")
+                .with_list_parse_key("policy.data.embedding.allowed_destinations"),
         );
 
         if let Some(http_bind) = overrides.http_bind {
@@ -725,7 +799,13 @@ impl AppConfig {
                     )));
                 }
             }
-            if config.policy.data.is_none() {
+            let completion_policy_is_complete = config.policy.data.as_ref().is_some_and(|data| {
+                data.mode.is_some()
+                    && data.classification.is_some()
+                    && data.maximum_sensitivity.is_some()
+                    && data.allowed_destinations.is_some()
+            });
+            if !completion_policy_is_complete {
                 return Err(config::ConfigError::Message(
                     "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
                         .into(),
@@ -739,6 +819,49 @@ impl AppConfig {
                         .into(),
                 ));
             }
+        }
+        if config.embedding.enabled {
+            for (label, value) in [
+                ("embedding.base_url", &config.embedding.base_url),
+                ("embedding.model_name", &config.embedding.model_name),
+                ("embedding.space_name", &config.embedding.space_name),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(config::ConfigError::Message(format!(
+                        "{label} is required when embedding.enabled is true"
+                    )));
+                }
+            }
+            let Some(embedding_policy) = config
+                .policy
+                .data
+                .as_ref()
+                .and_then(|data| data.embedding.as_ref())
+            else {
+                return Err(config::ConfigError::Message(
+                    "policy.data.embedding.mode, policy.data.embedding.admissible_labels, policy.data.embedding.allow_unclassified, policy.data.embedding.classification, policy.data.embedding.maximum_sensitivity, and policy.data.embedding.allowed_destinations are required when embedding.enabled is true"
+                        .into(),
+                ));
+            };
+            ClassificationPolicy::new(
+                embedding_policy.admissible_labels.iter().cloned(),
+                embedding_policy.allow_unclassified,
+            )
+            .map_err(|error| {
+                config::ConfigError::Message(format!(
+                    "policy.data.embedding.admissible_labels is invalid: {error}"
+                ))
+            })?;
+            vestrace_domain::trust::DataPolicy::new(
+                vestrace_domain::DataPolicyId::new(),
+                config.policy.version.clone(),
+                embedding_policy.maximum_sensitivity,
+                embedding_policy.allowed_destinations.clone(),
+                None,
+            )
+            .map_err(|error| {
+                config::ConfigError::Message(format!("policy.data.embedding is invalid: {error}"))
+            })?;
         }
         if config
             .policy
@@ -1428,11 +1551,12 @@ max_connections = 10
                 let baseline = config.fingerprint();
 
                 let mut changed = config.clone();
-                changed.policy.data.as_mut().unwrap().mode = DataPolicyMode::Observe;
+                changed.policy.data.as_mut().unwrap().mode = Some(DataPolicyMode::Observe);
                 assert_ne!(baseline, changed.fingerprint(), "mode was not hashed");
 
                 let mut changed = config.clone();
-                changed.policy.data.as_mut().unwrap().classification = Sensitivity::Restricted;
+                changed.policy.data.as_mut().unwrap().classification =
+                    Some(Sensitivity::Restricted);
                 assert_ne!(
                     baseline,
                     changed.fingerprint(),
@@ -1440,7 +1564,8 @@ max_connections = 10
                 );
 
                 let mut changed = config.clone();
-                changed.policy.data.as_mut().unwrap().maximum_sensitivity = Sensitivity::Restricted;
+                changed.policy.data.as_mut().unwrap().maximum_sensitivity =
+                    Some(Sensitivity::Restricted);
                 assert_ne!(
                     baseline,
                     changed.fingerprint(),
@@ -1454,6 +1579,8 @@ max_connections = 10
                     .as_mut()
                     .unwrap()
                     .allowed_destinations
+                    .as_mut()
+                    .unwrap()
                     .insert(DataDestination::RemoteProvider);
                 assert_ne!(
                     baseline,
@@ -1504,14 +1631,16 @@ max_connections = 10
             || {
                 let config = AppConfig::load_from(Some(&path)).unwrap();
                 let data = config.policy.data.unwrap();
-                assert_eq!(data.mode, DataPolicyMode::Observe);
-                assert_eq!(data.classification, Sensitivity::Confidential);
-                assert_eq!(data.maximum_sensitivity, Sensitivity::Restricted);
+                assert_eq!(data.mode, Some(DataPolicyMode::Observe));
+                assert_eq!(data.classification, Some(Sensitivity::Confidential));
+                assert_eq!(data.maximum_sensitivity, Some(Sensitivity::Restricted));
                 assert_eq!(
                     data.allowed_destinations,
-                    [DataDestination::LocalModel, DataDestination::RemoteProvider]
-                        .into_iter()
-                        .collect()
+                    Some(
+                        [DataDestination::LocalModel, DataDestination::RemoteProvider]
+                            .into_iter()
+                            .collect()
+                    )
                 );
             },
         );

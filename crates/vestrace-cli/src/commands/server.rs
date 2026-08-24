@@ -14,12 +14,12 @@ use vestrace_http::{AppState, MetricsRegistry, build_router};
 use vestrace_infrastructure::{
     AppConfig, LogFormat, ObservabilityConfig, PgAgUiRepository, PgAgentRepository,
     PgArtifactRepository, PgAuditRepository, PgCapabilityGrantRepository, PgConnectionRepository,
-    PgEvaluationRepository, PgEventRepository, PgExecutionHistoryRepository,
-    PgExternalEffectRepository, PgHealthFindingRepository, PgIdempotencyRepository,
-    PgInvariantObserver, PgMemoryRepository, PgModelExecutionRepository, PgModelRepository,
-    PgOutboxRepository, PgProvenanceRepository, PgProviderRepository, PgPurgeRepository,
-    PgRelationRepository, PgRetrievalJournal, PgRoutingDecisionRepository, PgRunLeasePort,
-    PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
+    PgEmbeddingDataPolicyDecisionRepository, PgEvaluationRepository, PgEventRepository,
+    PgExecutionHistoryRepository, PgExternalEffectRepository, PgHealthFindingRepository,
+    PgIdempotencyRepository, PgInvariantObserver, PgMemoryRepository, PgModelExecutionRepository,
+    PgModelRepository, PgOutboxRepository, PgProvenanceRepository, PgProviderRepository,
+    PgPurgeRepository, PgRelationRepository, PgRetrievalJournal, PgRoutingDecisionRepository,
+    PgRunLeasePort, PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
     PgTriggerRepository, PgVectorRetriever, PgWorkQueuePort, PgWorkflowRepository,
     PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
@@ -94,7 +94,7 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
     // always done — and the journal now records that the channel was not
     // configured rather than leaving its absence indistinguishable from a
     // channel that returned nothing.
-    let embedding_provider = build_embedding_provider(&config.embedding)?;
+    let embedding_provider = build_embedding_provider(config, &store)?;
     let vector_retriever: Option<vestrace_application::SharedVectorRetriever> =
         embedding_provider.as_ref().map(|provider| {
             Arc::new(PgVectorRetriever::new(
@@ -437,18 +437,60 @@ async fn seed_bootstrap_credential(
 /// has a text channel and says so, which is the honest degradation. What would
 /// be wrong is configuring one and quietly running without it.
 pub(crate) fn build_embedding_provider(
-    config: &vestrace_infrastructure::EmbeddingConfig,
-) -> anyhow::Result<Option<vestrace_application::retrieval::SharedEmbeddingProvider>> {
-    if !config.enabled {
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<Option<vestrace_application::SharedGovernedEmbeddingProvider>> {
+    if !config.embedding.enabled {
         return Ok(None);
     }
     let client = vestrace_infrastructure::OpenAiCompatibleEmbeddingClient::new(
-        &config.base_url,
-        &config.model_name,
+        &config.embedding.base_url,
+        &config.embedding.model_name,
         None,
     )
     .map_err(|error| anyhow!("invalid embedding configuration: {error}"))?;
-    Ok(Some(Arc::new(client)))
+    let egress = client.egress().clone();
+    let Some(data_policy) = config
+        .policy
+        .data
+        .as_ref()
+        .and_then(|data| data.embedding.as_ref())
+    else {
+        return Err(anyhow!(
+            "policy.data.embedding.mode, policy.data.embedding.admissible_labels, policy.data.embedding.allow_unclassified, policy.data.embedding.classification, policy.data.embedding.maximum_sensitivity, and policy.data.embedding.allowed_destinations are required when embedding.enabled is true"
+        ));
+    };
+    let classification_policy = vestrace_domain::retrieval::ClassificationPolicy::new(
+        data_policy.admissible_labels.iter().cloned(),
+        data_policy.allow_unclassified,
+    )
+    .map_err(|error| anyhow!("policy.data.embedding.admissible_labels is invalid: {error}"))?;
+    let policy = vestrace_domain::trust::DataPolicy::new(
+        vestrace_domain::DataPolicyId::new(),
+        config.policy.version.clone(),
+        data_policy.maximum_sensitivity,
+        data_policy.allowed_destinations.clone(),
+        None,
+    )
+    .map_err(|error| anyhow!("policy.data.embedding is invalid: {error}"))?;
+    let mode = match data_policy.mode {
+        vestrace_infrastructure::DataPolicyMode::Enforce => {
+            vestrace_application::EmbeddingDataPolicyMode::Enforce
+        }
+        vestrace_infrastructure::DataPolicyMode::Observe => {
+            vestrace_application::EmbeddingDataPolicyMode::Observe
+        }
+    };
+    let gate = vestrace_application::EmbeddingDataPolicyGate::new(
+        vestrace_application::EmbeddingDataPolicySettings {
+            classification_policy,
+            classification: data_policy.classification,
+            policy,
+            mode,
+        },
+        Arc::new(PgEmbeddingDataPolicyDecisionRepository::new(store.clone())),
+    );
+    Ok(Some(gate.govern(Arc::new(client), egress)))
 }
 
 /// Give the bootstrap principal the grants its configuration says it should

@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use sqlx::Row;
 use vestrace_application::retrieval::MemoryTextSource;
-use vestrace_application::{ApplicationError, OutboxMessage, OutboxRepository, RequestContext};
+use vestrace_application::{
+    ApplicationError, EmbeddingInput, OutboxMessage, OutboxRepository, RequestContext,
+};
 use vestrace_domain::id::MemoryId;
 use vestrace_domain::{WorkspaceId, id::OutboxId};
 
@@ -208,7 +210,7 @@ impl MemoryTextSource for PgMemoryTextSource {
         &self,
         context: &RequestContext,
         memory_id: MemoryId,
-    ) -> Result<Option<String>, ApplicationError> {
+    ) -> Result<Option<EmbeddingInput>, ApplicationError> {
         let mut scoped = self
             .store
             .begin_scoped(context)
@@ -216,7 +218,7 @@ impl MemoryTextSource for PgMemoryTextSource {
             .map_err(storage_error)?;
 
         let row = sqlx::query(
-            "SELECT r.content
+            "SELECT r.content, r.classification
              FROM memories m
              JOIN memory_revisions r ON r.id = m.active_revision_id
              WHERE m.id = $1 AND m.workspace_id = $2 AND m.status = 'active'",
@@ -228,7 +230,12 @@ impl MemoryTextSource for PgMemoryTextSource {
         .map_err(storage_error)?;
 
         scoped.commit().await.map_err(storage_error)?;
-        row.map(|row| row.try_get("content").map_err(storage_error))
-            .transpose()
+        row.map(|row| {
+            let content: String = row.try_get("content").map_err(storage_error)?;
+            let classification: Option<String> =
+                row.try_get("classification").map_err(storage_error)?;
+            Ok(EmbeddingInput::new(content, classification))
+        })
+        .transpose()
     }
 }

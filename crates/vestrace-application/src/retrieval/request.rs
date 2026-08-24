@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use vestrace_domain::{MemoryKind, MemoryStatus, RetrievalIntent, TimePerspective, WorkspaceId};
+use vestrace_domain::{
+    MemoryKind, MemoryStatus, RetrievalIntent, TimePerspective, WorkspaceId, id::RetrievalRunId,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalRequest {
@@ -61,6 +63,8 @@ impl RetrievalRequest {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NormalizedRetrievalRequest {
+    /// The causal identity shared by every channel and the retrieval journal.
+    pub request_id: RetrievalRunId,
     pub query: String,
     pub intent: RetrievalIntent,
     pub time_perspective: TimePerspective,
@@ -102,6 +106,7 @@ impl NormalizedRetrievalRequest {
         let channel_limit = req.limit.clamp(1, 100);
 
         Ok(Self {
+            request_id: RetrievalRunId::new(),
             query,
             intent: req.intent,
             time_perspective: req.time_perspective,

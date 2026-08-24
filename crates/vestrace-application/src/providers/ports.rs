@@ -17,18 +17,6 @@ pub struct GenerationResponse {
     pub completion_tokens: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EmbeddingRequest {
-    pub model: String,
-    pub input: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EmbeddingResponse {
-    pub embeddings: Vec<Vec<f32>>,
-    pub model: String,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("Timeout occurred")]
@@ -104,11 +92,6 @@ impl ProviderEgress {
 pub struct ResolvedTextGenerationProvider {
     pub provider: std::sync::Arc<dyn TextGenerationProvider>,
     pub egress: ProviderEgress,
-}
-
-#[async_trait]
-pub trait EmbeddingProvider: Send + Sync {
-    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError>;
 }
 
 /// Builds a provider for a specific workspace.

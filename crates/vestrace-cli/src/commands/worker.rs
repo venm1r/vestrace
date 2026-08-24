@@ -416,7 +416,7 @@ fn build_outbox_dispatcher(
     let repository = Arc::new(PgOutboxRepository::new(store.clone()));
     let mut dispatcher = OutboxDispatcher::new(repository);
 
-    match super::server::build_embedding_provider(&config.embedding)? {
+    match super::server::build_embedding_provider(config, store)? {
         Some(provider) => {
             let embeddings = Arc::new(PgEmbeddingStore::new(store.clone()));
             let memories = Arc::new(PgMemoryTextSource::new(store.clone()));
@@ -789,15 +789,31 @@ fn build_model_executor(
             "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
         ));
     };
+    let (
+        Some(maximum_sensitivity),
+        Some(allowed_destinations),
+        Some(configured_mode),
+        Some(classification),
+    ) = (
+        data_policy.maximum_sensitivity,
+        data_policy.allowed_destinations.clone(),
+        data_policy.mode,
+        data_policy.classification,
+    )
+    else {
+        return Err(anyhow::anyhow!(
+            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
+        ));
+    };
     let policy = vestrace_domain::trust::DataPolicy::new(
         vestrace_domain::DataPolicyId::new(),
         config.policy.version.clone(),
-        data_policy.maximum_sensitivity,
-        data_policy.allowed_destinations.clone(),
+        maximum_sensitivity,
+        allowed_destinations,
         None,
     )
     .map_err(|error| anyhow::anyhow!("policy.data is invalid: {error}"))?;
-    let mode = match data_policy.mode {
+    let mode = match configured_mode {
         vestrace_infrastructure::DataPolicyMode::Enforce => {
             vestrace_application::ModelDataPolicyMode::Enforce
         }
@@ -819,7 +835,7 @@ fn build_model_executor(
             },
             vestrace_application::ModelDataPolicySettings {
                 policy,
-                classification: data_policy.classification,
+                classification,
                 mode,
             },
         ),

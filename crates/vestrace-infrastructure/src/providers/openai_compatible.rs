@@ -3,8 +3,7 @@ use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
 use vestrace_application::{
-    EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse,
-    ProviderEgress, ProviderError, TextGenerationProvider,
+    GenerationRequest, GenerationResponse, ProviderEgress, ProviderError, TextGenerationProvider,
 };
 
 use super::egress::destination_for_endpoint;
@@ -21,7 +20,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct OpenAiCompatibleClient {
     client: Client,
     egress: ProviderEgress,
-    base_url: String,
     api_key: Option<String>,
 }
 
@@ -89,7 +87,6 @@ impl OpenAiCompatibleClient {
                 redirects_disabled,
                 proxy_disabled,
             ),
-            base_url,
             api_key,
         })
     }
@@ -186,75 +183,6 @@ impl TextGenerationProvider for OpenAiCompatibleClient {
             model: request.model,
             prompt_tokens: required_token_count(&body, "prompt_tokens")?,
             completion_tokens: required_token_count(&body, "completion_tokens")?,
-        })
-    }
-}
-
-#[async_trait]
-impl EmbeddingProvider for OpenAiCompatibleClient {
-    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError> {
-        let url = format!("{}/embeddings", self.base_url);
-        let expected = request.input.len();
-        let payload = json!({
-            "model": request.model,
-            "input": request.input,
-        });
-
-        let mut http_request = self.client.post(&url).json(&payload);
-        if let Some(key) = &self.api_key {
-            http_request = http_request.bearer_auth(key);
-        }
-
-        let response = http_request.send().await.map_err(|error| {
-            if error.is_timeout() {
-                ProviderError::Timeout
-            } else {
-                ProviderError::Unavailable(error.to_string())
-            }
-        })?;
-
-        if !response.status().is_success() {
-            return Err(Self::map_status(response.status()));
-        }
-
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
-
-        let data = body["data"].as_array().ok_or_else(|| {
-            ProviderError::InvalidResponse("provider response has no data array".into())
-        })?;
-
-        let mut embeddings = Vec::with_capacity(data.len());
-        for item in data {
-            let vector = item["embedding"].as_array().ok_or_else(|| {
-                ProviderError::InvalidResponse("embedding entry has no vector".into())
-            })?;
-            let mut values = Vec::with_capacity(vector.len());
-            for value in vector {
-                // Silently dropping unparseable components would shorten the
-                // vector, and a shortened vector is not a worse embedding — it
-                // is a different point in a different space.
-                values.push(value.as_f64().ok_or_else(|| {
-                    ProviderError::InvalidResponse("embedding component is not a number".into())
-                })? as f32);
-            }
-            embeddings.push(values);
-        }
-
-        // One embedding per input, or the caller cannot tell which input each
-        // vector belongs to.
-        if embeddings.len() != expected {
-            return Err(ProviderError::InvalidResponse(format!(
-                "provider returned {} embeddings for {expected} inputs",
-                embeddings.len()
-            )));
-        }
-
-        Ok(EmbeddingResponse {
-            embeddings,
-            model: request.model,
         })
     }
 }

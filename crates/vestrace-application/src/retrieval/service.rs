@@ -56,7 +56,7 @@ impl RetrievalService {
 
         let workspace_id = request.workspace_id;
         let normalized = NormalizedRetrievalRequest::normalize(request)?;
-        let run_id = RetrievalRunId::new();
+        let run_id = normalized.request_id;
 
         let start = Instant::now();
         let mut channels: Vec<Vec<RetrievalCandidate>> = Vec::new();
