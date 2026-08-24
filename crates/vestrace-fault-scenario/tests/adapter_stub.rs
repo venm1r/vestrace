@@ -1,4 +1,3 @@
-use vestrace_application::ExternalEffectReadBackAdapter;
 use vestrace_domain::external_effects::{
     EffectPrecondition, EvidenceStrength, ExternalEffectAdapter, ExternalEffectIntent,
     ExternalEffectReceipt,
