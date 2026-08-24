@@ -159,3 +159,37 @@ artifact.
 
 **The next slice is therefore not a vocabulary for the field. It is a writer for
 it.** Constraining what may be written is worth doing after something writes.
+
+## Second correction, larger than the first: the title is wrong too
+
+The correction above says no revision has ever carried a label. That is true and
+insufficient. The rest is worse.
+
+**`HydrationOutcome::apply_policy` has no production caller.** It is invoked
+only from conformance cases and domain tests, and `PgRevisionHydrator` is
+constructed only in infrastructure tests. `RetrievalCandidate` has no
+classification field at all; `PgTextRetriever` reads revision content straight
+past it; `ContextPackBuilder` renders that content without consulting any policy
+— and fills a field named `source_classification` with the **channel name**.
+
+So retrieval does not withhold by label, and never did. This document's framing
+— a rule that one path obeyed and another ignored — is wrong in both halves. No
+production path obeyed it. The only things that ever obeyed it were tests.
+
+What slice 17b actually did, stated correctly: it made the embedding channel the
+**first production consumer of `ClassificationPolicy` in this repository's
+history**. The path the rule was written for still does not ask it.
+
+That is a better outcome than the one claimed here, and it was claimed wrongly.
+The error is the same one twice: I checked that a rule existed and was reachable
+in code, and wrote it up as a rule that was running.
+
+**A third claim in the plan of that slice was also wrong.**
+`DeclassificationDecision` was described as having zero references outside the
+domain crate. `tests/t1_t8_trust.rs` constructs and applies it. The true claim
+is narrower: nothing in production or in conformance wires it. It is also
+inapplicable to labels — it operates on `Sensitivity`, not on strings — so it is
+not the escape hatch a label transition could use.
+
+Both corrections are appended rather than folded in. A document that quietly
+becomes right is less useful than one that shows what it took to get there.
