@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use vestrace_application::run::{
+    AdvanceRunHandler, RunWorkHandler,
     commands::{
-        AddRunSteps, CancelRun, CreateCheckpoint, CreateRun, NewRunStepDto, PauseRun, ResumeRun,
-        TransitionRun, TransitionRunStep,
+        AddRunSteps, CancelRun, ConfidentialRunInput, CreateCheckpoint, CreateRun,
+        MAX_CONFIDENTIAL_RUN_INPUT_BYTES, NewRunStepDto, PauseRun, ResumeRun, TransitionRun,
+        TransitionRunStep,
     },
     coordinator::RunCoordinator,
     ports::{
@@ -16,13 +18,15 @@ use vestrace_application::run::{
 use vestrace_application::{ApplicationError, RequestContext};
 use vestrace_domain::{
     DomainError,
-    id::{AgentRunId, AgentRuntimeSnapshotId, RunStepId},
+    id::{AgentRunId, AgentRuntimeSnapshotId, RunStepId, WorkItemId, WorkerId},
     run::{
-        RunActorRef, RunCheckpointPayloadV1, RunExecutionMode, RunFailure, RunStatus,
-        RunStepStatus, RunTerminalResult, RunVersion,
+        AgentRun, NewAgentRun, NewRunStep, RunActorRef, RunCheckpointPayloadV1, RunExecutionMode,
+        RunFailure, RunStatus, RunStep, RunStepStatus, RunTerminalResult, RunVersion,
     },
     time::Timestamp,
 };
+
+static_assertions::assert_not_impl_any!(ConfidentialRunInput: Clone, serde::Serialize);
 
 struct FakeClock {
     now: Mutex<Timestamp>,
@@ -252,6 +256,261 @@ fn make_coordinator() -> (
     (coord, store)
 }
 
+/// Catches a future change that makes confidential input duplicable, serializable,
+/// observable through Debug, scalar-bounded instead of byte-bounded, or accepts
+/// blank input. Those changes would permit plaintext disclosure before Task 3.
+#[test]
+fn confidential_run_input_is_move_only_redacted_and_byte_bounded() {
+    let input = ConfidentialRunInput::parse("sentinel-secret".into()).unwrap();
+    assert_eq!(format!("{input:?}"), "ConfidentialRunInput([REDACTED])");
+    assert_eq!(input.with_bytes(|bytes| bytes.to_vec()), b"sentinel-secret");
+
+    for value in [String::new(), " \t\n ".into()] {
+        assert!(ConfidentialRunInput::parse(value).is_err());
+    }
+    assert!(ConfidentialRunInput::parse("a".repeat(MAX_CONFIDENTIAL_RUN_INPUT_BYTES)).is_ok());
+    assert!(ConfidentialRunInput::parse("a".repeat(MAX_CONFIDENTIAL_RUN_INPUT_BYTES + 1)).is_err());
+    assert!(ConfidentialRunInput::parse("€".repeat(10_923)).is_err());
+}
+
+/// Catches persisting or enqueueing confidential agent input before Task 3
+/// supplies the one durable acceptance authority.
+#[tokio::test]
+async fn coordinator_refuses_confidential_agent_input_without_persisting_or_enqueuing_it() {
+    let (coord, store) = make_coordinator();
+    let ctx = context();
+    let run = coord
+        .create_run(
+            &ctx,
+            CreateRun {
+                correlation_id: None,
+                objective: "safe title".into(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+                execution_mode: RunExecutionMode::Supervised,
+                parent: None,
+                idempotency_key: "confidential-input-run".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = coord
+        .add_steps(
+            &ctx,
+            AddRunSteps {
+                correlation_id: None,
+                run_id: run.run.id,
+                expected_version: run.run.version,
+                steps: vec![NewRunStepDto {
+                    id: RunStepId::new(),
+                    plan_step_reference: None,
+                    assigned_actor: RunActorRef::AgentSnapshot(AgentRuntimeSnapshotId::new()),
+                    input_references: vec![],
+                    input: vestrace_application::run::commands::NewRunStepInput::Confidential(
+                        ConfidentialRunInput::parse("sentinel-secret".into()).unwrap(),
+                    ),
+                }],
+                actor: RunActorRef::System,
+                idempotency_key: "confidential-input-step".into(),
+            },
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ApplicationError::Unavailable(message)) if message == "governed Run-step input authority is not configured")
+    );
+    let snapshot = store
+        .runs
+        .lock()
+        .unwrap()
+        .get(&run.run.id)
+        .cloned()
+        .unwrap();
+    assert!(snapshot.steps.is_empty());
+    assert_eq!(store.work_items.lock().unwrap().len(), 1);
+}
+
+/// Catches a direct caller using the legacy `None` shape to schedule an agent
+/// before Task 3 supplies governed acceptance.
+#[tokio::test]
+async fn coordinator_refuses_agent_input_none_without_committing_or_enqueuing() {
+    let (coord, store) = make_coordinator();
+    let ctx = context();
+    let run = coord
+        .create_run(
+            &ctx,
+            CreateRun {
+                correlation_id: None,
+                objective: "safe title".into(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+                execution_mode: RunExecutionMode::Supervised,
+                parent: None,
+                idempotency_key: "agent-none-run".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let result = coord
+        .add_steps(
+            &ctx,
+            AddRunSteps {
+                correlation_id: None,
+                run_id: run.run.id,
+                expected_version: run.run.version,
+                steps: vec![NewRunStepDto {
+                    id: RunStepId::new(),
+                    plan_step_reference: None,
+                    assigned_actor: RunActorRef::AgentSnapshot(AgentRuntimeSnapshotId::new()),
+                    input_references: vec![],
+                    input: vestrace_application::run::NewRunStepInput::None,
+                }],
+                actor: RunActorRef::System,
+                idempotency_key: "agent-none-step".into(),
+            },
+        )
+        .await;
+    assert!(matches!(result, Err(ApplicationError::Unavailable(_))));
+    assert!(
+        store
+            .runs
+            .lock()
+            .unwrap()
+            .get(&run.run.id)
+            .unwrap()
+            .steps
+            .is_empty()
+    );
+    assert_eq!(store.work_items.lock().unwrap().len(), 1);
+}
+
+/// Catches a direct caller attaching confidential bytes to a non-agent step.
+#[tokio::test]
+async fn coordinator_refuses_non_agent_confidential_input_without_committing_or_enqueuing() {
+    let (coord, store) = make_coordinator();
+    let ctx = context();
+    let run = coord
+        .create_run(
+            &ctx,
+            CreateRun {
+                correlation_id: None,
+                objective: "safe title".into(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+                execution_mode: RunExecutionMode::Supervised,
+                parent: None,
+                idempotency_key: "principal-confidential-run".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let result = coord
+        .add_steps(
+            &ctx,
+            AddRunSteps {
+                correlation_id: None,
+                run_id: run.run.id,
+                expected_version: run.run.version,
+                steps: vec![NewRunStepDto {
+                    id: RunStepId::new(),
+                    plan_step_reference: None,
+                    assigned_actor: RunActorRef::Principal(ctx.principal_id),
+                    input_references: vec![],
+                    input: vestrace_application::run::NewRunStepInput::Confidential(
+                        ConfidentialRunInput::parse("sentinel-secret".into()).unwrap(),
+                    ),
+                }],
+                actor: RunActorRef::System,
+                idempotency_key: "principal-confidential-step".into(),
+            },
+        )
+        .await;
+    assert!(matches!(result, Err(ApplicationError::Unavailable(_))));
+    assert!(
+        store
+            .runs
+            .lock()
+            .unwrap()
+            .get(&run.run.id)
+            .unwrap()
+            .steps
+            .is_empty()
+    );
+    assert_eq!(store.work_items.lock().unwrap().len(), 1);
+}
+
+/// Catches removing AdvanceRun's agent filter, which would enqueue a legacy
+/// ExecuteStep before governed input acceptance exists.
+#[tokio::test]
+async fn advance_run_does_not_emit_execute_work_for_a_pending_agent_step() {
+    let store = InMemoryStore::new();
+    let ctx = context();
+    let mut run = AgentRun::create(
+        NewAgentRun {
+            id: AgentRunId::new(),
+            workspace_id: ctx.workspace_id,
+            objective: "safe title".into(),
+            coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+            execution_mode: RunExecutionMode::Supervised,
+            parent: None,
+            budget_snapshot_id: None,
+            resource_usage_snapshot_id: None,
+        },
+        now(),
+    )
+    .unwrap();
+    run.status = RunStatus::Preparing;
+    let step = RunStep::create(
+        NewRunStep {
+            id: RunStepId::new(),
+            run_id: run.id,
+            plan_step_reference: None,
+            assigned_actor: RunActorRef::AgentSnapshot(AgentRuntimeSnapshotId::new()),
+            input_references: vec![],
+        },
+        now(),
+    )
+    .unwrap();
+    let snapshot = RunSnapshot {
+        run: run.clone(),
+        steps: vec![step],
+        checkpoint: None,
+    };
+    store.runs.lock().unwrap().insert(run.id, snapshot.clone());
+    let item = WorkItem {
+        id: WorkItemId::new(),
+        run_id: run.id,
+        kind: WorkItemKind::AdvanceRun,
+        expected_run_version: run.version,
+        available_at: now(),
+        idempotency_key: "advance-agent".into(),
+        attempt: 1,
+    };
+    let lease = RunLease {
+        run_id: run.id,
+        worker_id: WorkerId::new(),
+        generation: 1,
+        acquired_at: now(),
+        heartbeat_at: now(),
+        lease_until: now(),
+    };
+    let handler = AdvanceRunHandler::new(
+        Arc::new(store.clone()),
+        Arc::new(store.clone()),
+        Arc::new(FakeClock::new(now())),
+    );
+    handler
+        .handle(&ctx, &snapshot, &item, &lease)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .work_items
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|work| !matches!(work.kind, WorkItemKind::ExecuteStep { .. }))
+    );
+}
+
 #[tokio::test]
 async fn create_run_succeeds() {
     let (coord, store) = make_coordinator();
@@ -399,6 +658,7 @@ async fn add_steps_to_run() {
                     plan_step_reference: Some("step-1".into()),
                     assigned_actor: RunActorRef::System,
                     input_references: vec![],
+                    input: vestrace_application::run::commands::NewRunStepInput::None,
                 }],
                 actor: RunActorRef::System,
                 idempotency_key: "key-2".into(),
@@ -445,6 +705,7 @@ async fn transition_step_succeeds() {
                     plan_step_reference: Some("step-1".into()),
                     assigned_actor: RunActorRef::System,
                     input_references: vec![],
+                    input: vestrace_application::run::commands::NewRunStepInput::None,
                 }],
                 actor: RunActorRef::System,
                 idempotency_key: "key-2".into(),

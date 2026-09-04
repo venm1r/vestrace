@@ -83,10 +83,10 @@ async fn fault_suite_fails_closed_on_executor_error() {
 }
 
 #[test]
-fn required_fault_points_include_ambiguous_dispatch_barrier() {
+fn required_fault_points_include_recovered_lost_dispatch() {
     let expected = FaultObservation::expected(EffectFaultPoint::AfterDispatchBeforeReceipt);
 
-    assert_eq!(expected.status, EffectLifecycleStatus::Unknown);
+    assert_eq!(expected.status, EffectLifecycleStatus::Reconciling);
     assert!(expected.reconciliation_started);
     assert!(!expected.retry_attempted);
 }

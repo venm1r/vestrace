@@ -156,6 +156,26 @@ impl RetrievalRunRecord {
             .map(|record| record.channel.clone())
             .collect()
     }
+
+    /// Bind the admission decision to the exact policy and every withheld
+    /// reference in the same durable run record as the query.
+    pub fn with_policy_decision(
+        mut self,
+        policy_version: &str,
+        withheld: &[vestrace_domain::retrieval::WithheldRevision],
+    ) -> Self {
+        if let Some(parameters) = self.parameters.as_object_mut() {
+            parameters.insert(
+                "retrieval_policy_version".to_owned(),
+                serde_json::Value::String(policy_version.to_owned()),
+            );
+            parameters.insert(
+                "withheld".to_owned(),
+                serde_json::to_value(withheld).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        self
+    }
 }
 
 #[async_trait]

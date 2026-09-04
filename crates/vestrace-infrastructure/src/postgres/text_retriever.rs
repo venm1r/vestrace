@@ -251,6 +251,7 @@ impl TextRetriever for PgTextRetriever {
                     revision_number: u32::try_from(revision_number)
                         .map_err(|e| ApplicationError::Storage(e.to_string()))?,
                     content,
+                    classification: None,
                     valid_from,
                     valid_until,
                     revision_created_at,

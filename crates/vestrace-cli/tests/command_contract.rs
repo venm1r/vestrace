@@ -29,7 +29,20 @@ fn worker_fails_explicitly_when_database_is_unavailable() {
 
 #[test]
 fn mcp_fails_explicitly_when_database_is_unavailable() {
-    let output = run("mcp");
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .arg("mcp")
+        .env("VESTRACE_DATABASE__URL", UNAVAILABLE_DATABASE_URL)
+        .env("VESTRACE_POLICY__DATA__MEMORY_LABELS", "internal")
+        .env(
+            "VESTRACE_POLICY__DATA__RETRIEVAL__ADMISSIBLE_LABELS",
+            "internal",
+        )
+        .env(
+            "VESTRACE_POLICY__DATA__RETRIEVAL__ALLOW_UNCLASSIFIED",
+            "false",
+        )
+        .output()
+        .expect("vestrace command should start");
 
     assert!(!output.status.success(), "mcp unexpectedly succeeded");
     assert!(

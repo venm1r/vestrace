@@ -13,13 +13,16 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use vestrace_application::SecretMaterial;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -81,13 +84,34 @@ pub struct PutSecretResponse {
 }
 
 pub fn secret_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/secrets", get(list_secrets).post(put_secret))
-        .route("/secrets/{id}", axum::routing::delete(delete_secret))
-        // Present so a caller that expects a read endpoint gets an explicit
-        // refusal rather than a confusing 405.
-        .route("/secrets/{id}/value", post(value_is_never_returned))
-        .route("/secrets/{id}/value", get(value_is_never_returned))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/secrets"),
+        get(list_secrets),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/secrets"),
+        post(put_secret),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::DELETE, "/v1/secrets/{id}"),
+        axum::routing::delete(delete_secret),
+    );
+    // Present so an authorized caller asking for a secret value receives the
+    // specific `secret_value_not_readable` refusal rather than a generic
+    // inventory refusal.
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/secrets/{id}/value"),
+        post(value_is_never_returned),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/secrets/{id}/value"),
+        get(value_is_never_returned),
+    )
 }
 
 async fn list_secrets(

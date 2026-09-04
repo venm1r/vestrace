@@ -151,6 +151,14 @@ impl vestrace_application::MemoryUseCases for StubMemoryUseCases {
     ) -> Result<Option<vestrace_domain::Memory>, vestrace_application::ApplicationError> {
         Ok(None)
     }
+    async fn find_revision(
+        &self,
+        _: &vestrace_application::RequestContext,
+        _: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<vestrace_domain::MemoryRevision>, vestrace_application::ApplicationError>
+    {
+        Ok(None)
+    }
 }
 
 struct StubTextRetriever;
@@ -372,7 +380,7 @@ fn request_span_contains_only_sanitized_bounded_metadata() {
     })
     .unwrap();
 
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let request_id = response.headers()["x-request-id"].to_str().unwrap();
     let correlation_id = response.headers()["x-correlation-id"].to_str().unwrap();
     assert_eq!(

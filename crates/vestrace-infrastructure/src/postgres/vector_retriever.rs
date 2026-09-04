@@ -254,6 +254,7 @@ impl VectorRetriever for PgVectorRetriever {
                     )
                     .map_err(|error| ApplicationError::Storage(error.to_string()))?,
                     content: row.try_get("content").map_err(storage_error)?,
+                    classification: None,
                     valid_from: row.try_get("valid_from").map_err(storage_error)?,
                     valid_until: row.try_get("valid_until").map_err(storage_error)?,
                     revision_created_at: row

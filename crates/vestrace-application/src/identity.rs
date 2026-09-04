@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use vestrace_domain::identity::AccessToken;
 use vestrace_domain::{AccessTokenId, PrincipalId, Timestamp, WorkspaceId};
 
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, GovernedMutationApply, RequestContext, UnitOfWork};
 
 /// Who a presented credential turned out to be.
 ///
@@ -71,6 +71,15 @@ pub trait AccessTokenStore: Send + Sync {
         token: &AccessToken,
     ) -> Result<(), ApplicationError>;
 
+    /// Persist a freshly minted credential inside a transaction the caller
+    /// already owns.
+    async fn put_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        token: &AccessToken,
+    ) -> Result<(), ApplicationError>;
+
     /// Every credential in the workspace, revoked ones included.
     ///
     /// Revoked rows are returned rather than filtered: an operator reviewing
@@ -94,6 +103,32 @@ pub trait AccessTokenStore: Send + Sync {
 }
 
 pub type SharedAccessTokenStore = Arc<dyn AccessTokenStore>;
+
+/// The mutation half of access-token creation. The surrounding
+/// [`crate::GovernedMutation`] supplies the audit, idempotency and outbox
+/// records so credential issuance cannot succeed without its audit event.
+#[derive(Clone)]
+pub struct AccessTokenMutation {
+    store: SharedAccessTokenStore,
+    token: AccessToken,
+}
+
+impl AccessTokenMutation {
+    pub fn new(store: SharedAccessTokenStore, token: AccessToken) -> Self {
+        Self { store, token }
+    }
+}
+
+#[async_trait]
+impl GovernedMutationApply for AccessTokenMutation {
+    async fn apply(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+    ) -> Result<(), ApplicationError> {
+        self.store.put_in(context, unit_of_work, &self.token).await
+    }
+}
 
 /// Draws the entropy a new credential is built from.
 ///

@@ -1,8 +1,16 @@
-use axum::{Json, extract::State, http::HeaderMap, routing::get};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, Method},
+    routing::get,
+};
 use serde::Serialize;
 use vestrace_domain::conversation::ExternalTrigger;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -33,7 +41,11 @@ impl From<ExternalTrigger> for TriggerResponse {
 }
 
 pub fn trigger_routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/triggers", get(list_triggers))
+    mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/triggers"),
+        get(list_triggers),
+    )
 }
 
 async fn list_triggers(

@@ -9,11 +9,13 @@ pub mod cognitive_ports;
 pub mod conformance_cases;
 pub mod connections;
 mod context;
+pub mod credential;
 pub mod crypto_qualification;
 pub mod diagnostics;
 pub mod effect_outcome_delivery;
 pub mod effect_recovery;
 pub mod effect_repository;
+pub mod embedding;
 pub mod embedding_data_policy;
 mod error;
 pub mod execution_ports;
@@ -25,17 +27,26 @@ pub mod fault_gate_evidence;
 pub mod fault_qualification;
 pub mod fault_runtime;
 pub mod fault_suite;
+pub mod governed_mutation;
 mod health;
 pub mod idempotency;
 pub mod identity;
+#[path = "installation/permit.rs"]
+pub mod installation;
 pub mod jobs;
+#[path = "material/vault.rs"]
+pub mod material;
 pub mod memory;
 pub mod model_data_policy;
+pub mod model_request_evidence;
 pub mod models;
 mod null_execution_history;
 pub mod operator;
 pub mod outbox;
 mod ports;
+pub mod provider_dispatch;
+pub mod provider_qualification;
+pub mod provider_result;
 pub mod providers;
 pub mod qualification;
 pub mod recovery;
@@ -53,7 +64,8 @@ pub mod v1_release_evidence;
 
 pub use ag_ui::{AgUiEndpoint, AgUiRepository, AgUiRunEvent, SharedAgUiRepository};
 pub use artifacts::{
-    ArtifactContent, ArtifactListing, ArtifactRepository, SharedArtifactRepository, StoredArtifact,
+    ArtifactContent, ArtifactListing, ArtifactRepository, GovernedArtifactMaterial,
+    ProviderArtifactMediaClass, SharedArtifactRepository, StoredArtifact,
 };
 pub use capability_restoration::{
     CapabilityRestorationDecision, CapabilityRestorationPolicy, CapabilityRestorationService,
@@ -73,8 +85,25 @@ pub use cognitive_ports::{
     SharedLearningRepository, SharedWorkflowRepository, UnavailableLearningRepository,
     WorkflowDefinitionRecord, WorkflowRepository, WorkflowRevisionRecord,
 };
-pub use connections::{ConnectionListing, ConnectionRepository, SharedConnectionRepository};
+pub use connections::{
+    ConnectionListing, ConnectionRepository, ConnectionRevisionRepository,
+    CreateConnectionRevision, GovernedConnectionProjection, PublishConnectionAdmissionPolicy,
+    SharedConnectionRepository, SharedConnectionRevisionRepository,
+};
 pub use context::RequestContext;
+pub use credential::activation::{
+    CredentialMaterialPreparation, CredentialMaterialPreparationFaultInjector,
+    CredentialMaterialPreparationFaultPoint, CredentialMaterialPreparationRequest,
+    CredentialMaterialPreparationState, CredentialMaterialPreparer,
+    NoCredentialMaterialPreparationFaults, OperatorCredential,
+};
+pub use credential::{
+    CandidateCredentialAbandonCommand, CandidateCredentialAbandonService,
+    CredentialActivationCommand, CredentialActivationError, CredentialActivationRepository,
+    CredentialDispatchLease, CredentialDispatchLeaseRepository, CredentialDispatchLeaseRequest,
+    CredentialIntentCommands, CredentialIntentResumption, CredentialIntentSnapshot,
+    CredentialResumptionOutcome, CredentialRevocationCommand, CredentialRotationCommand,
+};
 pub use crypto_qualification::{
     CryptoAdapterQualificationEvidence, CryptoAdapterQualificationProbe,
     CryptoAdapterQualificationService, CryptoAdapterQualificationTarget, CryptoCustody,
@@ -97,6 +126,7 @@ pub use effect_repository::{
     LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
     WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
+pub use embedding::{AcceptEmbeddingJob, EmbeddingJobRepository, SharedEmbeddingJobRepository};
 pub use embedding_data_policy::{
     EmbeddingDataPolicyDecisionRecord, EmbeddingDataPolicyDecisionRepository,
     EmbeddingDataPolicyGate, EmbeddingDataPolicyMode, EmbeddingDataPolicySettings, EmbeddingInput,
@@ -125,6 +155,10 @@ pub use fault_runtime::{
 pub use fault_suite::{
     EffectFaultScenarioExecutor, ExternalEffectFaultSuiteReport, ExternalEffectFaultSuiteService,
 };
+pub use governed_mutation::{
+    AuditEntry, GovernedMutation, GovernedMutationApply, GovernedMutationReceipt,
+    GovernedMutationRepository, SharedGovernedMutationRepository,
+};
 pub use health::{
     HealthFindingRepository, HealthInspectionService, HealthMonitorService, HealthRepository,
     InspectedFinding, InvariantObservation, InvariantObserver, MonitoredFinding,
@@ -132,20 +166,32 @@ pub use health::{
 };
 pub use idempotency::{IdempotencyRecord, IdempotencyRepository};
 pub use identity::{
-    AccessTokenAuthenticator, AccessTokenStore, AuthenticatedPrincipal,
+    AccessTokenAuthenticator, AccessTokenMutation, AccessTokenStore, AuthenticatedPrincipal,
     SharedAccessTokenAuthenticator, SharedAccessTokenStore, SharedTokenEntropySource,
     TokenEntropySource,
 };
+pub use installation::{InstallationMutationPermit, PermitHandle, PermitMode};
 pub use jobs::*;
+pub use material::{
+    FenceReceipt, MaterialKeyVault, VaultError,
+    commands::{
+        MaterialIntentCommands, MaterialIntentResumption, MaterialIntentSnapshot, ResumptionOutcome,
+    },
+    erasure::MaterialErasureService,
+};
 pub use memory::*;
 pub use model_data_policy::{
     ModelDataPolicyDecisionRecord, ModelDataPolicyDecisionRepository, ModelDataPolicyMode,
     ModelDataPolicySettings, SharedModelDataPolicyDecisionRepository,
 };
+pub use model_request_evidence::*;
 pub use models::{
-    ModelExecutionRecord, ModelExecutionRepository, ModelRecord, ModelRepository, ProviderRecord,
-    ProviderRepository, RoutingDecisionRecord, RoutingDecisionRepository,
-    SharedModelExecutionRepository, SharedModelRepository, SharedProviderRepository,
+    CreateModelRevision, GovernedModelProjection, GovernedProviderProjection,
+    LEGACY_RUN_MODEL_DEFAULT_PURPOSE, ModelBindingResolver, ModelExecutionRecord,
+    ModelExecutionRepository, ModelRecord, ModelRepository, ModelRevisionRepository,
+    ProviderRecord, ProviderRepository, RoutingDecisionRecord, RoutingDecisionRepository,
+    SetWorkspaceModelDefault, SharedModelBindingResolver, SharedModelExecutionRepository,
+    SharedModelRepository, SharedModelRevisionRepository, SharedProviderRepository,
     SharedRoutingDecisionRepository,
 };
 pub use null_execution_history::NullExecutionHistoryRepository;
@@ -154,7 +200,13 @@ pub use outbox::{
     DrainReport, OutboxDispatcher, OutboxHandler, OutboxMessage, OutboxRepository,
     SharedOutboxHandler, SharedOutboxRepository,
 };
-pub use ports::{TransactionManager, UnitOfWork};
+pub use ports::{
+    CredentialIntentRepository, MaterialErasurePreparation, MaterialErasureRepository,
+    MaterialIntentRepository, TransactionManager, UnitOfWork,
+};
+pub use provider_dispatch::*;
+pub use provider_qualification::*;
+pub use provider_result::*;
 pub use providers::*;
 pub use qualification::{
     QualificationBaselineRepository, QualificationRepository, QualificationRuntime,

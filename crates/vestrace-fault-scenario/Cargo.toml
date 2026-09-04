@@ -18,7 +18,13 @@ path = "src/lib.rs"
 reqwest.workspace = true
 secrecy.workspace = true
 serde_json.workspace = true
+# The key-intent scenarios drive guarded lifecycle transitions and read the
+# surviving state back out of PostgreSQL after the child dies, and they carry
+# intent, key and nonce identities. Added under the scope amendment recorded in
+# docs/development-evidence/v1-g0-02-preflight.json.
+sqlx.workspace = true
 tokio = { workspace = true, features = ["full"] }
+uuid.workspace = true
 vestrace-application = { path = "../vestrace-application" }
 vestrace-domain = { path = "../vestrace-domain" }
 vestrace-infrastructure = { path = "../vestrace-infrastructure" }

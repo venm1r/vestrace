@@ -93,6 +93,7 @@ mod tests {
             memory_status: vestrace_domain::MemoryStatus::Active,
             revision_number: 1,
             content: String::new(),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),

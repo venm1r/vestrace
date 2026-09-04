@@ -3,6 +3,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use chrono::{DateTime, Duration, Utc};
+use sqlx::types::Uuid;
 use vestrace_application::{
     ApplicationError, RequestContext, RunCommandExecutor, RunCommandService, RunRecoveryOperations,
     RunRecoveryService, RunRepository,
@@ -62,6 +63,161 @@ async fn seed_identity(pool: &sqlx::PgPool) {
     .unwrap();
 }
 
+async fn configure_chat_workspace_default(pool: &sqlx::PgPool) {
+    let connector_id = Uuid::now_v7();
+    let provider_id = Uuid::now_v7();
+    let connection_id = Uuid::now_v7();
+    let execution_guard_id = Uuid::now_v7();
+    let connection_revision_id = Uuid::now_v7();
+    let no_auth_binding_revision_id = Uuid::now_v7();
+    let model_id = Uuid::now_v7();
+    let model_revision_id = Uuid::now_v7();
+    let qualification_job_id = Uuid::now_v7();
+    let connection_qualification_revision_id = Uuid::now_v7();
+    let model_qualification_revision_id = Uuid::now_v7();
+    let profile_revision = "state-engine-recovery/v1";
+    let mut transaction = pool.begin().await.unwrap();
+    for (name, value) in [
+        ("vestrace.workspace_id", workspace_id().to_string()),
+        ("vestrace.principal_id", principal_id().to_string()),
+    ] {
+        sqlx::query_scalar::<_, String>("SELECT set_config($1, $2, true)")
+            .bind(name)
+            .bind(value)
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO connectors (id, workspace_id, name, provider_type) VALUES ($1, $2, 'state-engine-chat', 'local')")
+        .bind(connector_id)
+        .bind(workspace_id().as_uuid())
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO providers (id, workspace_id, name, locality) VALUES ($1, $2, 'state-engine-chat', 'local')")
+        .bind(provider_id)
+        .bind(workspace_id().as_uuid())
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO connections (id, connector_id, workspace_id, principal_id, name, status) VALUES ($1, $2, $3, $4, 'state-engine-chat', 'active')")
+        .bind(connection_id)
+        .bind(connector_id)
+        .bind(workspace_id().as_uuid())
+        .bind(principal_id().as_uuid())
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_ensure_connection_execution_guard($1, $2, $3)")
+        .bind(execution_guard_id)
+        .bind(workspace_id().as_uuid())
+        .bind(connection_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_create_connection_revision_and_advance_head($1, $2, $3, $4, 'lm_studio_local', 'http://127.0.0.1:1234/v1', 'http://127.0.0.1:1234/v1', $5, 'loopback_only', 'none', NULL, 0)")
+        .bind(connection_revision_id)
+        .bind(workspace_id().as_uuid())
+        .bind(connection_id)
+        .bind(execution_guard_id)
+        .bind(profile_revision)
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_create_no_auth_binding_revision($1, $2, $3, $4)",
+    )
+    .bind(no_auth_binding_revision_id)
+    .bind(workspace_id().as_uuid())
+    .bind(connection_id)
+    .bind(connection_revision_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO models (id, provider_id, workspace_id, model_name, context_window, input_cost_per_mtoken, output_cost_per_mtoken) VALUES ($1, $2, $3, 'state-engine-chat', 4096, 0, 0)")
+        .bind(model_id)
+        .bind(provider_id)
+        .bind(workspace_id().as_uuid())
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_create_model_revision_and_advance_head($1, $2, $3, $4, $5, $6, 'state-engine-chat', 'chat', NULL::INTEGER, NULL::UUID, NULL::TEXT, NULL::INTEGER, NULL::UUID, NULL::TEXT, 0::BIGINT)")
+        .bind(model_revision_id)
+        .bind(workspace_id().as_uuid())
+        .bind(model_id)
+        .bind(connection_id)
+        .bind(execution_guard_id)
+        .bind(connection_revision_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_set_workspace_model_default($1, $2, 'chat', $3, ARRAY['chat'], 0)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id().as_uuid())
+    .bind(model_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO qualification_jobs (id, workspace_id, connection_revision_id, profile_revision, state, completed_at) VALUES ($1, $2, $3, $4, 'succeeded', NOW())")
+        .bind(qualification_job_id)
+        .bind(workspace_id().as_uuid())
+        .bind(connection_revision_id)
+        .bind(profile_revision)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO qualification_target_bindings (id, workspace_id, qualification_job_id, connection_id, connection_revision_id, branch, no_auth_binding_revision_id) VALUES ($1, $2, $3, $4, $5, 'no_auth', $6)")
+        .bind(Uuid::now_v7())
+        .bind(workspace_id().as_uuid())
+        .bind(qualification_job_id)
+        .bind(connection_id)
+        .bind(connection_revision_id)
+        .bind(no_auth_binding_revision_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO connection_qualification_revisions (id, workspace_id, connection_revision_id, qualification_job_id, profile_revision, valid_until, capabilities) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '1 hour', ARRAY['chat'])")
+        .bind(connection_qualification_revision_id)
+        .bind(workspace_id().as_uuid())
+        .bind(connection_revision_id)
+        .bind(qualification_job_id)
+        .bind(profile_revision)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO connection_qualification_heads (workspace_id, connection_revision_id, current_qualification_revision_id, version) VALUES ($1, $2, $3, 1)")
+        .bind(workspace_id().as_uuid())
+        .bind(connection_revision_id)
+        .bind(connection_qualification_revision_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO model_qualification_revisions (id, workspace_id, model_revision_id, connection_revision_id, connection_qualification_revision_id, qualification_job_id, capabilities, valid_until) VALUES ($1, $2, $3, $4, $5, $6, ARRAY['chat'], NOW() + INTERVAL '1 hour')")
+        .bind(model_qualification_revision_id)
+        .bind(workspace_id().as_uuid())
+        .bind(model_revision_id)
+        .bind(connection_revision_id)
+        .bind(connection_qualification_revision_id)
+        .bind(qualification_job_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO model_qualification_heads (workspace_id, model_revision_id, current_qualification_revision_id, version) VALUES ($1, $2, $3, 1)")
+        .bind(workspace_id().as_uuid())
+        .bind(model_revision_id)
+        .bind(model_qualification_revision_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+}
+
 fn command(expected_version: RunVersion, command: RunCommand) -> RunCommandEnvelope {
     RunCommandEnvelope {
         command_id: OperationId::new(),
@@ -101,6 +257,7 @@ async fn execute(service: &RunCommandService, expected_version: u64, command_val
 #[sqlx::test(migrations = "./migrations")]
 async fn checkpoint_plus_tail_rebuilds_a_deleted_projection_exactly(pool: sqlx::PgPool) {
     seed_identity(&pool).await;
+    configure_chat_workspace_default(&pool).await;
     let (commands, recovery, repository) = services(&pool);
     let step_id = RunStepId::new();
 
@@ -219,6 +376,7 @@ async fn corrupted_checkpoint_is_rejected_instead_of_falling_back_to_projection(
     pool: sqlx::PgPool,
 ) {
     seed_identity(&pool).await;
+    configure_chat_workspace_default(&pool).await;
     let (commands, recovery, _) = services(&pool);
 
     commands

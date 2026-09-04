@@ -67,6 +67,13 @@ domain_id!(RelationId);
 domain_id!(JobId);
 domain_id!(OutboxId);
 domain_id!(EmbeddingSpaceId);
+domain_id!(EmbeddingJobId);
+domain_id!(CorpusGenerationId);
+domain_id!(TransitionBatchId);
+// Spec line 205: this is "an identity, never a content hash, fingerprint,
+// or digest", which is why it is a v7 UUID like every other identity here
+// rather than anything derived from the projection it names.
+domain_id!(EmbeddingTransitionProjectionRecipeId);
 domain_id!(RetrievalRunId);
 domain_id!(ContextPackId);
 domain_id!(AccessTokenId);

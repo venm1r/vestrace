@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use vestrace_domain::{
-    id::{AgentRunId, WorkItemId, WorkerId},
+    id::{
+        AgentRunId, ArtifactId, ArtifactRevisionId, ModelExecutionId, RunStepId, WorkItemId,
+        WorkerId,
+    },
     run::{AgentRun, RunCheckpoint, RunEvent, RunFailure, RunStep, RunVersion},
     time::Timestamp,
 };
 
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, RequestContext, UnitOfWork};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunSnapshot {
@@ -21,6 +24,18 @@ pub struct CommitRun {
     pub new_steps: Vec<RunStep>,
     pub checkpoint: Option<RunCheckpoint>,
     pub work_items: Vec<WorkItem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommitProviderResultRun {
+    pub run_id: AgentRunId,
+    pub step_id: RunStepId,
+    pub expected_run_version: u64,
+    pub artifact_id: ArtifactId,
+    pub artifact_revision_id: ArtifactRevisionId,
+    pub model_execution_id: ModelExecutionId,
+    pub work_item_id: WorkItemId,
+    pub occurred_at: Timestamp,
 }
 
 #[async_trait]
@@ -42,6 +57,32 @@ pub trait RunStorePort: Send + Sync {
         context: &RequestContext,
         commit: CommitRun,
     ) -> Result<RunSnapshot, ApplicationError>;
+
+    /// Commit a Run transition inside the caller's transaction.
+    ///
+    /// The default fails closed so non-transactional test adapters remain
+    /// source compatible without ever opening a hidden second transaction.
+    async fn commit_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _commit: CommitRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound run persistence is unsupported".into(),
+        ))
+    }
+
+    async fn commit_provider_result_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _commit: CommitProviderResultRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound provider-result Run persistence is unsupported".into(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,4 +218,23 @@ pub fn deterministic_idempotency_key(
     action: &str,
 ) -> String {
     format!("run:{run_id}:version:{}:action:{action}", version.value())
+}
+
+#[cfg(test)]
+mod transaction_bound_api_contract {
+    use super::*;
+
+    #[test]
+    fn run_store_exposes_caller_owned_commit() {
+        async fn type_check(
+            store: &dyn RunStorePort,
+            context: &RequestContext,
+            unit_of_work: &mut dyn UnitOfWork,
+            commit: CommitRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            store.commit_in(context, unit_of_work, commit).await
+        }
+
+        let _ = type_check;
+    }
 }

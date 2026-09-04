@@ -9,6 +9,10 @@ use vestrace_domain::{
     time::Timestamp,
 };
 
+pub use super::bindings::{
+    LEGACY_RUN_MODEL_DEFAULT_PURPOSE, ModelBindingResolver, SharedModelBindingResolver,
+};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderRecord {
     pub id: ProviderId,

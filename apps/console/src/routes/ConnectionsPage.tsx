@@ -110,10 +110,10 @@ export const ConnectionsPage: React.FC = () => {
                         margin: 0,
                       }}
                     >
-                      {connection.name}
+                      {connection.id}
                     </h2>
                     <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      Type: {connection.type}
+                      Revision: {connection.revision_id ?? 'none'}
                     </span>
                   </div>
                 </div>
@@ -130,15 +130,20 @@ export const ConnectionsPage: React.FC = () => {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {connection.status}
+                  {connection.state}
                 </span>
               </div>
 
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                Ping latency:{' '}
+                Qualification:{' '}
                 <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
-                  {connection.latency}
+                  {connection.qualification_state ?? 'unqualified'}
                 </strong>
+                {connection.blockers.length > 0 && (
+                  <span style={{ display: 'block', marginTop: '4px' }}>
+                    Blockers: {connection.blockers.join(', ')}
+                  </span>
+                )}
               </div>
 
               <ActionButton
@@ -147,7 +152,7 @@ export const ConnectionsPage: React.FC = () => {
                 onClick={() =>
                   notify(
                     'info',
-                    `Connection tests are not implemented in this build (${connection.name}).`,
+                    `Connection tests are not implemented in this build (${connection.id}).`,
                   )
                 }
               >

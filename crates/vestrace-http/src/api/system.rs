@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,10 @@ use uuid::Uuid;
 use vestrace_application::MonitoredFinding;
 use vestrace_domain::health::HealthSeverity;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -95,12 +98,16 @@ pub struct SystemHealthResponse {
 }
 
 pub fn system_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/system/health", get(system_health))
-        .route(
-            "/system/health/findings/{id}/disposition",
-            axum::routing::post(disposition_finding),
-        )
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/system/health"),
+        get(system_health),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/system/health/findings/{id}/disposition"),
+        axum::routing::post(disposition_finding),
+    )
 }
 
 async fn system_health(

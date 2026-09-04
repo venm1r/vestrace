@@ -63,6 +63,10 @@ fn application_storage_error(error: InfrastructureError) -> ApplicationError {
 
 #[async_trait::async_trait]
 impl UnitOfWork for PgScopedTransaction {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     async fn commit(self: Box<Self>) -> Result<(), ApplicationError> {
         PgScopedTransaction::commit(*self)
             .await

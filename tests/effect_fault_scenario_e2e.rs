@@ -244,5 +244,14 @@ fn point_name(point: EffectFaultPoint) -> &'static str {
             "after_receipt_before_outcome_confirmation"
         }
         EffectFaultPoint::AfterOutcomeBeforeRunCommit => "after_outcome_before_run_commit",
+        EffectFaultPoint::AfterReserved
+        | EffectFaultPoint::AfterVaultCreateBeforeReceipt
+        | EffectFaultPoint::AfterReceiptBeforePrepared
+        | EffectFaultPoint::AfterPreparedBeforeBound
+        | EffectFaultPoint::AfterBoundBeforePromotion
+        | EffectFaultPoint::AfterAbortBeforeWitnessedErase
+        | EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend => {
+            panic!("intent fault point cannot name an external-effect scenario")
+        }
     }
 }

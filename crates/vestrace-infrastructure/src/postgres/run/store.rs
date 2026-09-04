@@ -1,18 +1,20 @@
 use async_trait::async_trait;
 use sqlx::FromRow;
-use vestrace_application::run::ports::{CommitRun, RunSnapshot, RunStorePort};
-use vestrace_application::{ApplicationError, RequestContext};
+use vestrace_application::run::ports::{
+    CommitProviderResultRun, CommitRun, RunSnapshot, RunStorePort, WorkItem, WorkItemKind,
+};
+use vestrace_application::{ApplicationError, RequestContext, UnitOfWork};
 use vestrace_domain::id::{
-    AgentRunId, AgentRuntimeSnapshotId, BudgetSnapshotId, PlanRevisionId, ResourceUsageSnapshotId,
-    RunCheckpointId, RunStepId, WorkspaceId,
+    AgentRunId, AgentRuntimeSnapshotId, BudgetSnapshotId, CorrelationId, PlanRevisionId,
+    ResourceUsageSnapshotId, RunCheckpointId, RunStepId, WorkspaceId,
 };
 use vestrace_domain::run::{
-    AgentRun, RunCheckpoint, RunEvent, RunExecutionMode, RunStatus, RunStep, RunStepStatus,
-    RunTerminalResult, RunVersion,
+    AgentRun, RunActorRef, RunCheckpoint, RunEvent, RunEventPayload, RunExecutionMode, RunStatus,
+    RunStep, RunStepStatus, RunTerminalResult, RunVersion,
 };
 use vestrace_domain::time::Timestamp;
 
-use super::super::PgStore;
+use super::super::{PgScopedTransaction, PgStore};
 
 /// The durable run store.
 ///
@@ -244,6 +246,278 @@ impl TryFrom<RunCheckpointRow> for RunCheckpoint {
     }
 }
 
+fn postgres_transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<PgScopedTransaction>()
+        .ok_or_else(|| ApplicationError::Internal("expected PostgreSQL run transaction".into()))
+}
+
+async fn load_on(
+    connection: &mut sqlx::PgConnection,
+    context: &RequestContext,
+    run_id: AgentRunId,
+) -> Result<Option<RunSnapshot>, ApplicationError> {
+    let ws = context.workspace_id.as_uuid();
+    let rid = run_id.as_uuid();
+    let run_row: Option<AgentRunRow> = sqlx::query_as::<_, AgentRunRow>(
+        r#"
+        SELECT id, workspace_id, objective, coordinator_snapshot_id,
+               active_plan_revision_id, execution_mode, status,
+               current_step_id, checkpoint_id, parent_run_id, parent_step_id,
+               root_run_id, budget_snapshot_id, resource_usage_snapshot_id,
+               run_version, result, created_at, updated_at, finished_at
+        FROM agent_runs
+        WHERE workspace_id = $1 AND id = $2
+        "#,
+    )
+    .bind(ws)
+    .bind(rid)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+    let Some(run_row) = run_row else {
+        return Ok(None);
+    };
+    let run = AgentRun::try_from(run_row)?;
+
+    let step_rows: Vec<RunStepRow> = sqlx::query_as::<_, RunStepRow>(
+        r#"
+        SELECT id, run_id, plan_step_reference, assigned_actor,
+               input_references, status, attempt, output_references, error,
+               created_at, started_at, finished_at
+        FROM run_steps
+        WHERE run_id = $1
+        ORDER BY created_at
+        "#,
+    )
+    .bind(rid)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    let steps = step_rows
+        .into_iter()
+        .map(RunStep::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let checkpoint_row: Option<RunCheckpointRow> = sqlx::query_as::<_, RunCheckpointRow>(
+        r#"
+        SELECT workspace_id, run_id, sequence, state, created_at
+        FROM run_checkpoints
+        WHERE run_id = $1
+        ORDER BY sequence DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(rid)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    let checkpoint = checkpoint_row.map(RunCheckpoint::try_from).transpose()?;
+
+    Ok(Some(RunSnapshot {
+        run,
+        steps,
+        checkpoint,
+    }))
+}
+
+async fn commit_on(
+    connection: &mut sqlx::PgConnection,
+    context: &RequestContext,
+    commit: CommitRun,
+) -> Result<RunSnapshot, ApplicationError> {
+    let ws = context.workspace_id.as_uuid();
+    let run = &commit.run;
+    let run_id = run.id.as_uuid();
+    let expected_version = run
+        .version
+        .previous()
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    let new_version = run.version;
+    let now = run.updated_at;
+    let result_json = run
+        .result
+        .as_ref()
+        .map(|result| serde_json::to_value(result).unwrap_or(serde_json::Value::Null));
+
+    let result = sqlx::query(
+        r#"
+        UPDATE agent_runs
+        SET status = $3,
+            run_version = $4,
+            updated_at = $5,
+            finished_at = $6,
+            current_step_id = $7,
+            checkpoint_id = $8,
+            active_plan_revision_id = $9,
+            result = $10
+        WHERE workspace_id = $1
+          AND id = $2
+          AND run_version = $11
+        "#,
+    )
+    .bind(ws)
+    .bind(run_id)
+    .bind(run.status.as_str())
+    .bind(new_version.value() as i64)
+    .bind(now)
+    .bind(run.finished_at)
+    .bind(run.current_step_id.map(|step| step.as_uuid()))
+    .bind(run.checkpoint_id.map(|checkpoint| checkpoint.as_uuid()))
+    .bind(
+        run.active_plan_revision_id
+            .map(|revision| revision.as_uuid()),
+    )
+    .bind(result_json)
+    .bind(expected_version.value() as i64)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        let current: Option<(i64,)> = sqlx::query_as(
+            "SELECT run_version FROM agent_runs WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(run_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        return Err(ApplicationError::Conflict(format!(
+            "revision_conflict: expected version {}, found {:?}",
+            expected_version.value(),
+            current.map(|value| value.0)
+        )));
+    }
+
+    advance_stream(connection, ws, run_id, commit.event.run_version, now).await?;
+    append_event(connection, ws, &commit.event).await?;
+    for step in &commit.new_steps {
+        insert_step(connection, ws, step).await?;
+    }
+    if let Some(checkpoint) = &commit.checkpoint {
+        insert_checkpoint(connection, ws, checkpoint).await?;
+    }
+    for item in &commit.work_items {
+        insert_work_item(connection, ws, item).await?;
+    }
+
+    load_on(connection, context, commit.run.id)
+        .await?
+        .ok_or_else(|| ApplicationError::Storage("run not found after commit".into()))
+}
+
+async fn commit_provider_result_on(
+    connection: &mut sqlx::PgConnection,
+    context: &RequestContext,
+    commit: CommitProviderResultRun,
+) -> Result<RunSnapshot, ApplicationError> {
+    let workspace_id = context.workspace_id.as_uuid();
+    let new_version = commit
+        .expected_run_version
+        .checked_add(1)
+        .ok_or_else(|| ApplicationError::Conflict("provider result Run version overflow".into()))?;
+    let output_reference = serde_json::json!([{
+        "id": commit.artifact_id,
+        "kind": "artifact",
+        "artifact_id": commit.artifact_id,
+        "artifact_revision_id": commit.artifact_revision_id,
+        "model_execution_id": commit.model_execution_id,
+    }]);
+    let step = sqlx::query(
+        "UPDATE run_steps SET status='succeeded',finished_at=$4,output_references=$5 \
+          WHERE workspace_id=$1 AND run_id=$2 AND id=$3 AND status='running'",
+    )
+    .bind(workspace_id)
+    .bind(commit.run_id.as_uuid())
+    .bind(commit.step_id.as_uuid())
+    .bind(commit.occurred_at)
+    .bind(output_reference)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    if step.rows_affected() != 1 {
+        return Err(ApplicationError::Conflict(
+            "provider result requires its active running step".into(),
+        ));
+    }
+    let run = sqlx::query(
+        "UPDATE agent_runs SET run_version=$4,updated_at=$5 \
+          WHERE workspace_id=$1 AND id=$2 AND status='running' AND run_version=$3",
+    )
+    .bind(workspace_id)
+    .bind(commit.run_id.as_uuid())
+    .bind(i64::try_from(commit.expected_run_version).map_err(|_| {
+        ApplicationError::Conflict("provider result Run version is not representable".into())
+    })?)
+    .bind(i64::try_from(new_version).map_err(|_| {
+        ApplicationError::Conflict("provider result Run version is not representable".into())
+    })?)
+    .bind(commit.occurred_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    if run.rows_affected() != 1 {
+        return Err(ApplicationError::Conflict(
+            "provider result Run version changed".into(),
+        ));
+    }
+
+    let version = RunVersion::new(new_version)
+        .map_err(|error| ApplicationError::Conflict(error.to_string()))?;
+    let event = RunEvent::new(
+        commit.run_id,
+        context.workspace_id,
+        version,
+        vestrace_domain::run::ResumeCursor::from_version(version),
+        RunActorRef::System,
+        RunEventPayload::StepStatusChanged {
+            step_id: commit.step_id,
+            from: RunStepStatus::Running,
+            to: RunStepStatus::Succeeded,
+            attempt: 1,
+        },
+        CorrelationId::new(),
+        None,
+        commit.occurred_at,
+    )
+    .map_err(ApplicationError::from)?;
+    advance_stream(
+        connection,
+        workspace_id,
+        commit.run_id.as_uuid(),
+        version,
+        commit.occurred_at,
+    )
+    .await?;
+    append_event(connection, workspace_id, &event).await?;
+    insert_work_item_with_step(
+        connection,
+        workspace_id,
+        &WorkItem {
+            id: commit.work_item_id,
+            run_id: commit.run_id,
+            kind: WorkItemKind::AdvanceRun,
+            expected_run_version: version,
+            available_at: commit.occurred_at,
+            idempotency_key: format!(
+                "provider-result:{}:{}",
+                commit.run_id, commit.artifact_revision_id
+            ),
+            attempt: 0,
+        },
+        Some(commit.step_id.as_uuid()),
+    )
+    .await?;
+    load_on(connection, context, commit.run_id)
+        .await?
+        .ok_or_else(|| ApplicationError::Storage("run not found after provider result".into()))
+}
+
 #[async_trait]
 impl RunStorePort for PostgresRunStore {
     async fn load(
@@ -251,88 +525,17 @@ impl RunStorePort for PostgresRunStore {
         context: &RequestContext,
         run_id: AgentRunId,
     ) -> Result<Option<RunSnapshot>, ApplicationError> {
-        let ws = context.workspace_id.as_uuid();
-        let rid = run_id.as_uuid();
-
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-        let run_row: Option<AgentRunRow> = sqlx::query_as::<_, AgentRunRow>(
-            r#"
-            SELECT id, workspace_id, objective, coordinator_snapshot_id,
-                   active_plan_revision_id, execution_mode, status,
-                   current_step_id, checkpoint_id, parent_run_id, parent_step_id,
-                   root_run_id, budget_snapshot_id, resource_usage_snapshot_id,
-                   run_version, result, created_at, updated_at, finished_at
-            FROM agent_runs
-            WHERE workspace_id = $1 AND id = $2
-            "#,
-        )
-        .bind(ws)
-        .bind(rid)
-        .fetch_optional(scoped.connection())
-        .await
-        .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-        let Some(run_row) = run_row else {
-            scoped
-                .commit()
-                .await
-                .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-            return Ok(None);
-        };
-
-        let run = AgentRun::try_from(run_row)?;
-
-        let step_rows: Vec<RunStepRow> = sqlx::query_as::<_, RunStepRow>(
-            r#"
-            SELECT id, run_id, plan_step_reference, assigned_actor,
-                   input_references, status, attempt, output_references, error,
-                   created_at, started_at, finished_at
-            FROM run_steps
-            WHERE run_id = $1
-            ORDER BY created_at
-            "#,
-        )
-        .bind(rid)
-        .fetch_all(scoped.connection())
-        .await
-        .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-        let steps: Vec<RunStep> = step_rows
-            .into_iter()
-            .map(RunStep::try_from)
-            .collect::<Result<_, _>>()?;
-
-        let checkpoint_row: Option<RunCheckpointRow> = sqlx::query_as::<_, RunCheckpointRow>(
-            r#"
-            SELECT workspace_id, run_id, sequence, state, created_at
-            FROM run_checkpoints
-            WHERE run_id = $1
-            ORDER BY sequence DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(rid)
-        .fetch_optional(scoped.connection())
-        .await
-        .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
+        let snapshot = load_on(scoped.connection(), context, run_id).await?;
         scoped
             .commit()
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-        let checkpoint = checkpoint_row.map(RunCheckpoint::try_from).transpose()?;
-
-        Ok(Some(RunSnapshot {
-            run,
-            steps,
-            checkpoint,
-        }))
+        Ok(snapshot)
     }
 
     async fn create(
@@ -434,103 +637,37 @@ impl RunStorePort for PostgresRunStore {
         context: &RequestContext,
         commit: CommitRun,
     ) -> Result<RunSnapshot, ApplicationError> {
-        let ws = context.workspace_id.as_uuid();
-        let run = &commit.run;
-        let run_id = run.id.as_uuid();
-        let expected_version = run
-            .version
-            .previous()
-            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-        let new_version = run.version;
-        let now = run.updated_at;
-
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-        let tx = scoped.connection();
-
-        let result_json = run
-            .result
-            .as_ref()
-            .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null));
-
-        let result = sqlx::query(
-            r#"
-            UPDATE agent_runs
-            SET status = $3,
-                run_version = $4,
-                updated_at = $5,
-                finished_at = $6,
-                current_step_id = $7,
-                checkpoint_id = $8,
-                active_plan_revision_id = $9,
-                result = $10
-            WHERE workspace_id = $1
-              AND id = $2
-              AND run_version = $11
-            "#,
-        )
-        .bind(ws)
-        .bind(run_id)
-        .bind(run.status.as_str())
-        .bind(new_version.value() as i64)
-        .bind(now)
-        .bind(run.finished_at)
-        .bind(run.current_step_id.map(|s| s.as_uuid()))
-        .bind(run.checkpoint_id.map(|c| c.as_uuid()))
-        .bind(run.active_plan_revision_id.map(|r| r.as_uuid()))
-        .bind(result_json)
-        .bind(expected_version.value() as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            let current: Option<(i64,)> = sqlx::query_as(
-                "SELECT run_version FROM agent_runs WHERE workspace_id = $1 AND id = $2",
-            )
-            .bind(ws)
-            .bind(run_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| ApplicationError::Storage(e.to_string()))?;
-
-            drop(scoped);
-            return Err(ApplicationError::Conflict(format!(
-                "revision_conflict: expected version {}, found {:?}",
-                expected_version.value(),
-                current.map(|c| c.0)
-            )));
-        }
-
-        // Keeps the authoritative stream level with the event just appended;
-        // see the note in `create`.
-        advance_stream(tx, ws, run_id, commit.event.run_version, now).await?;
-
-        append_event(tx, ws, &commit.event).await?;
-
-        for step in &commit.new_steps {
-            insert_step(tx, ws, step).await?;
-        }
-
-        if let Some(checkpoint) = &commit.checkpoint {
-            insert_checkpoint(tx, ws, checkpoint).await?;
-        }
-
-        for item in &commit.work_items {
-            insert_work_item(tx, ws, item).await?;
-        }
-
+        let snapshot = commit_on(scoped.connection(), context, commit).await?;
         scoped
             .commit()
             .await
             .map_err(|e| ApplicationError::Storage(e.to_string()))?;
+        Ok(snapshot)
+    }
 
-        self.load(context, run.id)
-            .await?
-            .ok_or_else(|| ApplicationError::Storage("run not found after commit".into()))
+    async fn commit_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        commit: CommitRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        commit_on(transaction.connection(), context, commit).await
+    }
+
+    async fn commit_provider_result_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        commit: CommitProviderResultRun,
+    ) -> Result<RunSnapshot, ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        commit_provider_result_on(transaction.connection(), context, commit).await
     }
 }
 
@@ -739,13 +876,23 @@ async fn insert_work_item(
     workspace_id: uuid::Uuid,
     item: &vestrace_application::run::ports::WorkItem,
 ) -> Result<(), ApplicationError> {
-    let (kind, step_id) = match &item.kind {
+    insert_work_item_with_step(connection, workspace_id, item, None).await
+}
+
+async fn insert_work_item_with_step(
+    connection: &mut sqlx::PgConnection,
+    workspace_id: uuid::Uuid,
+    item: &vestrace_application::run::ports::WorkItem,
+    step_id_override: Option<uuid::Uuid>,
+) -> Result<(), ApplicationError> {
+    let (kind, kind_step_id) = match &item.kind {
         vestrace_application::run::ports::WorkItemKind::AdvanceRun => ("advance_run", None),
         vestrace_application::run::ports::WorkItemKind::ResumeRun => ("resume_run", None),
         vestrace_application::run::ports::WorkItemKind::ExecuteStep { step_id } => {
             ("execute_step", Some(step_id.as_uuid()))
         }
     };
+    let step_id = step_id_override.or(kind_step_id);
 
     sqlx::query(
         r#"
@@ -769,4 +916,38 @@ async fn insert_work_item(
     .map_err(|e| ApplicationError::Storage(e.to_string()))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ForeignUnitOfWork;
+
+    #[async_trait]
+    impl UnitOfWork for ForeignUnitOfWork {
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+
+        async fn commit(self: Box<Self>) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_foreign_unit_of_work_is_a_typed_error() {
+        let mut unit_of_work = ForeignUnitOfWork;
+        match postgres_transaction(&mut unit_of_work) {
+            Err(ApplicationError::Internal(message)) => {
+                assert_eq!(message, "expected PostgreSQL run transaction")
+            }
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(_) => panic!("foreign unit of work was accepted"),
+        }
+    }
 }

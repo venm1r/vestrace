@@ -14,12 +14,14 @@ use vestrace_http::{AppState, MetricsRegistry, build_router};
 use vestrace_infrastructure::{
     AppConfig, LogFormat, ObservabilityConfig, PgAgUiRepository, PgAgentRepository,
     PgArtifactRepository, PgAuditRepository, PgCapabilityGrantRepository, PgConnectionRepository,
-    PgEmbeddingDataPolicyDecisionRepository, PgEvaluationRepository, PgEventRepository,
-    PgExecutionHistoryRepository, PgExternalEffectRepository, PgHealthFindingRepository,
-    PgIdempotencyRepository, PgInvariantObserver, PgMemoryRepository, PgModelExecutionRepository,
-    PgModelRepository, PgOutboxRepository, PgProvenanceRepository, PgProviderRepository,
-    PgPurgeRepository, PgRelationRepository, PgRetrievalJournal, PgRoutingDecisionRepository,
-    PgRunLeasePort, PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
+    PgConnectionRevisionRepository, PgEmbeddingDataPolicyDecisionRepository,
+    PgEvaluationRepository, PgEventRepository, PgExecutionHistoryRepository,
+    PgExternalEffectRepository, PgHealthFindingRepository, PgIdempotencyRepository,
+    PgInstallationFingerprintReadiness, PgInvariantObserver, PgMemoryRepository,
+    PgModelExecutionRepository, PgModelRepository, PgModelRevisionRepository, PgOutboxRepository,
+    PgProvenanceRepository, PgProviderRepository, PgPurgeRepository, PgRelationRepository,
+    PgRetrievalJournal, PgRevisionHydrator, PgRoutingDecisionRepository, PgRunLeasePort,
+    PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
     PgTriggerRepository, PgVectorRetriever, PgWorkQueuePort, PgWorkflowRepository,
     PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
@@ -27,14 +29,40 @@ use vestrace_infrastructure::{
 pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result<()> {
     init_tracing(&config.observability)?;
     tracing::info!(bind = %config.http.bind, "starting vestrace server");
+    let retrieval_policy = config
+        .retrieval_classification_policy()
+        .map_err(|error| anyhow!(error.to_string()))?;
 
     let store = PgStore::connect(&config.database)
         .await
         .map_err(|_| anyhow!("database is unavailable"))?;
-    store
-        .migrate()
-        .await
-        .map_err(|_| anyhow!("database migrations are unavailable"))?;
+
+    // After the database, as in the worker. Both roots and connection refuse
+    // startup, and an operator running the pair against one bad connection
+    // string should hear the same reason from both.
+    let storage_roots = config
+        .provider_execution
+        .roots()
+        .map_err(|_| anyhow!("provider execution storage roots are unavailable or overlap"))?;
+
+    // The server holds the same governed dispatch authority the worker does.
+    // It does not execute run steps, but the acceptance and mutation surfaces
+    // it serves compose around this authority, and a server that built a
+    // different one would be a second opinion about what is dispatchable.
+    let governed = vestrace_infrastructure::GovernedProviderRuntime::new(
+        store.clone(),
+        build_material_vault(config, &storage_roots)?,
+        build_policy_engine(
+            &config.policy,
+            Arc::new(PgCapabilityGrantRepository::new(store.clone())),
+        )?,
+        build_model_data_policy_settings(config)?,
+        Arc::new(PostgresRunStore::new(&store)),
+    );
+    // Held so the composition is proved rather than merely constructed: the
+    // surfaces that use it are injected below, and an unused graph here would
+    // mean the server built an authority it never offers.
+    let _governed_dispatch = governed.dispatch();
     match store.migrations_are_compatible().await {
         Ok(true) => {}
         Ok(false) => return Err(anyhow!("database migration history is incompatible")),
@@ -68,6 +96,7 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
     let store_for_artifacts = store.clone();
     let store_for_triggers = store.clone();
     let store_for_connections = store.clone();
+    let store_for_governed_projections = store.clone();
     let store_for_secrets = store.clone();
     let store_for_credentials = store.clone();
     let store_for_journal = store.clone();
@@ -82,6 +111,9 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
         PgRelationRepository::new(store_for_memory.clone()),
         PgOutboxRepository::new(store.clone()),
         PgIdempotencyRepository::new(store.clone()),
+        config
+            .memory_label_vocabulary()
+            .map_err(|error| anyhow!(error.to_string()))?,
     );
     let memory_use_cases: vestrace_application::SharedMemoryUseCases = Arc::new(memory_service);
 
@@ -110,13 +142,20 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
             "retrieval has a vector channel"
         );
     }
-    let retrieval_service = Arc::new(RetrievalService::with_channels(
-        text_retriever,
-        vector_retriever,
-        None,
-        None,
-        retrieval_journal,
-    ));
+    let retrieval_service = Arc::new(
+        RetrievalService::with_channels(
+            text_retriever,
+            vector_retriever,
+            None,
+            None,
+            retrieval_journal,
+        )
+        .with_hydration(
+            Arc::new(PgRevisionHydrator::new(store.clone())),
+            retrieval_policy,
+            config.policy.version.clone(),
+        ),
+    );
 
     let provider_repository: vestrace_application::SharedProviderRepository =
         Arc::new(PgProviderRepository::new(store_for_catalog.clone()));
@@ -130,6 +169,13 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
         Arc::new(PgRoutingDecisionRepository::new(store_for_catalog.clone()));
     let model_execution_repository: vestrace_application::SharedModelExecutionRepository =
         Arc::new(PgModelExecutionRepository::new(store_for_catalog.clone()));
+    let connection_revision_repository: vestrace_application::SharedConnectionRevisionRepository =
+        Arc::new(PgConnectionRevisionRepository::new(
+            store_for_governed_projections.clone(),
+        ));
+    let model_revision_repository: vestrace_application::SharedModelRevisionRepository = Arc::new(
+        PgModelRevisionRepository::new(store_for_governed_projections),
+    );
     let execution_history_repository: vestrace_application::SharedExecutionHistoryRepository =
         Arc::new(PgExecutionHistoryRepository::new(store_for_catalog.clone()));
     let workflow_repository: vestrace_application::SharedWorkflowRepository =
@@ -166,8 +212,15 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
             PgPurgeRepository::new(store_for_purge),
         ));
 
+    // The wrapper records the create-only host-vault identity during startup
+    // and recomputes it on every readiness check. If host custody is absent or
+    // does not match PostgreSQL, it deliberately leaves /health/ready closed.
+    let installation_fingerprint_readiness = Arc::new(
+        PgInstallationFingerprintReadiness::initialize_from_environment(store.clone()).await,
+    );
+
     let app_state = AppState::new_with_learning_and_policy(
-        Arc::new(store),
+        installation_fingerprint_readiness,
         run_service,
         memory_use_cases,
         retrieval_service,
@@ -197,6 +250,18 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
     .with_artifact_repository(Arc::new(PgArtifactRepository::new(store_for_artifacts)))
     .with_trigger_repository(Arc::new(PgTriggerRepository::new(store_for_triggers)))
     .with_connection_repository(Arc::new(PgConnectionRepository::new(store_for_connections)))
+    .with_connection_revision_repository(connection_revision_repository)
+    .with_model_revision_repository(model_revision_repository)
+    // The governed provider mutation authorities. Without them the routes
+    // exist but refuse: a surface that answered a qualification request by
+    // doing nothing would report a job no probe will ever run.
+    .with_qualification_job_repository(Arc::new(
+        vestrace_infrastructure::PgQualificationJobRepository::new(store.clone()),
+    ))
+    .with_credential_activation_repository(Arc::new(
+        vestrace_infrastructure::PgCredentialActivationRepository::new(store.clone()),
+    ))
+    .with_embedding_job_repository(governed.embedding_jobs())
     .with_ag_ui(Arc::new(PgAgUiRepository::new(store_for_ag_ui)))
     .with_capability_grants(capability_grants)
     .with_purge(purge)
@@ -227,10 +292,17 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
         }
     };
     // Credential administration is workspace scoped like every other store.
+    // Creation additionally goes through the governed transaction authority.
+    let access_token_store: vestrace_application::SharedAccessTokenStore = Arc::new(
+        vestrace_infrastructure::PgAccessTokenStore::new(store_for_credentials.clone()),
+    );
     let app_state = app_state
-        .with_access_token_store(Arc::new(vestrace_infrastructure::PgAccessTokenStore::new(
-            store_for_credentials.clone(),
-        )))
+        .with_access_token_store(access_token_store)
+        .with_access_token_mutation_repository(Arc::new(
+            vestrace_infrastructure::PgGovernedMutationRepository::new(
+                store_for_credentials.clone(),
+            ),
+        ))
         .with_token_entropy_source(Arc::new(vestrace_infrastructure::SystemTokenEntropy::new()));
 
     // A development bootstrap credential, if one is configured. It is written
@@ -508,18 +580,84 @@ pub(crate) fn build_embedding_provider(
 /// the same table, and are listable and revocable like any other. An operator
 /// revoking a seeded grant is respected: this inserts only what is missing and
 /// never resurrects something withdrawn, because the identity it checks is the
-/// capability rather than the row.
+/// capability, operation, and resource scope rather than the row.
 ///
 /// The scope is `/v1` and the operation is `http`, which under the hierarchical
 /// rule covers every path and method beneath them. That is broad on purpose and
 /// is exactly as broad as the configured static list it replaces — the
 /// difference being that these are attached to a subject, expire if given an
-/// expiry, and can be revoked one at a time.
+/// expiry, and can be revoked one at a time. Metrics is deliberately separate:
+/// it is governed but outside `/v1`, so `audit.read` receives one exact
+/// `http.get` `/metrics` grant with a low-risk ceiling. The shipped AG-UI
+/// surface is also outside `/v1`, so its three inventory entries receive their
+/// own exact grants rather than a broader scope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BootstrapGrantSeed {
+    capability: vestrace_domain::Capability,
+    operation: &'static str,
+    resource_scope: &'static str,
+    risk_ceiling: vestrace_domain::RiskCategory,
+}
+
+fn bootstrap_grant_seeds(
+    configured_capabilities: &[String],
+    default_risk_ceiling: vestrace_domain::RiskCategory,
+) -> anyhow::Result<Vec<BootstrapGrantSeed>> {
+    use std::str::FromStr;
+
+    let mut seeds = Vec::new();
+    for name in configured_capabilities {
+        let capability = vestrace_domain::Capability::from_str(name.trim())
+            .map_err(|_| anyhow!("policy.capabilities names an unknown capability {name:?}"))?;
+        seeds.push(BootstrapGrantSeed {
+            capability: capability.clone(),
+            operation: "http",
+            resource_scope: "/v1",
+            risk_ceiling: default_risk_ceiling,
+        });
+        if capability == vestrace_domain::Capability::AuditRead {
+            seeds.push(BootstrapGrantSeed {
+                capability: capability.clone(),
+                operation: "http.get",
+                resource_scope: "/metrics",
+                risk_ceiling: vestrace_domain::RiskCategory::Low,
+            });
+        }
+        if capability == vestrace_domain::Capability::ExecutionRead {
+            seeds.push(BootstrapGrantSeed {
+                capability: capability.clone(),
+                operation: "http.get",
+                resource_scope: "/ag-ui/endpoints",
+                risk_ceiling: vestrace_domain::RiskCategory::Low,
+            });
+            seeds.push(BootstrapGrantSeed {
+                capability: capability.clone(),
+                operation: "http.get",
+                resource_scope: "/ag-ui/events/stream",
+                risk_ceiling: vestrace_domain::RiskCategory::Low,
+            });
+        }
+        if capability == vestrace_domain::Capability::ExecutionWrite {
+            seeds.push(BootstrapGrantSeed {
+                capability,
+                operation: "http.post",
+                resource_scope: "/ag-ui/run",
+                risk_ceiling: vestrace_domain::RiskCategory::High,
+            });
+        }
+    }
+    seeds.dedup_by(|left, right| {
+        left.capability == right.capability
+            && left.operation == right.operation
+            && left.resource_scope == right.resource_scope
+    });
+    Ok(seeds)
+}
+
 async fn seed_bootstrap_grants(
     config: &vestrace_infrastructure::AppConfig,
     store: &vestrace_infrastructure::PgStore,
 ) -> anyhow::Result<()> {
-    use std::str::FromStr;
     use vestrace_application::CapabilityGrantRepository;
     use vestrace_domain::security::{CapabilityGrant, CapabilityGrantSpec};
 
@@ -558,15 +696,15 @@ async fn seed_bootstrap_grants(
 
     let now = vestrace_domain::time::now();
     let mut seeded = 0usize;
-    for name in &config.policy.capabilities {
-        let capability = vestrace_domain::Capability::from_str(name.trim())
-            .map_err(|_| anyhow!("policy.capabilities names an unknown capability {name:?}"))?;
+    for seed in bootstrap_grant_seeds(&config.policy.capabilities, risk_ceiling)? {
         // Already issued, or issued and then revoked: either way this is not
         // ours to decide again.
-        if existing
-            .iter()
-            .any(|grant| grant.subject_id.as_uuid() == principal && grant.capability == capability)
-        {
+        if existing.iter().any(|grant| {
+            grant.subject_id.as_uuid() == principal
+                && grant.capability == seed.capability
+                && grant.operation == seed.operation
+                && grant.resource_scope == seed.resource_scope
+        }) {
             continue;
         }
 
@@ -576,13 +714,13 @@ async fn seed_bootstrap_grants(
                 workspace_id: context.workspace_id,
                 subject_id: context.principal_id,
                 issuer_id: context.principal_id,
-                capability,
-                operation: "http".to_string(),
-                resource_scope: "/v1".to_string(),
+                capability: seed.capability,
+                operation: seed.operation.to_string(),
+                resource_scope: seed.resource_scope.to_string(),
                 valid_from: now,
                 valid_until: None,
                 budget: None,
-                risk_ceiling,
+                risk_ceiling: seed.risk_ceiling,
                 conditions: Vec::new(),
             },
             now,
@@ -783,6 +921,85 @@ fn is_vestrace_target(metadata: &tracing::Metadata<'_>) -> bool {
     )
 }
 
+/// The deployment's declared model-disclosure boundary.
+///
+/// Shared by both long-running roots so server and worker cannot disagree about
+/// what a run step is allowed to send. Every field is required: a default here
+/// would be this layer deciding a disclosure question the deployment is
+/// supposed to answer.
+pub(crate) fn build_model_data_policy_settings(
+    config: &AppConfig,
+) -> anyhow::Result<vestrace_application::ModelDataPolicySettings> {
+    let Some(data_policy) = config.policy.data.as_ref() else {
+        return Err(anyhow!(
+            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity and policy.data.allowed_destinations are required for governed provider execution"
+        ));
+    };
+    let (Some(mode), Some(classification), Some(maximum_sensitivity), Some(allowed_destinations)) = (
+        data_policy.mode,
+        data_policy.classification,
+        data_policy.maximum_sensitivity,
+        data_policy.allowed_destinations.clone(),
+    ) else {
+        return Err(anyhow!(
+            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity and policy.data.allowed_destinations are required for governed provider execution"
+        ));
+    };
+    let policy = vestrace_domain::trust::DataPolicy::new(
+        vestrace_domain::DataPolicyId::new(),
+        config.policy.version.clone(),
+        maximum_sensitivity,
+        allowed_destinations,
+        None,
+    )
+    .map_err(|error| anyhow!("policy.data is invalid: {error}"))?;
+    Ok(vestrace_application::ModelDataPolicySettings {
+        policy,
+        classification,
+        mode: match mode {
+            vestrace_infrastructure::DataPolicyMode::Enforce => {
+                vestrace_application::ModelDataPolicyMode::Enforce
+            }
+            vestrace_infrastructure::DataPolicyMode::Observe => {
+                vestrace_application::ModelDataPolicyMode::Observe
+            }
+        },
+    })
+}
+
+/// The one host material vault both roots unwrap governed material through.
+///
+/// The bootstrap reference is read back from the mounted store rather than
+/// assembled from configuration, so a deployment cannot present one key as
+/// another. Failure refuses startup: a process that ran without a vault would
+/// reach a provider with material it could not have sealed.
+pub(crate) fn build_material_vault(
+    config: &AppConfig,
+    roots: &vestrace_infrastructure::config::ProviderExecutionStorageRoots,
+) -> anyhow::Result<Arc<vestrace_infrastructure::crypto::HostMaterialKeyVault>> {
+    let reference = config
+        .provider_execution
+        .bootstrap_key_reference(roots)
+        .map_err(|error| anyhow!("{error}"))?;
+    let scope = reference.scope().to_owned();
+    Ok(Arc::new(
+        vestrace_infrastructure::crypto::HostMaterialKeyVault::new(
+            roots.material_vault_root.clone(),
+            &roots.bootstrap_secret_root,
+            reference,
+            vestrace_domain::trust::SecretResolutionRequest::new(
+                // The bootstrap key is an installation fact, not a workspace's:
+                // it unwraps every workspace's material. The request names the
+                // installation rather than pretending one workspace owns it.
+                vestrace_domain::id::WorkspaceId::from_uuid(uuid::Uuid::nil()),
+                scope,
+                "vestrace://provider-execution",
+            ),
+        )
+        .map_err(|error| anyhow!("the host material vault is unavailable: {error:?}"))?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -919,5 +1136,103 @@ mod tests {
         assert_output_is_clamped(&output);
         let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
         assert!(event.is_object(), "{event}");
+    }
+
+    #[test]
+    fn bootstrap_seed_authorizes_every_governed_route_in_the_shipped_capability_set() {
+        let seeds = super::bootstrap_grant_seeds(
+            &[
+                "memory.read".to_owned(),
+                "memory.write".to_owned(),
+                "event.read".to_owned(),
+                "event.write".to_owned(),
+                "context.retrieve".to_owned(),
+                "agent.read".to_owned(),
+                "agent.write".to_owned(),
+                "skill.read".to_owned(),
+                "skill.write".to_owned(),
+                "workflow.read".to_owned(),
+                "workflow.write".to_owned(),
+                "execution.read".to_owned(),
+                "execution.write".to_owned(),
+                "model.read".to_owned(),
+                "model.write".to_owned(),
+                "provider.read".to_owned(),
+                "provider.write".to_owned(),
+                "evaluation.read".to_owned(),
+                "evaluation.write".to_owned(),
+                "learning.read".to_owned(),
+                "learning.write".to_owned(),
+                "audit.read".to_owned(),
+                "export.read".to_owned(),
+                "workspace.admin".to_owned(),
+            ],
+            vestrace_domain::RiskCategory::Critical,
+        )
+        .expect("the shipped capability list is valid");
+        let workspace = vestrace_domain::WorkspaceId::new();
+        let principal = vestrace_domain::PrincipalId::new();
+        let now = vestrace_domain::time::now();
+        let grants = seeds
+            .into_iter()
+            .map(|seed| {
+                vestrace_domain::CapabilityGrant::issue(
+                    vestrace_domain::security::CapabilityGrantSpec {
+                        id: vestrace_domain::CapabilityGrantId::new(),
+                        workspace_id: workspace,
+                        subject_id: principal,
+                        issuer_id: principal,
+                        capability: seed.capability,
+                        operation: seed.operation.to_owned(),
+                        resource_scope: seed.resource_scope.to_owned(),
+                        valid_from: now,
+                        valid_until: None,
+                        budget: None,
+                        risk_ceiling: seed.risk_ceiling,
+                        conditions: Vec::new(),
+                    },
+                    now,
+                )
+                .expect("the bootstrap grant has a valid exact scope")
+            })
+            .collect::<Vec<_>>();
+
+        for descriptor in vestrace_http::route_inventory::route_inventory()
+            .iter()
+            .filter(|descriptor| {
+                descriptor.exposure == vestrace_http::route_inventory::RouteExposure::Governed
+                    && grants
+                        .iter()
+                        .any(|grant| grant.capability == descriptor.capability)
+            })
+        {
+            let request = match vestrace_http::route_inventory::inventory_lookup(
+                &descriptor.method,
+                descriptor.path_pattern,
+            ) {
+                vestrace_http::route_inventory::RouteDecision::Governed(request) => request,
+                other => panic!(
+                    "the governed route was not found: {} {} ({other:?})",
+                    descriptor.method, descriptor.path_pattern
+                ),
+            };
+            let decision = vestrace_domain::security::evaluate_capability_grants(
+                vestrace_domain::PolicyDecisionId::new(),
+                workspace,
+                principal,
+                "bootstrap-seed-test",
+                &request,
+                &grants,
+                now,
+            )
+            .expect("the inventory request is a valid authorization request");
+
+            assert!(
+                decision.is_allowed(),
+                "bootstrap grants denied {} {}: {decision:?}",
+                descriptor.method,
+                descriptor.path_pattern
+            );
+        }
     }
 }

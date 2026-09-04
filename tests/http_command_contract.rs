@@ -95,6 +95,14 @@ impl vestrace_application::MemoryUseCases for StubMemoryUseCases {
     ) -> Result<Option<vestrace_domain::Memory>, vestrace_application::ApplicationError> {
         Ok(None)
     }
+    async fn find_revision(
+        &self,
+        _: &vestrace_application::RequestContext,
+        _: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<vestrace_domain::MemoryRevision>, vestrace_application::ApplicationError>
+    {
+        Ok(None)
+    }
 }
 
 struct StubTextRetriever;

@@ -1,12 +1,15 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 use vestrace_domain::{
     EvaluationId, EvidenceRef, LearnedProjection, LearningChange, LearningProjectionId,
     LearningProposal, LearningProposalId, LearningTarget, ProjectionGenerator, ProjectionKind,
@@ -17,24 +20,41 @@ use super::{ApiError, context::request_context};
 /// L2 deliberately exposes creation and inspection only. There is no endpoint
 /// that applies a learned result to an agent, skill, workflow, tool, or policy.
 pub fn learning_routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/learning/projections",
-            axum::routing::post(create_projection).get(list_projections),
-        )
-        .route(
-            "/learning/projections/{id}",
-            axum::routing::get(get_projection),
-        )
-        .route(
-            "/learning/proposals",
-            axum::routing::post(create_proposal).get(list_proposals),
-        )
-        .route(
-            "/learning/proposals/{id}/submit",
-            axum::routing::post(submit_proposal),
-        )
-        .route("/learning/proposals/{id}", axum::routing::get(get_proposal))
+    let router = mount(
+        Router::new(),
+        route_descriptor(&Method::GET, "/v1/learning/projections"),
+        axum::routing::get(list_projections),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/learning/projections"),
+        axum::routing::post(create_projection),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/learning/projections/{id}"),
+        axum::routing::get(get_projection),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/learning/proposals"),
+        axum::routing::get(list_proposals),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/learning/proposals"),
+        axum::routing::post(create_proposal),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/learning/proposals/{id}"),
+        axum::routing::get(get_proposal),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/learning/proposals/{id}/submit"),
+        axum::routing::post(submit_proposal),
+    )
 }
 
 #[derive(Debug, Deserialize)]

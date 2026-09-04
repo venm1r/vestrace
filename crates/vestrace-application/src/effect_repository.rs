@@ -9,7 +9,7 @@ use vestrace_domain::{
     ExternalReconciliationId, PolicyDecision, PolicyDecisionId, Timestamp, WorkerId,
 };
 
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, ProviderResultReceiptEvidence, RequestContext, UnitOfWork};
 
 /// Worker presence refresh cadence, shared with the run-lease heartbeat.
 ///
@@ -48,6 +48,32 @@ pub trait ExternalEffectRepository: Send + Sync {
         intent: &ExternalEffectIntent,
     ) -> Result<(), ApplicationError>;
 
+    /// Persist the intent in a caller-owned transaction.
+    ///
+    /// The default refuses instead of silently opening a second transaction;
+    /// transactional infrastructure adapters override it.
+    async fn save_intent_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _intent: &ExternalEffectIntent,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound external-effect intent persistence is unsupported".into(),
+        ))
+    }
+
+    /// Compatibility spelling retained for callers introduced before the
+    /// frozen provider-dispatch API named this operation `save_intent_in`.
+    async fn insert_intent_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        intent: &ExternalEffectIntent,
+    ) -> Result<(), ApplicationError> {
+        self.save_intent_in(context, unit_of_work, intent).await
+    }
+
     async fn find_intent(
         &self,
         context: &RequestContext,
@@ -66,6 +92,19 @@ pub trait ExternalEffectRepository: Send + Sync {
         decision: &PolicyDecision,
     ) -> Result<(), ApplicationError>;
 
+    /// Record authorization in a caller-owned transaction.
+    async fn record_authorization_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _effect_id: ExternalEffectId,
+        _decision: &PolicyDecision,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound external-effect authorization persistence is unsupported".into(),
+        ))
+    }
+
     /// Read one effect authorization by its policy-decision identity.
     async fn find_authorization(
         &self,
@@ -79,6 +118,33 @@ pub trait ExternalEffectRepository: Send + Sync {
         context: &RequestContext,
         receipt: &ExternalEffectReceipt,
     ) -> Result<(), ApplicationError>;
+
+    /// Persist a definite receipt in a caller-owned transaction.
+    async fn insert_receipt_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _receipt: &ExternalEffectReceipt,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound external-effect receipt persistence is unsupported".into(),
+        ))
+    }
+
+    /// Persist a provider-result receipt and its typed restart evidence in the
+    /// caller-owned transaction. Implementations must use the same receipt SQL
+    /// path as [`Self::insert_receipt_in`].
+    async fn insert_provider_result_receipt_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _receipt: &ExternalEffectReceipt,
+        _evidence: ProviderResultReceiptEvidence,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound provider-result receipt persistence is unsupported".into(),
+        ))
+    }
 
     async fn find_receipt(
         &self,
@@ -134,6 +200,21 @@ pub trait ExternalEffectRepository: Send + Sync {
         recorded_at: Timestamp,
     ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError>;
 
+    /// Append `Dispatching` in a caller-owned transaction.
+    async fn record_dispatch_started_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _effect_id: ExternalEffectId,
+        _dispatch_owner: WorkerId,
+        _dispatch_expires_at: Timestamp,
+        _recorded_at: Timestamp,
+    ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound external-effect dispatch persistence is unsupported".into(),
+        ))
+    }
+
     /// Atomically append the UNKNOWN assertion for one expired dispatch.
     ///
     /// Candidate discovery cannot be the claim at READ COMMITTED: two readers
@@ -147,6 +228,22 @@ pub trait ExternalEffectRepository: Send + Sync {
         dispatch_transition_id: ExternalEffectLifecycleTransitionId,
         recorded_at: Timestamp,
     ) -> Result<LostDispatchAdoption, ApplicationError>;
+
+    /// The caller-owned form is the recovery half of provider dispatch.  It
+    /// lets the original effect's lost-dispatch assertion, its q1 terminal
+    /// transition, and any adjacent guarded completion work share one commit.
+    async fn adopt_lost_dispatch_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _effect_id: ExternalEffectId,
+        _dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        _recorded_at: Timestamp,
+    ) -> Result<LostDispatchAdoption, ApplicationError> {
+        Err(ApplicationError::Internal(
+            "transaction-bound external-effect lost-dispatch adoption is unsupported".into(),
+        ))
+    }
 
     /// Legacy dispatch assertions that nobody gave a deadline.
     ///
@@ -284,6 +381,61 @@ pub struct ExternalEffectRecoveryCandidate {
     intent: ExternalEffectIntent,
     receipt: Option<ExternalEffectReceipt>,
     lost_dispatch: Option<LostDispatchRecovery>,
+}
+
+#[cfg(test)]
+mod transaction_bound_api_contract {
+    use super::*;
+
+    #[test]
+    fn effect_repository_exposes_caller_owned_transaction_variants() {
+        type Inputs<'a> = (
+            &'a dyn ExternalEffectRepository,
+            &'a RequestContext,
+            &'a mut dyn UnitOfWork,
+            &'a ExternalEffectIntent,
+            &'a PolicyDecision,
+            &'a ExternalEffectReceipt,
+            ExternalEffectId,
+            WorkerId,
+            Timestamp,
+        );
+
+        async fn type_check(input: Inputs<'_>) -> Result<(), ApplicationError> {
+            let (
+                repository,
+                context,
+                unit_of_work,
+                intent,
+                decision,
+                receipt,
+                effect_id,
+                dispatch_owner,
+                at,
+            ) = input;
+            repository
+                .save_intent_in(context, unit_of_work, intent)
+                .await?;
+            repository
+                .record_authorization_in(context, unit_of_work, effect_id, decision)
+                .await?;
+            repository
+                .record_dispatch_started_in(
+                    context,
+                    unit_of_work,
+                    effect_id,
+                    dispatch_owner,
+                    at,
+                    at,
+                )
+                .await?;
+            repository
+                .insert_receipt_in(context, unit_of_work, receipt)
+                .await
+        }
+
+        let _ = type_check;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

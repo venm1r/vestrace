@@ -83,6 +83,7 @@ mod tests {
             memory_status: vestrace_domain::MemoryStatus::Active,
             revision_number: 1,
             content: String::new(),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
@@ -145,7 +146,10 @@ mod tests {
     #[test]
     fn duplicate_candidates_within_a_channel_are_deduplicated() {
         let id = MemoryId::new();
-        let channel = vec![candidate(id, 0.9, "text", 1), candidate(id, 0.9, "text", 2)];
+        let first = candidate(id, 0.9, "text", 1);
+        let mut duplicate = first.clone();
+        duplicate.channel_rank = 2;
+        let channel = vec![first, duplicate];
 
         let fused = reciprocal_rank_fusion(&[channel], 60.0);
         assert_eq!(fused.len(), 1);

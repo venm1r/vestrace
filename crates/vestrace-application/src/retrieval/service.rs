@@ -1,14 +1,15 @@
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 use vestrace_domain::{
     ContextPack, RetrievalCandidate, WorkspaceId,
     id::{ContextPackId, RetrievalRunId},
+    retrieval::{ClassificationPolicy, HydrationOutcome, RevisionRef, WithheldRevision},
 };
 
 use crate::{
     ApplicationError, RequestContext,
     retrieval::{
         ChannelRecord, ContextPackBuilder, NormalizedRetrievalRequest, RetrievalRequest,
-        RetrievalRunRecord, SharedExactRetriever, SharedRetrievalJournal,
+        RetrievalRunRecord, SharedExactRetriever, SharedRetrievalJournal, SharedRevisionHydrator,
         SharedStructuredRetriever, SharedTextRetriever, SharedVectorRetriever,
         reciprocal_rank_fusion, rerank,
     },
@@ -20,6 +21,9 @@ pub struct RetrievalService {
     exact_retriever: Option<SharedExactRetriever>,
     structured_retriever: Option<SharedStructuredRetriever>,
     journal: SharedRetrievalJournal,
+    revision_hydrator: Option<SharedRevisionHydrator>,
+    classification_policy: Option<ClassificationPolicy>,
+    retrieval_policy_version: Option<String>,
 }
 
 impl RetrievalService {
@@ -40,7 +44,24 @@ impl RetrievalService {
             exact_retriever,
             structured_retriever,
             journal,
+            revision_hydrator: None,
+            classification_policy: None,
+            retrieval_policy_version: None,
         }
+    }
+
+    pub fn with_hydration(
+        mut self,
+        revision_hydrator: SharedRevisionHydrator,
+        classification_policy: ClassificationPolicy,
+        retrieval_policy_version: impl Into<String>,
+    ) -> Self {
+        let retrieval_policy_version = retrieval_policy_version.into();
+        self.revision_hydrator = Some(revision_hydrator);
+        self.classification_policy = Some(classification_policy);
+        self.retrieval_policy_version =
+            (!retrieval_policy_version.trim().is_empty()).then_some(retrieval_policy_version);
+        self
     }
 
     pub async fn search(
@@ -51,6 +72,14 @@ impl RetrievalService {
         if request.workspace_id != context.workspace_id {
             return Err(ApplicationError::Policy(
                 "retrieval workspace does not match request context".to_owned(),
+            ));
+        }
+        if self.revision_hydrator.is_none()
+            || self.classification_policy.is_none()
+            || self.retrieval_policy_version.is_none()
+        {
+            return Err(ApplicationError::Policy(
+                "retrieval hydration policy is not configured".to_owned(),
             ));
         }
 
@@ -118,11 +147,66 @@ impl RetrievalService {
             .map(|record| record.channel.clone())
             .collect::<Vec<_>>();
 
+        // Policy sees every exact revision discovered by every channel before
+        // memory-level fusion chooses a representative. Otherwise a historical
+        // sibling could disappear without a structured withholding record.
+        let mut seen_references = HashSet::new();
+        let references = channels
+            .iter()
+            .flatten()
+            .map(|candidate| RevisionRef {
+                memory_id: candidate.memory_id,
+                revision_id: candidate.revision_id,
+            })
+            .filter(|reference| seen_references.insert(*reference))
+            .collect::<Vec<_>>();
+        let resolved = self
+            .revision_hydrator
+            .as_ref()
+            .expect("hydrator was checked above")
+            .hydrate(context, &references)
+            .await?;
+        let outcome = HydrationOutcome::apply_policy(
+            resolved,
+            &references,
+            self.classification_policy
+                .as_ref()
+                .expect("classification policy was checked above"),
+        );
+        let channels = channels
+            .into_iter()
+            .map(|channel| {
+                channel
+                    .into_iter()
+                    .filter_map(|mut candidate| {
+                        let revision = outcome.revisions.iter().find(|revision| {
+                            revision.memory_id == candidate.memory_id
+                                && revision.revision_id == candidate.revision_id
+                        })?;
+                        candidate.revision_number = revision.revision_number;
+                        candidate.memory_status = revision.memory_status;
+                        candidate.content = revision.content.clone();
+                        candidate.classification = revision.classification.clone();
+                        candidate.valid_from = revision.valid_from;
+                        candidate.valid_until = revision.valid_until;
+                        candidate.revision_created_at = revision.created_at;
+                        Some(candidate)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let fused = reciprocal_rank_fusion(&channels, 60.0);
         let ranked = rerank(fused);
-
-        let candidates: Vec<RetrievalCandidate> =
-            ranked.iter().map(|r| r.candidate.clone()).collect();
+        let candidates: Vec<RetrievalCandidate> = ranked
+            .iter()
+            .map(|ranked| ranked.candidate.clone())
+            .collect();
+        let withheld = outcome.withheld;
+        let retrieval_policy_version = self
+            .retrieval_policy_version
+            .as_ref()
+            .expect("retrieval policy version was checked above")
+            .clone();
 
         let elapsed_ms = start.elapsed().as_millis() as i32;
 
@@ -132,13 +216,16 @@ impl RetrievalService {
             channel_records,
             candidates.len(),
             elapsed_ms,
-        );
+        )
+        .with_policy_decision(&retrieval_policy_version, &withheld);
         self.journal.record_run(context, &record).await?;
 
         Ok(RetrievalResult {
             run_id,
             workspace_id,
             candidates,
+            withheld,
+            retrieval_policy_version,
             degraded: !degraded_channels.is_empty(),
             degraded_channels,
             warnings,
@@ -157,26 +244,42 @@ impl RetrievalService {
                 "context workspace does not match request context".to_owned(),
             ));
         }
+        if self.revision_hydrator.is_none()
+            || self.classification_policy.is_none()
+            || self.retrieval_policy_version.is_none()
+        {
+            return Err(ApplicationError::Policy(
+                "retrieval hydration policy is not configured".to_owned(),
+            ));
+        }
 
         let pack_id = ContextPackId::new();
         let builder = ContextPackBuilder::new(token_budget);
 
-        let pack = builder.build_with_temporal_perspective(
+        let mut pack = builder.build_with_temporal_perspective(
             result.workspace_id,
             context.principal_id,
             result.run_id,
             result.normalized.time_perspective,
             &result.candidates,
         )?;
+        pack.retrieval_policy_version = self
+            .retrieval_policy_version
+            .as_ref()
+            .expect("retrieval policy version was checked above")
+            .clone();
 
         // One call rather than three assignments: `with_degradation` keeps the
         // flag and the channel list from disagreeing, which three separate
         // field writes could not.
         let pack =
             pack.with_degradation(result.degraded_channels.clone(), result.warnings.clone())?;
+        let pack = pack.with_withholding(result.withheld.clone());
 
-        let items_json = serde_json::to_value(&pack.sections)
-            .map_err(|e| ApplicationError::Internal(e.to_string()))?;
+        let items_json = serde_json::json!({
+            "sections": &pack.sections,
+            "withheld": &pack.withheld,
+        });
 
         self.journal
             .record_context_pack(
@@ -199,6 +302,8 @@ pub struct RetrievalResult {
     pub run_id: RetrievalRunId,
     pub workspace_id: WorkspaceId,
     pub candidates: Vec<RetrievalCandidate>,
+    pub withheld: Vec<WithheldRevision>,
+    pub retrieval_policy_version: String,
     pub degraded: bool,
     pub degraded_channels: Vec<String>,
     pub warnings: Vec<String>,
@@ -209,8 +314,11 @@ pub struct RetrievalResult {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::Arc;
-    use vestrace_domain::{MemoryKind, MemoryStatus, PrincipalId, RetrievalCandidate, WorkspaceId};
+    use std::sync::{Arc, Mutex};
+    use vestrace_domain::{
+        MemoryKind, MemoryStatus, PrincipalId, RetrievalCandidate, WorkspaceId,
+        retrieval::{ClassificationPolicy, HydratedRevision, RevisionRef, WithholdingReason},
+    };
 
     struct StubTextRetriever;
 
@@ -249,6 +357,117 @@ mod tests {
         ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
             Ok(vec![candidate("vector")])
         }
+    }
+
+    struct OneCandidateTextRetriever {
+        candidate: RetrievalCandidate,
+    }
+
+    struct ManyCandidateTextRetriever {
+        candidates: Vec<RetrievalCandidate>,
+    }
+
+    #[async_trait]
+    impl crate::TextRetriever for ManyCandidateTextRetriever {
+        async fn search(
+            &self,
+            _context: &RequestContext,
+            _request: &NormalizedRetrievalRequest,
+        ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
+            Ok(self.candidates.clone())
+        }
+    }
+
+    #[async_trait]
+    impl crate::TextRetriever for OneCandidateTextRetriever {
+        async fn search(
+            &self,
+            _context: &RequestContext,
+            _request: &NormalizedRetrievalRequest,
+        ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
+            Ok(vec![self.candidate.clone()])
+        }
+    }
+
+    struct OneRevisionHydrator {
+        revision: HydratedRevision,
+    }
+
+    struct ManyRevisionHydrator {
+        revisions: Vec<HydratedRevision>,
+    }
+
+    #[async_trait]
+    impl crate::retrieval::RevisionHydrator for ManyRevisionHydrator {
+        async fn hydrate(
+            &self,
+            _context: &RequestContext,
+            references: &[RevisionRef],
+        ) -> Result<Vec<HydratedRevision>, ApplicationError> {
+            Ok(self
+                .revisions
+                .iter()
+                .filter(|revision| {
+                    references.iter().any(|reference| {
+                        reference.memory_id == revision.memory_id
+                            && reference.revision_id == revision.revision_id
+                    })
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[async_trait]
+    impl crate::retrieval::RevisionHydrator for OneRevisionHydrator {
+        async fn hydrate(
+            &self,
+            _context: &RequestContext,
+            references: &[RevisionRef],
+        ) -> Result<Vec<HydratedRevision>, ApplicationError> {
+            if references.iter().any(|reference| {
+                reference.memory_id == self.revision.memory_id
+                    && reference.revision_id == self.revision.revision_id
+            }) {
+                Ok(vec![self.revision.clone()])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    struct EchoRevisionHydrator;
+
+    #[async_trait]
+    impl crate::retrieval::RevisionHydrator for EchoRevisionHydrator {
+        async fn hydrate(
+            &self,
+            _context: &RequestContext,
+            references: &[RevisionRef],
+        ) -> Result<Vec<HydratedRevision>, ApplicationError> {
+            Ok(references
+                .iter()
+                .map(|reference| HydratedRevision {
+                    memory_id: reference.memory_id,
+                    revision_id: reference.revision_id,
+                    revision_number: 1,
+                    memory_status: MemoryStatus::Active,
+                    content: "hydrated test content".to_owned(),
+                    classification: None,
+                    valid_from: None,
+                    valid_until: None,
+                    created_at: vestrace_domain::now(),
+                })
+                .collect())
+        }
+    }
+
+    fn governed(service: RetrievalService) -> RetrievalService {
+        service.with_hydration(
+            Arc::new(EchoRevisionHydrator),
+            ClassificationPolicy::permissive(),
+            "test-retrieval-policy",
+        )
     }
 
     struct FailingExactRetriever;
@@ -302,6 +521,7 @@ mod tests {
             memory_status: MemoryStatus::Active,
             revision_number: 1,
             content: format!("candidate from {channel}"),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
@@ -340,12 +560,47 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CapturingJournal {
+        run_parameters: Mutex<Option<serde_json::Value>>,
+        context_items: Mutex<Option<serde_json::Value>>,
+    }
+
+    #[async_trait]
+    impl crate::RetrievalJournal for CapturingJournal {
+        async fn record_run(
+            &self,
+            _context: &RequestContext,
+            record: &RetrievalRunRecord,
+        ) -> Result<(), ApplicationError> {
+            *self.run_parameters.lock().unwrap() = Some(record.parameters.clone());
+            Ok(())
+        }
+
+        async fn record_context_pack(
+            &self,
+            _context: &RequestContext,
+            _pack_id: ContextPackId,
+            _retrieval_run_id: RetrievalRunId,
+            _workspace_id: WorkspaceId,
+            _token_budget: u32,
+            _used_tokens: u32,
+            items: &serde_json::Value,
+        ) -> Result<(), ApplicationError> {
+            *self.context_items.lock().unwrap() = Some(items.clone());
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn search_rejects_workspace_mismatch() {
         let requested_workspace = WorkspaceId::new();
         let trusted_workspace = WorkspaceId::new();
         let context = RequestContext::new(trusted_workspace, PrincipalId::new());
-        let service = RetrievalService::new(Arc::new(StubTextRetriever), Arc::new(StubJournal));
+        let service = governed(RetrievalService::new(
+            Arc::new(StubTextRetriever),
+            Arc::new(StubJournal),
+        ));
 
         let result = service
             .search(
@@ -362,10 +617,223 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_without_a_hydration_boundary_fails_closed() {
+        let workspace = WorkspaceId::new();
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let service =
+            RetrievalService::new(Arc::new(SuccessfulTextRetriever), Arc::new(StubJournal));
+
+        let error = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApplicationError::Policy(message)
+                if message == "retrieval hydration policy is not configured"
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_with_a_blank_policy_version_fails_closed() {
+        let workspace = WorkspaceId::new();
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let service =
+            RetrievalService::new(Arc::new(SuccessfulTextRetriever), Arc::new(StubJournal))
+                .with_hydration(
+                    Arc::new(EchoRevisionHydrator),
+                    ClassificationPolicy::permissive(),
+                    "   ",
+                );
+
+        let error = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApplicationError::Policy(message)
+                if message == "retrieval hydration policy is not configured"
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_returns_content_from_the_exact_hydrated_revision() {
+        let workspace = WorkspaceId::new();
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let raw_candidate = candidate("text");
+        let hydrated = HydratedRevision {
+            memory_id: raw_candidate.memory_id,
+            revision_id: raw_candidate.revision_id,
+            revision_number: 7,
+            memory_status: MemoryStatus::Superseded,
+            content: "authoritative revision content".to_owned(),
+            classification: Some("internal".to_owned()),
+            valid_from: None,
+            valid_until: None,
+            created_at: vestrace_domain::now(),
+        };
+        let service = RetrievalService::new(
+            Arc::new(OneCandidateTextRetriever {
+                candidate: raw_candidate,
+            }),
+            Arc::new(StubJournal),
+        )
+        .with_hydration(
+            Arc::new(OneRevisionHydrator { revision: hydrated }),
+            ClassificationPolicy::new(["internal"], false).unwrap(),
+            "retrieval-policy-v2",
+        );
+
+        let result = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(
+            result.candidates[0].content,
+            "authoritative revision content"
+        );
+        assert_eq!(result.candidates[0].revision_number, 7);
+        assert_eq!(result.candidates[0].memory_status, MemoryStatus::Superseded);
+        assert_eq!(
+            result.candidates[0].classification.as_deref(),
+            Some("internal")
+        );
+        assert_eq!(result.retrieval_policy_version, "retrieval-policy-v2");
+    }
+
+    #[tokio::test]
+    async fn search_reports_inadmissible_revision_without_disclosing_its_content() {
+        let workspace = WorkspaceId::new();
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let raw_candidate = candidate("text");
+        let memory_id = raw_candidate.memory_id;
+        let revision_id = raw_candidate.revision_id;
+        let hydrated = HydratedRevision {
+            memory_id,
+            revision_id,
+            revision_number: 1,
+            memory_status: MemoryStatus::Active,
+            content: "restricted secret".to_owned(),
+            classification: Some("restricted".to_owned()),
+            valid_from: None,
+            valid_until: None,
+            created_at: vestrace_domain::now(),
+        };
+        let journal = Arc::new(CapturingJournal::default());
+        let service = RetrievalService::new(
+            Arc::new(OneCandidateTextRetriever {
+                candidate: raw_candidate,
+            }),
+            journal.clone(),
+        )
+        .with_hydration(
+            Arc::new(OneRevisionHydrator { revision: hydrated }),
+            ClassificationPolicy::new(["internal"], false).unwrap(),
+            "retrieval-policy-v2",
+        );
+
+        let result = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap();
+
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.withheld.len(), 1);
+        assert_eq!(result.withheld[0].memory_id, memory_id);
+        assert_eq!(result.withheld[0].revision_id, revision_id);
+        assert_eq!(
+            result.withheld[0].reason,
+            WithholdingReason::ClassificationNotAdmissible {
+                classification: "restricted".to_owned(),
+            }
+        );
+        assert!(
+            !serde_json::to_string(&result.withheld)
+                .unwrap()
+                .contains("restricted secret")
+        );
+        let recorded = journal.run_parameters.lock().unwrap().clone().unwrap();
+        assert_eq!(recorded["retrieval_policy_version"], "retrieval-policy-v2");
+        assert_eq!(
+            recorded["withheld"][0]["revision_id"],
+            revision_id.to_string()
+        );
+        assert!(!recorded.to_string().contains("restricted secret"));
+    }
+
+    #[tokio::test]
+    async fn inadmissible_sibling_cannot_displace_or_inflate_an_admitted_revision() {
+        let workspace = WorkspaceId::new();
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let first = candidate("text");
+        let mut second = first.clone();
+        second.revision_id = vestrace_domain::id::MemoryRevisionId::new();
+        second.revision_number = 2;
+        second.content = "second raw candidate".to_owned();
+        second.channel_rank = 2;
+        second.score = 0.99;
+        let restricted_revision_id = second.revision_id;
+        let revisions = [&first, &second]
+            .into_iter()
+            .map(|candidate| HydratedRevision {
+                memory_id: candidate.memory_id,
+                revision_id: candidate.revision_id,
+                revision_number: candidate.revision_number,
+                memory_status: MemoryStatus::Active,
+                content: format!("hydrated revision {}", candidate.revision_number),
+                classification: Some(
+                    if candidate.revision_number == 1 {
+                        "internal"
+                    } else {
+                        "restricted"
+                    }
+                    .to_owned(),
+                ),
+                valid_from: None,
+                valid_until: None,
+                created_at: vestrace_domain::now(),
+            })
+            .collect();
+        let service = RetrievalService::new(
+            Arc::new(ManyCandidateTextRetriever {
+                candidates: vec![first, second],
+            }),
+            Arc::new(StubJournal),
+        )
+        .with_hydration(
+            Arc::new(ManyRevisionHydrator { revisions }),
+            ClassificationPolicy::new(["internal"], false).unwrap(),
+            "retrieval-policy-v2",
+        );
+
+        let result = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].revision_number, 1);
+        assert_eq!(
+            result.candidates[0].classification.as_deref(),
+            Some("internal")
+        );
+        assert_eq!(result.withheld.len(), 1);
+        assert_eq!(result.withheld[0].revision_id, restricted_revision_id);
+    }
+
+    #[tokio::test]
     async fn build_context_rejects_result_from_another_workspace() {
         let result_workspace = WorkspaceId::new();
         let context_workspace = WorkspaceId::new();
-        let service = RetrievalService::new(Arc::new(StubTextRetriever), Arc::new(StubJournal));
+        let service = governed(RetrievalService::new(
+            Arc::new(StubTextRetriever),
+            Arc::new(StubJournal),
+        ));
         let normalized = NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
             result_workspace,
             "current fact",
@@ -375,6 +843,8 @@ mod tests {
             run_id: RetrievalRunId::new(),
             workspace_id: result_workspace,
             candidates: Vec::new(),
+            withheld: Vec::new(),
+            retrieval_policy_version: "test-retrieval-policy".to_owned(),
             degraded: false,
             degraded_channels: Vec::new(),
             warnings: Vec::new(),
@@ -398,11 +868,143 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_context_without_a_hydration_boundary_fails_closed() {
+        let workspace = WorkspaceId::new();
+        let service = RetrievalService::new(Arc::new(StubTextRetriever), Arc::new(StubJournal));
+        let result = RetrievalResult {
+            run_id: RetrievalRunId::new(),
+            workspace_id: workspace,
+            candidates: Vec::new(),
+            withheld: Vec::new(),
+            retrieval_policy_version: "test-retrieval-policy".to_owned(),
+            degraded: false,
+            degraded_channels: Vec::new(),
+            warnings: Vec::new(),
+            normalized: NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
+                workspace, "fact",
+            ))
+            .unwrap(),
+        };
+
+        let error = service
+            .build_context(
+                &RequestContext::new(workspace, PrincipalId::new()),
+                &result,
+                100,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApplicationError::Policy(message)
+                if message == "retrieval hydration policy is not configured"
+        ));
+    }
+
+    #[tokio::test]
+    async fn build_context_preserves_structured_withholding() {
+        let workspace = WorkspaceId::new();
+        let memory_id = vestrace_domain::MemoryId::new();
+        let revision_id = vestrace_domain::id::MemoryRevisionId::new();
+        let service = governed(RetrievalService::new(
+            Arc::new(StubTextRetriever),
+            Arc::new(StubJournal),
+        ));
+        let normalized = NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
+            workspace,
+            "restricted fact",
+        ))
+        .unwrap();
+        let result = RetrievalResult {
+            run_id: RetrievalRunId::new(),
+            workspace_id: workspace,
+            candidates: Vec::new(),
+            withheld: vec![WithheldRevision {
+                memory_id,
+                revision_id,
+                reason: WithholdingReason::ClassificationNotAdmissible {
+                    classification: "restricted".to_owned(),
+                },
+            }],
+            retrieval_policy_version: "test-retrieval-policy".to_owned(),
+            degraded: false,
+            degraded_channels: Vec::new(),
+            warnings: Vec::new(),
+            normalized,
+        };
+
+        let pack = service
+            .build_context(
+                &RequestContext::new(workspace, PrincipalId::new()),
+                &result,
+                100,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(pack.withheld, result.withheld);
+    }
+
+    #[tokio::test]
+    async fn context_journal_persists_structured_withholding() {
+        let workspace = WorkspaceId::new();
+        let memory_id = vestrace_domain::MemoryId::new();
+        let revision_id = vestrace_domain::id::MemoryRevisionId::new();
+        let journal = Arc::new(CapturingJournal::default());
+        let service = governed(RetrievalService::new(
+            Arc::new(StubTextRetriever),
+            journal.clone(),
+        ));
+        let result = RetrievalResult {
+            run_id: RetrievalRunId::new(),
+            workspace_id: workspace,
+            candidates: Vec::new(),
+            withheld: vec![WithheldRevision {
+                memory_id,
+                revision_id,
+                reason: WithholdingReason::RevisionNotFound,
+            }],
+            retrieval_policy_version: "test-retrieval-policy".to_owned(),
+            degraded: false,
+            degraded_channels: Vec::new(),
+            warnings: Vec::new(),
+            normalized: NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
+                workspace,
+                "missing fact",
+            ))
+            .unwrap(),
+        };
+
+        service
+            .build_context(
+                &RequestContext::new(workspace, PrincipalId::new()),
+                &result,
+                100,
+            )
+            .await
+            .unwrap();
+
+        let recorded = journal.context_items.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            recorded["withheld"][0]["memory_id"],
+            serde_json::json!(memory_id)
+        );
+        assert_eq!(
+            recorded["withheld"][0]["revision_id"],
+            serde_json::json!(revision_id)
+        );
+        assert_eq!(recorded["withheld"][0]["reason"], "revision_not_found");
+    }
+
+    #[tokio::test]
     async fn build_context_preserves_temporal_perspective() {
         let workspace = WorkspaceId::new();
         let at = chrono::Utc::now();
-        let service =
-            RetrievalService::new(Arc::new(SuccessfulTextRetriever), Arc::new(StubJournal));
+        let service = governed(RetrievalService::new(
+            Arc::new(SuccessfulTextRetriever),
+            Arc::new(StubJournal),
+        ));
         let normalized = NormalizedRetrievalRequest::normalize(
             RetrievalRequest::new(workspace, "historical fact")
                 .with_time_perspective(vestrace_domain::TimePerspective::AsOf(at)),
@@ -412,6 +1014,8 @@ mod tests {
             run_id: RetrievalRunId::new(),
             workspace_id: workspace,
             candidates: Vec::new(),
+            withheld: Vec::new(),
+            retrieval_policy_version: "retrieval-policy-v2".to_owned(),
             degraded: false,
             degraded_channels: Vec::new(),
             warnings: Vec::new(),
@@ -434,16 +1038,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_context_carries_the_configured_retrieval_policy_version() {
+        let workspace = WorkspaceId::new();
+        let raw_candidate = candidate("text");
+        let hydrated = HydratedRevision {
+            memory_id: raw_candidate.memory_id,
+            revision_id: raw_candidate.revision_id,
+            revision_number: 1,
+            memory_status: MemoryStatus::Active,
+            content: "fact".to_owned(),
+            classification: Some("internal".to_owned()),
+            valid_from: None,
+            valid_until: None,
+            created_at: vestrace_domain::now(),
+        };
+        let service = RetrievalService::new(
+            Arc::new(OneCandidateTextRetriever {
+                candidate: raw_candidate,
+            }),
+            Arc::new(StubJournal),
+        )
+        .with_hydration(
+            Arc::new(OneRevisionHydrator { revision: hydrated }),
+            ClassificationPolicy::new(["internal"], false).unwrap(),
+            "retrieval-policy-v2",
+        );
+        let context = RequestContext::new(workspace, PrincipalId::new());
+        let result = service
+            .search(&context, RetrievalRequest::new(workspace, "fact"))
+            .await
+            .unwrap();
+
+        let pack = service.build_context(&context, &result, 100).await.unwrap();
+
+        assert_eq!(pack.retrieval_policy_version, "retrieval-policy-v2");
+    }
+
+    #[tokio::test]
     async fn optional_channel_failure_marks_result_degraded_but_keeps_safe_results() {
         let workspace = WorkspaceId::new();
         let context = RequestContext::new(workspace, PrincipalId::new());
-        let service = RetrievalService::with_channels(
+        let service = governed(RetrievalService::with_channels(
             Arc::new(SuccessfulTextRetriever),
             Some(Arc::new(SuccessfulVectorRetriever)),
             Some(Arc::new(FailingExactRetriever)),
             None,
             Arc::new(StubJournal),
-        );
+        ));
 
         let result = service
             .search(&context, RetrievalRequest::new(workspace, "fact"))
@@ -465,13 +1106,13 @@ mod tests {
     async fn all_channel_failure_is_fail_closed() {
         let workspace = WorkspaceId::new();
         let context = RequestContext::new(workspace, PrincipalId::new());
-        let service = RetrievalService::with_channels(
+        let service = governed(RetrievalService::with_channels(
             Arc::new(FailingTextRetriever),
             Some(Arc::new(FailingVectorRetriever)),
             None,
             None,
             Arc::new(StubJournal),
-        );
+        ));
 
         let error = service
             .search(&context, RetrievalRequest::new(workspace, "fact"))

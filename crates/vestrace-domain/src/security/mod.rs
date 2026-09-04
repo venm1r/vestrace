@@ -42,6 +42,7 @@ pub enum Capability {
     LearningWrite,
     AuditRead,
     ExportRead,
+    EmbeddingRetryAfterUnknown,
     CapabilityDelegate,
     WorkspaceAdmin,
 }
@@ -73,6 +74,7 @@ impl fmt::Display for Capability {
             Self::LearningWrite => "learning.write",
             Self::AuditRead => "audit.read",
             Self::ExportRead => "export.read",
+            Self::EmbeddingRetryAfterUnknown => "embedding.retry_after_unknown",
             Self::CapabilityDelegate => "capability.delegate",
             Self::WorkspaceAdmin => "workspace.admin",
         };
@@ -109,6 +111,7 @@ impl FromStr for Capability {
             "learning.write" => Ok(Self::LearningWrite),
             "audit.read" => Ok(Self::AuditRead),
             "export.read" => Ok(Self::ExportRead),
+            "embedding.retry_after_unknown" => Ok(Self::EmbeddingRetryAfterUnknown),
             "capability.delegate" => Ok(Self::CapabilityDelegate),
             "workspace.admin" => Ok(Self::WorkspaceAdmin),
             _ => Err(DomainError::InvalidArgument(format!(

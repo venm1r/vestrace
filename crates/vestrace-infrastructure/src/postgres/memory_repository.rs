@@ -84,6 +84,8 @@ impl MemoryRepository for PgMemoryRepository {
         revision
             .validate_temporal_range()
             .map_err(ApplicationError::from)?;
+        MemoryRevision::validate_classification_shape(revision.classification.as_deref())
+            .map_err(ApplicationError::from)?;
 
         // One transaction for all three.
         //
@@ -99,29 +101,102 @@ impl MemoryRepository for PgMemoryRepository {
             .await
             .map_err(storage_error)?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO memories
-                (id, workspace_id, kind, status, active_revision_id, state_revision, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (id) DO UPDATE SET
-                status = EXCLUDED.status,
-                active_revision_id = EXCLUDED.active_revision_id,
-                state_revision = EXCLUDED.state_revision,
-                updated_at = EXCLUDED.updated_at
-            "#,
-        )
-        .bind(memory.id.as_uuid())
-        .bind(memory.workspace_id.as_uuid())
-        .bind(super::memory_encoding::kind_str(memory.kind))
-        .bind(super::memory_encoding::status_str(memory.status))
-        .bind(memory.active_revision_id.map(|r| r.as_uuid()))
-        .bind(memory.state_revision as i32)
-        .bind(memory.created_at)
-        .bind(memory.updated_at)
-        .execute(scoped.connection())
-        .await
-        .map_err(storage_error)?;
+        if revision.revision_number == 1 {
+            sqlx::query(
+                r#"
+                INSERT INTO memories
+                    (id, workspace_id, kind, status, active_revision_id, state_revision, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    active_revision_id = EXCLUDED.active_revision_id,
+                    state_revision = EXCLUDED.state_revision,
+                    updated_at = EXCLUDED.updated_at
+                "#,
+            )
+            .bind(memory.id.as_uuid())
+            .bind(memory.workspace_id.as_uuid())
+            .bind(super::memory_encoding::kind_str(memory.kind))
+            .bind(super::memory_encoding::status_str(memory.status))
+            .bind(memory.active_revision_id.map(|r| r.as_uuid()))
+            .bind(memory.state_revision as i32)
+            .bind(memory.created_at)
+            .bind(memory.updated_at)
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+        } else {
+            let expected_revision = revision.revision_number - 1;
+            let expected_state_revision =
+                memory.state_revision.checked_sub(1).ok_or_else(|| {
+                    ApplicationError::Storage(
+                        "memories.state_revision cannot precede a revision compare-and-set".into(),
+                    )
+                })?;
+            let updated = sqlx::query(
+                r#"
+                UPDATE memories AS memory
+                SET status = $3,
+                    active_revision_id = $4,
+                    state_revision = $5,
+                    updated_at = $6
+                WHERE memory.id = $1
+                  AND memory.workspace_id = $2
+                  AND memory.state_revision = $7
+                  AND EXISTS (
+                      SELECT 1
+                      FROM memory_revisions AS active
+                      WHERE active.id = memory.active_revision_id
+                        AND active.workspace_id = memory.workspace_id
+                        AND active.revision_number = $8
+                  )
+                "#,
+            )
+            .bind(memory.id.as_uuid())
+            .bind(memory.workspace_id.as_uuid())
+            .bind(super::memory_encoding::status_str(memory.status))
+            .bind(memory.active_revision_id.map(|r| r.as_uuid()))
+            .bind(memory.state_revision as i32)
+            .bind(memory.updated_at)
+            .bind(expected_state_revision as i32)
+            .bind(expected_revision as i32)
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
+
+            if updated.rows_affected() != 1 {
+                let current: Option<i32> = sqlx::query_scalar(
+                    r#"
+                    SELECT active.revision_number
+                    FROM memories AS memory
+                    JOIN memory_revisions AS active ON active.id = memory.active_revision_id
+                    WHERE memory.id = $1 AND memory.workspace_id = $2
+                    "#,
+                )
+                .bind(memory.id.as_uuid())
+                .bind(memory.workspace_id.as_uuid())
+                .fetch_optional(scoped.connection())
+                .await
+                .map_err(storage_error)?;
+                let current = current.ok_or_else(|| {
+                    ApplicationError::Storage(format!(
+                        "memories.active_revision_id for memory {} disappeared during revision \
+                         compare-and-set",
+                        memory.id
+                    ))
+                })?;
+                return Err(ApplicationError::from(
+                    vestrace_domain::DomainError::RevisionConflict {
+                        expected: u64::from(expected_revision),
+                        current: u64::try_from(current).map_err(|_| {
+                            ApplicationError::Storage(format!(
+                                "memory_revisions.revision_number {current} is negative"
+                            ))
+                        })?,
+                    },
+                ));
+            }
+        }
 
         sqlx::query(
             r#"
@@ -274,6 +349,8 @@ impl MemoryRepository for PgMemoryRepository {
         revision
             .validate_temporal_range()
             .map_err(ApplicationError::from)?;
+        MemoryRevision::validate_classification_shape(revision.classification.as_deref())
+            .map_err(ApplicationError::from)?;
 
         sqlx::query(
             r#"
@@ -418,7 +495,7 @@ fn parse_revision_row(row: sqlx::postgres::PgRow) -> Result<MemoryRevision, Appl
         .transpose()
         .map_err(storage_error)?;
 
-    Ok(MemoryRevision {
+    let revision = MemoryRevision {
         id: MemoryRevisionId::from_uuid(id),
         memory_id: MemoryId::from_uuid(memory_id),
         workspace_id: WorkspaceId::from_uuid(workspace_id),
@@ -435,6 +512,82 @@ fn parse_revision_row(row: sqlx::postgres::PgRow) -> Result<MemoryRevision, Appl
         valid_until: row.try_get("valid_until").ok(),
         change_reason: row.try_get("change_reason").ok(),
         canonical_hash: row.try_get("canonical_hash").ok(),
-        classification: row.try_get("classification").ok(),
-    })
+        classification: row.try_get("classification").map_err(storage_error)?,
+    };
+    MemoryRevision::validate_classification_shape(revision.classification.as_deref()).map_err(
+        |error| {
+            ApplicationError::Storage(format!(
+                "stored memory_revisions.classification is invalid: {error}"
+            ))
+        },
+    )?;
+    Ok(revision)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_revision_row;
+
+    #[sqlx::test]
+    async fn a_type_mismatched_classification_column_fails_closed(pool: sqlx::PgPool) {
+        let row = sqlx::query(
+            r#"
+            SELECT '10000000-0000-0000-0000-000000000001'::uuid AS id,
+                   '10000000-0000-0000-0000-000000000002'::uuid AS memory_id,
+                   '10000000-0000-0000-0000-000000000003'::uuid AS workspace_id,
+                   1::integer AS revision_number,
+                   'content'::text AS content,
+                   NULL::jsonb AS structured,
+                   0.9::real AS confidence,
+                   0.7::real AS importance,
+                   NOW() AS created_at,
+                   NULL::timestamptz AS valid_from,
+                   NULL::timestamptz AS valid_until,
+                   NULL::text AS change_reason,
+                   NULL::text AS canonical_hash,
+                   42::integer AS classification
+            "#,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let message = parse_revision_row(row).unwrap_err().to_string();
+
+        assert!(message.contains("classification"), "{message}");
+    }
+
+    #[sqlx::test]
+    async fn a_blank_or_untrimmed_classification_column_fails_closed(pool: sqlx::PgPool) {
+        for classification in ["   ", " internal", "internal "] {
+            let row = sqlx::query(
+                r#"
+                SELECT '10000000-0000-0000-0000-000000000001'::uuid AS id,
+                       '10000000-0000-0000-0000-000000000002'::uuid AS memory_id,
+                       '10000000-0000-0000-0000-000000000003'::uuid AS workspace_id,
+                       1::integer AS revision_number,
+                       'content'::text AS content,
+                       NULL::jsonb AS structured,
+                       0.9::real AS confidence,
+                       0.7::real AS importance,
+                       NOW() AS created_at,
+                       NULL::timestamptz AS valid_from,
+                       NULL::timestamptz AS valid_until,
+                       NULL::text AS change_reason,
+                       NULL::text AS canonical_hash,
+                       $1::text AS classification
+                "#,
+            )
+            .bind(classification)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+            let message = parse_revision_row(row).unwrap_err().to_string();
+            assert!(
+                message.contains("memory_revisions.classification"),
+                "{message}"
+            );
+        }
+    }
 }

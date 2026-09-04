@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { ModelItem, ProviderItem, vestraceClient } from '../sdk/client';
+import React, { useState } from 'react';
+import { GovernedModelItem, GovernedProviderItem, vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
 import { Modal } from '../design-system/primitives/Modal';
 import { Button } from '../design-system/primitives/Button';
@@ -20,26 +20,11 @@ import {
 
 // The console is English-only, and the backend reports costs in USD. Formatting in
 // the viewer's locale renders USD as "15,00 $", which reads as a different currency.
-const NUMBER_LOCALE = 'en-US';
-
-const costFormatter = new Intl.NumberFormat(NUMBER_LOCALE, {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 4,
-});
-
-const countFormatter = new Intl.NumberFormat(NUMBER_LOCALE);
-
-function formatCost(value: number): string {
-  return Number.isFinite(value) ? `${costFormatter.format(value)} / Mtok` : '—';
-}
-
 export const ModelsPage: React.FC = () => {
   const { data: initialModels, error, loading, reload } = useApiResource(vestraceClient.listModels);
   const { data: initialProviders } = useApiResource(vestraceClient.listProviders);
-  const [models, setModels] = useState<ModelItem[] | null>(null);
-  const [providers, setProviders] = useState<ProviderItem[] | null>(null);
+  const [models, setModels] = useState<GovernedModelItem[] | null>(null);
+  const [providers] = useState<GovernedProviderItem[] | null>(null);
   const { notice, notify, dismiss } = useNotice();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -55,11 +40,6 @@ export const ModelsPage: React.FC = () => {
   const providerList = providers ?? initialProviders ?? [];
   const items = models ?? initialModels ?? [];
 
-  const providerNames = useMemo(
-    () => new Map(providerList.map((provider) => [provider.id, provider.name])),
-    [providerList],
-  );
-
   const handleCreateModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modelName.trim()) {
@@ -69,19 +49,15 @@ export const ModelsPage: React.FC = () => {
 
     setSubmitting(true);
     try {
-      let providerId = selectedProviderId;
+      const providerId = selectedProviderId;
       if (!providerId || providerId === '__new__') {
-        if (!newProviderName.trim()) {
-          notify('warning', 'Provider name is required.');
-          setSubmitting(false);
-          return;
-        }
-        const createdProvider = await vestraceClient.createProvider({
-          name: newProviderName.trim(),
-          locality: newProviderLocality,
-        });
-        providerId = createdProvider.id;
-        setProviders([...providerList, createdProvider]);
+        // `POST /providers` is retired: it answers
+        // `legacy_provider_registry_retired` by design, because a registry row
+        // carries no immutable qualified connection revision. A model must name
+        // a provider that already exists.
+        notify('warning', 'Select an existing provider; the legacy provider registry is retired.');
+        setSubmitting(false);
+        return;
       }
 
       const newModel = await vestraceClient.createModel({
@@ -92,7 +68,11 @@ export const ModelsPage: React.FC = () => {
         output_cost_per_mtoken: parseFloat(outputCost) || 0,
       });
 
-      setModels([newModel, ...items]);
+      // `createModel` answers with the legacy registration shape, which is not
+      // what `GET /models` serves. Re-read rather than splice a different
+      // projection into the governed list.
+      setModels(null);
+      reload();
       setIsModalOpen(false);
       setModelName('');
       setNewProviderName('');
@@ -109,7 +89,7 @@ export const ModelsPage: React.FC = () => {
     <PageShell>
       <PageHeader
         title="Models & Providers Registry"
-        description="Registered model profiles, their provider binding, context windows, and per-million-token pricing."
+        description="Registered models as the governed API serves them: revision, state, qualification and any blockers."
         actions={
           <ActionButton
             icon="model_training"
@@ -186,10 +166,9 @@ export const ModelsPage: React.FC = () => {
             >
               {providerList.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} ({p.locality})
+                  {p.id} ({p.state})
                 </option>
               ))}
-              <option value="__new__">+ Add New Provider...</option>
             </select>
           </div>
 
@@ -376,11 +355,11 @@ export const ModelsPage: React.FC = () => {
             <table style={tableStyle}>
               <thead>
                 <tr style={tableHeadRowStyle}>
-                  <Th>Model Name</Th>
-                  <Th style={{ padding: '12px 16px' }}>Provider</Th>
-                  <Th style={{ padding: '12px 16px' }}>Context Window</Th>
-                  <Th style={{ padding: '12px 16px' }}>Input Cost</Th>
-                  <Th style={{ padding: '12px 16px' }}>Output Cost</Th>
+                  <Th>Model</Th>
+                  <Th style={{ padding: '12px 16px' }}>Revision</Th>
+                  <Th style={{ padding: '12px 16px' }}>State</Th>
+                  <Th style={{ padding: '12px 16px' }}>Qualification</Th>
+                  <Th style={{ padding: '12px 16px' }}>Blockers</Th>
                 </tr>
               </thead>
               <tbody>
@@ -396,31 +375,31 @@ export const ModelsPage: React.FC = () => {
                           gap: '8px',
                         }}
                       >
-                        <span
-                          className="material-symbols-outlined"
-                          aria-hidden="true"
-                          style={{ color: 'var(--color-tertiary)' }}
-                        >
-                          extension
+                        <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                          model_training
                         </span>
-                        {model.model_name}
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+                          {model.id}
+                        </span>
                       </div>
                     </td>
-                    <td style={{ padding: '16px' }}>
-                      {providerNames.get(model.provider_id) ?? (
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          {model.provider_id}
-                        </span>
+                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+                      {model.revision_id ?? (
+                        <span style={{ color: 'var(--text-secondary)' }}>none</span>
                       )}
                     </td>
-                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>
-                      {countFormatter.format(model.context_window)}
+                    <td style={{ padding: '16px' }}>{model.state}</td>
+                    <td style={{ padding: '16px' }}>
+                      {model.qualification_state ?? (
+                        <span style={{ color: 'var(--text-secondary)' }}>unqualified</span>
+                      )}
                     </td>
-                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                      {formatCost(model.input_cost_per_mtoken)}
-                    </td>
-                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                      {formatCost(model.output_cost_per_mtoken)}
+                    <td style={{ padding: '16px' }}>
+                      {model.blockers.length === 0 ? (
+                        <span style={{ color: 'var(--text-secondary)' }}>none</span>
+                      ) : (
+                        model.blockers.join(', ')
+                      )}
                     </td>
                   </tr>
                 ))}

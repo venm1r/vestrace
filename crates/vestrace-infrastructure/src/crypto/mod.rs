@@ -34,9 +34,17 @@ pub const LOCAL_FILE_PROVIDER: &str = "local-file";
 /// declared by migration 0087.
 pub const ALGORITHM_SUITE: &str = "AeadAes256GcmV1";
 
+mod content_material_codec;
+mod material_vault;
 mod mounted_secret_store;
 mod mounted_store_probe;
 
+pub use content_material_codec::{
+    ContentMaterialCodec, ContentMaterialCodecError, CredentialMaterialCodec,
+    CredentialMaterialCodecError, CredentialMaterialContext, MAX_FRAMED_CREDENTIAL_BYTES,
+    MAX_FRAMED_MATERIAL_BYTES, ValidatedContentMaterialFrame, ValidatedCredentialMaterialFrame,
+};
+pub use material_vault::HostMaterialKeyVault;
 pub use mounted_secret_store::{
     KeyDeclaration, MOUNTED_SECRET_STORE_PROVIDER, MountedSecretStoreKeyProvider,
 };

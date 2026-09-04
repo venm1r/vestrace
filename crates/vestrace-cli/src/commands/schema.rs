@@ -34,6 +34,32 @@ pub fn run(format: &SchemaFormat) -> anyhow::Result<()> {
 }
 
 fn openapi_v1() -> serde_json::Value {
+    let governed_mutation_headers = serde_json::json!([
+        {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        },
+        {
+            "name": "x-principal-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        },
+        {
+            "name": "x-request-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        },
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+    ]);
     serde_json::json!({
         "openapi": "3.1.0",
         "info": {
@@ -400,6 +426,71 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 }
             },
+            "/v1/memories/{id}/revisions": {
+                "post": {
+                    "summary": "Create a revision of an existing memory",
+                    "tags": ["memories"],
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "schema": { "type": "string", "format": "uuid" }
+                        },
+                        {
+                            "name": "x-workspace-id",
+                            "in": "header",
+                            "required": true,
+                            "schema": { "type": "string", "format": "uuid" }
+                        },
+                        {
+                            "name": "x-principal-id",
+                            "in": "header",
+                            "required": true,
+                            "schema": { "type": "string", "format": "uuid" }
+                        },
+                        {
+                            "name": "idempotency-key",
+                            "in": "header",
+                            "required": true,
+                            "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "if-match",
+                            "in": "header",
+                            "required": true,
+                            "description": "The active memory revision number expected by the caller",
+                            "schema": { "type": "integer", "minimum": 0 }
+                        }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ReviseMemoryRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Memory revision created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Memory" }
+                                }
+                            }
+                        },
+                        "409": {
+                            "description": "Revision conflict",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ApiError" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "/v1/retrieval/search": {
                 "post": {
                     "summary": "Search memories using hybrid retrieval",
@@ -532,7 +623,7 @@ fn openapi_v1() -> serde_json::Value {
                                 "application/json": {
                                     "schema": {
                                         "type": "array",
-                                        "items": { "$ref": "#/components/schemas/Model" }
+                                        "items": { "$ref": "#/components/schemas/GovernedModel" }
                                     }
                                 }
                             }
@@ -576,6 +667,82 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 }
             },
+            "/v1/connections/{id}/revisions": {
+                "post": {
+                    "summary": "Create an immutable connection revision",
+                    "tags": ["provider-connections"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConnectionRevisionRequest" } } } },
+                    "responses": { "201": { "description": "Connection revision created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GovernedConnection" } } } } }
+                }
+            },
+            "/v1/connections/{id}/admission-policies": {
+                "post": {
+                    "summary": "Publish the connection admission policy that governs every dispatch",
+                    "tags": ["provider-connections"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublishConnectionAdmissionPolicyRequest" } } } },
+                    "responses": {
+                        "201": { "description": "Admission policy published", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GovernedMutationReceipt" } } } },
+                        "409": { "description": "The stated head version is not the current one" }
+                    }
+                }
+            },
+            "/v1/connections/{id}/qualifications": {
+                "post": {
+                    "summary": "Request governed connection qualification",
+                    "tags": ["provider-connections"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationRequest" } } } },
+                    "responses": { "202": { "description": "Qualification requested", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Qualification" } } } } }
+                }
+            },
+            "/v1/connections/{id}/credentials": {
+                "post": {
+                    "summary": "Prepare a governed connection credential",
+                    "tags": ["provider-connections"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConnectionCredentialRequest" } } } },
+                    "responses": { "202": { "description": "Credential prepared", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CredentialLifecycle" } } } } }
+                }
+            },
+            "/v1/connections/{id}/credentials/{revision_id}/abandon": {
+                "post": {
+                    "summary": "Abandon a candidate credential after durable erasure",
+                    "tags": ["provider-connections"], "parameters": governed_mutation_headers.clone(),
+                    "responses": { "202": { "description": "Credential abandonment resumed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CredentialLifecycle" } } } } }
+                }
+            },
+            "/v1/connections/{id}/credentials/{revision_id}/activate": {
+                "post": {
+                    "summary": "Activate a governed credential revision",
+                    "tags": ["provider-connections"], "parameters": governed_mutation_headers.clone(),
+                    "responses": { "200": { "description": "Credential activated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CredentialLifecycle" } } } } }
+                }
+            },
+            "/v1/connections/{id}/credentials/{revision_id}/revoke": {
+                "post": {
+                    "summary": "Revoke a governed credential revision",
+                    "tags": ["provider-connections"], "parameters": governed_mutation_headers.clone(),
+                    "responses": { "200": { "description": "Credential revoked", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CredentialLifecycle" } } } } }
+                }
+            },
+            "/v1/models/{id}/revisions": {
+                "post": {
+                    "summary": "Create an immutable model revision",
+                    "tags": ["provider-models"], "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateModelRevisionRequest" } } } },
+                    "responses": { "201": { "description": "Model revision created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GovernedModel" } } } } }
+                }
+            },
+            "/v1/models/{id}/qualifications": {
+                "post": {
+                    "summary": "Request governed model qualification",
+                    "tags": ["provider-models"], "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationRequest" } } } },
+                    "responses": { "202": { "description": "Qualification requested", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Qualification" } } } } }
+                }
+            },
             "/v1/providers": {
                 "get": {
                     "summary": "List providers",
@@ -601,7 +768,7 @@ fn openapi_v1() -> serde_json::Value {
                                 "application/json": {
                                     "schema": {
                                         "type": "array",
-                                        "items": { "$ref": "#/components/schemas/Provider" }
+                                        "items": { "$ref": "#/components/schemas/GovernedProvider" }
                                     }
                                 }
                             }
@@ -609,7 +776,7 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 },
                 "post": {
-                    "summary": "Register a provider",
+                    "summary": "Refuse legacy provider registry creation",
                     "tags": ["models"],
                     "parameters": [
                         {
@@ -625,20 +792,12 @@ fn openapi_v1() -> serde_json::Value {
                             "schema": { "type": "string", "format": "uuid" }
                         }
                     ],
-                    "requestBody": {
-                        "required": true,
-                        "content": {
-                            "application/json": {
-                                "schema": { "$ref": "#/components/schemas/CreateProviderRequest" }
-                            }
-                        }
-                    },
                     "responses": {
-                        "201": {
-                            "description": "Provider registered",
+                        "403": {
+                            "description": "Legacy provider registry retired",
                             "content": {
                                 "application/json": {
-                                    "schema": { "$ref": "#/components/schemas/Provider" }
+                                    "schema": { "$ref": "#/components/schemas/ApiError" }
                                 }
                             }
                         }
@@ -1163,17 +1322,53 @@ fn openapi_v1() -> serde_json::Value {
             },
             "/v1/connections": {
                 "get": {
-                    "summary": "List connections (not yet implemented)",
-                    "tags": ["connections"],
+                    "summary": "List governed connection projections",
+                    "tags": ["provider-connections"],
+                    "parameters": [
+                        {
+                            "name": "x-workspace-id",
+                            "in": "header",
+                            "required": true,
+                            "schema": { "type": "string", "format": "uuid" }
+                        },
+                        {
+                            "name": "x-principal-id",
+                            "in": "header",
+                            "required": true,
+                            "schema": { "type": "string", "format": "uuid" }
+                        }
+                    ],
                     "responses": {
-                        "501": {
-                            "description": "Not implemented",
+                        "200": {
+                            "description": "List of governed connection projections",
                             "content": {
                                 "application/json": {
-                                    "schema": { "$ref": "#/components/schemas/ApiError" }
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/GovernedConnection" }
+                                    }
                                 }
                             }
                         }
+                    }
+                },
+                "post": {
+                    "summary": "Create a governed connection",
+                    "tags": ["provider-connections"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConnectionRequest" } } } },
+                    "responses": { "201": { "description": "Connection created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GovernedConnection" } } } }, "409": { "description": "Idempotency or lifecycle conflict", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } } } }
+                }
+            },
+            "/v1/embedding-jobs/{id}/acknowledge-unknown": {
+                "post": {
+                    "summary": "Acknowledge a possible duplicate embedding charge and create its successor",
+                    "tags": ["embedding-jobs"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcknowledgeEmbeddingJobUnknownRequest" } } } },
+                    "responses": {
+                        "201": { "description": "Successor accepted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GovernedMutationReceipt" } } } },
+                        "409": { "description": "Embedding job acceptance refused", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } } }
                     }
                 }
             },
@@ -1314,6 +1509,49 @@ fn openapi_v1() -> serde_json::Value {
                     },
                     "required": ["code", "message"]
                 },
+                "AcknowledgeEmbeddingJobUnknownRequest": {
+                    "type": "object",
+                    "properties": {
+                        "embedding_job_id": { "type": "string", "format": "uuid" },
+                        "expected_predecessor_version": { "type": "integer", "format": "int64", "minimum": 1 },
+                        "successor_embedding_job_id": { "type": "string", "format": "uuid" },
+                        "successor_model_request_evidence_id": { "type": "string", "format": "uuid" },
+                        "space_registration_id": { "type": "string", "format": "uuid" },
+                        "model_binding_snapshot_id": { "type": "string", "format": "uuid" },
+                        "kind": { "type": "string", "enum": ["retrieval_query", "delivery", "rebuild"] },
+                        "effect_intent": { "$ref": "#/components/schemas/EmbeddingEffectIntent" }
+                    },
+                    "required": ["embedding_job_id", "expected_predecessor_version", "successor_embedding_job_id", "successor_model_request_evidence_id", "space_registration_id", "model_binding_snapshot_id", "kind", "effect_intent"]
+                },
+                "EmbeddingEffectIntent": {
+                    "type": "object",
+                    "properties": {
+                        "execution_ref": { "type": "string" },
+                        "adapter": { "type": "string" },
+                        "operation": { "type": "string" },
+                        "target": { "type": "string" },
+                        "normalized_arguments_digest": { "type": "string" },
+                        "expected_effect": { "type": "string" },
+                        "preconditions": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/EmbeddingEffectPrecondition" } },
+                        "precondition_digest": { "type": "string" },
+                        "risk": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+                        "reversibility": { "type": "string", "enum": ["reversible", "compensatable", "irreversible", "unknown"] },
+                        "idempotency_profile": { "type": "string", "enum": ["none", "provider_key", "conditional", "unknown"] },
+                        "delivery_semantics": { "type": "string", "enum": ["at_most_once", "at_least_once", "effectively_once", "unknown"] },
+                        "required_capability": { "type": "string" },
+                        "budget_reservation_ref": { "type": ["string", "null"] },
+                        "policy_decision_ref": { "type": ["string", "null"] }
+                    },
+                    "required": ["execution_ref", "adapter", "operation", "target", "normalized_arguments_digest", "expected_effect", "preconditions", "precondition_digest", "risk", "reversibility", "idempotency_profile", "delivery_semantics", "required_capability"]
+                },
+                "EmbeddingEffectPrecondition": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "expected_value": { "type": "string" }
+                    },
+                    "required": ["name", "expected_value"]
+                },
                 "Run": {
                     "type": "object",
                     "properties": {
@@ -1361,6 +1599,7 @@ fn openapi_v1() -> serde_json::Value {
                         "kind": { "type": "string", "enum": ["fact", "decision", "task", "procedure", "observation", "outcome", "summary"] },
                         "status": { "type": "string", "enum": ["active", "superseded", "deleted"] },
                         "active_revision_id": { "type": "string", "format": "uuid" },
+                        "classification": { "type": ["string", "null"] },
                         "created_at": { "type": "string", "format": "date-time" },
                         "updated_at": { "type": "string", "format": "date-time" }
                     }
@@ -1372,9 +1611,25 @@ fn openapi_v1() -> serde_json::Value {
                         "content": { "type": "string" },
                         "confidence": { "type": "number" },
                         "importance": { "type": "number" },
-                        "source_event_id": { "type": "string", "format": "uuid" }
+                        "source_event_id": { "type": "string", "format": "uuid" },
+                        "classification": { "type": ["string", "null"] }
                     },
                     "required": ["kind", "content"]
+                },
+                "ReviseMemoryRequest": {
+                    "type": "object",
+                    "properties": {
+                        "content": { "type": "string" },
+                        "confidence": { "type": "number" },
+                        "importance": { "type": "number" },
+                        "source_event_id": { "type": "string", "format": "uuid" },
+                        "change_reason": { "type": ["string", "null"] },
+                        "classification": {
+                            "type": ["string", "null"],
+                            "description": "Omit to inherit the active label; null requests clearing and is refused because no label transition mechanism exists"
+                        }
+                    },
+                    "required": ["content", "confidence", "importance", "source_event_id"]
                 },
                 "RetrievalRequest": {
                     "type": "object",
@@ -1394,12 +1649,34 @@ fn openapi_v1() -> serde_json::Value {
                                 "type": "object",
                                 "properties": {
                                     "memory_id": { "type": "string", "format": "uuid" },
+                                    "revision_id": { "type": "string", "format": "uuid" },
                                     "score": { "type": "number" },
                                     "channel": { "type": "string" },
-                                    "explanation": { "type": "string" }
+                                    "explanation": { "type": "string" },
+                                    "source_classification": { "type": ["string", "null"] }
                                 }
                             }
-                        }
+                        },
+                        "withheld": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "memory_id": { "type": "string", "format": "uuid" },
+                                    "revision_id": { "type": "string", "format": "uuid" },
+                                    "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                            "revision_not_found",
+                                            "classification_not_admissible"
+                                        ]
+                                    },
+                                    "classification": { "type": ["string", "null"] }
+                                },
+                                "required": ["memory_id", "revision_id", "reason"]
+                            }
+                        },
+                        "retrieval_policy_version": { "type": "string", "minLength": 1 }
                     }
                 },
                 "Agent": {
@@ -1450,6 +1727,106 @@ fn openapi_v1() -> serde_json::Value {
                         "output_cost_per_mtoken": { "type": "number" }
                     },
                     "required": ["provider_id", "name", "context_window"]
+                },
+                "GovernedConnection": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "revision_id": { "type": ["string", "null"], "format": "uuid" },
+                        "state": { "type": "string" },
+                        "qualification_state": { "type": ["string", "null"] },
+                        "blockers": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["id", "revision_id", "state", "qualification_state", "blockers"]
+                },
+                "GovernedModel": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "revision_id": { "type": ["string", "null"], "format": "uuid" },
+                        "state": { "type": "string" },
+                        "qualification_state": { "type": ["string", "null"] },
+                        "blockers": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["id", "revision_id", "state", "qualification_state", "blockers"]
+                },
+                "GovernedProvider": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "state": { "type": "string" },
+                        "blockers": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["id", "state", "blockers"]
+                },
+                "Qualification": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "state": { "type": "string" },
+                        "profile_revision": { "type": "string" },
+                        "blockers": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["id", "state", "blockers"]
+                },
+                "CredentialLifecycle": {
+                    "type": "object",
+                    "properties": {
+                        "connection_id": { "type": "string", "format": "uuid" },
+                        "revision_id": { "type": "string", "format": "uuid" },
+                        "state": { "type": "string" }
+                    },
+                    "required": ["connection_id", "revision_id", "state"]
+                },
+                "CreateConnectionRequest": {
+                    "type": "object",
+                    "properties": { "name": { "type": "string" }, "connection_kind": { "type": "string" }, "runtime_base_url": { "type": "string", "format": "uri" } },
+                    "required": ["name", "connection_kind", "runtime_base_url"]
+                },
+                "CreateConnectionRevisionRequest": {
+                    "type": "object",
+                    "properties": { "connection_kind": { "type": "string" }, "runtime_base_url": { "type": "string", "format": "uri" }, "expected_version": { "type": "integer", "minimum": 0 } },
+                    "required": ["connection_kind", "runtime_base_url", "expected_version"]
+                },
+                "PublishConnectionAdmissionPolicyRequest": {
+                    "type": "object",
+                    "properties": {
+                        "connection_id": { "type": "string", "format": "uuid" },
+                        "policy_revision_id": { "type": "string", "format": "uuid" },
+                        "max_in_flight": { "type": "integer", "minimum": 1, "maximum": 64 },
+                        "requests_per_60_seconds": { "type": "integer", "minimum": 1, "maximum": 60000 },
+                        "queue_wait_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+                        "provider_throttle_cap_seconds": { "type": "integer", "minimum": 1, "maximum": 900 },
+                        "expected_head_version": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["connection_id", "policy_revision_id", "max_in_flight", "requests_per_60_seconds", "queue_wait_timeout_seconds", "provider_throttle_cap_seconds", "expected_head_version"]
+                },
+                "GovernedMutationReceipt": {
+                    "type": "object",
+                    "properties": {
+                        "audit_event_id": { "type": "string", "format": "uuid" },
+                        "idempotency_key": { "type": "string", "nullable": true },
+                        "outbox_message_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+                    },
+                    "required": ["audit_event_id", "outbox_message_ids"]
+                },
+                "QualificationRequest": {
+                    "type": "object",
+                    "properties": { "profile_revision": { "type": "string" } },
+                    "required": ["profile_revision"]
+                },
+                "CreateConnectionCredentialRequest": {
+                    "type": "object",
+                    "properties": { "credential": { "type": "string", "writeOnly": true, "minLength": 1 } },
+                    "required": ["credential"]
+                },
+                "CreateModelRevisionRequest": {
+                    "type": "object",
+                    "properties": { "model_name": { "type": "string" }, "connection_revision_id": { "type": "string", "format": "uuid" }, "expected_version": { "type": "integer", "minimum": 0 } },
+                    "required": ["model_name", "connection_revision_id", "expected_version"]
                 },
                 "Provider": {
                     "type": "object",
@@ -1602,4 +1979,77 @@ fn openapi_v1() -> serde_json::Value {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod memory_classification_schema_tests {
+    use super::openapi_v1;
+
+    #[test]
+    fn memory_create_and_response_schemas_expose_classification() {
+        let schema = openapi_v1();
+
+        assert_eq!(
+            schema["components"]["schemas"]["CreateMemoryRequest"]["properties"]["classification"]
+                ["type"],
+            serde_json::json!(["string", "null"])
+        );
+        assert_eq!(
+            schema["components"]["schemas"]["Memory"]["properties"]["classification"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+    }
+
+    #[test]
+    fn memory_revision_schema_exposes_concurrency_and_classification_contract() {
+        let schema = openapi_v1();
+        let operation = &schema["paths"]["/v1/memories/{id}/revisions"]["post"];
+
+        assert_eq!(
+            operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ReviseMemoryRequest"
+        );
+        assert!(
+            operation["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|parameter| parameter["name"] == "if-match" && parameter["required"] == true)
+        );
+        assert_eq!(
+            schema["components"]["schemas"]["ReviseMemoryRequest"]["properties"]["classification"]
+                ["type"],
+            serde_json::json!(["string", "null"])
+        );
+        assert!(
+            !schema["components"]["schemas"]["ReviseMemoryRequest"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "classification")
+        );
+    }
+
+    #[test]
+    fn retrieval_schema_exposes_classification_and_structured_withholding() {
+        let schema = openapi_v1();
+        let response = &schema["components"]["schemas"]["RetrievalResponse"];
+        let candidate = &response["properties"]["candidates"]["items"];
+        let withheld = &response["properties"]["withheld"]["items"];
+
+        assert_eq!(
+            candidate["properties"]["source_classification"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+        assert_eq!(withheld["properties"]["memory_id"]["format"], "uuid");
+        assert_eq!(withheld["properties"]["revision_id"]["format"], "uuid");
+        assert_eq!(
+            response["properties"]["retrieval_policy_version"]["minLength"],
+            1
+        );
+        assert_eq!(
+            withheld["properties"]["reason"]["enum"],
+            serde_json::json!(["revision_not_found", "classification_not_admissible"])
+        );
+    }
 }

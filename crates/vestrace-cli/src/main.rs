@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     conformance::{
         ConformanceArtifactArg, ConformanceLifecycleArg, ConformanceProfileArg,
-        FaultSuiteIsolationArg,
+        FaultSuiteIsolationArg, RecoveryQualificationIsolationArg,
     },
     rebuild::RebuildTarget,
     schema::SchemaFormat,
@@ -87,6 +87,20 @@ enum ConformanceAction {
         /// only the isolation the scenario can prove.
         #[arg(long, value_enum)]
         isolation: FaultSuiteIsolationArg,
+    },
+    /// Exercise every startup-recovery target in a disposable database and
+    /// persist the actions the recovery service actually took.
+    RecoveryQualification {
+        /// Workspace that owns the canonical run streams used by the scenario.
+        #[arg(long)]
+        workspace_id: uuid::Uuid,
+        /// Principal that authors the canonical run streams used by the scenario.
+        #[arg(long)]
+        principal_id: uuid::Uuid,
+        /// Qualification evidence is append-only, so only a disposable
+        /// database can be used for this complete sweep.
+        #[arg(long, value_enum)]
+        isolation: RecoveryQualificationIsolationArg,
     },
     /// Publish a durable baseline from an existing qualification bundle.
     PublishBaseline {

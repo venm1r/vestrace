@@ -9,6 +9,15 @@ pub mod cognitive;
 pub mod conformance;
 pub mod connection;
 pub mod conversation;
+#[path = "credential/guard.rs"]
+pub mod credential_guard;
+#[path = "credential/intent.rs"]
+pub mod credential_intent;
+#[path = "credential/revision.rs"]
+pub mod credential_revision;
+#[path = "credential/slot.rs"]
+pub mod credential_slot;
+pub mod embedding;
 pub mod enterprise;
 pub mod error;
 pub mod evaluation;
@@ -18,8 +27,11 @@ pub mod external_effects;
 pub mod health;
 pub mod id;
 pub mod identity;
+#[path = "installation/fingerprint.rs"]
+pub mod installation;
 pub mod job;
 pub mod learning;
+pub mod material;
 pub mod memory;
 pub mod models;
 pub mod observability;
@@ -54,6 +66,18 @@ pub use cognitive::{
     WorkflowNodeKind, WorkflowRevision, WorkflowTransition, WorkflowValidationError,
     WorkflowValidationReport,
 };
+pub use connection::revision::*;
+pub use credential_guard::{
+    ConnectionExecutionGuard, ConnectionExecutionGuardId, CredentialActivationGuard,
+    CredentialActivationGuardId,
+};
+pub use credential_intent::{
+    CredentialKeyCreationIntent, CredentialKeyCreationIntentId, CredentialPreparedAttachmentId,
+};
+pub use credential_revision::{
+    CredentialAssociatedDataProfile, CredentialRevision, CredentialRevisionId,
+};
+pub use credential_slot::{CredentialSlot, CredentialSlotId};
 pub use error::DomainError;
 pub use evaluation::{
     EvaluationAuthority, EvaluationFact, EvaluationMetric, EvaluationResult, EvaluationTarget,
@@ -78,12 +102,33 @@ pub use health::{
     RepairRisk, Repairability, VerificationResult, VerificationRun,
 };
 pub use id::*;
+pub use installation::{
+    ExternalIdFingerprint, FINGERPRINT_CONTINUITY_DOMAIN, FingerprintKey,
+    FingerprintKeyContinuityProof, FingerprintKeyId, FingerprintKeyVersion, FingerprintScope,
+    InstallationFingerprintKey, InstallationId, continuity_proof, external_id_fingerprint,
+};
 pub use job::{Job, JobState};
 pub use learning::{
     LearnedProjection, LearningChange, LearningProposal, LearningProposalStatus, LearningTarget,
     ProjectionAuthority, ProjectionGenerator, ProjectionKind,
 };
+pub use material::{
+    AssociatedData, ContentMaterial, ContentMaterialId, ContentMaterialState,
+    CredentialKeyCreationIntentState, ErasureReceipt, IntentNonce, MaterialKeyBindingReceipt,
+    MaterialKeyCreationIntent, MaterialKeyCreationIntentId, MaterialKeyCreationIntentState,
+    MaterialKeyId, PreparedMaterialAttachment, PreparedMaterialAttachmentId,
+    PreparedMaterialMarker, SizeClass, VaultReceipt, ZeroizingDek, size_class_for,
+};
 pub use memory::*;
+pub use models::{
+    ConnectionAdmissionPolicy, ConnectionAdmissionPolicyId, ConnectionQualificationRevisionId,
+    ModelBindingSnapshot, ModelBindingSnapshotId, ModelKind, ModelObservation,
+    ModelObservationSource, ModelQualificationRevisionId, ModelRequestEvidence,
+    ModelRequestEvidenceId, ModelRequestEvidenceNode, ModelRequestEvidenceStatus, ModelRevision,
+    ModelRevisionId, ProviderAdmissionError, ProviderAdmissionLeaseId, QualificationJobId,
+    QualificationJobState, QualificationJobStatus, QualificationProbeOrdinal,
+    QualificationProbeResult, QualificationTargetBinding, RollingWindowDecision,
+};
 pub use models::{
     ModelCostProfile, ModelProfile, ModelRouter, ProviderLocality, RejectedCandidate,
     RoutingCandidate, RoutingDecision, RoutingStrategy, TaskRequirements,

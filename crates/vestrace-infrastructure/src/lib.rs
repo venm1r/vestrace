@@ -4,6 +4,7 @@ pub mod config;
 pub mod crypto;
 mod error;
 mod http_read_back;
+pub mod openai_q1;
 pub mod postgres;
 pub mod providers;
 pub mod token_entropy;

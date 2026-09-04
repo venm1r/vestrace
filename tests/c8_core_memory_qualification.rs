@@ -209,6 +209,7 @@ fn c8_temporal_retrieval_and_context_fixture_preserve_perspective_provenance_and
         memory_status: MemoryStatus::Superseded,
         revision_number: 1,
         content: "historical architecture".to_owned(),
+        classification: None,
         valid_from: Some(as_of - Duration::hours(1)),
         valid_until: Some(as_of + Duration::hours(1)),
         revision_created_at: as_of,

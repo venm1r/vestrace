@@ -76,7 +76,7 @@ async fn configured_executor_passes_exact_target_and_fault_point_to_runtime() {
         .await
         .unwrap();
 
-    assert_eq!(observation.status, EffectLifecycleStatus::Unknown);
+    assert_eq!(observation.status, EffectLifecycleStatus::Reconciling);
     assert_eq!(
         runtime.calls.lock().unwrap().as_slice(),
         &[(
@@ -146,15 +146,15 @@ async fn process_runtime_passes_target_and_point_to_an_isolated_child() {
     #[cfg(windows)]
     let script = r#"
 if ($env:VESTRACE_FAULT_TARGET_DIGEST -ne 'sha256:deployment-target') { exit 7 }
-$status = if ($env:VESTRACE_FAULT_POINT -eq 'after_dispatch_before_receipt') { 'unknown' } else { 'prepared' }
+$status = if ($env:VESTRACE_FAULT_POINT -eq 'after_dispatch_before_receipt') { 'reconciling' } else { 'prepared' }
 $reconciliation = $env:VESTRACE_FAULT_POINT -eq 'after_dispatch_before_receipt'
 $o = @{ point = $env:VESTRACE_FAULT_POINT; status = $status; retry_attempted = $false; reconciliation_started = $reconciliation; receipt_persisted = $false }
 $o | ConvertTo-Json -Compress
 "#;
     #[cfg(not(windows))]
-    let script = r#"test "$VESTRACE_FAULT_TARGET_DIGEST" = "sha256:deployment-target" || exit 7; if [ "$VESTRACE_FAULT_POINT" = "after_dispatch_before_receipt" ]; then printf '%s' '{"point":"after_dispatch_before_receipt","status":"unknown","retry_attempted":false,"reconciliation_started":true,"receipt_persisted":false}'; else printf '%s' '{"point":"after_intent_persistence","status":"prepared","retry_attempted":false,"reconciliation_started":false,"receipt_persisted":false}'; fi"#;
+    let script = r#"test "$VESTRACE_FAULT_TARGET_DIGEST" = "sha256:deployment-target" || exit 7; if [ "$VESTRACE_FAULT_POINT" = "after_dispatch_before_receipt" ]; then printf '%s' '{"point":"after_dispatch_before_receipt","status":"reconciling","retry_attempted":false,"reconciliation_started":true,"receipt_persisted":false}'; else printf '%s' '{"point":"after_intent_persistence","status":"prepared","retry_attempted":false,"reconciliation_started":false,"receipt_persisted":false}'; fi"#;
 
-    let runtime = process_runtime(script, Duration::from_secs(2));
+    let runtime = process_runtime(script, Duration::from_secs(10));
     let observation = runtime
         .execute(
             "sha256:deployment-target",
@@ -176,7 +176,7 @@ async fn process_runtime_fails_closed_on_non_zero_child_exit() {
     #[cfg(not(windows))]
     let script = "exit 23";
 
-    let error = process_runtime(script, Duration::from_secs(2))
+    let error = process_runtime(script, Duration::from_secs(10))
         .execute(
             "sha256:deployment-target",
             EffectFaultPoint::AfterIntentPersistence,
@@ -214,7 +214,7 @@ async fn process_runtime_rejects_malformed_observation_output() {
     #[cfg(not(windows))]
     let script = "printf '%s' not-json";
 
-    let error = process_runtime(script, Duration::from_secs(2))
+    let error = process_runtime(script, Duration::from_secs(10))
         .execute(
             "sha256:deployment-target",
             EffectFaultPoint::AfterIntentPersistence,

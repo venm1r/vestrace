@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use tower::ServiceExt;
@@ -101,6 +101,14 @@ impl vestrace_application::MemoryUseCases for StubMemoryUseCases {
         _: &vestrace_application::RequestContext,
         _: vestrace_domain::id::MemoryId,
     ) -> Result<Option<vestrace_domain::Memory>, vestrace_application::ApplicationError> {
+        Ok(None)
+    }
+    async fn find_revision(
+        &self,
+        _: &vestrace_application::RequestContext,
+        _: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<vestrace_domain::MemoryRevision>, vestrace_application::ApplicationError>
+    {
         Ok(None)
     }
 }
@@ -326,6 +334,12 @@ fn test_policy() -> Arc<dyn PolicyDecisionEngine> {
             "/ag-ui/run",
             RiskCategory::High,
         ),
+        (
+            Capability::AuditRead,
+            "http.get",
+            "/metrics",
+            RiskCategory::Low,
+        ),
     ]
     .into_iter()
     .map(|(capability, operation, resource_scope, risk_ceiling)| {
@@ -366,22 +380,15 @@ async fn v1_is_applied_exactly_once() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    let duplicated = app()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/v1/runs")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(duplicated.status(), StatusCode::NOT_FOUND);
+    assert!(matches!(
+        vestrace_http::inventory_lookup_for_test(&axum::http::Method::GET, "/v1/v1/runs"),
+        vestrace_http::route_inventory::RouteDecision::NotInInventory
+    ));
 }
 
 #[tokio::test]
-/// AG-UI is implemented, but a deployment that supplies no run orchestrator has
-/// nothing to create a run with. It must say so with 501 rather than accept the
-/// instruction and drop it.
+/// AG-UI must refuse message-to-execution bridging before it consults an
+/// orchestrator, because governed confidential-input acceptance is absent.
 async fn ag_ui_run_reports_unavailable_when_no_orchestrator_is_configured() {
     let response = app()
         .oneshot(
@@ -396,13 +403,23 @@ async fn ag_ui_run_reports_unavailable_when_no_orchestrator_is_configured() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "governed_run_input_required");
+    assert!(!body.to_string().contains("do the thing"));
 }
 
 #[tokio::test]
 async fn metrics_returns_prometheus_format() {
     let response = app()
-        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/metrics")
+                .header("x-workspace-id", "00000000-0000-0000-0000-000000000001")
+                .header("x-principal-id", "00000000-0000-0000-0000-000000000002")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -441,15 +458,18 @@ fn unimplemented_surfaces_do_not_cite_a_retired_phase_name() {
 #[test]
 fn settings_routes_require_workspace_administration() {
     use axum::http::Method;
+    use vestrace_http::route_inventory::RouteDecision;
 
-    assert_eq!(
-        vestrace_http::http_capability_for_test(&Method::GET, "/v1/settings"),
-        Some(vestrace_domain::Capability::WorkspaceAdmin)
-    );
-    assert_eq!(
-        vestrace_http::http_capability_for_test(&Method::PUT, "/v1/settings"),
-        Some(vestrace_domain::Capability::WorkspaceAdmin)
-    );
+    assert!(matches!(
+        vestrace_http::inventory_lookup_for_test(&Method::GET, "/v1/settings"),
+        RouteDecision::Governed(request)
+            if request.capability == vestrace_domain::Capability::WorkspaceAdmin
+    ));
+    assert!(matches!(
+        vestrace_http::inventory_lookup_for_test(&Method::PUT, "/v1/settings"),
+        RouteDecision::Governed(request)
+            if request.capability == vestrace_domain::Capability::WorkspaceAdmin
+    ));
 }
 
 /// Destroying a memory takes its own capability.
@@ -463,26 +483,26 @@ fn settings_routes_require_workspace_administration() {
 fn purging_a_memory_is_not_a_write() {
     use axum::http::Method;
     use vestrace_domain::Capability;
-    use vestrace_http::http_capability_for_test as capability;
+    use vestrace_http::{inventory_lookup_for_test, route_inventory::RouteDecision};
 
-    assert_eq!(
-        capability(
+    assert!(matches!(
+        inventory_lookup_for_test(
             &Method::DELETE,
             "/v1/memories/01a00000-0000-7000-8000-000000000000"
         ),
-        Some(Capability::MemoryPurge)
-    );
-    assert_eq!(
-        capability(&Method::POST, "/v1/memories"),
-        Some(Capability::MemoryWrite)
-    );
-    assert_eq!(
-        capability(
+        RouteDecision::Governed(request) if request.capability == Capability::MemoryPurge
+    ));
+    assert!(matches!(
+        inventory_lookup_for_test(&Method::POST, "/v1/memories"),
+        RouteDecision::Governed(request) if request.capability == Capability::MemoryWrite
+    ));
+    assert!(matches!(
+        inventory_lookup_for_test(
             &Method::GET,
             "/v1/memories/01a00000-0000-7000-8000-000000000000"
         ),
-        Some(Capability::MemoryRead)
-    );
+        RouteDecision::Governed(request) if request.capability == Capability::MemoryRead
+    ));
 }
 
 /// Answering a finding is an administrative act.
@@ -495,13 +515,13 @@ fn purging_a_memory_is_not_a_write() {
 fn dispositioning_a_finding_takes_workspace_administration() {
     use axum::http::Method;
     use vestrace_domain::Capability;
-    use vestrace_http::http_capability_for_test as capability;
+    use vestrace_http::{inventory_lookup_for_test, route_inventory::RouteDecision};
 
-    assert_eq!(
-        capability(
+    assert!(matches!(
+        inventory_lookup_for_test(
             &Method::POST,
             "/v1/system/health/findings/01a00000-0000-7000-8000-000000000000/disposition"
         ),
-        Some(Capability::WorkspaceAdmin)
-    );
+        RouteDecision::Governed(request) if request.capability == Capability::WorkspaceAdmin
+    ));
 }

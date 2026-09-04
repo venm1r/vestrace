@@ -4,12 +4,14 @@ export interface ApiErrorBody {
 }
 
 export class ApiRequestError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly body: ApiErrorBody,
-  ) {
+  public readonly status: number;
+  public readonly body: ApiErrorBody;
+
+  constructor(status: number, body: ApiErrorBody) {
     super(body.message);
     this.name = 'ApiRequestError';
+    this.status = status;
+    this.body = body;
   }
 
   /** The backend answers 501 for surfaces that are reserved but unimplemented. */
@@ -69,7 +71,7 @@ export interface WorkflowItem {
   created_at: string;
 }
 
-/** Mirrors `api::models::ModelResponse`. */
+/** Legacy create-model response; governed GET does not expose these fields. */
 export interface ModelItem {
   id: string;
   provider_id: string;
@@ -137,6 +139,43 @@ export interface ConnectionItem {
   type: string;
   status: string;
   latency: string;
+}
+
+/** Safe projection of a governed connection/revision head. */
+export interface GovernedConnectionItem {
+  id: string;
+  revision_id: string | null;
+  state: string;
+  qualification_state: string | null;
+  blockers: string[];
+}
+
+export interface GovernedModelItem {
+  id: string;
+  revision_id: string | null;
+  state: string;
+  qualification_state: string | null;
+  blockers: string[];
+}
+
+/** Opaque provider projection backed by a qualified governed tuple. */
+export interface GovernedProviderItem {
+  id: string;
+  state: string;
+  blockers: string[];
+}
+
+export interface QualificationItem {
+  id: string;
+  state: string;
+  profile_revision: string;
+  blockers: string[];
+}
+
+export interface CredentialLifecycleItem {
+  connection_id: string;
+  revision_id: string;
+  state: string;
 }
 
 export interface AuditEventItem {
@@ -215,15 +254,30 @@ export interface RequestIdentity {
   principalId: string;
 }
 
+export const REQUEST_IDENTITY_HEADER_NAMES = {
+  workspace: 'x-workspace-id',
+  principal: 'x-principal-id',
+} as const;
+
 /**
  * The backend never substitutes a default identity: a missing or malformed
  * `x-workspace-id` / `x-principal-id` header is answered with 400. Reading the
  * identity up front lets the console say so instead of firing doomed requests.
  */
 export function readRequestIdentity(): RequestIdentity {
+  const env = import.meta.env ?? {};
   return {
-    workspaceId: import.meta.env.VITE_VESTRACE_WORKSPACE_ID ?? '',
-    principalId: import.meta.env.VITE_VESTRACE_PRINCIPAL_ID ?? '',
+    workspaceId: env.VITE_VESTRACE_WORKSPACE_ID ?? '',
+    principalId: env.VITE_VESTRACE_PRINCIPAL_ID ?? '',
+  };
+}
+
+export function buildRequestIdentityHeaders(
+  identity: RequestIdentity = readRequestIdentity(),
+): Record<string, string> {
+  return {
+    [REQUEST_IDENTITY_HEADER_NAMES.workspace]: identity.workspaceId,
+    [REQUEST_IDENTITY_HEADER_NAMES.principal]: identity.principalId,
   };
 }
 
@@ -246,8 +300,7 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'x-workspace-id': identity.workspaceId,
-        'x-principal-id': identity.principalId,
+        ...buildRequestIdentityHeaders(identity),
         ...options?.headers,
       },
     });
@@ -276,6 +329,18 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function governedPost<T>(
+  endpoint: string,
+  payload: unknown | undefined,
+  options: GovernedMutationOptions,
+): Promise<T> {
+  return request<T>(endpoint, {
+    method: 'POST',
+    headers: { 'x-request-id': options.requestId },
+    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+  });
 }
 
 export type KernelReadiness = 'ready' | 'degraded' | 'unreachable';
@@ -318,17 +383,42 @@ export interface CreateAgentPayload {
   system_prompt: string;
 }
 
-export interface CreateProviderPayload {
-  name: string;
-  locality: 'local' | 'remote';
-}
-
 export interface CreateModelPayload {
   provider_id: string;
   model_name: string;
   context_window: number;
   input_cost_per_mtoken: number;
   output_cost_per_mtoken: number;
+}
+
+export interface CreateConnectionPayload {
+  name: string;
+  connection_kind: string;
+  runtime_base_url: string;
+}
+
+export interface CreateConnectionRevisionPayload {
+  connection_kind: string;
+  runtime_base_url: string;
+  expected_version: number;
+}
+
+export interface QualificationRequestPayload {
+  profile_revision: string;
+}
+
+export interface CreateConnectionCredentialPayload {
+  credential: string;
+}
+
+export interface CreateModelRevisionPayload {
+  model_name: string;
+  connection_revision_id: string;
+  expected_version: number;
+}
+
+export interface GovernedMutationOptions {
+  requestId: string;
 }
 
 export interface CreateWorkflowPayload {
@@ -378,19 +468,101 @@ export const vestraceClient = {
       body: JSON.stringify(payload),
     }),
   listTriggers: (): Promise<TriggerItem[]> => request<TriggerItem[]>('/triggers'),
-  listConnections: (): Promise<ConnectionItem[]> => request<ConnectionItem[]>('/connections'),
-  listModels: (): Promise<ModelItem[]> => request<ModelItem[]>('/models'),
+  listConnections: (): Promise<GovernedConnectionItem[]> =>
+    request<GovernedConnectionItem[]>('/connections'),
+  createConnection: (
+    payload: CreateConnectionPayload,
+    options: GovernedMutationOptions,
+  ): Promise<GovernedConnectionItem> =>
+    governedPost<GovernedConnectionItem>('/connections', payload, options),
+  createConnectionRevision: (
+    connectionId: string,
+    payload: CreateConnectionRevisionPayload,
+    options: GovernedMutationOptions,
+  ): Promise<GovernedConnectionItem> =>
+    governedPost<GovernedConnectionItem>(
+      `/connections/${encodeURIComponent(connectionId)}/revisions`,
+      payload,
+      options,
+    ),
+  requestConnectionQualification: (
+    connectionId: string,
+    payload: QualificationRequestPayload,
+    options: GovernedMutationOptions,
+  ): Promise<QualificationItem> =>
+    governedPost<QualificationItem>(
+      `/connections/${encodeURIComponent(connectionId)}/qualifications`,
+      payload,
+      options,
+    ),
+  createConnectionCredential: (
+    connectionId: string,
+    payload: CreateConnectionCredentialPayload,
+    options: GovernedMutationOptions,
+  ): Promise<CredentialLifecycleItem> =>
+    governedPost<CredentialLifecycleItem>(
+      `/connections/${encodeURIComponent(connectionId)}/credentials`,
+      payload,
+      options,
+    ),
+  abandonConnectionCredential: (
+    connectionId: string,
+    revisionId: string,
+    options: GovernedMutationOptions,
+  ): Promise<CredentialLifecycleItem> =>
+    governedPost<CredentialLifecycleItem>(
+      `/connections/${encodeURIComponent(connectionId)}/credentials/${encodeURIComponent(revisionId)}/abandon`,
+      undefined,
+      options,
+    ),
+  activateConnectionCredential: (
+    connectionId: string,
+    revisionId: string,
+    options: GovernedMutationOptions,
+  ): Promise<CredentialLifecycleItem> =>
+    governedPost<CredentialLifecycleItem>(
+      `/connections/${encodeURIComponent(connectionId)}/credentials/${encodeURIComponent(revisionId)}/activate`,
+      undefined,
+      options,
+    ),
+  revokeConnectionCredential: (
+    connectionId: string,
+    revisionId: string,
+    options: GovernedMutationOptions,
+  ): Promise<CredentialLifecycleItem> =>
+    governedPost<CredentialLifecycleItem>(
+      `/connections/${encodeURIComponent(connectionId)}/credentials/${encodeURIComponent(revisionId)}/revoke`,
+      undefined,
+      options,
+    ),
+  listModels: (): Promise<GovernedModelItem[]> => request<GovernedModelItem[]>('/models'),
   createModel: (payload: CreateModelPayload): Promise<ModelItem> =>
     request<ModelItem>('/models', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  listProviders: (): Promise<ProviderItem[]> => request<ProviderItem[]>('/providers'),
-  createProvider: (payload: CreateProviderPayload): Promise<ProviderItem> =>
-    request<ProviderItem>('/providers', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  createModelRevision: (
+    modelId: string,
+    payload: CreateModelRevisionPayload,
+    options: GovernedMutationOptions,
+  ): Promise<GovernedModelItem> =>
+    governedPost<GovernedModelItem>(
+      `/models/${encodeURIComponent(modelId)}/revisions`,
+      payload,
+      options,
+    ),
+  requestModelQualification: (
+    modelId: string,
+    payload: QualificationRequestPayload,
+    options: GovernedMutationOptions,
+  ): Promise<QualificationItem> =>
+    governedPost<QualificationItem>(
+      `/models/${encodeURIComponent(modelId)}/qualifications`,
+      payload,
+      options,
+    ),
+  listProviders: (): Promise<GovernedProviderItem[]> =>
+    request<GovernedProviderItem[]>('/providers'),
   listEvaluations: (): Promise<EvaluationItem[]> => request<EvaluationItem[]>('/evaluations'),
   createEvaluation: (payload: CreateEvaluationPayload): Promise<{ evaluation_id: string }> =>
     request<{ evaluation_id: string }>('/evaluations', {

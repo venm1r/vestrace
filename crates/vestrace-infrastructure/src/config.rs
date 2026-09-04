@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,
+    io::Write as _,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
@@ -10,8 +11,8 @@ use secrecy::SecretString;
 use serde::Deserialize;
 use vestrace_application::RestorationStage;
 use vestrace_domain::{
-    DataDestination, QualificationLifecycle, Sensitivity, conformance::QualificationProfile,
-    retrieval::ClassificationPolicy,
+    DataDestination, MemoryLabelVocabulary, QualificationLifecycle, Sensitivity,
+    conformance::QualificationProfile, retrieval::ClassificationPolicy,
 };
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:3000";
@@ -37,6 +38,7 @@ struct FileConfig {
     policy: Option<FilePolicyConfig>,
     auth: Option<FileAuthConfig>,
     secrets: Option<FileSecretsConfig>,
+    provider_execution: Option<FileProviderExecutionStorageConfig>,
     model: Option<FileModelConfig>,
     embedding: Option<FileEmbeddingConfig>,
     workspaces: Option<Vec<uuid::Uuid>>,
@@ -112,6 +114,20 @@ impl AppConfig {
             "database.max_connections",
             &self.database.max_connections.to_string(),
         );
+        field(
+            "provider_execution.bootstrap_key_id",
+            self.provider_execution
+                .bootstrap_key_id
+                .as_deref()
+                .unwrap_or("absent"),
+        );
+        field(
+            "provider_execution.bootstrap_key_version",
+            self.provider_execution
+                .bootstrap_key_version
+                .as_deref()
+                .unwrap_or("absent"),
+        );
         field("policy.engine", &format!("{:?}", self.policy.engine));
         field("policy.version", &self.policy.version);
         field(
@@ -151,6 +167,21 @@ impl AppConfig {
                     "policy.data.required_capability",
                     data.required_capability.as_deref().unwrap_or("absent"),
                 );
+                for label in &data.memory_labels {
+                    field("policy.data.memory_label", label);
+                }
+                match &data.retrieval {
+                    None => field("policy.data.retrieval", "absent"),
+                    Some(retrieval) => {
+                        for label in &retrieval.admissible_labels {
+                            field("policy.data.retrieval.admissible_label", label);
+                        }
+                        field(
+                            "policy.data.retrieval.allow_unclassified",
+                            &retrieval.allow_unclassified.to_string(),
+                        );
+                    }
+                }
                 match &data.embedding {
                     None => field("policy.data.embedding", "absent"),
                     Some(embedding) => {
@@ -219,6 +250,39 @@ impl AppConfig {
         self.fingerprint()
     }
 
+    pub fn memory_label_vocabulary(
+        &self,
+    ) -> Result<MemoryLabelVocabulary, vestrace_domain::DomainError> {
+        MemoryLabelVocabulary::new(
+            self.policy
+                .data
+                .as_ref()
+                .into_iter()
+                .flat_map(|data| data.memory_labels.iter().cloned()),
+        )
+    }
+
+    pub fn retrieval_classification_policy(
+        &self,
+    ) -> Result<ClassificationPolicy, vestrace_domain::DomainError> {
+        let Some(retrieval) = self
+            .policy
+            .data
+            .as_ref()
+            .and_then(|data| data.retrieval.as_ref())
+        else {
+            return Err(vestrace_domain::DomainError::InvalidArgument(
+                "policy.data.retrieval.admissible_labels and policy.data.retrieval.allow_unclassified are required for retrieval"
+                    .into(),
+            ));
+        };
+
+        ClassificationPolicy::new(
+            retrieval.admissible_labels.iter().cloned(),
+            retrieval.allow_unclassified,
+        )
+    }
+
     /// What this deployment is running against, in a form a human can read.
     ///
     /// Not a digest: the environment manifest is meant to be looked at when
@@ -271,6 +335,11 @@ pub struct AppConfig {
     /// no plaintext fallback.
     #[serde(default)]
     pub secrets: SecretsConfig,
+    /// Host custody for governed provider material.  Generic commands may
+    /// inspect a configuration without it, but server and worker startup
+    /// resolve this boundary before constructing provider authorities.
+    #[serde(default)]
+    pub provider_execution: ProviderExecutionStorageConfig,
     /// Disabled by default: an agent step then fails rather than pretending to
     /// have run.
     #[serde(default)]
@@ -284,6 +353,166 @@ pub struct AppConfig {
     /// workspaces to sweep and poll; there is no cross-workspace scan.
     #[serde(default)]
     pub workspaces: Vec<uuid::Uuid>,
+}
+
+/// Explicit filesystem custody for provider execution. The bootstrap mount
+/// carries externally provisioned material only; configuration deliberately
+/// has no field for an embedded bootstrap key.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ProviderExecutionStorageConfig {
+    pub material_vault_root: Option<PathBuf>,
+    pub bootstrap_secret_root: Option<PathBuf>,
+    /// Which key in the mounted store unwraps this installation's material
+    /// vault.
+    ///
+    /// Named by the deployment because it is a deployment fact: the store holds
+    /// one directory per key id, and a fixed id compiled in here would decide
+    /// for every operator which file their vault depends on and make rotating
+    /// it a code change. Only the identity is configured — the mount itself
+    /// declares the key's scope, purpose and algorithm, so a configuration
+    /// cannot claim a key is something the store says it is not.
+    pub bootstrap_key_id: Option<String>,
+    pub bootstrap_key_version: Option<String>,
+}
+
+/// Canonical paths which production composition can hand to its material
+/// vault without a symlink allowing either boundary to contain the other.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderExecutionStorageRoots {
+    pub material_vault_root: PathBuf,
+    pub bootstrap_secret_root: PathBuf,
+}
+
+impl ProviderExecutionStorageConfig {
+    /// The exact bootstrap key this installation's vault is unwrapped by.
+    ///
+    /// Read back from the mount rather than assembled from configuration: the
+    /// store's own declaration is the authority for scope and algorithm, and a
+    /// reference built from what a caller claimed would let a misconfiguration
+    /// present one key as another.
+    pub fn bootstrap_key_reference(
+        &self,
+        roots: &ProviderExecutionStorageRoots,
+    ) -> Result<vestrace_domain::trust::KeyReference, config::ConfigError> {
+        let key_id = self
+            .bootstrap_key_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                config::ConfigError::Message(
+                    "provider_execution.bootstrap_key_id is required for provider execution startup"
+                        .to_owned(),
+                )
+            })?;
+        let version = self
+            .bootstrap_key_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                config::ConfigError::Message(
+                    "provider_execution.bootstrap_key_version is required for provider execution startup"
+                        .to_owned(),
+                )
+            })?;
+        let declaration =
+            crate::crypto::MountedSecretStoreKeyProvider::new(&roots.bootstrap_secret_root)
+                .declaration(key_id)
+                .map_err(|error| {
+                    config::ConfigError::Message(format!(
+                        "provider_execution.bootstrap_key_id names no usable key: {error}"
+                    ))
+                })?;
+        vestrace_domain::trust::KeyReference::new(
+            crate::crypto::MOUNTED_SECRET_STORE_PROVIDER,
+            key_id,
+            version,
+            vestrace_domain::trust::KeyPurpose::Storage,
+            declaration.scope,
+            declaration.algorithm,
+        )
+        .map_err(|error| {
+            config::ConfigError::Message(format!(
+                "the mounted bootstrap key declaration is unusable: {error}"
+            ))
+        })
+    }
+
+    /// Validate the host-provided roots at long-running process startup.
+    ///
+    /// The bootstrap mount's read-only mode is enforced by composition. This
+    /// method intentionally never writes there; it only probes the explicitly
+    /// writable material-vault root.
+    pub fn roots(&self) -> Result<ProviderExecutionStorageRoots, config::ConfigError> {
+        fn configured_directory(
+            path: Option<&PathBuf>,
+            label: &str,
+        ) -> Result<PathBuf, config::ConfigError> {
+            let path = path
+                .filter(|path| !path.as_os_str().is_empty())
+                .ok_or_else(|| {
+                    config::ConfigError::Message(format!(
+                        "provider_execution.{label} is required for provider execution startup"
+                    ))
+                })?;
+            let canonical = fs::canonicalize(path).map_err(|_| {
+                config::ConfigError::Message(format!(
+                    "provider_execution.{label} must name an existing directory"
+                ))
+            })?;
+            if !canonical.is_dir() {
+                return Err(config::ConfigError::Message(format!(
+                    "provider_execution.{label} must name an existing directory"
+                )));
+            }
+            Ok(canonical)
+        }
+
+        let material_vault_root =
+            configured_directory(self.material_vault_root.as_ref(), "material_vault_root")?;
+        let bootstrap_secret_root =
+            configured_directory(self.bootstrap_secret_root.as_ref(), "bootstrap_secret_root")?;
+        if material_vault_root.starts_with(&bootstrap_secret_root)
+            || bootstrap_secret_root.starts_with(&material_vault_root)
+        {
+            return Err(config::ConfigError::Message(
+                "provider_execution.material_vault_root and provider_execution.bootstrap_secret_root must not overlap"
+                    .into(),
+            ));
+        }
+
+        let probe = material_vault_root.join(format!(
+            ".vestrace-material-vault-write-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| config::ConfigError::Message("system clock is unavailable".into()))?
+                .as_nanos(),
+        ));
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&probe)
+            .map_err(|_| {
+                config::ConfigError::Message(
+                    "provider_execution.material_vault_root must be writable".into(),
+                )
+            })?;
+        let write_result = file.write_all(&[0]).and_then(|()| file.sync_all());
+        let remove_result = fs::remove_file(&probe);
+        if write_result.is_err() || remove_result.is_err() {
+            return Err(config::ConfigError::Message(
+                "provider_execution.material_vault_root must be writable".into(),
+            ));
+        }
+
+        Ok(ProviderExecutionStorageRoots {
+            material_vault_root,
+            bootstrap_secret_root,
+        })
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -341,7 +570,17 @@ struct FileDataPolicyConfig {
     maximum_sensitivity: Option<Sensitivity>,
     allowed_destinations: Option<BTreeSet<DataDestination>>,
     required_capability: Option<String>,
+    memory_labels: Option<Vec<String>>,
+    retrieval: Option<FileRetrievalDataPolicyConfig>,
     embedding: Option<FileEmbeddingDataPolicyConfig>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileRetrievalDataPolicyConfig {
+    admissible_labels: Option<BTreeSet<String>>,
+    allow_unclassified: Option<bool>,
 }
 
 #[allow(dead_code)]
@@ -406,6 +645,14 @@ impl fmt::Debug for AuthConfig {
 struct FileSecretsConfig {
     master_key: Option<String>,
     key_version: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProviderExecutionStorageConfig {
+    material_vault_root: Option<PathBuf>,
+    bootstrap_secret_root: Option<PathBuf>,
 }
 
 /// The master key that wraps each workspace's data key.
@@ -627,10 +874,25 @@ pub struct DataPolicyConfig {
     /// The worker has a workspace identity here, not the originating subject.
     #[serde(default)]
     pub required_capability: Option<String>,
+    /// Labels a caller may state when creating a memory. This is an unordered
+    /// vocabulary; startup normalises it into sorted, trimmed, unique values.
+    #[serde(default)]
+    pub memory_labels: Vec<String>,
+    /// The disclosure decision at the exact-revision retrieval boundary.
+    /// Separate from embedding because admitting content to a local context
+    /// does not authorize sending it to an embedding provider, or vice versa.
+    #[serde(default)]
+    pub retrieval: Option<RetrievalDataPolicyConfig>,
     /// A separate disclosure decision for the embedding channel. Completion
     /// consent in the fields above never satisfies this declaration.
     #[serde(default)]
     pub embedding: Option<EmbeddingDataPolicyConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RetrievalDataPolicyConfig {
+    pub admissible_labels: BTreeSet<String>,
+    pub allow_unclassified: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -735,6 +997,8 @@ impl AppConfig {
                 .with_list_parse_key("workspaces")
                 .with_list_parse_key("policy.capabilities")
                 .with_list_parse_key("policy.data.allowed_destinations")
+                .with_list_parse_key("policy.data.memory_labels")
+                .with_list_parse_key("policy.data.retrieval.admissible_labels")
                 .with_list_parse_key("policy.data.embedding.admissible_labels")
                 .with_list_parse_key("policy.data.embedding.allowed_destinations"),
         );
@@ -743,7 +1007,35 @@ impl AppConfig {
             builder = builder.set_override("http.bind", http_bind.to_string())?;
         }
 
-        let config: Self = builder.build()?.try_deserialize()?;
+        let mut config: Self = builder.build()?.try_deserialize()?;
+        if config.policy.version.trim().is_empty() {
+            return Err(config::ConfigError::Message(
+                "policy.version must not be blank".to_owned(),
+            ));
+        }
+        if let Some(data) = config.policy.data.as_mut() {
+            let vocabulary = MemoryLabelVocabulary::new(data.memory_labels.iter().cloned())
+                .map_err(|error| config::ConfigError::Message(error.to_string()))?;
+            data.memory_labels = vocabulary.labels().map(str::to_owned).collect();
+            if let Some(retrieval) = data.retrieval.as_mut() {
+                let policy = ClassificationPolicy::new(
+                    retrieval.admissible_labels.iter().cloned(),
+                    retrieval.allow_unclassified,
+                )
+                .map_err(|error| config::ConfigError::Message(error.to_string()))?;
+                retrieval.admissible_labels =
+                    policy.admissible_labels().map(str::to_owned).collect();
+                if let Some(label) = retrieval
+                    .admissible_labels
+                    .iter()
+                    .find(|label| !data.memory_labels.contains(label))
+                {
+                    return Err(config::ConfigError::Message(format!(
+                        "policy.data.retrieval.admissible_labels contains '{label}', which is not declared in policy.data.memory_labels"
+                    )));
+                }
+            }
+        }
         if config.auth.is_enabled() {
             // A short shared secret is guessable, and an authenticated identity
             // that is not configured cannot be attributed to anyone.
@@ -898,12 +1190,63 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     use vestrace_application::RestorationStage;
     use vestrace_domain::{DataDestination, Sensitivity};
 
-    use super::{AppConfig, DataPolicyMode};
+    use super::{AppConfig, DataPolicyMode, ProviderExecutionStorageConfig};
+
+    #[test]
+    fn provider_execution_storage_roots_are_explicit_separate_and_writable() {
+        let material_root = tempfile::tempdir().expect("material vault root");
+        let bootstrap_root = tempfile::tempdir().expect("bootstrap secret root");
+
+        let missing = ProviderExecutionStorageConfig::default();
+        let error = missing.roots().expect_err("missing roots must fail closed");
+        assert!(error.to_string().contains("material_vault_root"), "{error}");
+
+        let overlapping = ProviderExecutionStorageConfig {
+            material_vault_root: Some(material_root.path().to_path_buf()),
+            bootstrap_secret_root: Some(material_root.path().to_path_buf()),
+            bootstrap_key_id: None,
+            bootstrap_key_version: None,
+        };
+        let error = overlapping
+            .roots()
+            .expect_err("overlapping roots must fail closed");
+        assert!(error.to_string().contains("must not overlap"), "{error}");
+
+        let configured = ProviderExecutionStorageConfig {
+            material_vault_root: Some(material_root.path().to_path_buf()),
+            bootstrap_secret_root: Some(bootstrap_root.path().to_path_buf()),
+            bootstrap_key_id: None,
+            bootstrap_key_version: None,
+        };
+        let roots = configured.roots().expect("separate configured roots");
+        assert_eq!(
+            roots.material_vault_root,
+            fs::canonicalize(material_root.path()).unwrap()
+        );
+        assert_eq!(
+            roots.bootstrap_secret_root,
+            fs::canonicalize(bootstrap_root.path()).unwrap()
+        );
+
+        let absent = ProviderExecutionStorageConfig {
+            material_vault_root: Some(PathBuf::from("definitely-missing-material-vault-root")),
+            bootstrap_secret_root: Some(bootstrap_root.path().to_path_buf()),
+            bootstrap_key_id: None,
+            bootstrap_key_version: None,
+        };
+        let error = absent.roots().expect_err("absent root must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("must name an existing directory"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn qualification_is_disabled_by_default() {
@@ -1599,6 +1942,73 @@ max_connections = 10
             },
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn memory_label_vocabulary_refuses_blank_and_duplicate_entries_at_load() {
+        for (name, labels) in [
+            ("blank", "['internal', '   ']"),
+            ("duplicate", "['internal', ' internal ']"),
+        ] {
+            let path = temp_config(
+                &format!("memory-labels-{name}"),
+                &format!(
+                    "[database]\nmax_connections = 10\n\n[policy.data]\nmemory_labels = {labels}\n"
+                ),
+            );
+
+            temp_env::with_var(
+                "VESTRACE_DATABASE__URL",
+                Some("postgres://localhost/vestrace"),
+                || {
+                    let message = AppConfig::load_from(Some(&path)).unwrap_err().to_string();
+                    assert!(message.contains("policy.data.memory_labels"), "{message}");
+                },
+            );
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn memory_label_vocabulary_is_unordered_but_changes_the_configuration_identity() {
+        let internal = temp_config(
+            "memory-labels-internal",
+            "[database]\nmax_connections = 10\n\n[policy.data]\nmemory_labels = ['internal']\n",
+        );
+        let two_labels = temp_config(
+            "memory-labels-two",
+            "[database]\nmax_connections = 10\n\n[policy.data]\nmemory_labels = ['internal', 'restricted']\n",
+        );
+        let reversed = temp_config(
+            "memory-labels-reversed",
+            "[database]\nmax_connections = 10\n\n[policy.data]\nmemory_labels = [' restricted ', 'internal']\n",
+        );
+
+        temp_env::with_var(
+            "VESTRACE_DATABASE__URL",
+            Some("postgres://localhost/vestrace"),
+            || {
+                let internal = AppConfig::load_from(Some(&internal)).unwrap();
+                let two_labels = AppConfig::load_from(Some(&two_labels)).unwrap();
+                let reversed = AppConfig::load_from(Some(&reversed)).unwrap();
+
+                assert_ne!(internal.fingerprint(), two_labels.fingerprint());
+                assert_eq!(two_labels.fingerprint(), reversed.fingerprint());
+                assert_eq!(
+                    two_labels
+                        .policy
+                        .data
+                        .unwrap()
+                        .memory_labels
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    vec!["internal", "restricted"]
+                );
+            },
+        );
+        for path in [internal, two_labels, reversed] {
+            let _ = fs::remove_file(path);
+        }
     }
 
     #[test]

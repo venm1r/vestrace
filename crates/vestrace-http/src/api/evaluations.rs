@@ -1,12 +1,15 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 use vestrace_domain::{
     EvaluationAuthority, EvaluationFact, EvaluationMetric, EvaluationResult, EvaluationTarget,
     EvaluatorRef, EvidenceRef,
@@ -15,17 +18,36 @@ use vestrace_domain::{
 use super::{ApiError, context::request_context};
 
 pub fn evaluation_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route(
-            "/evaluations",
-            post(create_evaluation).get(list_evaluations),
-        )
-        .route("/evaluations/{id}", get(get_evaluation))
-        .route(
-            "/evaluation-facts",
-            post(create_evaluation_fact).get(list_evaluation_facts),
-        )
-        .route("/evaluation-facts/{id}", get(get_evaluation_fact))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/evaluations"),
+        get(list_evaluations),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/evaluations"),
+        post(create_evaluation),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/evaluations/{id}"),
+        get(get_evaluation),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/evaluation-facts"),
+        get(list_evaluation_facts),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/evaluation-facts"),
+        post(create_evaluation_fact),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/evaluation-facts/{id}"),
+        get(get_evaluation_fact),
+    )
 }
 
 #[derive(Debug, Deserialize)]

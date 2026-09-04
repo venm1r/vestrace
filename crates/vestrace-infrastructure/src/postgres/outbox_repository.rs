@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use sqlx::Row;
 use vestrace_application::retrieval::MemoryTextSource;
 use vestrace_application::{
-    ApplicationError, EmbeddingInput, OutboxMessage, OutboxRepository, RequestContext,
+    ApplicationError, EmbeddingInput, OutboxMessage, OutboxRepository, RequestContext, UnitOfWork,
 };
 use vestrace_domain::id::MemoryId;
-use vestrace_domain::{WorkspaceId, id::OutboxId};
+use vestrace_domain::{MemoryRevision, WorkspaceId, id::OutboxId};
 
 use super::PgStore;
 
@@ -34,6 +34,15 @@ impl PgOutboxRepository {
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
+}
+
+fn transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut super::PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<super::PgScopedTransaction>()
+        .ok_or_else(|| ApplicationError::Internal("expected a PostgreSQL unit of work".to_owned()))
 }
 
 fn parse_outbox_row(row: sqlx::postgres::PgRow) -> Result<OutboxMessage, ApplicationError> {
@@ -72,6 +81,23 @@ impl OutboxRepository for PgOutboxRepository {
             .await
             .map_err(storage_error)?;
 
+        self.save_in(context, &mut scoped, message).await?;
+
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn save_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        message: &OutboxMessage,
+    ) -> Result<(), ApplicationError> {
+        if message.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "an outbox message cannot be saved into another workspace".into(),
+            ));
+        }
+
         // A message is born unattempted and immediately due; the remaining
         // columns take their defaults so a producer cannot set a delivery
         // history it has no business knowing about.
@@ -84,11 +110,11 @@ impl OutboxRepository for PgOutboxRepository {
         .bind(&message.topic)
         .bind(&message.payload)
         .bind(message.created_at)
-        .execute(scoped.connection())
+        .execute(transaction(unit_of_work)?.connection())
         .await
         .map_err(storage_error)?;
 
-        scoped.commit().await.map_err(storage_error)
+        Ok(())
     }
 
     async fn claim_pending(
@@ -234,6 +260,13 @@ impl MemoryTextSource for PgMemoryTextSource {
             let content: String = row.try_get("content").map_err(storage_error)?;
             let classification: Option<String> =
                 row.try_get("classification").map_err(storage_error)?;
+            MemoryRevision::validate_classification_shape(classification.as_deref()).map_err(
+                |error| {
+                    ApplicationError::Storage(format!(
+                        "stored memory_revisions.classification is invalid: {error}"
+                    ))
+                },
+            )?;
             Ok(EmbeddingInput::new(content, classification))
         })
         .transpose()

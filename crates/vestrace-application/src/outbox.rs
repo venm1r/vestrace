@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, RequestContext, UnitOfWork};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use vestrace_domain::{WorkspaceId, id::OutboxId, time::Timestamp};
@@ -69,6 +69,14 @@ pub trait OutboxRepository: Send + Sync {
     async fn save(
         &self,
         context: &RequestContext,
+        message: &OutboxMessage,
+    ) -> Result<(), ApplicationError>;
+
+    /// Persist a message inside a transaction the caller already owns.
+    async fn save_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
         message: &OutboxMessage,
     ) -> Result<(), ApplicationError>;
 
@@ -318,6 +326,16 @@ mod tests {
         async fn save(
             &self,
             _context: &RequestContext,
+            message: &OutboxMessage,
+        ) -> Result<(), ApplicationError> {
+            self.insert(message.clone());
+            Ok(())
+        }
+
+        async fn save_in(
+            &self,
+            _context: &RequestContext,
+            _unit_of_work: &mut dyn UnitOfWork,
             message: &OutboxMessage,
         ) -> Result<(), ApplicationError> {
             self.insert(message.clone());

@@ -27,7 +27,20 @@ pub struct RememberMemoryCommand {
     pub source_event_id: EventId,
     pub evidence_role: EvidenceRole,
     pub policy: MemoryWritePolicy,
+    pub classification: Option<String>,
     pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "intent", content = "label")]
+pub enum MemoryClassificationUpdate {
+    /// The caller did not state a classification, so the active one carries.
+    Inherit,
+    /// The caller explicitly stated JSON null and therefore asked to clear it.
+    Clear,
+    /// The caller stated a label. Only the active revision's identical label
+    /// can be accepted until a label-native transition mechanism exists.
+    Set(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -40,6 +53,7 @@ pub struct ReviseMemoryCommand {
     pub importance: Importance,
     pub source_event_id: EventId,
     pub change_reason: Option<String>,
+    pub classification: MemoryClassificationUpdate,
     pub idempotency_key: String,
 }
 
@@ -102,6 +116,7 @@ impl IdempotentRequest for RememberMemoryCommand {
             "source_event_id": self.source_event_id,
             "evidence_role": self.evidence_role,
             "policy": self.policy,
+            "classification": self.classification,
         })
     }
 }
@@ -120,6 +135,7 @@ impl IdempotentRequest for ReviseMemoryCommand {
             "importance": self.importance,
             "source_event_id": self.source_event_id,
             "change_reason": self.change_reason,
+            "classification": self.classification,
         })
     }
 }

@@ -2,6 +2,32 @@ use vestrace_domain::external_effects::EffectFaultPoint;
 use vestrace_fault_scenario::child::{EFFECT_ID_MARKER, SETUP_FAILURE_MARKER};
 use vestrace_fault_scenario::{ChildStage, aborts_at, completion_marker, confirm_reached_point};
 
+fn url_file() -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "vestrace-fault-scenario-vocabulary-{}-{}.txt",
+        std::process::id(),
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::write(&path, "postgres://localhost/ephemeral").unwrap();
+    path
+}
+
+fn invoke_with(point: &str, scenario: Option<&str>) -> std::process::Output {
+    let url_file = url_file();
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_vestrace-fault-scenario"));
+    command
+        .arg("--database-url-file")
+        .arg(&url_file)
+        .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
+        .env("VESTRACE_FAULT_POINT", point);
+    if let Some(scenario) = scenario {
+        command.arg("--scenario").arg(scenario);
+    }
+    let output = command.output().unwrap();
+    std::fs::remove_file(url_file).ok();
+    output
+}
+
 /// The abort site is the whole experiment. If it drifts by one stage the
 /// observation is about a different fault than the one reported, and nothing
 /// downstream can tell.
@@ -33,9 +59,35 @@ fn each_point_aborts_at_its_own_stage() {
 /// a new point to whatever stage happened to be last.
 #[test]
 fn every_required_point_has_a_stage() {
-    for point in EffectFaultPoint::required_points() {
+    let points = EffectFaultPoint::required_points();
+    assert_eq!(points.len(), 5, "the effect suite owns exactly five points");
+    for point in points {
         let _ = aborts_at(point);
     }
+}
+
+#[test]
+fn intent_points_are_refused_by_the_external_effect_stage_mapping() {
+    for point in EffectFaultPoint::intent_points() {
+        assert!(
+            std::panic::catch_unwind(|| aborts_at(point)).is_err(),
+            "{point:?} reached the external-effect stage mapping"
+        );
+    }
+}
+
+#[test]
+fn mismatched_fault_vocabularies_are_refused_by_the_harness_with_exit_two() {
+    let effect_for_intent = invoke_with(
+        "after_dispatch_before_receipt",
+        Some("material_intent_crash"),
+    );
+    assert_eq!(effect_for_intent.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&effect_for_intent.stderr).contains("unknown fault point"));
+
+    let intent_for_effect = invoke_with("after_reserved", None);
+    assert_eq!(intent_for_effect.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&intent_for_effect.stderr).contains("unknown fault point"));
 }
 
 /// A child's stderr as it looks when the child reached its point and aborted
@@ -72,7 +124,7 @@ fn a_child_that_completed_its_stage_is_accepted() {
 /// id as one that reached it, and the database it leaves behind reads as an
 /// earlier lifecycle stage. Accepting it would report "it never got there" as a
 /// finding about the point it never got to — at point 3, a failed dispatch
-/// rendered as "after dispatch before receipt must become UNKNOWN".
+/// rendered as a lifecycle disagreement after recovery.
 #[test]
 fn a_child_that_stopped_short_of_its_point_is_refused() {
     let stderr = stopped_short("the effect could not be dispatched: connection refused");
