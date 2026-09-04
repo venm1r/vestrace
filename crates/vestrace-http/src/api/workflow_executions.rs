@@ -1,34 +1,54 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
 pub fn workflow_execution_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/workflow-executions", post(start_execution))
-        .route(
-            "/workflow-executions/{id}",
-            axum::routing::get(get_execution),
-        )
-        .route(
-            "/workflow-executions/{id}/steps",
-            axum::routing::post(record_step).get(list_steps),
-        )
-        .route(
-            "/workflow-executions/{id}/complete",
-            post(complete_execution),
-        )
-        .route(
-            "/workflow-executions/{id}/outcomes",
-            axum::routing::post(record_outcome).get(list_outcomes),
-        )
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::POST, "/v1/workflow-executions"),
+        post(start_execution),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/workflow-executions/{id}"),
+        axum::routing::get(get_execution),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/workflow-executions/{id}/steps"),
+        axum::routing::get(list_steps),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/workflow-executions/{id}/steps"),
+        axum::routing::post(record_step),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/workflow-executions/{id}/complete"),
+        post(complete_execution),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/workflow-executions/{id}/outcomes"),
+        axum::routing::get(list_outcomes),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/workflow-executions/{id}/outcomes"),
+        axum::routing::post(record_outcome),
+    )
 }
 
 #[derive(Debug, Deserialize)]

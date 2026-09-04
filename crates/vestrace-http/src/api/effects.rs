@@ -1,4 +1,9 @@
-use axum::{Json, extract::State, http::HeaderMap, routing::post};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, Method},
+    routing::post,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vestrace_domain::external_effects::{
@@ -7,12 +12,19 @@ use vestrace_domain::external_effects::{
 };
 use vestrace_domain::{Capability, RiskCategory};
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
 pub fn effect_routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/effects", post(perform_effect))
+    mount(
+        axum::Router::new(),
+        route_descriptor(&Method::POST, "/v1/effects"),
+        post(perform_effect),
+    )
 }
 
 #[derive(Debug, Deserialize)]

@@ -7,6 +7,15 @@ COPY src ./src
 COPY crates ./crates
 COPY migrations ./migrations
 
+# Compiled into the binary, not read at runtime.
+# `crates/vestrace-infrastructure/src/openai_q1.rs` embeds the q1 manifest and
+# the q1 marker fixture with `include_str!`/`include_bytes!`, so the build fails
+# without them even though nothing here executes a test. Both are protected
+# authority paths: the image must carry the same bytes the qualification pinned,
+# which is why they are copied rather than duplicated into the crate.
+COPY schemas ./schemas
+COPY tests/fixtures ./tests/fixtures
+
 # The revision this binary was built from, compiled in.
 #
 # A capability manifest refuses to be written without one, because a

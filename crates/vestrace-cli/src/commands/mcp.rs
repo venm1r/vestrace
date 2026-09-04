@@ -5,17 +5,29 @@ use vestrace_infrastructure::{
     AppConfig, PgAgentRepository, PgEvaluationRepository, PgEventRepository,
     PgExecutionHistoryRepository, PgIdempotencyRepository, PgMemoryRepository, PgModelRepository,
     PgOutboxRepository, PgProvenanceRepository, PgRelationRepository, PgRetrievalJournal,
-    PgSkillRepository, PgStore, PgTextRetriever, PgWorkflowRepository,
+    PgRevisionHydrator, PgSkillRepository, PgStore, PgTextRetriever, PgWorkflowRepository,
 };
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
+    let retrieval_policy = config
+        .retrieval_classification_policy()
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let store = PgStore::connect(&config.database)
         .await
         .map_err(|_| anyhow::anyhow!("database is unavailable"))?;
-    store
-        .migrate()
-        .await
-        .map_err(|_| anyhow::anyhow!("database migrations are unavailable"))?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(anyhow::anyhow!(
+                "database migration history is incompatible"
+            ));
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "database migration verification is unavailable"
+            ));
+        }
+    }
 
     let store_for_journal = store.clone();
     let store_for_memory = store.clone();
@@ -27,6 +39,9 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         PgRelationRepository::new(store_for_memory.clone()),
         PgOutboxRepository::new(store.clone()),
         PgIdempotencyRepository::new(store.clone()),
+        config
+            .memory_label_vocabulary()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
     );
     let memory_use_cases: vestrace_application::SharedMemoryUseCases = Arc::new(memory_service);
 
@@ -34,7 +49,13 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         Arc::new(PgTextRetriever::new(store.clone()));
     let retrieval_journal: vestrace_application::SharedRetrievalJournal =
         Arc::new(PgRetrievalJournal::new(store_for_journal));
-    let retrieval_service = Arc::new(RetrievalService::new(text_retriever, retrieval_journal));
+    let retrieval_service = Arc::new(
+        RetrievalService::new(text_retriever, retrieval_journal).with_hydration(
+            Arc::new(PgRevisionHydrator::new(store.clone())),
+            retrieval_policy,
+            config.policy.version.clone(),
+        ),
+    );
 
     let model_repository: vestrace_application::SharedModelRepository =
         Arc::new(PgModelRepository::new(store.clone()));

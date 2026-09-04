@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use sqlx::FromRow;
+use sqlx::{FromRow, PgConnection};
 use vestrace_application::{
     ApplicationError, ExternalEffectRecoveryCandidate, ExternalEffectRepository,
-    LostDispatchAdoption, RequestContext, UndeliveredOutcome, WORKER_PRESENCE_LAPSE_AFTER,
+    LostDispatchAdoption, ProviderResultReceiptEvidence, RequestContext, UndeliveredOutcome,
+    UnitOfWork, WORKER_PRESENCE_LAPSE_AFTER,
 };
 use vestrace_domain::external_effects::{
     EffectLifecycleStatus, ExternalEffectIntent, ExternalEffectReceipt, ExternalReconciliation,
@@ -15,7 +16,7 @@ use vestrace_domain::{
     ExternalReconciliationId, PolicyDecision, PolicyDecisionId, Timestamp, WorkerId,
 };
 
-use super::PgStore;
+use super::{PgScopedTransaction, PgStore};
 
 // The recovery query is deliberately one shared artifact: planner evidence must
 // explain the same CTE, joins, predicates, union and ordering production runs.
@@ -184,13 +185,6 @@ fn conflict(message: impl Into<String>) -> ApplicationError {
     ApplicationError::Conflict(message.into())
 }
 
-fn is_dispatch_lost_unique_violation(error: &sqlx::Error) -> bool {
-    error.as_database_error().is_some_and(|database_error| {
-        database_error.code().as_deref() == Some("23505")
-            && database_error.constraint() == Some("uq_external_effect_lifecycle_dispatch_lost")
-    })
-}
-
 fn enum_name<T: Serialize>(value: T) -> Result<String, ApplicationError> {
     serde_json::to_value(value)
         .map_err(storage_error)?
@@ -332,6 +326,350 @@ where
     }
 }
 
+fn postgres_transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<PgScopedTransaction>()
+        .ok_or_else(|| {
+            ApplicationError::Internal("expected PostgreSQL effect transaction".to_owned())
+        })
+}
+
+async fn insert_intent_on(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    intent: &ExternalEffectIntent,
+) -> Result<(), ApplicationError> {
+    if intent.workspace_id() != context.workspace_id {
+        return Err(ApplicationError::Policy(
+            "an external effect intent cannot be recorded into another workspace".into(),
+        ));
+    }
+
+    let payload = json(intent)?;
+    let result = sqlx::query(
+        "INSERT INTO external_effect_intents (id, workspace_id, adapter, payload)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(intent.id().as_uuid())
+    .bind(intent.workspace_id().as_uuid())
+    .bind(intent.adapter())
+    .bind(payload)
+    .execute(&mut *connection)
+    .await
+    .map_err(storage_error)?;
+
+    if result.rows_affected() == 1 {
+        sqlx::query(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             VALUES ($1, $2, 'prepared', 'intent_recorded', $3, $4)",
+        )
+        .bind(intent.id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(intent.id().to_string())
+        .bind(intent.created_at())
+        .execute(&mut *connection)
+        .await
+        .map_err(storage_error)?;
+        return Ok(());
+    }
+
+    let row = sqlx::query_as::<_, IntentRow>(
+        "SELECT id, workspace_id, adapter, payload
+         FROM external_effect_intents WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(intent.id().as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(storage_error)?;
+    let existing = row
+        .map(|row| {
+            let existing: ExternalEffectIntent = decode(row.payload)?;
+            if existing.id().as_uuid() != row.id
+                || existing.workspace_id().as_uuid() != row.workspace_id
+                || existing.adapter() != row.adapter
+            {
+                return Err(storage_error(
+                    "external effect intent indexed metadata does not match payload",
+                ));
+            }
+            Ok(existing)
+        })
+        .transpose()?;
+    verify_insert(
+        std::future::ready(Ok(existing)),
+        intent,
+        &format!(
+            "external effect intent id {} already contains different evidence",
+            intent.id()
+        ),
+    )
+    .await
+}
+
+async fn record_authorization_on(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    effect_id: ExternalEffectId,
+    decision: &PolicyDecision,
+) -> Result<(), ApplicationError> {
+    if decision.workspace_id != context.workspace_id {
+        return Err(ApplicationError::Policy(
+            "an external effect authorization cannot be recorded into another workspace".into(),
+        ));
+    }
+
+    let policy_id = decision.policy_id.map(|id| id.as_uuid());
+    let capability = decision.capability.to_string();
+    let result = enum_name(decision.result)?;
+    let reason = enum_name(decision.reason)?;
+    let input_state = json(&decision.input_state)?;
+    let matched_grant_id = decision.matched_grant_id.map(|id| id.as_uuid());
+    let payload = json(decision)?;
+    let inserted = sqlx::query(
+        "INSERT INTO external_effect_authorizations ( \
+             id, effect_id, workspace_id, policy_id, policy_version, subject_id, \
+             capability, operation, resource_scope, result, reason, input_state, \
+             matched_grant_id, decided_at, payload \
+         ) \
+         SELECT $1, id, workspace_id, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+                $13, $14, $15 \
+         FROM external_effect_intents \
+         WHERE id = $2 AND workspace_id = $3",
+    )
+    .bind(decision.id.as_uuid())
+    .bind(effect_id.as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .bind(policy_id)
+    .bind(&decision.policy_version)
+    .bind(decision.subject_id.as_uuid())
+    .bind(capability)
+    .bind(&decision.operation)
+    .bind(&decision.resource_scope)
+    .bind(&result)
+    .bind(&reason)
+    .bind(input_state)
+    .bind(matched_grant_id)
+    .bind(decision.decided_at)
+    .bind(payload)
+    .execute(&mut *connection)
+    .await
+    .map_err(storage_error)?;
+
+    if inserted.rows_affected() != 1 {
+        return Err(storage_error(
+            "external effect authorization could not be recorded",
+        ));
+    }
+
+    if decision.is_allowed() {
+        sqlx::query(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             VALUES ($1, $2, 'authorized', 'authorization_recorded', $3, $4)",
+        )
+        .bind(effect_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(decision.id.to_string())
+        .bind(decision.decided_at)
+        .execute(&mut *connection)
+        .await
+        .map_err(storage_error)?;
+    }
+    Ok(())
+}
+
+async fn insert_receipt_on(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    receipt: &ExternalEffectReceipt,
+    provider_result_evidence: Option<ProviderResultReceiptEvidence>,
+) -> Result<(), ApplicationError> {
+    let outcome_status = enum_name(receipt.outcome_status())?;
+    let mut payload = json(receipt)?;
+    if let Some(evidence) = provider_result_evidence {
+        let object = payload.as_object_mut().ok_or_else(|| {
+            storage_error("external effect receipt did not serialize as an object")
+        })?;
+        object.insert(
+            "provider_result_recovery".into(),
+            serde_json::json!({
+                "advance_work_item_id": evidence.advance_work_item_id(),
+                "finish_reason": evidence.finish_reason(),
+                "usage_known": evidence.usage_known(),
+                "prompt_tokens": evidence.prompt_tokens(),
+                "completion_tokens": evidence.completion_tokens(),
+            }),
+        );
+    }
+    let expected_provider_result_evidence = payload.get("provider_result_recovery").cloned();
+    let result = sqlx::query(
+        "INSERT INTO external_effect_receipts (id, effect_id, workspace_id, outcome_status, payload)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(receipt.id().as_uuid())
+    .bind(receipt.effect_id().as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .bind(&outcome_status)
+    .bind(&payload)
+    .execute(&mut *connection)
+    .await
+    .map_err(storage_error)?;
+
+    if result.rows_affected() == 1 {
+        sqlx::query(
+            "INSERT INTO external_effect_lifecycle_transitions \
+                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+             SELECT $1, $2, $3, 'receipt_recorded', $4, $5 \
+             FROM external_effect_intents \
+             WHERE id = $1 AND workspace_id = $2",
+        )
+        .bind(receipt.effect_id().as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(&outcome_status)
+        .bind(receipt.id().to_string())
+        .bind(receipt.recorded_at())
+        .execute(&mut *connection)
+        .await
+        .map_err(storage_error)?;
+        return Ok(());
+    }
+
+    let row = sqlx::query_as::<_, ReceiptRow>(
+        "SELECT id, effect_id, outcome_status, payload
+         FROM external_effect_receipts WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(receipt.id().as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(storage_error)?;
+    let existing = row
+        .map(|row| {
+            if provider_result_evidence.is_some()
+                && row.payload.get("provider_result_recovery")
+                    != expected_provider_result_evidence.as_ref()
+            {
+                return Err(conflict(
+                    "external effect receipt already contains different provider-result evidence",
+                ));
+            }
+            let existing: ExternalEffectReceipt = decode(row.payload)?;
+            if existing.id().as_uuid() != row.id
+                || existing.effect_id().as_uuid() != row.effect_id
+                || enum_name(existing.outcome_status())? != row.outcome_status
+            {
+                return Err(storage_error(
+                    "external effect receipt indexed metadata does not match payload",
+                ));
+            }
+            Ok(existing)
+        })
+        .transpose()?;
+    verify_insert(
+        std::future::ready(Ok(existing)),
+        receipt,
+        &format!(
+            "external effect receipt id {} already contains different evidence",
+            receipt.id()
+        ),
+    )
+    .await
+}
+
+async fn record_dispatch_started_on(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    effect_id: ExternalEffectId,
+    dispatch_owner: WorkerId,
+    dispatch_expires_at: Timestamp,
+    recorded_at: Timestamp,
+) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError> {
+    let transition_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO external_effect_lifecycle_transitions \
+             (effect_id, workspace_id, status, cause, cause_ref, recorded_at, \
+              dispatch_owner, dispatch_expires_at) \
+         SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $5, $3, $4 \
+         FROM external_effect_intents \
+         WHERE id = $1 AND workspace_id = $2 \
+         RETURNING id",
+    )
+    .bind(effect_id.as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .bind(dispatch_owner.to_string())
+    .bind(dispatch_expires_at)
+    .bind(recorded_at)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(storage_error)?
+    .ok_or_else(|| storage_error("external effect dispatch could not be recorded"))?;
+    Ok(ExternalEffectLifecycleTransitionId::from_uuid(
+        transition_id,
+    ))
+}
+
+async fn adopt_lost_dispatch_on(
+    connection: &mut PgConnection,
+    context: &RequestContext,
+    effect_id: ExternalEffectId,
+    dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+    recorded_at: Timestamp,
+) -> Result<LostDispatchAdoption, ApplicationError> {
+    let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO external_effect_lifecycle_transitions \
+             (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
+         SELECT dispatch.effect_id, dispatch.workspace_id, \
+                'unknown', 'dispatch_lost', dispatch.id::text, $4 \
+           FROM external_effect_lifecycle_transitions dispatch \
+         WHERE dispatch.id = $3 \
+            AND dispatch.effect_id = $1 \
+            AND dispatch.workspace_id = $2 \
+            AND dispatch.status = 'dispatching' \
+         ON CONFLICT (workspace_id, effect_id, cause_ref) \
+             WHERE cause = 'dispatch_lost' DO NOTHING \
+         RETURNING id",
+    )
+    .bind(effect_id.as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .bind(dispatch_transition_id.as_uuid())
+    .bind(recorded_at)
+    .fetch_optional(&mut *connection)
+    .await;
+    match inserted {
+        Ok(Some(_)) => Ok(LostDispatchAdoption::Adopted),
+        Ok(None) => {
+            let already_adopted = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (
+                    SELECT 1 FROM external_effect_lifecycle_transitions
+                     WHERE workspace_id=$1 AND effect_id=$2
+                       AND status='unknown' AND cause='dispatch_lost'
+                       AND cause_ref=$3
+                )",
+            )
+            .bind(context.workspace_id.as_uuid())
+            .bind(effect_id.as_uuid())
+            .bind(dispatch_transition_id.as_uuid().to_string())
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(storage_error)?;
+            if already_adopted {
+                Ok(LostDispatchAdoption::AlreadyAdopted)
+            } else {
+                Err(storage_error(
+                    "external effect dispatch could not be adopted",
+                ))
+            }
+        }
+        Err(error) => Err(storage_error(error)),
+    }
+}
+
 #[async_trait]
 impl ExternalEffectRepository for PgExternalEffectRepository {
     async fn insert_intent(
@@ -339,61 +677,24 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         context: &RequestContext,
         intent: &ExternalEffectIntent,
     ) -> Result<(), ApplicationError> {
-        if intent.workspace_id() != context.workspace_id {
-            return Err(ApplicationError::Policy(
-                "an external effect intent cannot be recorded into another workspace".into(),
-            ));
-        }
-
-        let payload = json(intent)?;
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-
-        let result = sqlx::query(
-            "INSERT INTO external_effect_intents (id, workspace_id, adapter, payload)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(intent.id().as_uuid())
-        .bind(intent.workspace_id().as_uuid())
-        .bind(intent.adapter())
-        .bind(payload)
-        .execute(scoped.connection())
-        .await
-        .map_err(storage_error)?;
-
-        if result.rows_affected() == 1 {
-            sqlx::query(
-                "INSERT INTO external_effect_lifecycle_transitions \
-                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
-                 VALUES ($1, $2, 'prepared', 'intent_recorded', $3, $4)",
-            )
-            .bind(intent.id().as_uuid())
-            .bind(context.workspace_id.as_uuid())
-            .bind(intent.id().to_string())
-            .bind(intent.created_at())
-            .execute(scoped.connection())
-            .await
-            .map_err(storage_error)?;
-        }
-
+        insert_intent_on(scoped.connection(), context, intent).await?;
         scoped.commit().await.map_err(storage_error)?;
+        Ok(())
+    }
 
-        if result.rows_affected() == 1 {
-            return Ok(());
-        }
-        verify_insert(
-            self.find_intent(context, intent.id()),
-            intent,
-            &format!(
-                "external effect intent id {} already contains different evidence",
-                intent.id()
-            ),
-        )
-        .await
+    async fn save_intent_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        intent: &ExternalEffectIntent,
+    ) -> Result<(), ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        insert_intent_on(transaction.connection(), context, intent).await
     }
 
     async fn find_intent(
@@ -440,78 +741,24 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         effect_id: ExternalEffectId,
         decision: &PolicyDecision,
     ) -> Result<(), ApplicationError> {
-        if decision.workspace_id != context.workspace_id {
-            return Err(ApplicationError::Policy(
-                "an external effect authorization cannot be recorded into another workspace".into(),
-            ));
-        }
-
-        let policy_id = decision.policy_id.map(|id| id.as_uuid());
-        let capability = decision.capability.to_string();
-        let result = enum_name(decision.result)?;
-        let reason = enum_name(decision.reason)?;
-        let input_state = json(&decision.input_state)?;
-        let matched_grant_id = decision.matched_grant_id.map(|id| id.as_uuid());
-        let payload = json(decision)?;
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-
-        let inserted = sqlx::query(
-            "INSERT INTO external_effect_authorizations ( \
-                 id, effect_id, workspace_id, policy_id, policy_version, subject_id, \
-                 capability, operation, resource_scope, result, reason, input_state, \
-                 matched_grant_id, decided_at, payload \
-             ) \
-             SELECT $1, id, workspace_id, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-                    $13, $14, $15 \
-             FROM external_effect_intents \
-             WHERE id = $2 AND workspace_id = $3",
-        )
-        .bind(decision.id.as_uuid())
-        .bind(effect_id.as_uuid())
-        .bind(context.workspace_id.as_uuid())
-        .bind(policy_id)
-        .bind(&decision.policy_version)
-        .bind(decision.subject_id.as_uuid())
-        .bind(capability)
-        .bind(&decision.operation)
-        .bind(&decision.resource_scope)
-        .bind(&result)
-        .bind(&reason)
-        .bind(input_state)
-        .bind(matched_grant_id)
-        .bind(decision.decided_at)
-        .bind(payload)
-        .execute(scoped.connection())
-        .await
-        .map_err(storage_error)?;
-
-        if inserted.rows_affected() != 1 {
-            scoped.rollback().await.map_err(storage_error)?;
-            return Err(storage_error(
-                "external effect authorization could not be recorded",
-            ));
-        }
-
-        if decision.is_allowed() {
-            sqlx::query(
-                "INSERT INTO external_effect_lifecycle_transitions \
-                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
-                 VALUES ($1, $2, 'authorized', 'authorization_recorded', $3, $4)",
-            )
-            .bind(effect_id.as_uuid())
-            .bind(context.workspace_id.as_uuid())
-            .bind(decision.id.to_string())
-            .bind(decision.decided_at)
-            .execute(scoped.connection())
-            .await
-            .map_err(storage_error)?;
-        }
-
+        record_authorization_on(scoped.connection(), context, effect_id, decision).await?;
         scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn record_authorization_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        effect_id: ExternalEffectId,
+        decision: &PolicyDecision,
+    ) -> Result<(), ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        record_authorization_on(transaction.connection(), context, effect_id, decision).await
     }
 
     async fn find_authorization(
@@ -547,65 +794,35 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
         context: &RequestContext,
         receipt: &ExternalEffectReceipt,
     ) -> Result<(), ApplicationError> {
-        let outcome_status = enum_name(receipt.outcome_status())?;
-        let payload = json(receipt)?;
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-
-        // The workspace is bound from the context, and the composite foreign
-        // key onto `(id, workspace_id)` of the intent refuses a receipt filed
-        // against an effect belonging to a different tenant. The adapter does
-        // not have to check that itself, and could not check it reliably: the
-        // receipt carries no workspace to compare.
-        let result = sqlx::query(
-            "INSERT INTO external_effect_receipts (id, effect_id, workspace_id, outcome_status, payload)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(receipt.id().as_uuid())
-        .bind(receipt.effect_id().as_uuid())
-        .bind(context.workspace_id.as_uuid())
-        .bind(&outcome_status)
-        .bind(payload)
-        .execute(scoped.connection())
-        .await
-        .map_err(storage_error)?;
-
-        if result.rows_affected() == 1 {
-            sqlx::query(
-                "INSERT INTO external_effect_lifecycle_transitions \
-                     (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
-                 SELECT $1, $2, $3, 'receipt_recorded', $4, $5 \
-                 FROM external_effect_intents \
-                 WHERE id = $1 AND workspace_id = $2",
-            )
-            .bind(receipt.effect_id().as_uuid())
-            .bind(context.workspace_id.as_uuid())
-            .bind(&outcome_status)
-            .bind(receipt.id().to_string())
-            .bind(receipt.recorded_at())
-            .execute(scoped.connection())
-            .await
-            .map_err(storage_error)?;
-        }
-
+        insert_receipt_on(scoped.connection(), context, receipt, None).await?;
         scoped.commit().await.map_err(storage_error)?;
+        Ok(())
+    }
 
-        if result.rows_affected() == 1 {
-            return Ok(());
-        }
-        verify_insert(
-            self.find_receipt(context, receipt.id()),
-            receipt,
-            &format!(
-                "external effect receipt id {} already contains different evidence",
-                receipt.id()
-            ),
-        )
-        .await
+    async fn insert_receipt_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        receipt: &ExternalEffectReceipt,
+    ) -> Result<(), ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        insert_receipt_on(transaction.connection(), context, receipt, None).await
+    }
+
+    async fn insert_provider_result_receipt_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        receipt: &ExternalEffectReceipt,
+        evidence: ProviderResultReceiptEvidence,
+    ) -> Result<(), ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        insert_receipt_on(transaction.connection(), context, receipt, Some(evidence)).await
     }
 
     async fn find_receipt(
@@ -769,29 +986,38 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-        let transition_id = sqlx::query_scalar::<_, uuid::Uuid>(
-            "INSERT INTO external_effect_lifecycle_transitions \
-                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at, \
-                  dispatch_owner, dispatch_expires_at) \
-             SELECT id, workspace_id, 'dispatching', 'dispatch_started', id::text, $5, $3, $4 \
-             FROM external_effect_intents \
-             WHERE id = $1 AND workspace_id = $2 \
-             RETURNING id",
+        let transition_id = record_dispatch_started_on(
+            scoped.connection(),
+            context,
+            effect_id,
+            dispatch_owner,
+            dispatch_expires_at,
+            recorded_at,
         )
-        .bind(effect_id.as_uuid())
-        .bind(context.workspace_id.as_uuid())
-        .bind(dispatch_owner.to_string())
-        .bind(dispatch_expires_at)
-        .bind(recorded_at)
-        .fetch_optional(scoped.connection())
-        .await
-        .map_err(storage_error)?;
-        let transition_id = transition_id
-            .ok_or_else(|| storage_error("external effect dispatch could not be recorded"))?;
+        .await?;
         scoped.commit().await.map_err(storage_error)?;
-        Ok(ExternalEffectLifecycleTransitionId::from_uuid(
-            transition_id,
-        ))
+        Ok(transition_id)
+    }
+
+    async fn record_dispatch_started_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        effect_id: ExternalEffectId,
+        dispatch_owner: WorkerId,
+        dispatch_expires_at: Timestamp,
+        recorded_at: Timestamp,
+    ) -> Result<ExternalEffectLifecycleTransitionId, ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        record_dispatch_started_on(
+            transaction.connection(),
+            context,
+            effect_id,
+            dispatch_owner,
+            dispatch_expires_at,
+            recorded_at,
+        )
+        .await
     }
 
     async fn adopt_lost_dispatch(
@@ -806,44 +1032,43 @@ impl ExternalEffectRepository for PgExternalEffectRepository {
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
-        let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
-            "INSERT INTO external_effect_lifecycle_transitions \
-                 (effect_id, workspace_id, status, cause, cause_ref, recorded_at) \
-             SELECT dispatch.effect_id, dispatch.workspace_id, \
-                    'unknown', 'dispatch_lost', dispatch.id::text, $4 \
-             FROM external_effect_lifecycle_transitions dispatch \
-             WHERE dispatch.id = $3 \
-               AND dispatch.effect_id = $1 \
-               AND dispatch.workspace_id = $2 \
-               AND dispatch.status = 'dispatching' \
-             RETURNING id",
+        let adoption = adopt_lost_dispatch_on(
+            scoped.connection(),
+            context,
+            effect_id,
+            dispatch_transition_id,
+            recorded_at,
         )
-        .bind(effect_id.as_uuid())
-        .bind(context.workspace_id.as_uuid())
-        .bind(dispatch_transition_id.as_uuid())
-        .bind(recorded_at)
-        .fetch_optional(scoped.connection())
         .await;
-        match inserted {
-            Ok(Some(_)) => {
+        match adoption {
+            Ok(adoption) => {
                 scoped.commit().await.map_err(storage_error)?;
-                Ok(LostDispatchAdoption::Adopted)
-            }
-            Ok(None) => {
-                scoped.rollback().await.map_err(storage_error)?;
-                Err(storage_error(
-                    "external effect dispatch could not be adopted",
-                ))
-            }
-            Err(error) if is_dispatch_lost_unique_violation(&error) => {
-                scoped.rollback().await.map_err(storage_error)?;
-                Ok(LostDispatchAdoption::AlreadyAdopted)
+                Ok(adoption)
             }
             Err(error) => {
                 scoped.rollback().await.map_err(storage_error)?;
-                Err(storage_error(error))
+                Err(error)
             }
         }
+    }
+
+    async fn adopt_lost_dispatch_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        effect_id: ExternalEffectId,
+        dispatch_transition_id: ExternalEffectLifecycleTransitionId,
+        recorded_at: Timestamp,
+    ) -> Result<LostDispatchAdoption, ApplicationError> {
+        let transaction = postgres_transaction(unit_of_work)?;
+        adopt_lost_dispatch_on(
+            transaction.connection(),
+            context,
+            effect_id,
+            dispatch_transition_id,
+            recorded_at,
+        )
+        .await
     }
 
     async fn count_deadline_less_dispatching_transitions(
@@ -1383,5 +1608,39 @@ mod planner_tests {
             !has_receipt_seq_scan(&plan),
             "the exact recovery query scanned external_effect_receipts: {plan}"
         );
+    }
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    struct ForeignUnitOfWork;
+
+    #[async_trait]
+    impl UnitOfWork for ForeignUnitOfWork {
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+
+        async fn commit(self: Box<Self>) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> Result<(), ApplicationError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_foreign_unit_of_work_is_a_typed_error() {
+        let mut unit_of_work = ForeignUnitOfWork;
+        match postgres_transaction(&mut unit_of_work) {
+            Err(ApplicationError::Internal(message)) => {
+                assert_eq!(message, "expected PostgreSQL effect transaction")
+            }
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(_) => panic!("foreign unit of work was accepted"),
+        }
     }
 }

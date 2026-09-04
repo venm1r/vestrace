@@ -114,7 +114,7 @@ impl ContextPackBuilder {
                         revision_id: candidate.revision_id,
                     }],
                     inclusion_explanation: format!("included in {label} as {representation:?}"),
-                    source_classification: Some(candidate.channel.clone()),
+                    source_classification: candidate.classification.clone(),
                 });
                 used_tokens += token_count;
                 remaining_budget -= token_count;
@@ -264,6 +264,7 @@ mod tests {
             memory_status: MemoryStatus::Active,
             revision_number: 1,
             content: explanation.to_owned(),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
@@ -289,6 +290,7 @@ mod tests {
             memory_status: MemoryStatus::Active,
             revision_number: 1,
             content: content.to_owned(),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
@@ -353,6 +355,27 @@ mod tests {
     }
 
     #[test]
+    fn context_item_uses_the_hydrated_revision_classification() {
+        let mut classified = candidate(MemoryId::new(), "classified fact");
+        classified.classification = Some("internal".to_owned());
+        classified.channel = "vector".to_owned();
+
+        let pack = ContextPackBuilder::new(100)
+            .build(
+                WorkspaceId::new(),
+                PrincipalId::new(),
+                RetrievalRunId::new(),
+                &[classified],
+            )
+            .unwrap();
+
+        assert_eq!(
+            pack.sections[0].items[0].source_classification.as_deref(),
+            Some("internal")
+        );
+    }
+
+    #[test]
     fn uses_deterministic_representation_ladder() {
         let build_one = |content: &str, budget: u32| {
             let candidate = candidate_with_kind(
@@ -413,6 +436,7 @@ mod tests {
             memory_status: MemoryStatus::Active,
             revision_number: 1,
             content: "hydrated revision content".to_owned(),
+            classification: None,
             valid_from: None,
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
@@ -453,6 +477,7 @@ mod tests {
             memory_status: MemoryStatus::Superseded,
             revision_number: 3,
             content: "historical fact".to_owned(),
+            classification: None,
             valid_from: Some(at),
             valid_until: None,
             revision_created_at: at,

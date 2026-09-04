@@ -1,8 +1,16 @@
-use axum::{Json, extract::State, http::HeaderMap, routing::get};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, Method},
+    routing::get,
+};
 use serde::Serialize;
 use vestrace_domain::AuditEvent;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -35,7 +43,11 @@ impl From<AuditEvent> for AuditEventResponse {
 }
 
 pub fn audit_routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/audit", get(list_audit_events))
+    mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/audit"),
+        get(list_audit_events),
+    )
 }
 
 async fn list_audit_events(

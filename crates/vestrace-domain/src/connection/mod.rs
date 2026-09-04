@@ -4,6 +4,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod revision;
+pub use revision::{
+    ConnectionAuthMode, ConnectionKind, ConnectionRevision, ConnectionRevisionId,
+    ConnectionTransportPolicy, NoAuthBindingRevision, NoAuthBindingRevisionId, NormalizedBaseUrl,
+};
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Connector {
     pub id: ConnectorId,

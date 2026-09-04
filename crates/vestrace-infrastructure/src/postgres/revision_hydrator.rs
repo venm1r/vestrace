@@ -7,7 +7,7 @@ use vestrace_application::retrieval::RevisionHydrator;
 use vestrace_application::{ApplicationError, RequestContext};
 use vestrace_domain::retrieval::{HydratedRevision, RevisionRef};
 use vestrace_domain::{
-    MemoryStatus,
+    MemoryRevision, MemoryStatus,
     id::{MemoryId, MemoryRevisionId},
 };
 
@@ -128,6 +128,9 @@ impl RevisionHydrator for PgRevisionHydrator {
 
             let status: String = row.get("memory_status");
             let memory_status = memory_status_from_str(&status)?;
+            let classification: Option<String> = row.get("classification");
+            MemoryRevision::validate_classification_shape(classification.as_deref())
+                .map_err(storage_error)?;
 
             let revision_number: i32 = row.get("revision_number");
             hydrated.push(HydratedRevision {
@@ -136,7 +139,7 @@ impl RevisionHydrator for PgRevisionHydrator {
                 revision_number: revision_number.max(0) as u32,
                 memory_status,
                 content: row.get("content"),
-                classification: row.get("classification"),
+                classification,
                 valid_from: row.get("valid_from"),
                 valid_until: row.get("valid_until"),
                 created_at: row.get("created_at"),

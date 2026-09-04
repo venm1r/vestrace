@@ -1,4 +1,4 @@
-﻿{
+{
   "components": {
     "schemas": {
       "Agent": {
@@ -107,6 +107,12 @@
       },
       "CreateMemoryRequest": {
         "properties": {
+          "classification": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "confidence": {
             "type": "number"
           },
@@ -345,6 +351,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "classification": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -508,15 +520,100 @@
                   "format": "uuid",
                   "type": "string"
                 },
+                "revision_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
                 "score": {
                   "type": "number"
+                },
+                "source_classification": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "type": "object"
             },
             "type": "array"
+          },
+          "retrieval_policy_version": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "withheld": {
+            "items": {
+              "properties": {
+                "classification": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "memory_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "reason": {
+                  "enum": [
+                    "revision_not_found",
+                    "classification_not_admissible"
+                  ],
+                  "type": "string"
+                },
+                "revision_id": {
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "memory_id",
+                "revision_id",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           }
         },
+        "type": "object"
+      },
+      "ReviseMemoryRequest": {
+        "properties": {
+          "change_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "classification": {
+            "description": "Omit to inherit the active label; null requests clearing and is refused because no label transition mechanism exists",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "content": {
+            "type": "string"
+          },
+          "importance": {
+            "type": "number"
+          },
+          "source_event_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "confidence",
+          "importance",
+          "source_event_id"
+        ],
         "type": "object"
       },
       "RouteRequest": {
@@ -729,7 +826,7 @@
     }
   },
   "info": {
-    "description": "Cognitive runtime foundation тАФ memory, retrieval, routing, execution, and diagnostics",
+    "description": "Cognitive runtime foundation — memory, retrieval, routing, execution, and diagnostics",
     "title": "Vestrace API",
     "version": "1.0.0"
   },
@@ -1416,6 +1513,93 @@
           }
         },
         "summary": "Get a memory by ID",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/v1/memories/{id}/revisions": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-workspace-id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-principal-id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The active memory revision number expected by the caller",
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviseMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
+              }
+            },
+            "description": "Memory revision created"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Revision conflict"
+          }
+        },
+        "summary": "Create a revision of an existing memory",
         "tags": [
           "memories"
         ]

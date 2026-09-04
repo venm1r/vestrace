@@ -19,14 +19,17 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
 use vestrace_domain::identity::AccessToken;
 use vestrace_domain::{AccessTokenId, PrincipalId, time::now};
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -109,18 +112,29 @@ impl std::fmt::Debug for CreateAccessTokenResponse {
 }
 
 pub fn access_token_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route(
-            "/access-tokens",
-            get(list_access_tokens).post(create_access_token),
-        )
-        .route(
-            "/access-tokens/{id}",
-            axum::routing::delete(revoke_access_token),
-        )
-        // Present so a caller expecting a read endpoint gets an explicit
-        // refusal rather than a confusing 405.
-        .route("/access-tokens/{id}/value", get(value_is_never_returned))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/access-tokens"),
+        get(list_access_tokens),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/access-tokens"),
+        axum::routing::post(create_access_token),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::DELETE, "/v1/access-tokens/{id}"),
+        axum::routing::delete(revoke_access_token),
+    );
+    // Present so an authorized caller asking for a token value receives the
+    // specific `access_token_value_not_readable` refusal rather than a generic
+    // inventory refusal.
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/access-tokens/{id}/value"),
+        get(value_is_never_returned),
+    )
 }
 
 async fn list_access_tokens(
@@ -194,26 +208,33 @@ async fn create_access_token(
     .map_err(|error| ApiError::from_application(error.into()))?;
 
     let record = issued.record().clone();
-    let store = state.access_token_store()?;
-    store
-        .put(&context, &record)
-        .await
-        .map_err(ApiError::from_application)?;
-
-    // Recorded before the caller is told it succeeded. The event names the
-    // credential and never its value.
-    record_audit(
-        &state,
-        &context,
+    let audit = vestrace_domain::AuditEvent::new(
+        vestrace_domain::id::AuditEventId::new(),
+        context.workspace_id,
+        context.principal_id,
         "access_token.created",
+        "access_token",
         record.id.as_uuid(),
         serde_json::json!({
             "label": label,
             "principal_id": principal_id.as_uuid(),
             "expires_at": record.expires_at.map(|at| at.to_rfc3339()),
         }),
+        now(),
     )
-    .await?;
+    .map_err(|error| ApiError::from_application(error.into()))?;
+    let store = state.access_token_store_handle()?;
+    state
+        .access_token_mutation_repository()?
+        .commit(vestrace_application::GovernedMutation {
+            context: context.clone(),
+            audit,
+            idempotency: None,
+            outbox: Vec::new(),
+            apply: vestrace_application::AccessTokenMutation::new(store, record.clone()),
+        })
+        .await
+        .map_err(ApiError::from_application)?;
 
     Ok((
         StatusCode::CREATED,

@@ -15,3 +15,12 @@
 
 !migrations/
 !migrations/**
+
+# Compiled into the binary by include_str!/include_bytes! in
+# crates/vestrace-infrastructure/src/openai_q1.rs. Without these the release
+# build fails inside the container while succeeding on a full checkout.
+!schemas/
+!schemas/**
+!tests/
+!tests/fixtures/
+!tests/fixtures/**

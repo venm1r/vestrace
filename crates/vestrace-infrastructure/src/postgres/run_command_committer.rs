@@ -2,24 +2,31 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
-use vestrace_application::{ApplicationError, RequestContext, RunCommandCommitter, project_run};
+use vestrace_application::{
+    ApplicationError, ModelBindingResolver, RequestContext, RunCommandCommitter, project_run,
+};
 use vestrace_domain::{
     id::{AgentRunId, CorrelationId, OperationId, RunEventId, WorkspaceId},
     run::{
-        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunStatus, RunVersion, replay,
+        AgentRun, LegacyRunEvent, LegacyRunEventEnvelope, RunActor, RunState, RunStatus,
+        RunVersion, replay,
     },
 };
 
-use super::PgStore;
+use super::{PgModelBindingRepository, PgStore};
 
 #[derive(Clone, Debug)]
 pub struct PgRunCommandCommitter {
     store: PgStore,
+    model_binding_resolver: PgModelBindingRepository,
 }
 
 impl PgRunCommandCommitter {
     pub fn new(store: PgStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            model_binding_resolver: PgModelBindingRepository,
+        }
     }
 }
 
@@ -106,13 +113,19 @@ impl RunCommandCommitter for PgRunCommandCommitter {
 
         let existing_events = load_events(transaction.connection(), context, run_id).await?;
         validate_stream_head(&existing_events, actual_version)?;
-        if actual_version != RunVersion::ZERO {
-            replay(existing_events.clone())
-                .map_err(|error| {
-                    storage_corruption(&format!("stored run event replay failed: {error}"))
-                })?
-                .ok_or_else(|| storage_corruption("run stream head has no authoritative events"))?;
-        }
+        let prior_state = if actual_version != RunVersion::ZERO {
+            Some(
+                replay(existing_events.clone())
+                    .map_err(|error| {
+                        storage_corruption(&format!("stored run event replay failed: {error}"))
+                    })?
+                    .ok_or_else(|| {
+                        storage_corruption("run stream head has no authoritative events")
+                    })?,
+            )
+        } else {
+            None
+        };
 
         let mut complete_stream = existing_events;
         complete_stream.extend_from_slice(events);
@@ -142,11 +155,31 @@ impl RunCommandCommitter for PgRunCommandCommitter {
             projection.updated_at,
         )
         .await?;
+        if becomes_executable(prior_state.as_ref(), &resulting_state) {
+            // `lock_or_create_stream` established the canonical run identity before
+            // the stream CAS. Resolve immediately after that CAS and before
+            // projection materialization, so Created -> Preparing cannot commit an
+            // executable Run without its binding. Creation alone intentionally does
+            // not resolve a model.
+            self.model_binding_resolver
+                .resolve_for_run_in(context, &mut transaction, run_id)
+                .await?;
+        }
         upsert_projection(transaction.connection(), context.principal_id, projection).await?;
 
         transaction.commit().await.map_err(storage_error)?;
         Ok(projection.version)
     }
+}
+
+fn becomes_executable(prior_state: Option<&RunState>, resulting_state: &RunState) -> bool {
+    matches!(
+        (
+            prior_state.map(|state| state.status),
+            resulting_state.status
+        ),
+        (None, RunStatus::Preparing) | (Some(RunStatus::Created), RunStatus::Preparing)
+    )
 }
 
 fn validate_batch(

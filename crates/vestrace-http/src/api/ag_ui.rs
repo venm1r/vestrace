@@ -1,22 +1,9 @@
-//! The AG-UI gateway.
+//! AG-UI reads endpoints and streams safe run-event metadata.
 //!
-//! All three routes answered 501 while the console's chat component called
-//! them, so the chat window was dead. Each is now backed by something that
-//! already exists rather than by a second parallel mechanism:
-//!
-//! - `endpoints` reads the `ag_ui_endpoints` registry from migration 0110;
-//! - `run` issues the same canonical `RunCommand::Create` that `POST /v1/runs`
-//!   issues, so an instruction from the chat is an ordinary run with ordinary
-//!   history, authorization and recovery;
-//! - `events/stream` tails the run event log this workspace has already
-//!   written.
-//!
-//! # What this is not
-//!
-//! It is not a conversational agent. A message creates a run whose objective is
-//! that message; the reply a caller sees is the run's progress, not a chat
-//! turn. Saying otherwise in the shape of the API would invite callers to
-//! depend on a dialogue that does not exist.
+//! Its `POST /ag-ui/run` surface is deliberately closed: confidential agent
+//! input must first be accepted by the governed Run authority, which is not
+//! composed here. The route therefore returns `governed_run_input_required`
+//! and never invokes the run orchestrator.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -24,19 +11,18 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
-use vestrace_application::run::CreateRun;
-use vestrace_domain::{
-    id::{AgentRunId, AgentRuntimeSnapshotId},
-    run::RunExecutionMode,
-};
+use vestrace_domain::id::AgentRunId;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -93,10 +79,21 @@ pub struct StreamQuery {
 }
 
 pub fn ag_ui_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/endpoints", get(list_endpoints))
-        .route("/run", post(run_agent))
-        .route("/events/stream", get(event_stream))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/ag-ui/endpoints"),
+        get(list_endpoints),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/ag-ui/run"),
+        post(run_agent),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/ag-ui/events/stream"),
+        get(event_stream),
+    )
 }
 
 async fn list_endpoints(
@@ -125,49 +122,15 @@ async fn list_endpoints(
 }
 
 async fn run_agent(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<RunAgentRequest>,
-) -> Result<Json<RunAgentResponse>, ApiError> {
-    let context = request_context(&headers)?;
-    let objective = request.message.trim();
-    if objective.is_empty() {
-        return Err(ApiError::bad_request("message must not be blank"));
-    }
-
-    // The idempotency key is generated here because the console's fetch sets no
-    // request id. Resending the same message therefore creates a second run,
-    // which is the truthful behaviour given the caller supplied nothing to
-    // deduplicate on — inventing a key from the message text would silently
-    // swallow a deliberate repeat.
-    let result = state
-        .run_orchestrator()?
-        .create_run(
-            &context,
-            CreateRun {
-                objective: objective.to_string(),
-                coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
-                execution_mode: RunExecutionMode::Supervised,
-                parent: None,
-                // The console sets no correlation header, so the coordinator
-                // mints one rather than leaving the events uncorrelated.
-                correlation_id: None,
-                idempotency_key: uuid::Uuid::now_v7().to_string(),
-            },
-        )
-        .await
-        .map_err(ApiError::from_application)?;
-
-    Ok(Json(RunAgentResponse {
-        run_id: result.run.id.as_uuid(),
-        status: result.run.status.as_str().to_string(),
-        // Says what happened, not what the model replied — nothing has been
-        // generated at this point.
-        message: format!(
-            "created run {} from this instruction; watch the event stream for progress",
-            result.run.id.as_uuid()
-        ),
-    }))
+    Json(_request): Json<RunAgentRequest>,
+) -> Result<(), ApiError> {
+    let _context = request_context(&headers)?;
+    Err(ApiError::refused(
+        "governed_run_input_required",
+        "AG-UI run execution requires governed confidential input acceptance",
+    ))
 }
 
 async fn event_stream(

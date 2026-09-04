@@ -59,6 +59,11 @@ fn observation(point: EffectFaultPoint, status: EffectLifecycleStatus) -> FaultO
 /// Every observation this program can print must survive the reader.
 #[test]
 fn the_report_is_accepted_by_the_readers_shape() {
+    assert_eq!(
+        EffectFaultPoint::required_points().len(),
+        5,
+        "the external-effect output contract has exactly five points"
+    );
     for point in EffectFaultPoint::required_points() {
         for status in ALL_STATUSES {
             let rendered = report::render(&observation(point, status));
@@ -71,6 +76,16 @@ fn the_report_is_accepted_by_the_readers_shape() {
             assert!(!parsed.reconciliation_started);
             assert!(parsed.receipt_persisted);
         }
+    }
+}
+
+#[test]
+fn the_external_effect_report_refuses_intent_points() {
+    for point in EffectFaultPoint::intent_points() {
+        assert!(
+            std::panic::catch_unwind(|| report::point_name(point)).is_err(),
+            "{point:?} reached the external-effect report vocabulary"
+        );
     }
 }
 

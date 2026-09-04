@@ -248,3 +248,27 @@ async fn the_stored_classification_travels_with_the_revision(pool: PgPool) {
     assert_eq!(hydrated.len(), 1);
     assert_eq!(hydrated[0].classification.as_deref(), Some("restricted"));
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn malformed_stored_classification_fails_hydration_closed(pool: PgPool) {
+    let fixture = seed(&pool, Some("internal")).await;
+    sqlx::query("UPDATE memory_revisions SET classification = ' internal ' WHERE id = $1")
+        .bind(fixture.first.as_uuid())
+        .execute(&pool)
+        .await
+        .expect("corrupt stored classification");
+    let hydrator = PgRevisionHydrator::new(PgStore::from_pool(pool));
+
+    let error = hydrator
+        .hydrate(
+            &fixture.context,
+            &[RevisionRef {
+                memory_id: fixture.memory_id,
+                revision_id: fixture.first,
+            }],
+        )
+        .await
+        .expect_err("malformed classification must not reach policy admission");
+
+    assert!(error.to_string().contains("must be trimmed"), "{error}");
+}

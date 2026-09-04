@@ -99,6 +99,9 @@ pub struct RetrievalCandidate {
     pub memory_status: MemoryStatus,
     pub revision_number: u32,
     pub content: String,
+    /// Set only after the exact revision has crossed the hydration policy
+    /// boundary. Search adapters are finders, not classification authorities.
+    pub classification: Option<String>,
     pub valid_from: Option<Timestamp>,
     pub valid_until: Option<Timestamp>,
     pub revision_created_at: Timestamp,
@@ -177,6 +180,7 @@ pub struct ContextPack {
     pub degraded: bool,
     pub degraded_channels: Vec<String>,
     pub warnings: Vec<String>,
+    pub withheld: Vec<WithheldRevision>,
     pub conflict_warnings: Vec<ConflictWarning>,
     pub retrieval_policy_version: String,
     pub authorization_checked: bool,
@@ -264,11 +268,17 @@ impl ContextPack {
             degraded,
             degraded_channels,
             warnings,
+            withheld: Vec::new(),
             conflict_warnings,
             retrieval_policy_version,
             authorization_checked,
             created_at: at,
         })
+    }
+
+    pub fn with_withholding(mut self, withheld: Vec<WithheldRevision>) -> Self {
+        self.withheld = withheld;
+        self
     }
 
     /// Record that one or more channels degraded during retrieval.

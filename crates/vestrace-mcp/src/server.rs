@@ -3,8 +3,8 @@ use std::sync::Arc;
 use vestrace_application::{
     AgentRepository, ApplicationError, AuthorizationBoundary, DenyAllPolicyEngine,
     EvaluationRepository, ExecutionHistoryRepository, MemoryUseCases, ModelRepository,
-    RequestContext, RetrievalRequest, RetrievalService, SharedPolicyDecisionEngine,
-    SkillRepository, WorkflowRepository,
+    RequestContext, RetrievalRequest, RetrievalResult, RetrievalService,
+    SharedPolicyDecisionEngine, SkillRepository, WorkflowRepository,
 };
 use vestrace_domain::{
     AuthorizationRequest, Capability, PrincipalId, ResourceKind, ResourceScope, RiskCategory,
@@ -101,16 +101,7 @@ impl McpServer {
                 let result = self.retrieval_service.search(&ctx, request).await?;
 
                 Ok(McpToolResult {
-                    content: serde_json::json!({
-                        "candidates": result.candidates.iter().map(|c| {
-                            serde_json::json!({
-                                "memory_id": c.memory_id.as_uuid(),
-                                "score": c.score,
-                                "explanation": c.explanation,
-                            })
-                        }).collect::<Vec<_>>(),
-                        "degraded": result.degraded,
-                    }),
+                    content: retrieval_result_content(&result),
                     is_error: false,
                 })
             }
@@ -689,6 +680,23 @@ impl McpServer {
     }
 }
 
+fn retrieval_result_content(result: &RetrievalResult) -> serde_json::Value {
+    serde_json::json!({
+        "candidates": result.candidates.iter().map(|candidate| {
+            serde_json::json!({
+                "memory_id": candidate.memory_id.as_uuid(),
+                "revision_id": candidate.revision_id.as_uuid(),
+                "score": candidate.score,
+                "explanation": candidate.explanation,
+                "source_classification": candidate.classification,
+            })
+        }).collect::<Vec<_>>(),
+        "withheld": &result.withheld,
+        "retrieval_policy_version": &result.retrieval_policy_version,
+        "degraded": result.degraded,
+    })
+}
+
 fn mcp_authorization_request(
     tool: &str,
     arguments: &serde_json::Value,
@@ -824,6 +832,13 @@ mod tests {
             _: &RequestContext,
             _: vestrace_domain::id::MemoryId,
         ) -> Result<Option<vestrace_domain::Memory>, ApplicationError> {
+            Ok(None)
+        }
+        async fn find_revision(
+            &self,
+            _: &RequestContext,
+            _: vestrace_domain::id::MemoryRevisionId,
+        ) -> Result<Option<vestrace_domain::MemoryRevision>, ApplicationError> {
             Ok(None)
         }
     }
@@ -1072,6 +1087,67 @@ mod tests {
         assert_eq!(tools.len(), 11);
         assert_eq!(tools[0].name, "search_memories");
         assert_eq!(tools[1].name, "get_memory");
+    }
+
+    #[test]
+    fn retrieval_output_exposes_policy_classification_and_structured_withholding() {
+        let workspace_id = WorkspaceId::new();
+        let memory_id = vestrace_domain::id::MemoryId::new();
+        let revision_id = vestrace_domain::id::MemoryRevisionId::new();
+        let withheld_revision_id = vestrace_domain::id::MemoryRevisionId::new();
+        let result = RetrievalResult {
+            run_id: vestrace_domain::id::RetrievalRunId::new(),
+            workspace_id,
+            candidates: vec![vestrace_domain::RetrievalCandidate {
+                memory_id,
+                revision_id,
+                kind: vestrace_domain::MemoryKind::Fact,
+                memory_status: vestrace_domain::MemoryStatus::Active,
+                revision_number: 1,
+                content: "admitted".to_owned(),
+                classification: Some("internal".to_owned()),
+                valid_from: None,
+                valid_until: None,
+                revision_created_at: vestrace_domain::now(),
+                source_generation: 1,
+                score: 0.9,
+                channel_rank: 1,
+                channel: "fused".to_owned(),
+                explanation: "match".to_owned(),
+                conflict_ids: Vec::new(),
+            }],
+            withheld: vec![vestrace_domain::retrieval::WithheldRevision {
+                memory_id,
+                revision_id: withheld_revision_id,
+                reason:
+                    vestrace_domain::retrieval::WithholdingReason::ClassificationNotAdmissible {
+                        classification: "restricted".to_owned(),
+                    },
+            }],
+            retrieval_policy_version: "policy-v3".to_owned(),
+            degraded: false,
+            degraded_channels: Vec::new(),
+            warnings: Vec::new(),
+            normalized: NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
+                workspace_id,
+                "fact",
+            ))
+            .unwrap(),
+        };
+
+        let output = retrieval_result_content(&result);
+
+        assert_eq!(output["retrieval_policy_version"], "policy-v3");
+        assert_eq!(
+            output["candidates"][0]["revision_id"],
+            revision_id.to_string()
+        );
+        assert_eq!(output["candidates"][0]["source_classification"], "internal");
+        assert_eq!(
+            output["withheld"][0]["revision_id"],
+            withheld_revision_id.to_string()
+        );
+        assert!(!output.to_string().contains("admitted"));
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::{ApplicationError, RequestContext};
+use crate::{ApplicationError, RequestContext, UnitOfWork};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use vestrace_domain::{WorkspaceId, time::Timestamp};
@@ -25,6 +25,14 @@ pub trait IdempotencyRepository: Send + Sync {
     async fn save(
         &self,
         context: &RequestContext,
+        record: &IdempotencyRecord,
+    ) -> Result<(), ApplicationError>;
+
+    /// Persist a key inside a transaction the caller already owns.
+    async fn save_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
         record: &IdempotencyRecord,
     ) -> Result<(), ApplicationError>;
 }

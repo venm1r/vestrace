@@ -176,11 +176,38 @@ fn parse_fault_point(value: &str) -> Result<EffectFaultPoint, ApplicationError> 
             Ok(EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation)
         }
         "after_outcome_before_run_commit" => Ok(EffectFaultPoint::AfterOutcomeBeforeRunCommit),
+        "after_reserved" => Err(intent_fault_point_refusal(EffectFaultPoint::AfterReserved)),
+        "after_vault_create_before_receipt" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterVaultCreateBeforeReceipt,
+        )),
+        "after_receipt_before_prepared" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterReceiptBeforePrepared,
+        )),
+        "after_prepared_before_bound" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterPreparedBeforeBound,
+        )),
+        "after_bound_before_promotion" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterBoundBeforePromotion,
+        )),
+        "after_abort_before_witnessed_erase" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterAbortBeforeWitnessedErase,
+        )),
+        "after_erase_receipt_before_terminal_append" => Err(intent_fault_point_refusal(
+            EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend,
+        )),
         other => Err(vestrace_domain::DomainError::InvalidArgument(format!(
             "fault process returned unknown point {other:?}"
         ))
         .into()),
     }
+}
+
+fn intent_fault_point_refusal(point: EffectFaultPoint) -> ApplicationError {
+    vestrace_domain::DomainError::InvalidArgument(format!(
+        "intent fault point {} cannot be used by the external-effect runtime",
+        point.as_str()
+    ))
+    .into()
 }
 
 fn parse_effect_status(
@@ -204,15 +231,26 @@ fn parse_effect_status(
     }
 }
 
-fn fault_point_name(point: EffectFaultPoint) -> &'static str {
+fn fault_point_name(point: EffectFaultPoint) -> Result<&'static str, ApplicationError> {
     match point {
-        EffectFaultPoint::AfterIntentPersistence => "after_intent_persistence",
-        EffectFaultPoint::AfterAuthorizationBeforeDispatch => "after_authorization_before_dispatch",
-        EffectFaultPoint::AfterDispatchBeforeReceipt => "after_dispatch_before_receipt",
-        EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation => {
-            "after_receipt_before_outcome_confirmation"
+        EffectFaultPoint::AfterIntentPersistence => Ok("after_intent_persistence"),
+        EffectFaultPoint::AfterAuthorizationBeforeDispatch => {
+            Ok("after_authorization_before_dispatch")
         }
-        EffectFaultPoint::AfterOutcomeBeforeRunCommit => "after_outcome_before_run_commit",
+        EffectFaultPoint::AfterDispatchBeforeReceipt => Ok("after_dispatch_before_receipt"),
+        EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation => {
+            Ok("after_receipt_before_outcome_confirmation")
+        }
+        EffectFaultPoint::AfterOutcomeBeforeRunCommit => Ok("after_outcome_before_run_commit"),
+        EffectFaultPoint::AfterReserved
+        | EffectFaultPoint::AfterVaultCreateBeforeReceipt
+        | EffectFaultPoint::AfterReceiptBeforePrepared
+        | EffectFaultPoint::AfterPreparedBeforeBound
+        | EffectFaultPoint::AfterBoundBeforePromotion
+        | EffectFaultPoint::AfterAbortBeforeWitnessedErase
+        | EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend => {
+            Err(intent_fault_point_refusal(point))
+        }
     }
 }
 
@@ -254,6 +292,7 @@ async fn execute_fault_command(
     deadline: Duration,
     preserve_env: &[&str],
 ) -> Result<FaultObservation, ApplicationError> {
+    let point_name = fault_point_name(point)?;
     let mut command = Command::new(program);
     command.args(args).env_clear();
     for name in preserve_env {
@@ -263,7 +302,7 @@ async fn execute_fault_command(
     }
     let child = command
         .env("VESTRACE_FAULT_TARGET_DIGEST", target_digest)
-        .env("VESTRACE_FAULT_POINT", fault_point_name(point))
+        .env("VESTRACE_FAULT_POINT", point_name)
         .env(
             "VESTRACE_FAULT_ISOLATION",
             isolation_name(settings.environment()),
@@ -495,5 +534,53 @@ impl EffectFaultScenarioExecutor for ConfiguredEffectFaultScenarioExecutor {
             .into());
         }
         Ok(observation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn effect_runtime_refuses_every_intent_fault_point_before_launching_a_child() {
+        let settings = FaultInjectionSettings::new(
+            true,
+            "sha256:fault-runtime-test",
+            FaultInjectionEnvironment::Ephemeral,
+        )
+        .expect("the test settings are valid");
+        let runtime = ProcessFaultInjectionRuntime::new(
+            settings,
+            "not-a-real-fault-program",
+            std::iter::empty::<String>(),
+            Duration::from_secs(1),
+        )
+        .expect("a launchable runtime configuration is syntactically valid");
+
+        for point in EffectFaultPoint::intent_points() {
+            let error = runtime
+                .execute("sha256:fault-runtime-test", point)
+                .await
+                .expect_err("an intent point must not reach the external-effect runtime");
+            assert!(
+                error.to_string().contains("intent fault point"),
+                "{point:?} was not refused as an intent point: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn effect_runtime_rejects_intent_point_names_from_child_observations() {
+        for point in EffectFaultPoint::intent_points() {
+            let error = parse_fault_point(point.as_str())
+                .expect_err("an intent observation cannot be an external-effect observation");
+            assert!(
+                error.to_string().contains("intent fault point"),
+                "{} was not identified as an intent point: {error}",
+                point.as_str()
+            );
+        }
     }
 }

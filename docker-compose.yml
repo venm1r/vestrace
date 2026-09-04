@@ -6,6 +6,7 @@ services:
       POSTGRES_USER: vestrace_bootstrap
       POSTGRES_PASSWORD: bootstrap-local-development-only
       VESTRACE_RUNTIME_PASSWORD: runtime-local-development-only
+      VESTRACE_GUARDED_OWNER: vestrace_guarded_owner
       VESTRACE_RUNTIME_DATABASE_URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vestrace_bootstrap -d vestrace"]
@@ -17,6 +18,24 @@ services:
       - ./docker/postgres/init-runtime-role.sh:/docker-entrypoint-initdb.d/10-runtime-role.sh:ro
       - postgres-data:/var/lib/postgresql/data
 
+  vestrace-role-provision:
+    image: pgvector/pgvector:pg17-bookworm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: bootstrap-local-development-only
+      POSTGRES_DB: vestrace
+      POSTGRES_USER: vestrace_bootstrap
+      VESTRACE_RUNTIME_PASSWORD: runtime-local-development-only
+      VESTRACE_GUARDED_OWNER: vestrace_guarded_owner
+    volumes:
+      - ./docker/postgres/init-runtime-role.sh:/opt/vestrace/init-runtime-role.sh:ro
+    entrypoint: ["bash"]
+    command: ["/opt/vestrace/init-runtime-role.sh"]
+    restart: "no"
+
   vestrace-migrate:
     build:
       context: .
@@ -24,12 +43,35 @@ services:
       args:
         VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
     depends_on:
-      postgres:
-        condition: service_healthy
+      vestrace-role-provision:
+        condition: service_completed_successfully
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 5
     command: ["migrate"]
+    restart: "no"
+
+  vestrace-fingerprint-vault-init:
+    image: busybox:1.36.1
+    entrypoint:
+      - sh
+      - -ec
+      - mkdir -p /vault && chown 10001:10001 /vault && chmod 0700 /vault
+    volumes:
+      - installation-fingerprint-vault:/vault
+    restart: "no"
+
+  # Provider result/input DEK envelopes are process-owned, durable files. This
+  # initializer is intentionally separate from the read-only bootstrap mount:
+  # no bootstrap key is generated or embedded by Compose.
+  vestrace-provider-material-vault-init:
+    image: busybox:1.36.1
+    entrypoint:
+      - sh
+      - -ec
+      - mkdir -p /vault && chown 10001:10001 /vault && chmod 0700 /vault
+    volumes:
+      - provider-material-vault:/vault
     restart: "no"
 
   vestrace-server:
@@ -45,12 +87,26 @@ services:
         condition: service_healthy
       dev-seed:
         condition: service_completed_successfully
+      vestrace-fingerprint-vault-init:
+        condition: service_completed_successfully
+      vestrace-provider-material-vault-init:
+        condition: service_completed_successfully
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 10
       VESTRACE_HTTP__BIND: 0.0.0.0:8080
       VESTRACE_OBSERVABILITY__LOG_FILTER: info
       VESTRACE_OBSERVABILITY__FORMAT: text
+      VESTRACE_INSTALLATION_FINGERPRINT_VAULT_ROOT: /var/lib/vestrace/installation-fingerprint
+      VESTRACE_PROVIDER_EXECUTION__MATERIAL_VAULT_ROOT: /var/lib/vestrace/provider-material
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_SECRET_ROOT: /run/secrets/vestrace-provider-bootstrap
+      # Which key under the read-only bootstrap mount unwraps this
+      # installation's material vault. Only the identity is configured: the
+      # mount itself declares the key's scope, purpose and algorithm, so this
+      # cannot claim a key is something the store says it is not. Compose
+      # generates no key; startup refuses if the mount holds none by this name.
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_KEY_ID: material-vault-bootstrap
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_KEY_VERSION: v1
       # Every run/lease query is workspace-scoped; this is the workspace
       # dev-seed creates below.
       VESTRACE_WORKSPACES: 10000000-0000-0000-0000-000000000001
@@ -93,7 +149,7 @@ services:
       VESTRACE_AUTH__ADMIN_PRINCIPAL: 10000000-0000-0000-0000-000000000002
       # Master key for envelope-encrypted secret storage: 32 bytes, base64.
       #
-      # Local-file custody — anything that can read this process's environment
+      # Local-file custody вЂ” anything that can read this process's environment
       # can read the key, so it protects the database and nothing else. It does
       # not pass production crypto qualification, by design. A real deployment
       # replaces this with a KMS-backed adapter and must generate its own key
@@ -116,12 +172,28 @@ services:
       # This is a permissive local-development policy, not a recommended
       # deployment policy. A deployment should first narrow admitted labels and
       # unclassified input, then narrow the sensitivity and destination bounds.
+      # The model-call disclosure boundary. Task 11 made every one of these
+      # required: a default here would be this software deciding what a
+      # deployment may send to a provider, so a governed root that cannot read
+      # them refuses to start. The posture matches the embedding boundary
+      # declared below rather than inventing a second, different answer to the
+      # same disclosure question.
+      VESTRACE_POLICY__DATA__MODE: enforce
+      VESTRACE_POLICY__DATA__CLASSIFICATION: restricted
+      VESTRACE_POLICY__DATA__MAXIMUM_SENSITIVITY: restricted
+      VESTRACE_POLICY__DATA__ALLOWED_DESTINATIONS: remote_provider
       VESTRACE_POLICY__DATA__EMBEDDING__MODE: enforce
       VESTRACE_POLICY__DATA__EMBEDDING__ADMISSIBLE_LABELS: public,internal,confidential,restricted
       VESTRACE_POLICY__DATA__EMBEDDING__ALLOW_UNCLASSIFIED: "true"
       VESTRACE_POLICY__DATA__EMBEDDING__CLASSIFICATION: restricted
       VESTRACE_POLICY__DATA__EMBEDDING__MAXIMUM_SENSITIVITY: restricted
       VESTRACE_POLICY__DATA__EMBEDDING__ALLOWED_DESTINATIONS: remote_provider
+      # These labels are caller-stated on memory creation. Their order has no
+      # meaning, and this permissive local-development set is not a production
+      # classification policy.
+      VESTRACE_POLICY__DATA__MEMORY_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__RETRIEVAL__ADMISSIBLE_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__RETRIEVAL__ALLOW_UNCLASSIFIED: "true"
       VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
       VESTRACE_SECRETS__KEY_VERSION: local-dev-v1
       # An external effect adapter. The destination is configuration and never a
@@ -130,7 +202,7 @@ services:
       #
       # The read-back URL is not optional. An adapter that cannot be asked what
       # happened leaves an unknown outcome unknown forever, and the adapter
-      # contract refuses to let one claim reconciliation it cannot perform — so
+      # contract refuses to let one claim reconciliation it cannot perform вЂ” so
       # a webhook without it fails at startup rather than after the first
       # timeout.
       VESTRACE_EFFECTS__WEBHOOK__NAME: ${VESTRACE_EFFECT_NAME:-local-webhook}
@@ -138,6 +210,10 @@ services:
       VESTRACE_EFFECTS__WEBHOOK__READ_BACK_URL: ${VESTRACE_EFFECT_READ_BACK_URL:-http://host.docker.internal:18081/effects}
     ports:
       - "127.0.0.1:${VESTRACE_HTTP_PORT:-8080}:8080"
+    volumes:
+      - installation-fingerprint-vault:/var/lib/vestrace/installation-fingerprint
+      - provider-material-vault:/var/lib/vestrace/provider-material
+      - provider-bootstrap-secrets:/run/secrets/vestrace-provider-bootstrap:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 5s
@@ -161,11 +237,22 @@ services:
         condition: service_healthy
       dev-seed:
         condition: service_completed_successfully
+      vestrace-provider-material-vault-init:
+        condition: service_completed_successfully
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 5
       VESTRACE_OBSERVABILITY__LOG_FILTER: info
       VESTRACE_OBSERVABILITY__FORMAT: text
+      VESTRACE_PROVIDER_EXECUTION__MATERIAL_VAULT_ROOT: /var/lib/vestrace/provider-material
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_SECRET_ROOT: /run/secrets/vestrace-provider-bootstrap
+      # Which key under the read-only bootstrap mount unwraps this
+      # installation's material vault. Only the identity is configured: the
+      # mount itself declares the key's scope, purpose and algorithm, so this
+      # cannot claim a key is something the store says it is not. Compose
+      # generates no key; startup refuses if the mount holds none by this name.
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_KEY_ID: material-vault-bootstrap
+      VESTRACE_PROVIDER_EXECUTION__BOOTSTRAP_KEY_VERSION: v1
       # The worker polls the workspaces it is told to serve; without this it
       # would run but claim no run work.
       VESTRACE_WORKSPACES: 10000000-0000-0000-0000-000000000001
@@ -180,7 +267,7 @@ services:
       VESTRACE_POLICY__CAPABILITIES: execution.read,execution.write
       # Model execution for agent-assigned steps. Disabled by default: with it
       # off, such a step now *fails* rather than reporting success without
-      # having run — which is what the previous build did.
+      # having run вЂ” which is what the previous build did.
       #
       # To enable, set VESTRACE_MODEL__ENABLED=true and store the provider key
       # through the API, which encrypts it:
@@ -203,12 +290,18 @@ services:
       VESTRACE_POLICY__DATA__CLASSIFICATION: restricted
       VESTRACE_POLICY__DATA__MAXIMUM_SENSITIVITY: restricted
       VESTRACE_POLICY__DATA__ALLOWED_DESTINATIONS: remote_provider
+      # Keep the deployment identity aligned with the server. The worker does
+      # not create memories, but the vocabulary is still a policy field in the
+      # shared configuration fingerprint.
+      VESTRACE_POLICY__DATA__MEMORY_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__RETRIEVAL__ADMISSIBLE_LABELS: public,internal,confidential,restricted
+      VESTRACE_POLICY__DATA__RETRIEVAL__ALLOW_UNCLASSIFIED: "true"
       # The worker needs the same master key as the server to resolve that
       # secret. Same custody caveat as above.
       VESTRACE_SECRETS__MASTER_KEY: ${VESTRACE_MASTER_KEY:-dmVzdHJhY2UtbG9jYWwtZGV2ZWxvcG1lbnQta2V5MDE=}
       VESTRACE_SECRETS__KEY_VERSION: local-dev-v1
       # The worker drains the outbox, and embedding a written memory is what it
-      # drains `memory.created` and `memory.revised` into — so the embedding
+      # drains `memory.created` and `memory.revised` into вЂ” so the embedding
       # settings belong here, and must name the same space as the server. Two
       # processes writing different geometries into one space is exactly what
       # the space check refuses, and it refuses it here too.
@@ -239,6 +332,9 @@ services:
       VESTRACE_EFFECTS__WEBHOOK__READ_BACK_URL: ${VESTRACE_EFFECT_READ_BACK_URL:-http://host.docker.internal:18081/effects}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - provider-material-vault:/var/lib/vestrace/provider-material
+      - provider-bootstrap-secrets:/run/secrets/vestrace-provider-bootstrap:ro
     command: ["worker"]
 
   console:
@@ -271,4 +367,12 @@ services:
     restart: "no"
 
 volumes:
+  installation-fingerprint-vault:
+  provider-material-vault:
+  # Provision this externally with the exact mounted-secret-store layout.  It
+  # is never populated by Compose, so a development image cannot smuggle an
+  # embedded bootstrap key into production composition.
+  provider-bootstrap-secrets:
+    external: true
+    name: ${VESTRACE_PROVIDER_BOOTSTRAP_SECRET_VOLUME:-vestrace-provider-bootstrap-secrets}
   postgres-data:

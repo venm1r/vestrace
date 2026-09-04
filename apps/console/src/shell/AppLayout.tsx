@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import vestraceMark from '../assets/vestrace-mark.svg';
 import {
   describeIdentityProblem,
   getKernelReadiness,
@@ -14,9 +15,6 @@ interface AppLayoutProps {
 interface NavItem {
   label: string;
   path: string;
-  /** Material Symbols ligature. These match the reference screens: a different
-   *  glyph for the same destination is a different product to a returning
-   *  operator. */
   icon: string;
 }
 
@@ -56,38 +54,44 @@ const READINESS_PRESENTATION: Record<
   checking: {
     label: 'Checking kernel',
     color: 'var(--text-secondary)',
-    background: 'rgba(196, 198, 205, 0.15)',
+    background: 'rgba(169, 187, 205, 0.12)',
   },
   ready: {
     label: 'Kernel online',
     color: 'var(--color-success)',
-    background: 'rgba(0, 230, 118, 0.15)',
+    background: 'rgba(0, 230, 118, 0.1)',
   },
   degraded: {
     label: 'Kernel not ready',
     color: 'var(--color-warning)',
-    background: 'rgba(255, 184, 0, 0.15)',
+    background: 'rgba(255, 184, 0, 0.1)',
   },
   unreachable: {
     label: 'Kernel unreachable',
     color: 'var(--color-error)',
-    background: 'rgba(255, 77, 79, 0.15)',
+    background: 'rgba(255, 77, 79, 0.1)',
   },
 };
 
 const READINESS_POLL_MS = 30_000;
+const MOBILE_DRAWER_QUERY = '(max-width: 1023px)';
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
+  const location = useLocation();
   const navigate = useNavigate();
   const [readiness, setReadiness] = useState<KernelReadiness | 'checking'>('checking');
-  // Below md the sidebar leaves the flow and becomes a drawer. It starts
-  // closed, and the toggle is the only way back to navigation there.
   const [navOpen, setNavOpen] = useState(false);
+  const [isMobileDrawer, setIsMobileDrawer] = useState(
+    () => window.matchMedia(MOBILE_DRAWER_QUERY).matches,
+  );
+  const sidebarRef = useRef<HTMLElement>(null);
+  const drawerNavigationRef = useRef<HTMLElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
   const identityProblem = describeIdentityProblem(readRequestIdentity());
+  const isRunsWorkspace = /^\/runs(?:\/[^/]+)?\/?$/.test(location.pathname);
 
   useEffect(() => {
     let active = true;
-
     const check = () => {
       void getKernelReadiness().then((value) => {
         if (active) setReadiness(value);
@@ -103,18 +107,55 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     };
   }, []);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(MOBILE_DRAWER_QUERY);
+    const synchronizeDrawerMode = () => {
+      setIsMobileDrawer(mediaQuery.matches);
+      if (!mediaQuery.matches) setNavOpen(false);
+    };
+
+    synchronizeDrawerMode();
+    mediaQuery.addEventListener('change', synchronizeDrawerMode);
+    return () => mediaQuery.removeEventListener('change', synchronizeDrawerMode);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileDrawer || !navOpen) return;
+
+    drawerNavigationRef.current?.querySelector<HTMLAnchorElement>('a[href]')?.focus();
+  }, [isMobileDrawer, navOpen]);
+
+  useLayoutEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+
+    if (isMobileDrawer && !navOpen) {
+      sidebar.setAttribute('inert', '');
+    } else {
+      sidebar.removeAttribute('inert');
+    }
+  }, [isMobileDrawer, navOpen]);
+
+  const closeMobileNavigation = () => {
+    setNavOpen(false);
+    navToggleRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!isMobileDrawer || !navOpen) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMobileNavigation();
+    };
+
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [isMobileDrawer, navOpen]);
+
   const readinessPresentation = READINESS_PRESENTATION[readiness];
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        width: '100%',
-        height: '100%',
-        overflow: 'hidden',
-        backgroundColor: 'var(--color-surface)',
-      }}
-    >
+    <div className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -124,121 +165,40 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
           type="button"
           className="app-scrim"
           aria-label="Close navigation"
-          onClick={() => setNavOpen(false)}
+          onClick={closeMobileNavigation}
         />
       )}
 
       <aside
+        ref={sidebarRef}
         className="app-sidebar"
         data-open={navOpen ? 'true' : 'false'}
-        style={{
-          width: 'var(--layout-sidebar)',
-          // `surface-container`, a tone above the page background: the spec
-          // builds hierarchy from tonal layering, and the previous value
-          // (`surface-container-lowest`) sat *below* the page, flattening it.
-          backgroundColor: 'var(--color-surface-container)',
-          borderRight: '1px solid var(--color-outline-variant)',
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100%',
-          padding: 'var(--space-md) var(--space-sm)',
-          flexShrink: 0,
-        }}
+        aria-hidden={isMobileDrawer && !navOpen ? true : undefined}
       >
-        <div
-          style={{
-            padding: `0 var(--space-sm) var(--space-lg) var(--space-sm)`,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-sm)',
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: 'var(--radius-md)',
-              backgroundColor: 'var(--color-primary)',
-              color: 'var(--color-on-primary)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>
-              terminal
-            </span>
-          </span>
-          <div>
-            {/* Sentence case in Space Grotesk at the h3 step, coloured
-                `primary` — the reference wordmark. It was previously white
-                uppercase at 16px, which reads as a different product. */}
-            <div
-              className="type-h3"
-              style={{ color: 'var(--color-primary)', fontWeight: 700, letterSpacing: '-0.01em' }}
-            >
-              Vestrace
-            </div>
-            <div className="type-label" style={{ color: 'var(--color-on-surface-variant)' }}>
-              EXECUTION KERNEL
-            </div>
+        <div className="app-brand">
+          <img className="app-brand-mark" src={vestraceMark} alt="" />
+          <div className="app-brand-copy">
+            <div className="app-brand-wordmark">Vestrace</div>
+            <div className="app-brand-tagline">AI execution kernel</div>
           </div>
         </div>
 
-        <nav
-          aria-label="Primary"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-lg)',
-            flex: 1,
-            overflowY: 'auto',
-          }}
-        >
+        <nav ref={drawerNavigationRef} id="primary-navigation" className="app-primary-nav" aria-label="Primary">
           {NAV_GROUPS.map((group) => (
-            <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-              <div
-                className="type-label"
-                style={{
-                  textTransform: 'uppercase',
-                  color: 'var(--brand-muted)',
-                  padding: `0 var(--space-sm) var(--space-xs)`,
-                }}
-              >
-                {group.title}
-              </div>
+            <div key={group.title} className="app-nav-group">
+              <div className="app-nav-group-title">{group.title}</div>
               {group.items.map((item) => (
                 <NavLink
                   key={item.path}
                   to={item.path}
                   end={item.path === '/'}
-                  className="app-nav-link"
+                  className={({ isActive }) => `app-nav-link${isActive ? ' is-active' : ''}`}
                   title={item.label}
-                  // Selecting a destination closes the drawer; leaving it open
-                  // over the page the operator just asked for would hide it.
-                  onClick={() => setNavOpen(false)}
-                  style={({ isActive }) => ({
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'var(--space-sm)',
-                    padding: 'var(--space-sm) var(--space-md)',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: 'var(--text-body-size)',
-                    lineHeight: 'var(--text-body-line)',
-                    fontWeight: isActive ? 700 : 500,
-                    textDecoration: 'none',
-                    // The reference marks the active item with a right accent
-                    // and a tinted container, not a solid fill.
-                    color: isActive ? 'var(--color-primary)' : 'var(--color-on-surface-variant)',
-                    backgroundColor: isActive ? 'var(--color-primary-container)' : 'transparent',
-                    borderRight: isActive
-                      ? '2px solid var(--color-primary)'
-                      : '2px solid transparent',
-                  })}
+                  onClick={() => {
+                    if (isMobileDrawer) closeMobileNavigation();
+                  }}
                 >
-                  <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '20px' }}>
+                  <span className="material-symbols-outlined app-nav-icon" aria-hidden="true">
                     {item.icon}
                   </span>
                   <span>{item.label}</span>
@@ -249,163 +209,63 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         </nav>
       </aside>
 
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-        <header
-          style={{
-            minHeight: 'var(--layout-topbar)',
-            backgroundColor: 'var(--color-surface-container-low)',
-            borderBottom: '1px solid var(--color-outline-variant)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 'var(--space-md)',
-            padding: `0 var(--space-md)`,
-            flexShrink: 0,
-          }}
-        >
-          <span
-            className="type-body-sm"
-            style={{
-              color: 'var(--color-on-surface-variant)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-sm)',
-              minWidth: 0,
-            }}
-          >
+      <div className="app-shell-content">
+        <header className="app-topbar">
+          <div className="app-workspace-identity">
             <button
               type="button"
+              ref={navToggleRef}
               className="app-nav-toggle"
               aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
               aria-expanded={navOpen}
-              onClick={() => setNavOpen((open) => !open)}
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--color-outline-variant)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--color-on-surface)',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '36px',
-                height: '36px',
-                flexShrink: 0,
-              }}
+              aria-controls="primary-navigation"
+              onClick={() => (navOpen ? closeMobileNavigation() : setNavOpen(true))}
             >
-              <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '20px' }}>
+              <span className="material-symbols-outlined" aria-hidden="true">
                 {navOpen ? 'close' : 'menu'}
               </span>
             </button>
-            <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '18px' }}>
+            <span className="material-symbols-outlined app-workspace-icon" aria-hidden="true">
               grid_view
             </span>
-            {/* The word is dropped on a phone; the identifier beside it is the
-                part that carries information. */}
-            <span className="workspace-caption" style={{ whiteSpace: 'nowrap' }}>
-              Workspace:
-            </span>
-            <strong
-              className="type-label"
-              style={{
-                color: 'var(--brand-white)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
+            <span className="workspace-caption">Workspace:</span>
+            <strong className="app-workspace-id">
               {readRequestIdentity().workspaceId || 'not configured'}
             </strong>
-          </span>
+          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+          <div className="app-topbar-actions">
             <span
               role="status"
-              style={{
-                padding: '4px 10px',
-                background: readinessPresentation.background,
-                color: readinessPresentation.color,
-                borderRadius: '12px',
-                fontSize: '12px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                whiteSpace: 'nowrap',
-              }}
+              className="kernel-status"
+              style={{ color: readinessPresentation.color, background: readinessPresentation.background }}
             >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: readinessPresentation.color,
-                }}
-              />
+              <span aria-hidden="true" className="kernel-status-dot" />
               {readinessPresentation.label}
             </span>
-
             <button
               type="button"
+              className="app-icon-button"
               onClick={() => navigate('/profile')}
               aria-label="Open operator profile"
               title="Operator profile"
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--color-surface-container-high)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--color-outline)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
             >
-              <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '20px' }}>
+              <span className="material-symbols-outlined" aria-hidden="true">
                 person
               </span>
             </button>
           </div>
         </header>
 
-        <main
-          id="main-content"
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            // 24px is the spec's dashboard margin; a phone keeps the 16px
-            // gutter so content is not squeezed into the middle third.
-            padding: 'var(--space-md)',
-          }}
-        >
+        <main id="main-content" className={`app-main${isRunsWorkspace ? ' app-main--runs' : ''}`}>
           {identityProblem && (
-            <div
-              role="alert"
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '12px',
-                padding: '14px 16px',
-                marginBottom: '24px',
-                borderRadius: '8px',
-                border: '1px solid var(--color-warning)',
-                background: 'rgba(255, 184, 0, 0.08)',
-                fontSize: '14px',
-              }}
-            >
-              <span
-                className="material-symbols-outlined"
-                aria-hidden="true"
-                style={{ color: 'var(--color-warning)' }}
-              >
+            <div role="alert" className="identity-alert">
+              <span className="material-symbols-outlined" aria-hidden="true">
                 warning
               </span>
               <div>
-                <strong style={{ color: 'var(--text-primary)' }}>Request identity is not configured.</strong>
-                <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>{identityProblem}</div>
+                <strong>Request identity is not configured.</strong>
+                <div>{identityProblem}</div>
               </div>
             </div>
           )}

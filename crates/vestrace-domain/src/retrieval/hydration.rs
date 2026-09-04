@@ -119,7 +119,7 @@ pub struct HydratedRevision {
 }
 
 /// Why a referenced revision did not come back.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum WithholdingReason {
     /// The reference names nothing in this workspace.
@@ -133,7 +133,7 @@ pub enum WithholdingReason {
 }
 
 /// A reference that was not hydrated, and why. Carries no content.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WithheldRevision {
     pub memory_id: MemoryId,
     pub revision_id: MemoryRevisionId,

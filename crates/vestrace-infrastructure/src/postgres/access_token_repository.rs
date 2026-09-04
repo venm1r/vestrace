@@ -17,12 +17,12 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 use vestrace_application::{
     AccessTokenAuthenticator, AccessTokenStore, ApplicationError, AuthenticatedPrincipal,
-    RequestContext,
+    RequestContext, UnitOfWork,
 };
 use vestrace_domain::identity::AccessToken;
 use vestrace_domain::{AccessTokenId, PrincipalId, Timestamp, WorkspaceId};
 
-use super::PgStore;
+use super::{PgScopedTransaction, PgStore};
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
@@ -137,11 +137,37 @@ fn row_to_token(row: &sqlx::postgres::PgRow) -> AccessToken {
 const COLUMNS: &str = "id, workspace_id, principal_id, token_hash, label, created_at, \
                        expires_at, revoked_at, last_used_at";
 
+fn transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<PgScopedTransaction>()
+        .ok_or_else(|| ApplicationError::Internal("expected a PostgreSQL unit of work".to_owned()))
+}
+
 #[async_trait]
 impl AccessTokenStore for PgAccessTokenStore {
     async fn put(
         &self,
         context: &RequestContext,
+        token: &AccessToken,
+    ) -> Result<(), ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+
+        self.put_in(context, &mut scoped, token).await?;
+
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn put_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
         token: &AccessToken,
     ) -> Result<(), ApplicationError> {
         // Refused rather than silently accepted: a credential minted into
@@ -152,12 +178,6 @@ impl AccessTokenStore for PgAccessTokenStore {
                 "an access token cannot be created in another workspace".into(),
             ));
         }
-
-        let mut scoped = self
-            .store
-            .begin_scoped(context)
-            .await
-            .map_err(storage_error)?;
 
         sqlx::query(
             r#"
@@ -173,11 +193,11 @@ impl AccessTokenStore for PgAccessTokenStore {
         .bind(&token.label)
         .bind(token.created_at)
         .bind(token.expires_at)
-        .execute(scoped.connection())
+        .execute(transaction(unit_of_work)?.connection())
         .await
         .map_err(storage_error)?;
 
-        scoped.commit().await.map_err(storage_error)
+        Ok(())
     }
 
     async fn list(&self, context: &RequestContext) -> Result<Vec<AccessToken>, ApplicationError> {

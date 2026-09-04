@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::Row;
 use vestrace_application::{
-    ApplicationError, IdempotencyRecord, IdempotencyRepository, RequestContext,
+    ApplicationError, IdempotencyRecord, IdempotencyRepository, RequestContext, UnitOfWork,
 };
 use vestrace_domain::{WorkspaceId, time::Timestamp};
 
@@ -26,6 +26,15 @@ impl PgIdempotencyRepository {
 
 fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
+}
+
+fn transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut super::PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<super::PgScopedTransaction>()
+        .ok_or_else(|| ApplicationError::Internal("expected a PostgreSQL unit of work".to_owned()))
 }
 
 #[async_trait]
@@ -69,6 +78,23 @@ impl IdempotencyRepository for PgIdempotencyRepository {
             .await
             .map_err(storage_error)?;
 
+        self.save_in(context, &mut scoped, record).await?;
+
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn save_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        record: &IdempotencyRecord,
+    ) -> Result<(), ApplicationError> {
+        if record.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "an idempotency record cannot be saved into another workspace".into(),
+            ));
+        }
+
         sqlx::query(
             r#"
             INSERT INTO idempotency_keys (idempotency_key, workspace_id, request_hash, response_payload, status, created_at, expires_at)
@@ -83,11 +109,11 @@ impl IdempotencyRepository for PgIdempotencyRepository {
         .bind(&record.status)
         .bind(record.created_at)
         .bind(record.expires_at)
-        .execute(scoped.connection())
+        .execute(transaction(unit_of_work)?.connection())
         .await
-        .map_err(|e| ApplicationError::Conflict(e.to_string()))?;
+        .map_err(|error| ApplicationError::Conflict(error.to_string()))?;
 
-        scoped.commit().await.map_err(storage_error)
+        Ok(())
     }
 }
 

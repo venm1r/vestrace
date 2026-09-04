@@ -78,6 +78,8 @@ pub struct CreateMemoryRequest {
     pub importance: f32,
     pub source_event_id: Uuid,
     pub evidence_role: String,
+    #[serde(default)]
+    pub classification: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +87,7 @@ pub struct MemoryResponse {
     pub id: Uuid,
     pub kind: String,
     pub status: String,
+    pub classification: Option<String>,
     pub created_at: vestrace_domain::Timestamp,
     pub updated_at: vestrace_domain::Timestamp,
 }
@@ -114,6 +117,7 @@ pub async fn create_memory(
         source_event_id: EventId::from_uuid(request.source_event_id),
         evidence_role,
         policy: vestrace_domain::MemoryWritePolicy::Manual,
+        classification: request.classification,
         idempotency_key,
     };
 
@@ -125,7 +129,7 @@ pub async fn create_memory(
 
     Ok((
         axum::http::StatusCode::CREATED,
-        Json(memory_to_response(memory)),
+        Json(memory_response(&state, &context, memory).await?),
     ))
 }
 
@@ -149,6 +153,28 @@ pub struct ReviseMemoryRequest {
     /// which is what the service already writes.
     #[serde(default)]
     pub change_reason: Option<String>,
+    #[serde(default)]
+    classification: MemoryClassificationField,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum MemoryClassificationField {
+    #[default]
+    Omitted,
+    Clear,
+    Set(String),
+}
+
+impl<'de> Deserialize<'de> for MemoryClassificationField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match Option::<String>::deserialize(deserializer)? {
+            Some(label) => Self::Set(label),
+            None => Self::Clear,
+        })
+    }
 }
 
 pub async fn revise_memory(
@@ -182,6 +208,17 @@ pub async fn revise_memory(
         importance,
         source_event_id: EventId::from_uuid(request.source_event_id),
         change_reason: request.change_reason,
+        classification: match request.classification {
+            MemoryClassificationField::Omitted => {
+                vestrace_application::MemoryClassificationUpdate::Inherit
+            }
+            MemoryClassificationField::Clear => {
+                vestrace_application::MemoryClassificationUpdate::Clear
+            }
+            MemoryClassificationField::Set(label) => {
+                vestrace_application::MemoryClassificationUpdate::Set(label)
+            }
+        },
         idempotency_key,
     };
 
@@ -193,7 +230,7 @@ pub async fn revise_memory(
 
     Ok((
         axum::http::StatusCode::CREATED,
-        Json(memory_to_response(memory)),
+        Json(memory_response(&state, &context, memory).await?),
     ))
 }
 
@@ -214,7 +251,7 @@ pub async fn get_memory(
         .map_err(ApiError::from_application)?
         .ok_or_else(|| ApiError::not_found("memory"))?;
 
-    Ok(Json(memory_to_response(memory)))
+    Ok(Json(memory_response(&state, &context, memory).await?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,7 +319,48 @@ pub async fn purge_memory(
     }))
 }
 
-fn memory_to_response(memory: vestrace_domain::Memory) -> MemoryResponse {
+async fn memory_response(
+    state: &AppState,
+    context: &vestrace_application::RequestContext,
+    memory: vestrace_domain::Memory,
+) -> Result<MemoryResponse, ApiError> {
+    let Some(active_revision_id) = memory.active_revision_id else {
+        return memory_to_response(memory, None);
+    };
+    let revision = state
+        .memory_use_cases()
+        .find_revision(context, active_revision_id)
+        .await
+        .map_err(ApiError::from_application)?
+        .ok_or_else(|| {
+            ApiError::from_application(vestrace_application::ApplicationError::Internal(format!(
+                "memories.active_revision_id {active_revision_id} names no memory_revisions.id"
+            )))
+        })?;
+    memory_to_response(memory, Some(&revision))
+}
+
+fn memory_to_response(
+    memory: vestrace_domain::Memory,
+    revision: Option<&vestrace_domain::MemoryRevision>,
+) -> Result<MemoryResponse, ApiError> {
+    match (memory.active_revision_id, revision) {
+        (None, None) => {}
+        (Some(active_revision_id), Some(revision))
+            if active_revision_id == revision.id
+                && memory.id == revision.memory_id
+                && memory.workspace_id == revision.workspace_id => {}
+        (active_revision_id, revision) => {
+            return Err(ApiError::from_application(
+                vestrace_application::ApplicationError::Internal(format!(
+                    "memories.active_revision_id {active_revision_id:?} for memory {} does not \
+                     match memory_revisions.id {:?}",
+                    memory.id,
+                    revision.map(|revision| revision.id)
+                )),
+            ));
+        }
+    }
     let kind = match memory.kind {
         vestrace_domain::MemoryKind::Fact => "fact",
         vestrace_domain::MemoryKind::Preference => "preference",
@@ -302,13 +380,14 @@ fn memory_to_response(memory: vestrace_domain::Memory) -> MemoryResponse {
         vestrace_domain::MemoryStatus::Expired => "expired",
         vestrace_domain::MemoryStatus::Deleted => "deleted",
     };
-    MemoryResponse {
+    Ok(MemoryResponse {
         id: memory.id.as_uuid(),
         kind: kind.to_owned(),
         status: status.to_owned(),
+        classification: revision.and_then(|revision| revision.classification.clone()),
         created_at: memory.created_at,
         updated_at: memory.updated_at,
-    }
+    })
 }
 
 fn parse_memory_kind(value: &str) -> Result<vestrace_domain::MemoryKind, ApiError> {
@@ -398,4 +477,83 @@ fn required_string_header(headers: &HeaderMap, name: &'static str) -> Result<Str
         .to_str()
         .map_err(|_| ApiError::bad_request(format!("{name} header must be valid UTF-8")))?;
     Ok(value.to_owned())
+}
+
+#[cfg(test)]
+mod classification_http_tests {
+    use super::{MemoryClassificationField, ReviseMemoryRequest, memory_to_response};
+    use vestrace_domain::{
+        Confidence, Importance, Memory, MemoryKind, MemoryRevision,
+        id::{MemoryId, MemoryRevisionId, WorkspaceId},
+        now,
+    };
+
+    #[test]
+    fn revision_json_distinguishes_omitted_null_and_a_label() {
+        let body = |classification: Option<&str>| {
+            let mut value = serde_json::json!({
+                "content": "correction",
+                "confidence": 0.9,
+                "importance": 0.7,
+                "source_event_id": "10000000-0000-0000-0000-000000000001"
+            });
+            if let Some(classification) = classification {
+                value["classification"] = serde_json::from_str(classification).unwrap();
+            }
+            serde_json::from_value::<ReviseMemoryRequest>(value).unwrap()
+        };
+
+        assert_eq!(
+            body(None).classification,
+            MemoryClassificationField::Omitted
+        );
+        assert_eq!(
+            body(Some("null")).classification,
+            MemoryClassificationField::Clear
+        );
+        assert_eq!(
+            body(Some("\"internal\"")).classification,
+            MemoryClassificationField::Set("internal".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_memory_response_exposes_the_exact_revision_classification() {
+        let at = now();
+        let memory_id = MemoryId::new();
+        let workspace_id = WorkspaceId::new();
+        let revision = MemoryRevision {
+            id: MemoryRevisionId::new(),
+            memory_id,
+            workspace_id,
+            revision_number: 1,
+            content: "labelled".to_owned(),
+            structured: None,
+            confidence: Confidence::new(0.9).unwrap(),
+            importance: Importance::new(0.7).unwrap(),
+            created_at: at,
+            valid_from: None,
+            valid_until: None,
+            change_reason: None,
+            canonical_hash: None,
+            classification: Some("internal".to_owned()),
+        };
+        let memory = Memory::new(memory_id, workspace_id, MemoryKind::Fact, at)
+            .activate(&revision, at)
+            .unwrap();
+
+        let response = memory_to_response(memory, Some(&revision)).unwrap();
+
+        assert_eq!(response.classification.as_deref(), Some("internal"));
+    }
+
+    #[test]
+    fn a_memory_without_an_active_revision_returns_a_null_classification() {
+        let at = now();
+        let memory = Memory::new(MemoryId::new(), WorkspaceId::new(), MemoryKind::Fact, at);
+
+        let response = memory_to_response(memory, None).unwrap();
+
+        assert_eq!(response.classification, None);
+    }
 }

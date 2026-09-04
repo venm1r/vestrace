@@ -32,6 +32,8 @@ const TARGET_PRINCIPAL: &str = "70000000-0000-0000-0000-000000000004";
 const SOURCE_MEMORY: &str = "70000000-0000-0000-0000-000000000005";
 const SOURCE_REVISION_1: &str = "70000000-0000-0000-0000-000000000006";
 const SOURCE_REVISION_2: &str = "70000000-0000-0000-0000-000000000007";
+const SOURCE_EVENT: &str = "70000000-0000-0000-0000-000000000008";
+const SOURCE_LINK: &str = "70000000-0000-0000-0000-000000000009";
 
 #[derive(Clone)]
 struct FixedClock(Timestamp);
@@ -122,6 +124,7 @@ fn sharing_fixture(
 }
 
 async fn seed_shared_revisions(pool: &sqlx::PgPool) {
+    let mut transaction = pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO workspaces (id, slug) VALUES
          ($1, 'idw014-source'), ($2, 'idw014-target'), ($3, 'idw014-wrong-source')",
@@ -129,7 +132,7 @@ async fn seed_shared_revisions(pool: &sqlx::PgPool) {
     .bind(parse_uuid(SOURCE_WORKSPACE))
     .bind(parse_uuid(TARGET_WORKSPACE))
     .bind(parse_uuid(WRONG_SOURCE_WORKSPACE))
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .unwrap();
     sqlx::query(
@@ -137,7 +140,16 @@ async fn seed_shared_revisions(pool: &sqlx::PgPool) {
     )
     .bind(parse_uuid(TARGET_PRINCIPAL))
     .bind(parse_uuid(TARGET_WORKSPACE))
-    .execute(pool)
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO events (id, workspace_id, event_type, actor)
+         VALUES ($1, $2, 'idw014-source', '{}'::jsonb)",
+    )
+    .bind(parse_uuid(SOURCE_EVENT))
+    .bind(parse_uuid(SOURCE_WORKSPACE))
+    .execute(&mut *transaction)
     .await
     .unwrap();
     sqlx::query(
@@ -145,7 +157,7 @@ async fn seed_shared_revisions(pool: &sqlx::PgPool) {
     )
     .bind(parse_uuid(SOURCE_MEMORY))
     .bind(parse_uuid(SOURCE_WORKSPACE))
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .unwrap();
     sqlx::query(
@@ -159,9 +171,22 @@ async fn seed_shared_revisions(pool: &sqlx::PgPool) {
     .bind(parse_uuid(SOURCE_REVISION_2))
     .bind(parse_uuid(SOURCE_MEMORY))
     .bind(parse_uuid(SOURCE_WORKSPACE))
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO memory_sources
+           (id, memory_id, workspace_id, event_id, role)
+         VALUES ($1, $2, $3, $4, 'primary')",
+    )
+    .bind(parse_uuid(SOURCE_LINK))
+    .bind(parse_uuid(SOURCE_MEMORY))
+    .bind(parse_uuid(SOURCE_WORKSPACE))
+    .bind(parse_uuid(SOURCE_EVENT))
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
 }
 
 async fn snapshot_class(pool: &sqlx::PgPool) -> ClassSnapshot {

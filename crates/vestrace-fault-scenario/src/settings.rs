@@ -1,5 +1,35 @@
 use vestrace_domain::external_effects::EffectFaultPoint;
 
+/// Which lifecycle one invocation crashes.
+///
+/// The external-effect scenario is the default precisely because it predates
+/// the others: every existing invocation omits `--scenario`, and none of them
+/// may change meaning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scenario {
+    ExternalEffect,
+    MaterialIntent,
+    CredentialIntent,
+}
+
+impl Scenario {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "external_effect" => Ok(Self::ExternalEffect),
+            "material_intent_crash" => Ok(Self::MaterialIntent),
+            "credential_intent_crash" => Ok(Self::CredentialIntent),
+            other => Err(format!("unknown scenario '{other}'")),
+        }
+    }
+}
+
+/// The boundary this invocation crashes at, in the vocabulary of its scenario.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScenarioPoint {
+    Effect(EffectFaultPoint),
+    Intent(EffectFaultPoint),
+}
+
 /// What one invocation was asked to do, and whether it is allowed to.
 ///
 /// The invoking contract clears the environment and passes only the three
@@ -7,7 +37,8 @@ use vestrace_domain::external_effects::EffectFaultPoint;
 /// arguments — and the database URL cannot, because argv is readable by any
 /// process on the host. It arrives as a path to a file instead.
 pub struct ScenarioSettings {
-    point: EffectFaultPoint,
+    scenario: Scenario,
+    point: ScenarioPoint,
     database_url: String,
     is_child: bool,
 }
@@ -19,6 +50,7 @@ impl std::fmt::Debug for ScenarioSettings {
         // and is never rendered.
         formatter
             .debug_struct("ScenarioSettings")
+            .field("scenario", &self.scenario)
             .field("point", &self.point)
             .field("database_url", &"[REDACTED]")
             .field("is_child", &self.is_child)
@@ -40,27 +72,34 @@ impl ScenarioSettings {
             ));
         }
 
-        let requested = env("VESTRACE_FAULT_POINT").unwrap_or_default();
-        let point = match requested.as_str() {
-            "after_intent_persistence" => EffectFaultPoint::AfterIntentPersistence,
-            "after_authorization_before_dispatch" => {
-                EffectFaultPoint::AfterAuthorizationBeforeDispatch
-            }
-            "after_dispatch_before_receipt" => EffectFaultPoint::AfterDispatchBeforeReceipt,
-            "after_receipt_before_outcome_confirmation" => {
-                EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation
-            }
-            "after_outcome_before_run_commit" => EffectFaultPoint::AfterOutcomeBeforeRunCommit,
-            other => return Err(format!("unknown fault point '{other}'")),
-        };
-
         let mut url_file = None;
+        let mut requested_scenario = None;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             if arg == "--database-url-file" {
                 url_file = args.next();
+            } else if arg == "--scenario" {
+                requested_scenario = args.next();
             }
         }
+
+        // An invocation that names no scenario is an external-effect invocation.
+        // Every caller written before this argument existed relies on that.
+        let scenario = match requested_scenario {
+            Some(value) => Scenario::parse(&value)?,
+            None => Scenario::ExternalEffect,
+        };
+
+        let requested = env("VESTRACE_FAULT_POINT").unwrap_or_default();
+        let point = match scenario {
+            Scenario::ExternalEffect => {
+                ScenarioPoint::Effect(parse_external_effect_point(&requested)?)
+            }
+            Scenario::MaterialIntent | Scenario::CredentialIntent => {
+                ScenarioPoint::Intent(parse_intent_point(&requested)?)
+            }
+        };
+
         let url_file = url_file
             .ok_or_else(|| "database url file is required: pass --database-url-file".to_owned())?;
         let database_url = std::fs::read_to_string(&url_file)
@@ -72,14 +111,41 @@ impl ScenarioSettings {
         }
 
         Ok(Self {
+            scenario,
             point,
             database_url,
             is_child: env("VESTRACE_FAULT_CHILD").is_some(),
         })
     }
 
+    pub fn scenario(&self) -> Scenario {
+        self.scenario
+    }
+
+    /// The external-effect boundary.
+    ///
+    /// Defined only for [`Scenario::ExternalEffect`]. `main` dispatches on the
+    /// scenario before any external-effect code runs, so the other arms cannot
+    /// reach this; it panics rather than inventing a boundary that the parent
+    /// would then report as observed.
     pub fn point(&self) -> EffectFaultPoint {
-        self.point
+        match self.point {
+            ScenarioPoint::Effect(point) => point,
+            ScenarioPoint::Intent(point) => panic!(
+                "point() is defined only for the external-effect scenario, but this \
+                 invocation is {:?} at {}",
+                self.scenario,
+                point.as_str()
+            ),
+        }
+    }
+
+    /// The key-intent boundary, or `None` for an external-effect invocation.
+    pub fn intent_point(&self) -> Option<EffectFaultPoint> {
+        match self.point {
+            ScenarioPoint::Intent(point) => Some(point),
+            ScenarioPoint::Effect(_) => None,
+        }
     }
 
     pub fn database_url(&self) -> &str {
@@ -88,5 +154,141 @@ impl ScenarioSettings {
 
     pub fn is_child(&self) -> bool {
         self.is_child
+    }
+}
+
+fn parse_external_effect_point(value: &str) -> Result<EffectFaultPoint, String> {
+    match value {
+        "after_intent_persistence" => Ok(EffectFaultPoint::AfterIntentPersistence),
+        "after_authorization_before_dispatch" => {
+            Ok(EffectFaultPoint::AfterAuthorizationBeforeDispatch)
+        }
+        "after_dispatch_before_receipt" => Ok(EffectFaultPoint::AfterDispatchBeforeReceipt),
+        "after_receipt_before_outcome_confirmation" => {
+            Ok(EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation)
+        }
+        "after_outcome_before_run_commit" => Ok(EffectFaultPoint::AfterOutcomeBeforeRunCommit),
+        "after_reserved"
+        | "after_vault_create_before_receipt"
+        | "after_receipt_before_prepared"
+        | "after_prepared_before_bound"
+        | "after_bound_before_promotion"
+        | "after_abort_before_witnessed_erase"
+        | "after_erase_receipt_before_terminal_append" => {
+            Err(format!("unknown fault point '{value}'"))
+        }
+        other => Err(format!("unknown fault point '{other}'")),
+    }
+}
+
+fn parse_intent_point(value: &str) -> Result<EffectFaultPoint, String> {
+    EffectFaultPoint::intent_points()
+        .into_iter()
+        .find(|point| point.as_str() == value)
+        .ok_or_else(|| format!("unknown fault point '{value}'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url_file() -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("vestrace-fault-url-{}", std::process::id()));
+        std::fs::write(&path, "postgres://localhost/ephemeral").unwrap();
+        path
+    }
+
+    fn settings_for(scenario: Option<&str>, point: &str) -> Result<ScenarioSettings, String> {
+        let path = url_file();
+        let mut args = vec!["--database-url-file".to_owned(), path.display().to_string()];
+        if let Some(scenario) = scenario {
+            args.push("--scenario".to_owned());
+            args.push(scenario.to_owned());
+        }
+        ScenarioSettings::from_env_and_args(args.into_iter(), &|name| match name {
+            "VESTRACE_FAULT_ISOLATION" => Some("ephemeral".to_owned()),
+            "VESTRACE_FAULT_POINT" => Some(point.to_owned()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn an_invocation_without_a_scenario_is_still_an_external_effect_invocation() {
+        let settings = settings_for(None, "after_dispatch_before_receipt").unwrap();
+        assert_eq!(settings.scenario(), Scenario::ExternalEffect);
+        assert_eq!(
+            settings.point(),
+            EffectFaultPoint::AfterDispatchBeforeReceipt
+        );
+        assert_eq!(settings.intent_point(), None);
+    }
+
+    #[test]
+    fn an_intent_scenario_parses_its_own_boundary_vocabulary() {
+        let settings = settings_for(
+            Some("material_intent_crash"),
+            "after_vault_create_before_receipt",
+        )
+        .unwrap();
+        assert_eq!(settings.scenario(), Scenario::MaterialIntent);
+        assert_eq!(
+            settings.intent_point(),
+            Some(EffectFaultPoint::AfterVaultCreateBeforeReceipt)
+        );
+    }
+
+    #[test]
+    fn an_effect_boundary_is_not_accepted_by_an_intent_scenario() {
+        let error = settings_for(
+            Some("material_intent_crash"),
+            "after_dispatch_before_receipt",
+        )
+        .expect_err("an effect boundary must not name an intent boundary");
+        assert!(error.contains("unknown fault point"), "{error}");
+    }
+
+    #[test]
+    fn an_intent_boundary_is_not_accepted_by_the_effect_scenario() {
+        let error = settings_for(None, "after_reserved")
+            .expect_err("an intent boundary must not name an effect boundary");
+        assert!(error.contains("unknown fault point"), "{error}");
+    }
+
+    #[test]
+    fn the_ephemeral_isolation_guard_still_refuses_every_scenario() {
+        let path = url_file();
+        for scenario in ["material_intent_crash", "credential_intent_crash"] {
+            let args = vec![
+                "--database-url-file".to_owned(),
+                path.display().to_string(),
+                "--scenario".to_owned(),
+                scenario.to_owned(),
+            ];
+            let error = ScenarioSettings::from_env_and_args(args.into_iter(), &|name| match name {
+                "VESTRACE_FAULT_ISOLATION" => Some("shared".to_owned()),
+                "VESTRACE_FAULT_POINT" => Some("after_reserved".to_owned()),
+                _ => None,
+            })
+            .expect_err("a non-ephemeral isolation must be refused for every scenario");
+            assert!(error.contains("refusing to run"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_database_url_file_is_required_by_every_scenario() {
+        let error = ScenarioSettings::from_env_and_args(
+            [
+                "--scenario".to_owned(),
+                "credential_intent_crash".to_owned(),
+            ]
+            .into_iter(),
+            &|name| match name {
+                "VESTRACE_FAULT_ISOLATION" => Some("ephemeral".to_owned()),
+                "VESTRACE_FAULT_POINT" => Some("after_reserved".to_owned()),
+                _ => None,
+            },
+        )
+        .expect_err("an intent scenario must still require --database-url-file");
+        assert!(error.contains("database url file is required"), "{error}");
     }
 }

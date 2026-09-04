@@ -13,7 +13,8 @@ use crate::{
 use chrono::Duration;
 use sha2::{Digest, Sha256};
 use vestrace_domain::{
-    DomainError, Event, KnowledgeRelation, Memory, MemoryRevision, MemorySource, now,
+    DomainError, Event, KnowledgeRelation, Memory, MemoryLabelVocabulary, MemoryRevision,
+    MemorySource, now,
 };
 
 pub struct MemoryService<E, M, P, R, O, I> {
@@ -23,6 +24,7 @@ pub struct MemoryService<E, M, P, R, O, I> {
     relation_repo: R,
     outbox_repo: O,
     idempotency_repo: I,
+    memory_labels: MemoryLabelVocabulary,
 }
 
 impl<E, M, P, R, O, I> MemoryService<E, M, P, R, O, I>
@@ -41,6 +43,7 @@ where
         relation_repo: R,
         outbox_repo: O,
         idempotency_repo: I,
+        memory_labels: MemoryLabelVocabulary,
     ) -> Self {
         Self {
             event_repo,
@@ -49,6 +52,7 @@ where
             relation_repo,
             outbox_repo,
             idempotency_repo,
+            memory_labels,
         }
     }
 
@@ -64,6 +68,21 @@ where
             }
         }
         Ok(memory)
+    }
+
+    pub async fn find_revision(
+        &self,
+        ctx: &RequestContext,
+        id: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<MemoryRevision>, ApplicationError> {
+        let revision = self.memory_repo.find_revision_by_id(ctx, id).await?;
+        if revision
+            .as_ref()
+            .is_some_and(|revision| revision.workspace_id != ctx.workspace_id)
+        {
+            return Ok(None);
+        }
+        Ok(revision)
     }
 
     pub async fn record_event(
@@ -141,6 +160,9 @@ where
             return serde_json::from_value(cached).map_err(internal_error);
         }
 
+        let classification = self
+            .memory_labels
+            .validate_creation(cmd.classification.as_deref())?;
         let at = now();
         let memory = Memory::new(cmd.memory_id, ctx.workspace_id, cmd.kind, at);
 
@@ -159,7 +181,7 @@ where
             valid_until: None,
             change_reason: None,
             canonical_hash: None,
-            classification: None,
+            classification,
         };
 
         let memory = memory.activate(&revision, at)?;
@@ -306,6 +328,11 @@ where
             }));
         }
 
+        let classification = resolve_revision_classification(
+            current_revision.classification.as_deref(),
+            &cmd.classification,
+        )?;
+
         let at = now();
         let new_rev_id = vestrace_domain::id::MemoryRevisionId::new();
         let new_revision = MemoryRevision {
@@ -325,7 +352,7 @@ where
                     .unwrap_or_else(|| "content update".to_owned()),
             ),
             canonical_hash: None,
-            classification: None,
+            classification,
         };
 
         let memory = memory.activate(&new_revision, at)?;
@@ -428,6 +455,80 @@ fn internal_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Internal(error.to_string())
 }
 
+fn resolve_revision_classification(
+    current: Option<&str>,
+    requested: &crate::memory::MemoryClassificationUpdate,
+) -> Result<Option<String>, ApplicationError> {
+    match requested {
+        crate::memory::MemoryClassificationUpdate::Inherit => Ok(current.map(str::to_owned)),
+        crate::memory::MemoryClassificationUpdate::Set(label)
+            if current.is_some_and(|current| current == label.trim()) =>
+        {
+            Ok(current.map(str::to_owned))
+        }
+        crate::memory::MemoryClassificationUpdate::Set(_)
+        | crate::memory::MemoryClassificationUpdate::Clear => {
+            Err(ApplicationError::from(DomainError::PolicyViolation(
+                "memory_revisions.classification change was refused because no label transition \
+                 mechanism exists"
+                    .into(),
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod revision_classification_tests {
+    use super::resolve_revision_classification;
+    use crate::memory::MemoryClassificationUpdate;
+
+    #[test]
+    fn an_omitted_revision_classification_inherits_the_label() {
+        assert_eq!(
+            resolve_revision_classification(Some("internal"), &MemoryClassificationUpdate::Inherit)
+                .unwrap(),
+            Some("internal".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_identical_trimmed_label_is_accepted() {
+        assert_eq!(
+            resolve_revision_classification(
+                Some("internal"),
+                &MemoryClassificationUpdate::Set(" internal ".to_owned())
+            )
+            .unwrap(),
+            Some("internal".to_owned())
+        );
+    }
+
+    #[test]
+    fn every_label_change_says_no_transition_mechanism_exists() {
+        for (current, requested) in [
+            (
+                Some("internal"),
+                MemoryClassificationUpdate::Set("restricted".to_owned()),
+            ),
+            (None, MemoryClassificationUpdate::Set("internal".to_owned())),
+            (Some("internal"), MemoryClassificationUpdate::Clear),
+        ] {
+            let message = resolve_revision_classification(current, &requested)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                message.contains("no label transition mechanism exists"),
+                "{message}"
+            );
+            assert!(
+                message.contains("memory_revisions.classification"),
+                "{message}"
+            );
+            assert!(!message.contains("DeclassificationDecision"), "{message}");
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl<E, M, P, R, O, I> crate::memory::MemoryUseCases for MemoryService<E, M, P, R, O, I>
 where
@@ -477,12 +578,23 @@ where
     ) -> Result<Option<Memory>, ApplicationError> {
         self.find_memory(ctx, id).await
     }
+
+    async fn find_revision(
+        &self,
+        ctx: &RequestContext,
+        id: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<MemoryRevision>, ApplicationError> {
+        self.find_revision(ctx, id).await
+    }
 }
 
 #[cfg(test)]
 mod idempotency_hash_tests {
     use super::compute_hash;
-    use crate::memory::{IdempotentRequest, RecordEventCommand, RememberMemoryCommand};
+    use crate::memory::{
+        IdempotentRequest, MemoryClassificationUpdate, RecordEventCommand, RememberMemoryCommand,
+        ReviseMemoryCommand,
+    };
     use vestrace_domain::{
         ActorRef, Confidence, EvidenceRole, Importance, MemoryKind, MemoryWritePolicy,
         id::{EventId, MemoryId},
@@ -549,6 +661,7 @@ mod idempotency_hash_tests {
             source_event_id: EventId::new(),
             evidence_role: EvidenceRole::DirectSource,
             policy: MemoryWritePolicy::Manual,
+            classification: Some("internal".to_owned()),
             idempotency_key: "key-1".to_owned(),
         };
 
@@ -569,5 +682,57 @@ mod idempotency_hash_tests {
         // the only place the decision lives.
         assert!(first.fingerprint().get("memory_id").is_none());
         assert!(first.fingerprint().get("content").is_some());
+    }
+
+    #[test]
+    fn memory_write_fingerprints_include_the_stated_classification() {
+        let base = RememberMemoryCommand {
+            memory_id: MemoryId::new(),
+            kind: MemoryKind::Fact,
+            content: "a fact".to_owned(),
+            structured: None,
+            confidence: Confidence::new(0.9).unwrap(),
+            importance: Importance::new(0.7).unwrap(),
+            source_event_id: EventId::new(),
+            evidence_role: EvidenceRole::DirectSource,
+            policy: MemoryWritePolicy::Manual,
+            classification: Some("internal".to_owned()),
+            idempotency_key: "key-1".to_owned(),
+        };
+        let changed = RememberMemoryCommand {
+            classification: Some("restricted".to_owned()),
+            ..base.clone()
+        };
+
+        assert_ne!(compute_hash(&base), compute_hash(&changed));
+        assert_eq!(base.fingerprint()["classification"], "internal");
+    }
+
+    #[test]
+    fn revision_fingerprints_distinguish_inherit_clear_and_a_stated_label() {
+        let base = ReviseMemoryCommand {
+            memory_id: MemoryId::new(),
+            expected_revision: 1,
+            content: "a correction".to_owned(),
+            structured: None,
+            confidence: Confidence::new(0.9).unwrap(),
+            importance: Importance::new(0.7).unwrap(),
+            source_event_id: EventId::new(),
+            change_reason: None,
+            classification: MemoryClassificationUpdate::Inherit,
+            idempotency_key: "key-1".to_owned(),
+        };
+        let clear = ReviseMemoryCommand {
+            classification: MemoryClassificationUpdate::Clear,
+            ..base.clone()
+        };
+        let stated = ReviseMemoryCommand {
+            classification: MemoryClassificationUpdate::Set("internal".to_owned()),
+            ..base.clone()
+        };
+
+        assert_ne!(compute_hash(&base), compute_hash(&clear));
+        assert_ne!(compute_hash(&base), compute_hash(&stated));
+        assert_ne!(compute_hash(&clear), compute_hash(&stated));
     }
 }

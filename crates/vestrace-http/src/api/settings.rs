@@ -1,13 +1,16 @@
 use axum::{
     Json,
     extract::State,
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     routing::{get, put},
 };
 use serde::{Deserialize, Serialize};
 use vestrace_domain::{LogLevel, WorkspaceSettings};
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -47,9 +50,16 @@ pub struct UpdateSettingsRequest {
 }
 
 pub fn settings_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/settings", get(get_settings))
-        .route("/settings", put(update_settings))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/settings"),
+        get(get_settings),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::PUT, "/v1/settings"),
+        put(update_settings),
+    )
 }
 
 async fn get_settings(

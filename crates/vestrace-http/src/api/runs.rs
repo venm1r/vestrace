@@ -6,7 +6,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vestrace_application::run::{
-    AddRunSteps, ApproveRun, CancelRun, CreateRun, NewRunStepDto, PauseRun, ResumeRun,
+    AddRunSteps, ApproveRun, CancelRun, ConfidentialRunInput, CreateRun, NewRunStepDto,
+    NewRunStepInput, PauseRun, ResumeRun,
 };
 use vestrace_domain::{
     Timestamp,
@@ -44,6 +45,8 @@ pub struct NewStepRequest {
     pub assigned_actor: String,
     #[serde(default)]
     pub plan_step_reference: Option<String>,
+    #[serde(default)]
+    pub input: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -330,15 +333,31 @@ pub async fn add_run_steps(
         .steps
         .into_iter()
         .map(|step| {
+            let assigned_actor = parse_actor(&step.assigned_actor, context.principal_id)?;
+            let input = match (&assigned_actor, step.input) {
+                (RunActorRef::AgentSnapshot(_), Some(value)) => NewRunStepInput::Confidential(
+                    ConfidentialRunInput::parse(value).map_err(ApiError::from_application)?,
+                ),
+                (RunActorRef::AgentSnapshot(_), None) => {
+                    return Err(ApiError::bad_request("agent steps require input"));
+                }
+                (_, Some(_)) => {
+                    return Err(ApiError::bad_request(
+                        "only agent steps may provide confidential input",
+                    ));
+                }
+                (_, None) => NewRunStepInput::None,
+            };
             Ok(NewRunStepDto {
                 id: vestrace_domain::id::RunStepId::new(),
                 plan_step_reference: step.plan_step_reference,
-                assigned_actor: parse_actor(&step.assigned_actor, context.principal_id)?,
+                assigned_actor,
                 // Deliberately empty: input references name artifacts and
                 // approvals a caller has no way to create through this route
                 // yet, and accepting unresolvable ones would leave a step that
                 // is never scheduled with no indication why.
                 input_references: vec![],
+                input,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -420,7 +439,7 @@ fn required_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Uuid,
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -525,6 +544,14 @@ mod tests {
             _: &vestrace_application::RequestContext,
             _: vestrace_domain::id::MemoryId,
         ) -> Result<Option<vestrace_domain::Memory>, vestrace_application::ApplicationError>
+        {
+            Ok(None)
+        }
+        async fn find_revision(
+            &self,
+            _: &vestrace_application::RequestContext,
+            _: vestrace_domain::id::MemoryRevisionId,
+        ) -> Result<Option<vestrace_domain::MemoryRevision>, vestrace_application::ApplicationError>
         {
             Ok(None)
         }
@@ -707,7 +734,7 @@ mod tests {
         }
     }
 
-    struct TestAllowPolicy;
+    pub(crate) struct TestAllowPolicy;
 
     #[async_trait]
     impl PolicyDecisionEngine for TestAllowPolicy {
@@ -746,7 +773,10 @@ mod tests {
         }
     }
 
-    fn test_state() -> AppState {
+    /// Shared with the provider mutation tests: one AppState with every
+    /// unrelated port stubbed, so a test can inject exactly the authority it is
+    /// about and prove the others are untouched.
+    pub(crate) fn test_state() -> AppState {
         AppState::new(
             Arc::new(Healthy),
             Arc::new(ReadOnlyRuns),
@@ -936,14 +966,19 @@ mod tests {
                     .header("x-request-id", Uuid::now_v7().to_string())
                     .header("x-correlation-id", Uuid::now_v7().to_string())
                     .header("if-match", "1")
-                    .body(Body::from(r#"{"steps":[{"assigned_actor":"agent"}]}"#))
+                    // An agent step carries confidential input since the input
+                    // became governed material; a step without it is refused
+                    // before it reaches any orchestrator.
+                    .body(Body::from(
+                        r#"{"steps":[{"assigned_actor":"agent","input":"the governed input"}]}"#,
+                    ))
                     .unwrap(),
             )
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let added = orchestrator.added.lock().unwrap().clone().unwrap();
+        let added = orchestrator.added.lock().unwrap().take().unwrap();
         assert_eq!(added.steps.len(), 1);
         // Only an agent-assigned step invokes a model, so the mapping from the
         // request's actor name is what decides whether anything executes.

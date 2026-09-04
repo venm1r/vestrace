@@ -9,6 +9,8 @@ use axum::{
 use vestrace_application::SharedAccessTokenAuthenticator;
 use vestrace_domain::identity::hash_presented_token;
 
+use crate::route_inventory::{RouteExposure, route_inventory};
+
 const BEARER_PREFIX: &str = "Bearer ";
 const WORKSPACE_ID_HEADER: &str = "x-workspace-id";
 const PRINCIPAL_ID_HEADER: &str = "x-principal-id";
@@ -70,7 +72,9 @@ fn unauthorized() -> Response {
 ///
 /// `/metrics` is deliberately **not** exempt: it reports per-workspace activity.
 fn is_public_probe(path: &str) -> bool {
-    matches!(path, "/health/live" | "/health/ready")
+    route_inventory().iter().any(|descriptor| {
+        descriptor.exposure == RouteExposure::PublicBounded && descriptor.path_pattern == path
+    })
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -206,6 +210,18 @@ mod tests {
         assert!(!is_public_probe("/health/live/../../v1/runs"));
         assert!(!is_public_probe("/health/livez"));
         assert!(!is_public_probe("/v1/runs"));
+    }
+
+    #[test]
+    fn public_probe_exemption_matches_the_inventory() {
+        for descriptor in route_inventory() {
+            assert_eq!(
+                is_public_probe(descriptor.path_pattern),
+                descriptor.exposure == RouteExposure::PublicBounded,
+                "{} must derive its authentication exemption from the inventory",
+                descriptor.path_pattern
+            );
+        }
     }
 
     #[tokio::test]

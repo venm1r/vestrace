@@ -824,6 +824,29 @@ pub struct ExternalEffectReceipt {
 }
 
 impl ExternalEffectReceipt {
+    pub fn provider_result_acknowledged(
+        id: ExternalEffectReceiptId,
+        effect_id: ExternalEffectId,
+        adapter: impl Into<String>,
+        preparation_id: uuid::Uuid,
+        recorded_at: Timestamp,
+    ) -> Self {
+        Self {
+            id,
+            effect_id,
+            adapter: adapter.into(),
+            dispatched_at: recorded_at,
+            acknowledgement_at: Some(recorded_at),
+            response_class: "http_200".into(),
+            external_resource_id: None,
+            external_version: None,
+            response_digest: None,
+            outcome_status: EffectLifecycleStatus::Acknowledged,
+            evidence_refs: vec![format!("provider_result_preparation:{preparation_id}")],
+            recorded_at,
+        }
+    }
+
     fn from_dispatch(
         effect_id: ExternalEffectId,
         adapter: String,
@@ -1144,7 +1167,7 @@ pub fn reconcile_effect<'a>(
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectFaultPoint {
     AfterIntentPersistence,
@@ -1152,6 +1175,13 @@ pub enum EffectFaultPoint {
     AfterDispatchBeforeReceipt,
     AfterReceiptBeforeOutcomeConfirmation,
     AfterOutcomeBeforeRunCommit,
+    AfterReserved,
+    AfterVaultCreateBeforeReceipt,
+    AfterReceiptBeforePrepared,
+    AfterPreparedBeforeBound,
+    AfterBoundBeforePromotion,
+    AfterAbortBeforeWitnessedErase,
+    AfterEraseReceiptBeforeTerminalAppend,
 }
 
 impl EffectFaultPoint {
@@ -1163,6 +1193,44 @@ impl EffectFaultPoint {
             Self::AfterReceiptBeforeOutcomeConfirmation,
             Self::AfterOutcomeBeforeRunCommit,
         ]
+    }
+
+    /// Every key-intent crash boundary, in lifecycle order.
+    ///
+    /// These share the closed fault-point vocabulary with external effects, but
+    /// are deliberately not part of [`Self::required_points`]: the external
+    /// effect suite still owns exactly its original five boundaries.
+    pub fn intent_points() -> [Self; 7] {
+        [
+            Self::AfterReserved,
+            Self::AfterVaultCreateBeforeReceipt,
+            Self::AfterReceiptBeforePrepared,
+            Self::AfterPreparedBeforeBound,
+            Self::AfterBoundBeforePromotion,
+            Self::AfterAbortBeforeWitnessedErase,
+            Self::AfterEraseReceiptBeforeTerminalAppend,
+        ]
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AfterIntentPersistence => "after_intent_persistence",
+            Self::AfterAuthorizationBeforeDispatch => "after_authorization_before_dispatch",
+            Self::AfterDispatchBeforeReceipt => "after_dispatch_before_receipt",
+            Self::AfterReceiptBeforeOutcomeConfirmation => {
+                "after_receipt_before_outcome_confirmation"
+            }
+            Self::AfterOutcomeBeforeRunCommit => "after_outcome_before_run_commit",
+            Self::AfterReserved => "after_reserved",
+            Self::AfterVaultCreateBeforeReceipt => "after_vault_create_before_receipt",
+            Self::AfterReceiptBeforePrepared => "after_receipt_before_prepared",
+            Self::AfterPreparedBeforeBound => "after_prepared_before_bound",
+            Self::AfterBoundBeforePromotion => "after_bound_before_promotion",
+            Self::AfterAbortBeforeWitnessedErase => "after_abort_before_witnessed_erase",
+            Self::AfterEraseReceiptBeforeTerminalAppend => {
+                "after_erase_receipt_before_terminal_append"
+            }
+        }
     }
 }
 
@@ -1194,7 +1262,7 @@ impl FaultObservation {
             },
             EffectFaultPoint::AfterDispatchBeforeReceipt => Self {
                 point,
-                status: EffectLifecycleStatus::Unknown,
+                status: EffectLifecycleStatus::Reconciling,
                 retry_attempted: false,
                 reconciliation_started: true,
                 receipt_persisted: false,
@@ -1207,6 +1275,15 @@ impl FaultObservation {
                 reconciliation_started: true,
                 receipt_persisted: true,
             },
+            EffectFaultPoint::AfterReserved
+            | EffectFaultPoint::AfterVaultCreateBeforeReceipt
+            | EffectFaultPoint::AfterReceiptBeforePrepared
+            | EffectFaultPoint::AfterPreparedBeforeBound
+            | EffectFaultPoint::AfterBoundBeforePromotion
+            | EffectFaultPoint::AfterAbortBeforeWitnessedErase
+            | EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend => {
+                panic!("intent fault points have no external-effect observation")
+            }
         }
     }
 }
@@ -1241,21 +1318,14 @@ pub fn evaluate_fault_suite(observations: &[FaultObservation]) -> FaultSuiteDeci
         }
         let observed = matches[0];
         let expected = FaultObservation::expected(point);
-        if point == EffectFaultPoint::AfterDispatchBeforeReceipt
-            && observed.status != EffectLifecycleStatus::Unknown
-        {
-            failures.push("after dispatch before receipt must become UNKNOWN".into());
-        }
         if observed.retry_attempted {
             failures.push(format!("fault point {point:?} attempted unsafe retry"));
         }
         if point == EffectFaultPoint::AfterDispatchBeforeReceipt && !observed.reconciliation_started
         {
-            failures.push("UNKNOWN fault point must start reconciliation".into());
+            failures.push("lost-dispatch fault point must start reconciliation".into());
         }
-        if point != EffectFaultPoint::AfterDispatchBeforeReceipt
-            && observed.status != expected.status
-        {
+        if observed.status != expected.status {
             failures.push(format!(
                 "fault point {point:?} has incorrect lifecycle status"
             ));
@@ -1336,7 +1406,71 @@ mod tests {
             .into_iter()
             .map(FaultObservation::expected)
             .collect::<Vec<_>>();
+        assert_eq!(cases.len(), 5);
         assert!(evaluate_fault_suite(&cases).is_passed());
+    }
+
+    #[test]
+    fn effect_and_intent_fault_point_sets_are_closed_and_disjoint() {
+        assert_eq!(
+            EffectFaultPoint::required_points(),
+            [
+                EffectFaultPoint::AfterIntentPersistence,
+                EffectFaultPoint::AfterAuthorizationBeforeDispatch,
+                EffectFaultPoint::AfterDispatchBeforeReceipt,
+                EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation,
+                EffectFaultPoint::AfterOutcomeBeforeRunCommit,
+            ]
+        );
+        assert_eq!(
+            EffectFaultPoint::intent_points(),
+            [
+                EffectFaultPoint::AfterReserved,
+                EffectFaultPoint::AfterVaultCreateBeforeReceipt,
+                EffectFaultPoint::AfterReceiptBeforePrepared,
+                EffectFaultPoint::AfterPreparedBeforeBound,
+                EffectFaultPoint::AfterBoundBeforePromotion,
+                EffectFaultPoint::AfterAbortBeforeWitnessedErase,
+                EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend,
+            ]
+        );
+        assert_eq!(
+            EffectFaultPoint::intent_points().map(EffectFaultPoint::as_str),
+            [
+                "after_reserved",
+                "after_vault_create_before_receipt",
+                "after_receipt_before_prepared",
+                "after_prepared_before_bound",
+                "after_bound_before_promotion",
+                "after_abort_before_witnessed_erase",
+                "after_erase_receipt_before_terminal_append",
+            ]
+        );
+    }
+
+    /// A lost dispatch is first adopted as `Unknown`, but a definitive provider
+    /// read-back settles it before the fault scenario observes the lifecycle.
+    /// Requiring the transient adoption state here would make the suite reject
+    /// the durable evidence written by the production recovery path.
+    #[test]
+    fn settled_lost_dispatch_is_reconciling_after_recovery() {
+        let mut observations = EffectFaultPoint::required_points()
+            .into_iter()
+            .map(FaultObservation::expected)
+            .collect::<Vec<_>>();
+        let lost_dispatch = observations
+            .iter_mut()
+            .find(|observation| observation.point == EffectFaultPoint::AfterDispatchBeforeReceipt)
+            .expect("the required fault points include the lost dispatch");
+        lost_dispatch.status = EffectLifecycleStatus::Reconciling;
+
+        let decision = evaluate_fault_suite(&observations);
+
+        assert!(
+            decision.is_passed(),
+            "a settled lost dispatch was rejected after recovery: {:?}",
+            decision.failures()
+        );
     }
 
     /// An intent differing only in what it says it belongs to.

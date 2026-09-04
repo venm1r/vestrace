@@ -31,7 +31,7 @@ use vestrace_domain::trust::{
     RevalidationCheck, RevalidationLevel, RevalidationResult, RevalidationRun, TrustState,
     TrustStateRecord,
 };
-use vestrace_domain::{AgentRunId, HealthScope, WorkspaceId};
+use vestrace_domain::{AgentRunId, HealthScope, PrincipalId, WorkspaceId};
 use vestrace_infrastructure::{
     PgQualificationBaselineRepository, PgRecoveryQualificationEvidenceRepository,
     PgRecoveryRepository, PgStore,
@@ -551,6 +551,27 @@ fn run_release_with_recovery_qualification(
         .unwrap()
 }
 
+fn run_recovery_qualification_scenario(
+    workspace_id: WorkspaceId,
+    principal_id: PrincipalId,
+    database_url: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "conformance",
+            "recovery-qualification",
+            "--workspace-id",
+            &workspace_id.to_string(),
+            "--principal-id",
+            &principal_id.to_string(),
+            "--isolation",
+            "ephemeral",
+        ])
+        .env("VESTRACE_DATABASE__URL", database_url)
+        .output()
+        .unwrap()
+}
+
 fn failures(output: &std::process::Output) -> Vec<String> {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
@@ -665,6 +686,61 @@ async fn recovery_qualification_flag_names_duplicate_and_every_unobserved_target
             "recovery target DivergentHistory must have exactly one observation"
         ])
     );
+
+    fs::remove_file(manifest_path).ok();
+    fs::remove_file(bundle_path).ok();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn recovery_qualification_scenario_changes_the_release_leg_from_missing_to_passed(
+    pool: PgPool,
+) {
+    let id = test_suffix();
+    let manifest = manifest(QualificationProfile::Trusted);
+    let bundle = bundle_for(&manifest, QualificationProfile::Trusted);
+    let (manifest_path, bundle_path) = write_pair(&id, &manifest, &bundle);
+    let workspace_id = WorkspaceId::new();
+    let principal_id = PrincipalId::new();
+    sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
+        .bind(workspace_id.as_uuid())
+        .bind(format!("recovery-qualification-{workspace_id}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO principals (id, workspace_id, identifier) VALUES ($1, $2, $3)")
+        .bind(principal_id.as_uuid())
+        .bind(workspace_id.as_uuid())
+        .bind(format!("recovery-qualification-{principal_id}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let database_url = ephemeral_database_url(&pool).await;
+
+    let scenario = run_recovery_qualification_scenario(workspace_id, principal_id, &database_url);
+    assert!(
+        scenario.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&scenario.stderr)
+    );
+
+    let release =
+        run_release_with_recovery_qualification(&manifest_path, &bundle_path, &database_url);
+    assert!(
+        !release.status.success(),
+        "other release evidence is intentionally absent"
+    );
+    let report: Value = serde_json::from_slice(&release.stdout).unwrap();
+    let observed = failures(&release);
+    assert!(
+        !observed.contains(&"recovery_qualification_missing".to_owned()),
+        "{observed:?}"
+    );
+    assert!(
+        !observed.contains(&"recovery_qualification_failed".to_owned()),
+        "{observed:?}"
+    );
+    assert_eq!(report["recovery_qualification_failures"], Value::Null);
+    assert!(observed.contains(&"fault_suite_missing".to_owned()));
 
     fs::remove_file(manifest_path).ok();
     fs::remove_file(bundle_path).ok();
@@ -1023,6 +1099,21 @@ fn required_observations() -> Vec<FaultObservation> {
         .into_iter()
         .map(FaultObservation::expected)
         .collect()
+}
+
+#[test]
+fn release_fault_suite_fixture_remains_the_exact_five_point_external_effect_set() {
+    let observations = required_observations();
+
+    assert_eq!(observations.len(), 5);
+    assert_eq!(
+        observations
+            .iter()
+            .map(|observation| observation.point)
+            .collect::<Vec<_>>(),
+        EffectFaultPoint::required_points()
+    );
+    assert!(evaluate_fault_suite(&observations).is_passed());
 }
 
 fn scenario_binary() -> std::path::PathBuf {

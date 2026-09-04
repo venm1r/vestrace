@@ -9,17 +9,19 @@ pub mod worker;
 
 pub use clock::SystemClock;
 pub use commands::{
-    AddRunSteps, ApproveRun, CancelRun, CreateRun, NewRunStepDto, PauseRun, ResumeRun,
+    AddRunSteps, ApproveRun, CancelRun, ConfidentialRunInput, CreateRun,
+    MAX_CONFIDENTIAL_RUN_INPUT_BYTES, NewRunStepDto, NewRunStepInput, PauseRun, ResumeRun,
 };
 pub use coordinator::{RunCoordinator, RunOrchestrator, SharedRunOrchestrator};
 pub use handlers::{AdvanceRunHandler, ExecuteStepHandler, ResumeRunHandler};
 pub use model_step::{
-    ProviderStepModelExecutor, SharedStepModelExecutor, StepModelExecutor, StepModelOutcome,
-    StepModelRequest, StepModelSettings,
+    GovernedModelAdapter, GovernedProviderStepExecutor, RUN_STEP_DISPATCH_TTL_SECONDS,
+    SharedStepModelExecutor, StepModelExecutor, StepModelOutcome, StepModelRequest,
 };
 pub use ports::{
-    AcquireRunLease, CommitRun, LeaseWorkRequest, RunClockPort, RunLease, RunLeasePort,
-    RunSnapshot, RunStorePort, WorkItem, WorkItemKind, WorkItemKindDiscriminant, WorkQueuePort,
+    AcquireRunLease, CommitProviderResultRun, CommitRun, LeaseWorkRequest, RunClockPort, RunLease,
+    RunLeasePort, RunSnapshot, RunStorePort, WorkItem, WorkItemKind, WorkItemKindDiscriminant,
+    WorkQueuePort,
 };
 pub use replay::{RunProjection, replay_run};
 pub use worker::{

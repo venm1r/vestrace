@@ -1,19 +1,34 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
 pub fn workflow_routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/workflows", post(create_workflow).get(list_workflows))
-        .route("/workflows/{id}", get(get_workflow))
+    let router = mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/workflows"),
+        get(list_workflows),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/workflows"),
+        post(create_workflow),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/workflows/{id}"),
+        get(get_workflow),
+    )
 }
 
 #[derive(Debug, Deserialize)]

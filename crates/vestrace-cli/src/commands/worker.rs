@@ -14,10 +14,8 @@ use vestrace_application::{
 use vestrace_domain::external_effects::ExternalEffectAdapter;
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
 use vestrace_infrastructure::{
-    AppConfig, PgArtifactRepository, PgEmbeddingStore, PgExternalEffectRepository,
-    PgMemoryTextSource, PgModelDataPolicyDecisionRepository, PgModelExecutionRepository,
-    PgModelRepository, PgOutboxRepository, PgRunLeasePort, PgSecretStore, PgStore, PgWorkQueuePort,
-    PostgresRunStore, SecretBackedProviderFactory,
+    AppConfig, PgEmbeddingStore, PgExternalEffectRepository, PgMemoryTextSource,
+    PgOutboxRepository, PgRunLeasePort, PgStore, PgWorkQueuePort, PostgresRunStore,
 };
 
 /// How many messages one drain pass claims per workspace.
@@ -32,15 +30,18 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     // emits is discarded — which is how it ran silently until now.
     super::server::init_tracing(&config.observability)?;
     tracing::info!("starting vestrace worker");
-
     let store = PgStore::connect(&config.database)
         .await
         .map_err(|_| anyhow::anyhow!("database is unavailable"))?;
 
-    store
-        .migrate()
-        .await
-        .map_err(|_| anyhow::anyhow!("database migrations are unavailable"))?;
+    // Checked after the database, not before it. Both refuse startup, but a
+    // worker pointed at a database that is not there should say so: reporting a
+    // storage-root problem first sends an operator to look at the filesystem
+    // for a fault that is in the connection string.
+    let storage_roots = config.provider_execution.roots().map_err(|_| {
+        anyhow::anyhow!("provider execution storage roots are unavailable or overlap")
+    })?;
+
     match store.migrations_are_compatible().await {
         Ok(true) => {}
         Ok(false) => {
@@ -108,26 +109,29 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         run_store.clone(),
         clock.clone(),
     )));
-    let execute_step = ExecuteStepHandler::new(run_store.clone(), clock.clone());
-    let execute_step = match build_model_executor(config, &store)? {
-        Some(executor) => {
-            tracing::info!(
-                model = %config.model.model_name,
-                "agent steps will invoke a model"
-            );
-            execute_step.with_model_executor(executor)
-        }
-        None => {
-            // Stated as a warning rather than left silent: with no executor an
-            // agent-assigned step fails, which is a visible behaviour change
-            // from the build that reported success without running anything.
-            tracing::warn!(
-                "no model is configured; steps assigned to an agent will fail rather than report success"
-            );
-            execute_step
-        }
-    };
-    registry.register(Arc::new(execute_step));
+    reject_config_only_model_execution(config)?;
+    // The one governed route from a work item to a provider. Every authority
+    // here already existed; what this composition adds is that the worker
+    // holds them rather than failing every agent step for want of an executor.
+    // Nothing is optional: a missing vault, policy or repository refuses
+    // startup instead of registering a handler that would report success
+    // having called nothing.
+    let governed = vestrace_infrastructure::GovernedProviderRuntime::new(
+        store.clone(),
+        super::server::build_material_vault(config, &storage_roots)?,
+        super::server::build_policy_engine(
+            &config.policy,
+            Arc::new(vestrace_infrastructure::PgCapabilityGrantRepository::new(
+                store.clone(),
+            )),
+        )?,
+        super::server::build_model_data_policy_settings(config)?,
+        run_store.clone(),
+    );
+    registry.register(Arc::new(
+        ExecuteStepHandler::new(run_store.clone(), clock.clone())
+            .with_model_executor(governed.step_executor(worker_id)),
+    ));
 
     let run_worker = Arc::new(RunWorker::new_with_policy(
         run_worker_config,
@@ -746,100 +750,16 @@ async fn shutdown_signal() {
     }
 }
 
-/// Build the executor that performs an agent step's model call.
-///
-/// Returns `None` when model execution is disabled, which is the default. The
-/// credential is not read here: it is a per-workspace secret resolved through
-/// the secret store at invocation time, so a rotated key takes effect without
-/// restarting this process.
-fn build_model_executor(
-    config: &AppConfig,
-    store: &PgStore,
-) -> anyhow::Result<Option<vestrace_application::run::SharedStepModelExecutor>> {
-    use secrecy::ExposeSecret;
-
-    if !config.model.enabled {
-        return Ok(None);
+/// Process configuration may seed a local candidate connection, but it cannot
+/// authorize a Run adapter call.  Refuse the retired execution switch instead
+/// of accepting an unpinned URL, model name, or secret path.
+fn reject_config_only_model_execution(config: &AppConfig) -> anyhow::Result<()> {
+    if config.model.enabled {
+        return Err(anyhow::anyhow!(
+            "config-only model execution is retired; governed provider dispatch authority is required"
+        ));
     }
-    let Some(key) = config.secrets.master_key.as_ref() else {
-        // Configuration validation already rejects this combination; the guard
-        // remains so a future caller cannot bypass it and silently disable
-        // execution instead of failing.
-        return Err(anyhow::anyhow!(
-            "model execution requires secret storage, but no master key is configured"
-        ));
-    };
-    let master = vestrace_infrastructure::crypto::MasterKey::from_base64(
-        key.expose_secret(),
-        config.secrets.effective_key_version(),
-    )
-    // Not chained: the rendering must never risk carrying the key.
-    .map_err(|_| anyhow::anyhow!("secrets.master_key must be 32 bytes encoded as base64"))?;
-
-    let secrets = Arc::new(PgSecretStore::new(store.clone(), Arc::new(master)));
-    let providers = Arc::new(SecretBackedProviderFactory::new(
-        config.model.base_url.clone(),
-        secrets,
-        config.model.secret_name.clone(),
-    ));
-    let Some(data_policy) = config.policy.data.as_ref() else {
-        // Configuration loading already refuses this. Keep the constructor
-        // fail-closed for callers that assemble AppConfig directly.
-        return Err(anyhow::anyhow!(
-            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
-        ));
-    };
-    let (
-        Some(maximum_sensitivity),
-        Some(allowed_destinations),
-        Some(configured_mode),
-        Some(classification),
-    ) = (
-        data_policy.maximum_sensitivity,
-        data_policy.allowed_destinations.clone(),
-        data_policy.mode,
-        data_policy.classification,
-    )
-    else {
-        return Err(anyhow::anyhow!(
-            "policy.data.mode, policy.data.classification, policy.data.maximum_sensitivity, and policy.data.allowed_destinations are required when model.enabled is true"
-        ));
-    };
-    let policy = vestrace_domain::trust::DataPolicy::new(
-        vestrace_domain::DataPolicyId::new(),
-        config.policy.version.clone(),
-        maximum_sensitivity,
-        allowed_destinations,
-        None,
-    )
-    .map_err(|error| anyhow::anyhow!("policy.data is invalid: {error}"))?;
-    let mode = match configured_mode {
-        vestrace_infrastructure::DataPolicyMode::Enforce => {
-            vestrace_application::ModelDataPolicyMode::Enforce
-        }
-        vestrace_infrastructure::DataPolicyMode::Observe => {
-            vestrace_application::ModelDataPolicyMode::Observe
-        }
-    };
-
-    Ok(Some(Arc::new(
-        vestrace_application::run::ProviderStepModelExecutor::new(
-            providers,
-            Arc::new(PgModelRepository::new(store.clone())),
-            Arc::new(PgArtifactRepository::new(store.clone())),
-            Arc::new(PgModelExecutionRepository::new(store.clone())),
-            Arc::new(PgModelDataPolicyDecisionRepository::new(store.clone())),
-            vestrace_application::run::StepModelSettings {
-                model_name: config.model.model_name.clone(),
-                max_tokens: config.model.max_tokens,
-            },
-            vestrace_application::ModelDataPolicySettings {
-                policy,
-                classification,
-                mode,
-            },
-        ),
-    )))
+    Ok(())
 }
 
 #[cfg(test)]

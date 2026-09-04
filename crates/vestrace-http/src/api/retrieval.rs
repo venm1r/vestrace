@@ -2,7 +2,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use vestrace_application::RetrievalRequest;
-use vestrace_domain::{MemoryStatus, TimePerspective};
+use vestrace_domain::{MemoryStatus, TimePerspective, retrieval::WithheldRevision};
 
 use crate::AppState;
 
@@ -21,6 +21,8 @@ pub struct RetrievalSearchRequest {
 #[derive(Debug, Serialize)]
 pub struct RetrievalSearchResponse {
     pub candidates: Vec<CandidateDto>,
+    pub withheld: Vec<WithheldRevision>,
+    pub retrieval_policy_version: String,
     pub temporal_perspective: TimePerspective,
     pub degraded: bool,
     pub degraded_channels: Vec<String>,
@@ -42,6 +44,7 @@ pub struct CandidateDto {
     pub channel: String,
     pub channel_rank: u32,
     pub explanation: String,
+    pub source_classification: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +55,8 @@ pub struct ContextPackDto {
     pub candidate_count: usize,
     pub section_count: usize,
     pub degraded_channels: Vec<String>,
+    pub withheld: Vec<WithheldRevision>,
+    pub retrieval_policy_version: String,
 }
 
 pub fn parse_time_perspective(
@@ -128,31 +133,36 @@ pub async fn search(
             channel: c.channel.clone(),
             channel_rank: c.channel_rank,
             explanation: c.explanation.clone(),
+            source_classification: c.classification.clone(),
         })
         .collect();
 
     let context_pack = if let Some(budget) = request.token_budget {
-        match state
-            .retrieval_service()
-            .build_context(&context, &result, budget)
-            .await
-        {
-            Ok(pack) => Some(ContextPackDto {
-                temporal_perspective: pack.temporal_perspective,
-                token_budget: pack.token_budget,
-                used_tokens: pack.used_tokens,
-                candidate_count: pack.candidate_ids.len(),
-                section_count: pack.sections.len(),
-                degraded_channels: pack.degraded_channels,
-            }),
-            Err(_) => None,
-        }
+        Some(
+            state
+                .retrieval_service()
+                .build_context(&context, &result, budget)
+                .await
+                .map(|pack| ContextPackDto {
+                    temporal_perspective: pack.temporal_perspective,
+                    token_budget: pack.token_budget,
+                    used_tokens: pack.used_tokens,
+                    candidate_count: pack.candidate_ids.len(),
+                    section_count: pack.sections.len(),
+                    degraded_channels: pack.degraded_channels,
+                    withheld: pack.withheld,
+                    retrieval_policy_version: pack.retrieval_policy_version,
+                })
+                .map_err(ApiError::from_application)?,
+        )
     } else {
         None
     };
 
     Ok(Json(RetrievalSearchResponse {
         candidates,
+        withheld: result.withheld,
+        retrieval_policy_version: result.retrieval_policy_version,
         temporal_perspective: result.normalized.time_perspective,
         degraded: result.degraded,
         degraded_channels: result.degraded_channels,

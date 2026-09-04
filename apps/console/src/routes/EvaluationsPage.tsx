@@ -162,7 +162,7 @@ export const EvaluationsPage: React.FC = () => {
                 <option value="">(No specific model bound)</option>
                 {modelList.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.model_name}
+                    {m.id}
                   </option>
                 ))}
               </select>

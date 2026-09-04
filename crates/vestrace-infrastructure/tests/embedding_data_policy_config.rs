@@ -80,6 +80,10 @@ fn compose_style_environment_lists_build_the_embedding_policy() {
                 Some("internal,confidential"),
             ),
             (
+                "VESTRACE_POLICY__DATA__MEMORY_LABELS",
+                Some("internal,confidential"),
+            ),
+            (
                 "VESTRACE_POLICY__DATA__EMBEDDING__ALLOW_UNCLASSIFIED",
                 Some("true"),
             ),
@@ -98,7 +102,8 @@ fn compose_style_environment_lists_build_the_embedding_policy() {
         ],
         || {
             let config = AppConfig::load_from(Some(&path)).unwrap();
-            let policy = config.policy.data.unwrap().embedding.unwrap();
+            let data = config.policy.data.unwrap();
+            let policy = data.embedding.unwrap();
             assert_eq!(
                 policy.admissible_labels.into_iter().collect::<Vec<_>>(),
                 vec!["confidential", "internal"]
@@ -106,6 +111,10 @@ fn compose_style_environment_lists_build_the_embedding_policy() {
             assert_eq!(
                 policy.allowed_destinations.into_iter().collect::<Vec<_>>(),
                 vec![vestrace_domain::DataDestination::RemoteProvider]
+            );
+            assert_eq!(
+                data.memory_labels.into_iter().collect::<Vec<_>>(),
+                vec!["confidential", "internal"]
             );
         },
     );

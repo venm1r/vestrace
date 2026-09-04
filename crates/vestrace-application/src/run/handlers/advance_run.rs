@@ -160,7 +160,8 @@ impl AdvanceRunHandler {
             .steps
             .iter()
             .filter(|s| {
-                s.input_references.is_empty()
+                !matches!(s.assigned_actor, RunActorRef::AgentSnapshot(_))
+                    && s.input_references.is_empty()
                     && s.status == vestrace_domain::run::RunStepStatus::Pending
             })
             .map(|s| s.id)
@@ -230,7 +231,8 @@ impl AdvanceRunHandler {
             .steps
             .iter()
             .filter(|s| {
-                s.input_references.is_empty()
+                !matches!(s.assigned_actor, RunActorRef::AgentSnapshot(_))
+                    && s.input_references.is_empty()
                     && s.status == vestrace_domain::run::RunStepStatus::Pending
             })
             .map(|s| s.id)

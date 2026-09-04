@@ -1,61 +1,55 @@
-import React, { useEffect, useState } from 'react';
-import { RunItem, RunStatus, vestraceClient } from '../sdk/client';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import type { RunItem } from '../sdk/client';
+import { vestraceClient } from '../sdk/client';
+import { RunInspector } from '../components/RunInspector';
+import { RunsRail } from '../components/RunsRail';
+import { RunWorkspace } from '../components/RunWorkspace';
 import { useApiResource } from '../sdk/useApiResource';
-import {
-  ActionButton,
-  NoticeBanner,
-  PageHeader,
-  PageShell,
-  Panel,
-  ResourceState,
-  Th,
-  describeError,
-  rowStyle,
-  tableHeadRowStyle,
-  tableStyle,
-  useNotice,
-} from '../shell/PageState';
-
-const STATUS_COLOR: Record<RunStatus, string> = {
-  created: 'var(--text-secondary)',
-  preparing: 'var(--color-tertiary)',
-  running: 'var(--color-tertiary)',
-  waiting_for_input: 'var(--color-warning)',
-  waiting_for_approval: 'var(--color-warning)',
-  waiting_for_dependency: 'var(--color-warning)',
-  paused: 'var(--color-warning)',
-  paused_policy_changed: 'var(--color-warning)',
-  succeeded: 'var(--color-success)',
-  succeeded_with_warnings: 'var(--color-warning)',
-  partial: 'var(--color-warning)',
-  failed: 'var(--color-error)',
-  cancelled: 'var(--text-secondary)',
-  expired: 'var(--text-secondary)',
-};
-
-function formatTimestamp(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-}
+import { filterRuns, resolveSelectedRun, type RunFilter } from './runWorkspaceModel';
+import { NoticeBanner, ResourceState, describeError, useNotice } from '../shell/PageState';
 
 export const RunsPage: React.FC = () => {
+  const { runId } = useParams();
+  const navigate = useNavigate();
   const { data, error, loading, reload } = useApiResource(vestraceClient.listRuns);
   const [runs, setRuns] = useState<RunItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<RunFilter>('all');
   const [creating, setCreating] = useState(false);
+  const locallyCreatedRuns = useRef(new Map<string, RunItem>());
   const { notice, notify, dismiss } = useNotice();
 
   useEffect(() => {
-    setRuns(data ?? []);
+    if (data === null) return;
+
+    setRuns(() => {
+      const returnedIds = new Set(data.map(({ id }) => id));
+      for (const id of returnedIds) locallyCreatedRuns.current.delete(id);
+      const pendingCreates = [...locallyCreatedRuns.current.values()];
+      return [...pendingCreates, ...data.filter(({ id }) => !locallyCreatedRuns.current.has(id))];
+    });
   }, [data]);
+
+  const visibleRuns = filterRuns(runs, query, filter);
+  const selectedRun = resolveSelectedRun(runs, runId);
+
+  const selectRun = (run: RunItem) => {
+    navigate(`/runs/${encodeURIComponent(run.id)}`);
+  };
 
   const createRun = async () => {
     if (creating) return;
+
     setCreating(true);
     try {
       const newRun = await vestraceClient.createRun({
         title: 'Manual Operator Execution Trigger',
       });
-      setRuns((current) => [newRun, ...current]);
+      locallyCreatedRuns.current.set(newRun.id, newRun);
+      setRuns((current) => [newRun, ...current.filter(({ id }) => id !== newRun.id)]);
+      navigate(`/runs/${encodeURIComponent(newRun.id)}`);
+      reload();
       notify('success', `Run record ${newRun.id} was persisted.`);
     } catch (reason: unknown) {
       const described = describeError(reason, 'run creation');
@@ -66,20 +60,24 @@ export const RunsPage: React.FC = () => {
   };
 
   return (
-    <PageShell>
-      <PageHeader
-        title="Run Records"
-        description="Persisted run records available in this build."
-        actions={
-          <ActionButton onClick={createRun} disabled={creating} icon="add">
-            {creating ? 'Creating...' : 'Create Run'}
-          </ActionButton>
-        }
+    <div className="runs-workspace">
+      <RunsRail
+        runs={runs}
+        visibleRuns={visibleRuns}
+        query={query}
+        filter={filter}
+        selectedRunId={selectedRun?.id}
+        loading={loading}
+        creating={creating}
+        onQueryChange={setQuery}
+        onFilterChange={setFilter}
+        onSelectRun={selectRun}
+        onCreateRun={createRun}
+        onReload={reload}
       />
 
-      <NoticeBanner notice={notice} onDismiss={dismiss} />
-
-      <Panel>
+      <section className="run-center" aria-label="Selected run workspace">
+        <NoticeBanner notice={notice} onDismiss={dismiss} />
         <ResourceState
           loading={loading}
           error={error}
@@ -88,63 +86,10 @@ export const RunsPage: React.FC = () => {
           emptyMessage="No run records exist in this workspace."
           onRetry={reload}
         />
-        {!loading && !error && runs.length > 0 && (
-          <div className="table-scroll">
-            <table style={tableStyle}>
-              <caption style={{ position: 'absolute', left: '-9999px' }}>
-                Persisted run records for the active workspace
-              </caption>
-              <thead>
-                <tr style={tableHeadRowStyle}>
-                  <Th>Title &amp; ID</Th>
-                  <Th style={{ padding: '12px 16px' }}>Status</Th>
-                  <Th style={{ padding: '12px 16px' }}>Version</Th>
-                  <Th style={{ padding: '12px 16px' }}>Created</Th>
-                  <Th>Updated</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <tr key={run.id} style={rowStyle}>
-                    <td style={{ padding: '16px 24px' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{run.title}</div>
-                      <div
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '12px',
-                          color: 'var(--text-secondary)',
-                          marginTop: '2px',
-                        }}
-                      >
-                        {run.id}
-                      </div>
-                    </td>
-                    <td style={{ padding: '16px' }}>
-                      <span
-                        style={{
-                          padding: '4px 10px',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          textTransform: 'uppercase',
-                          background: 'var(--color-surface-container-high)',
-                          color: STATUS_COLOR[run.status] ?? 'var(--text-secondary)',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {run.status.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td style={{ padding: '16px', fontFamily: 'var(--font-mono)' }}>{run.version}</td>
-                    <td style={{ padding: '16px', whiteSpace: 'nowrap' }}>{formatTimestamp(run.created_at)}</td>
-                    <td style={{ padding: '16px 24px', whiteSpace: 'nowrap' }}>{formatTimestamp(run.updated_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-    </PageShell>
+        {!loading && !error && selectedRun && <RunWorkspace run={selectedRun} />}
+      </section>
+
+      {!loading && !error && selectedRun && <RunInspector run={selectedRun} />}
+    </div>
   );
 };

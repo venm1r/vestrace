@@ -1,7 +1,15 @@
-use axum::{Json, extract::State, http::HeaderMap, routing::get};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, Method},
+    routing::get,
+};
 use serde::Serialize;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
@@ -26,7 +34,11 @@ pub struct ProfileResponse {
 }
 
 pub fn profile_routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/profile", get(get_profile))
+    mount(
+        axum::Router::new(),
+        route_descriptor(&Method::GET, "/v1/profile"),
+        get(get_profile),
+    )
 }
 
 async fn get_profile(

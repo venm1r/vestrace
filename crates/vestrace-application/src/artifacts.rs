@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use vestrace_domain::artifact::{Artifact, ArtifactRevision};
+use vestrace_domain::{
+    ContentMaterialId, SizeClass,
+    artifact::{Artifact, ArtifactRevision},
+    id::ArtifactRevisionId,
+};
 
 use crate::{ApplicationError, RequestContext};
 
@@ -11,7 +15,45 @@ use crate::{ApplicationError, RequestContext};
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArtifactListing {
     pub artifact: Artifact,
+    /// Present only for pre-P03 digest-backed revisions. Provider-produced
+    /// revisions intentionally leave this absent so their digest and exact
+    /// byte size cannot leak through a compatibility projection.
     pub latest_revision: Option<ArtifactRevision>,
+    /// The one safe projection for a provider-produced revision. It contains
+    /// only opaque identities, a DEK-bound commitment, padded size class, and
+    /// closed media class; it is never reconstructible as legacy bytes.
+    pub governed_material: Option<GovernedArtifactMaterial>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderArtifactMediaClass {
+    Text,
+    Json,
+    Binary,
+    Image,
+    Audio,
+}
+
+impl ProviderArtifactMediaClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+            Self::Binary => "binary",
+            Self::Image => "image",
+            Self::Audio => "audio",
+        }
+    }
+}
+
+/// A provider result's durable, content-safe Artifact revision projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernedArtifactMaterial {
+    pub artifact_revision_id: ArtifactRevisionId,
+    pub content_material_id: ContentMaterialId,
+    pub erasure_bound_commitment: [u8; 32],
+    pub size_class: SizeClass,
+    pub media_class: ProviderArtifactMediaClass,
 }
 
 /// Content to be stored, with the media type a reader needs to interpret it.

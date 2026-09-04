@@ -10,8 +10,8 @@ use vestrace_domain::{
 use crate::{ApplicationError, RequestContext};
 
 use super::commands::{
-    AddRunSteps, ApproveRun, CancelRun, CreateCheckpoint, CreateRun, PauseRun, ResumeRun,
-    TransitionRun, TransitionRunStep,
+    AddRunSteps, ApproveRun, CancelRun, CreateCheckpoint, CreateRun, NewRunStepInput, PauseRun,
+    ResumeRun, TransitionRun, TransitionRunStep,
 };
 use super::ports::{
     CommitRun, RunClockPort, RunLeasePort, RunSnapshot, RunStorePort, WorkItem, WorkItemKind,
@@ -245,6 +245,15 @@ where
             .steps
             .into_iter()
             .map(|dto| {
+                let legacy_coordinator_input = !matches!(
+                    dto.assigned_actor,
+                    vestrace_domain::run::RunActorRef::AgentSnapshot(_)
+                ) && matches!(dto.input, NewRunStepInput::None);
+                if !legacy_coordinator_input {
+                    return Err(ApplicationError::Unavailable(
+                        "governed Run-step input authority is not configured".into(),
+                    ));
+                }
                 RunStep::create(
                     NewRunStep {
                         id: dto.id,
@@ -255,6 +264,7 @@ where
                     },
                     at,
                 )
+                .map_err(ApplicationError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
 

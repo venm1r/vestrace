@@ -31,6 +31,7 @@ ReactDOM.createRoot(container).render(
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/runs" element={<RunsPage />} />
+            <Route path="/runs/:runId" element={<RunsPage />} />
             <Route path="/artifacts" element={<ArtifactsPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/workflows" element={<WorkflowsPage />} />

@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+a2a.workspace = true
+a2a-server.workspace = true
 async-stream.workspace = true
 axum.workspace = true
 futures-util.workspace = true

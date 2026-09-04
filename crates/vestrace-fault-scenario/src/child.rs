@@ -54,6 +54,15 @@ pub fn aborts_at(point: EffectFaultPoint) -> ChildStage {
         EffectFaultPoint::AfterDispatchBeforeReceipt => ChildStage::Dispatched,
         EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation => ChildStage::ReceiptPersisted,
         EffectFaultPoint::AfterOutcomeBeforeRunCommit => ChildStage::OutcomeSettled,
+        EffectFaultPoint::AfterReserved
+        | EffectFaultPoint::AfterVaultCreateBeforeReceipt
+        | EffectFaultPoint::AfterReceiptBeforePrepared
+        | EffectFaultPoint::AfterPreparedBeforeBound
+        | EffectFaultPoint::AfterBoundBeforePromotion
+        | EffectFaultPoint::AfterAbortBeforeWitnessedErase
+        | EffectFaultPoint::AfterEraseReceiptBeforeTerminalAppend => {
+            panic!("intent fault point cannot name an external-effect child stage")
+        }
     }
 }
 

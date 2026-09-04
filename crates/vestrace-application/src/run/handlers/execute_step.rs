@@ -4,10 +4,7 @@ use async_trait::async_trait;
 use vestrace_domain::{
     CorrelationId,
     id::WorkItemId,
-    run::{
-        ResumeCursor, RunActorRef, RunEvent, RunEventPayload, RunFailure, RunReference,
-        RunReferenceKind, RunStepStatus,
-    },
+    run::{ResumeCursor, RunActorRef, RunEvent, RunEventPayload, RunFailure, RunStepStatus},
     time::Timestamp,
 };
 
@@ -17,7 +14,7 @@ use super::super::ports::{
     CommitRun, RunClockPort, RunLease, RunSnapshot, RunStorePort, WorkItem, WorkItemKind,
     WorkItemKindDiscriminant, deterministic_idempotency_key,
 };
-use super::super::{RunWorkHandler, RunWorkOutcome};
+use super::super::{RunWorkHandler, RunWorkOutcome, StepModelOutcome};
 
 pub struct ExecuteStepHandler {
     store: Arc<dyn RunStorePort>,
@@ -46,6 +43,13 @@ impl ExecuteStepHandler {
         self
     }
 }
+
+/// How long to wait before re-attempting a step whose dispatch was contended
+/// and quoted no interval of its own.
+///
+/// Deliberately short: nothing was called, so coming back early costs one
+/// refused admission rather than a duplicate external effect.
+const CONTENDED_DISPATCH_RETRY_SECONDS: u32 = 5;
 
 /// Whether this step is one a model is supposed to perform.
 ///
@@ -139,9 +143,7 @@ impl RunWorkHandler for ExecuteStepHandler {
         if !is_agent_step(&step.assigned_actor) {
             // Nothing to invoke: this step belongs to a principal, a worker or
             // the system, and completing it here is what it always meant.
-            return self
-                .complete_step(context, &updated_run, &step, None, at)
-                .await;
+            return self.complete_step(context, &updated_run, &step, at).await;
         }
 
         let Some(executor) = self.model.as_ref() else {
@@ -170,15 +172,70 @@ impl RunWorkHandler for ExecuteStepHandler {
                 super::super::StepModelRequest {
                     run_id: updated_run.id,
                     step_id: step.id,
-                    objective: updated_run.objective.clone(),
                 },
             )
             .await;
 
         match outcome {
-            Ok(outcome) => {
-                self.complete_step(context, &updated_run, &step, Some(outcome), at)
-                    .await
+            // The result finalizer published this step inside the same
+            // transaction that bound its encrypted output. Completing it again
+            // here would advance the Run a second time from stale state.
+            Ok(StepModelOutcome::Published) => Ok(RunWorkOutcome::Completed),
+            Ok(StepModelOutcome::Denied { authorization_id }) => {
+                self.fail_step(
+                    context,
+                    &updated_run,
+                    &step,
+                    RunFailure {
+                        code: "provider_dispatch_denied".to_string(),
+                        message: format!(
+                            "policy refused this step's provider dispatch; \
+                             the decision is recorded as {authorization_id}"
+                        ),
+                        // A refusal is a decision, not a transient fault.
+                        retryable: false,
+                    },
+                )
+                .await
+            }
+            // Nothing was called and the step is not finished. Completing the
+            // item here would leave a step nobody is coming back for, and
+            // failing it would report a failure for work that may be
+            // succeeding elsewhere; the item is rescheduled instead. If the
+            // other owner publishes first, the next pass sees a terminal step
+            // and stops.
+            Ok(StepModelOutcome::Conflict {
+                retry_after_seconds,
+            }) => Ok(RunWorkOutcome::Retry {
+                available_at: at
+                    + chrono::Duration::seconds(i64::from(
+                        retry_after_seconds.unwrap_or(CONTENDED_DISPATCH_RETRY_SECONDS),
+                    )),
+                error: RunFailure {
+                    code: "provider_dispatch_contended".to_string(),
+                    message: "this step's provider dispatch could not be admitted yet; \
+                              nothing was called and it will be attempted again"
+                        .to_string(),
+                    retryable: true,
+                },
+            }),
+            Ok(StepModelOutcome::RecoveredUnknown) => {
+                self.fail_step(
+                    context,
+                    &updated_run,
+                    &step,
+                    RunFailure {
+                        code: "provider_dispatch_unknown".to_string(),
+                        message: "a provider dispatch for this step left the process and its \
+                                  outcome could not be established; it was adopted as unknown \
+                                  and will not be called again"
+                            .to_string(),
+                        // Retrying would be a second effect for a call that may
+                        // already have happened.
+                        retryable: false,
+                    },
+                )
+                .await
             }
             Err(error) => {
                 // `Unavailable` is the application's word for "may succeed
@@ -201,12 +258,17 @@ impl RunWorkHandler for ExecuteStepHandler {
 }
 
 impl ExecuteStepHandler {
+    /// Complete a step this process performed itself.
+    ///
+    /// Only non-agent steps reach it. A governed agent step is published by the
+    /// provider-result finalizer, which advances the Run in the same
+    /// transaction that binds the encrypted output; a second completion here
+    /// would write a second success from state the finalizer has already moved.
     async fn complete_step(
         &self,
         context: &RequestContext,
         run: &vestrace_domain::run::AgentRun,
         step: &vestrace_domain::run::RunStep,
-        outcome: Option<super::super::StepModelOutcome>,
         _started_at: Timestamp,
     ) -> Result<RunWorkOutcome, ApplicationError> {
         let at = self.clock.now();
@@ -216,21 +278,6 @@ impl ExecuteStepHandler {
         let mut completed_step = step.clone();
         completed_step.status = RunStepStatus::Succeeded;
         completed_step.finished_at = Some(at);
-        if let Some(outcome) = outcome {
-            // The step names what the invocation produced. Two references,
-            // because they answer different questions: the artifact is the
-            // output, the model invocation is what it cost.
-            completed_step.output_references.push(RunReference {
-                id: vestrace_domain::id::RunReferenceId::from_uuid(outcome.artifact_id.as_uuid()),
-                kind: RunReferenceKind::Artifact,
-            });
-            completed_step.output_references.push(RunReference {
-                id: vestrace_domain::id::RunReferenceId::from_uuid(
-                    outcome.model_execution_id.as_uuid(),
-                ),
-                kind: RunReferenceKind::ModelInvocation,
-            });
-        }
 
         let mut updated_run = run.clone();
         updated_run.version = run_version;

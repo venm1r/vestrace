@@ -15,21 +15,25 @@ use vestrace_application::{
     AgentRepository, ArtifactRepository, AuditRepository, AuthorizationBoundary,
     ConnectionRepository, DenyAllPolicyEngine, EvaluationRepository, ExecutionHistoryRepository,
     HealthInspectionService, HealthMonitorService, HealthRepository, MemoryUseCases,
-    ModelExecutionRepository, ModelRepository, ProviderRepository, RetrievalService,
-    RoutingDecisionRepository, RunUseCases, SharedAgentRepository, SharedArtifactRepository,
-    SharedAuditRepository, SharedCapabilityGrantRepository, SharedConnectionRepository,
-    SharedEvaluationRepository, SharedExecutionHistoryRepository, SharedHealthFindingRepository,
-    SharedInvariantObserver, SharedLearningRepository, SharedMemoryUseCases,
-    SharedModelExecutionRepository, SharedModelRepository, SharedPolicyDecisionEngine,
+    ModelExecutionRepository, ModelRepository, RetrievalService, RoutingDecisionRepository,
+    RunUseCases, SharedAgentRepository, SharedArtifactRepository, SharedAuditRepository,
+    SharedCapabilityGrantRepository, SharedConnectionRepository,
+    SharedConnectionRevisionRepository, SharedEvaluationRepository,
+    SharedExecutionHistoryRepository, SharedHealthFindingRepository, SharedInvariantObserver,
+    SharedLearningRepository, SharedMemoryUseCases, SharedModelExecutionRepository,
+    SharedModelRepository, SharedModelRevisionRepository, SharedPolicyDecisionEngine,
     SharedProviderRepository, SharedRoutingDecisionRepository, SharedRunUseCases,
     SharedRuntimeEvidenceProvider, SharedSkillRepository, SharedTriggerRepository,
     SharedWorkflowRepository, SharedWorkspaceCountsProvider, SharedWorkspaceSettingsRepository,
     SkillRepository, TriggerRepository, UnavailableLearningRepository, WorkflowRepository,
     WorkspaceSettingsService,
 };
-use vestrace_domain::{AuthorizationRequest, Capability, RiskCategory};
 
-use crate::{health, metrics::MetricsRegistry};
+use crate::{
+    health,
+    metrics::MetricsRegistry,
+    route_inventory::{RouteDecision, inventory_lookup, mount, route_descriptor},
+};
 
 const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 const CORRELATION_ID_HEADER: HeaderName = HeaderName::from_static("x-correlation-id");
@@ -40,7 +44,6 @@ pub struct AppState {
     run_use_cases: SharedRunUseCases,
     memory_use_cases: SharedMemoryUseCases,
     retrieval_service: Arc<RetrievalService>,
-    provider_repository: SharedProviderRepository,
     model_repository: SharedModelRepository,
     agent_repository: SharedAgentRepository,
     skill_repository: SharedSkillRepository,
@@ -69,8 +72,22 @@ pub struct AppState {
     artifact_repository: Option<SharedArtifactRepository>,
     trigger_repository: Option<SharedTriggerRepository>,
     connection_repository: Option<SharedConnectionRepository>,
+    connection_revision_repository: Option<SharedConnectionRevisionRepository>,
+    model_revision_repository: Option<SharedModelRevisionRepository>,
+    qualification_job_repository:
+        Option<std::sync::Arc<dyn vestrace_application::QualificationJobRepository>>,
+    credential_activation_repository:
+        Option<std::sync::Arc<dyn vestrace_application::CredentialActivationRepository>>,
+    embedding_job_repository: Option<vestrace_application::SharedEmbeddingJobRepository>,
+    embedding_transition_repository:
+        Option<vestrace_application::SharedEmbeddingTransitionRepository>,
     secret_store: Option<vestrace_application::SharedSecretStore>,
     access_token_store: Option<vestrace_application::SharedAccessTokenStore>,
+    access_token_mutation_repository: Option<
+        vestrace_application::SharedGovernedMutationRepository<
+            vestrace_application::AccessTokenMutation,
+        >,
+    >,
     token_entropy_source: Option<vestrace_application::SharedTokenEntropySource>,
     ag_ui: Option<vestrace_application::SharedAgUiRepository>,
     run_orchestrator: Option<vestrace_application::run::SharedRunOrchestrator>,
@@ -84,7 +101,7 @@ impl AppState {
         run_use_cases: SharedRunUseCases,
         memory_use_cases: SharedMemoryUseCases,
         retrieval_service: Arc<RetrievalService>,
-        provider_repository: SharedProviderRepository,
+        _provider_repository: SharedProviderRepository,
         model_repository: SharedModelRepository,
         agent_repository: SharedAgentRepository,
         skill_repository: SharedSkillRepository,
@@ -100,7 +117,7 @@ impl AppState {
             run_use_cases,
             memory_use_cases,
             retrieval_service,
-            provider_repository,
+            _provider_repository,
             model_repository,
             agent_repository,
             skill_repository,
@@ -120,7 +137,7 @@ impl AppState {
         run_use_cases: SharedRunUseCases,
         memory_use_cases: SharedMemoryUseCases,
         retrieval_service: Arc<RetrievalService>,
-        provider_repository: SharedProviderRepository,
+        _provider_repository: SharedProviderRepository,
         model_repository: SharedModelRepository,
         agent_repository: SharedAgentRepository,
         skill_repository: SharedSkillRepository,
@@ -137,7 +154,7 @@ impl AppState {
             run_use_cases,
             memory_use_cases,
             retrieval_service,
-            provider_repository,
+            _provider_repository,
             model_repository,
             agent_repository,
             skill_repository,
@@ -158,7 +175,7 @@ impl AppState {
         run_use_cases: SharedRunUseCases,
         memory_use_cases: SharedMemoryUseCases,
         retrieval_service: Arc<RetrievalService>,
-        provider_repository: SharedProviderRepository,
+        _provider_repository: SharedProviderRepository,
         model_repository: SharedModelRepository,
         agent_repository: SharedAgentRepository,
         skill_repository: SharedSkillRepository,
@@ -176,7 +193,6 @@ impl AppState {
             run_use_cases,
             memory_use_cases,
             retrieval_service,
-            provider_repository,
             model_repository,
             agent_repository,
             skill_repository,
@@ -199,8 +215,15 @@ impl AppState {
             artifact_repository: None,
             trigger_repository: None,
             connection_repository: None,
+            connection_revision_repository: None,
+            model_revision_repository: None,
+            qualification_job_repository: None,
+            credential_activation_repository: None,
+            embedding_job_repository: None,
+            embedding_transition_repository: None,
             secret_store: None,
             access_token_store: None,
+            access_token_mutation_repository: None,
             token_entropy_source: None,
             ag_ui: None,
             run_orchestrator: None,
@@ -256,10 +279,6 @@ impl AppState {
 
     pub(crate) fn retrieval_service(&self) -> &RetrievalService {
         &self.retrieval_service
-    }
-
-    pub(crate) fn provider_repository(&self) -> &dyn ProviderRepository {
-        self.provider_repository.as_ref()
     }
 
     pub(crate) fn model_repository(&self) -> &dyn ModelRepository {
@@ -330,6 +349,40 @@ impl AppState {
         &self,
     ) -> Result<&dyn vestrace_application::AccessTokenStore, crate::api::ApiError> {
         self.access_token_store
+            .as_deref()
+            .ok_or_else(|| crate::api::ApiError::not_implemented("access token API"))
+    }
+
+    pub fn access_token_store_handle(
+        &self,
+    ) -> Result<vestrace_application::SharedAccessTokenStore, crate::api::ApiError> {
+        self.access_token_store
+            .clone()
+            .ok_or_else(|| crate::api::ApiError::not_implemented("access token API"))
+    }
+
+    /// Supply the transaction authority used by credential minting. Without
+    /// it, creating a credential is unavailable rather than risking a token
+    /// record without its audit event.
+    pub fn with_access_token_mutation_repository(
+        mut self,
+        repository: vestrace_application::SharedGovernedMutationRepository<
+            vestrace_application::AccessTokenMutation,
+        >,
+    ) -> Self {
+        self.access_token_mutation_repository = Some(repository);
+        self
+    }
+
+    pub fn access_token_mutation_repository(
+        &self,
+    ) -> Result<
+        &dyn vestrace_application::GovernedMutationRepository<
+            vestrace_application::AccessTokenMutation,
+        >,
+        crate::api::ApiError,
+    > {
+        self.access_token_mutation_repository
             .as_deref()
             .ok_or_else(|| crate::api::ApiError::not_implemented("access token API"))
     }
@@ -563,6 +616,148 @@ impl AppState {
             .ok_or_else(|| crate::api::ApiError::not_implemented("connection API"))
     }
 
+    /// Supply the only readable governed Connection projection authority.
+    /// Absence fails closed instead of falling back to the legacy registry.
+    pub fn with_connection_revision_repository(
+        mut self,
+        repository: SharedConnectionRevisionRepository,
+    ) -> Self {
+        self.connection_revision_repository = Some(repository);
+        self
+    }
+
+    pub fn connection_revision_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::ConnectionRevisionRepository, crate::api::ApiError> {
+        self.connection_revision_repository
+            .as_deref()
+            .ok_or_else(|| {
+                crate::api::ApiError::from_application(
+                    vestrace_application::ApplicationError::Unavailable(
+                        "governed connection projection is not configured".to_owned(),
+                    ),
+                )
+            })
+    }
+
+    /// Supply the only readable governed Model and Provider projection authority.
+    /// Absence fails closed instead of falling back to legacy registries.
+    pub fn with_model_revision_repository(
+        mut self,
+        repository: SharedModelRevisionRepository,
+    ) -> Self {
+        self.model_revision_repository = Some(repository);
+        self
+    }
+
+    pub fn model_revision_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::ModelRevisionRepository, crate::api::ApiError> {
+        self.model_revision_repository.as_deref().ok_or_else(|| {
+            crate::api::ApiError::from_application(
+                vestrace_application::ApplicationError::Unavailable(
+                    "governed model projection is not configured".to_owned(),
+                ),
+            )
+        })
+    }
+
+    /// Supply the one authority that may request a qualification job.
+    ///
+    /// Absence fails closed: a surface that quietly did nothing would report a
+    /// qualification that no probe will ever run.
+    pub fn with_qualification_job_repository(
+        mut self,
+        repository: std::sync::Arc<dyn vestrace_application::QualificationJobRepository>,
+    ) -> Self {
+        self.qualification_job_repository = Some(repository);
+        self
+    }
+
+    pub fn qualification_job_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::QualificationJobRepository, crate::api::ApiError> {
+        self.qualification_job_repository.as_deref().ok_or_else(|| {
+            crate::api::ApiError::from_application(
+                vestrace_application::ApplicationError::Unavailable(
+                    "governed qualification authority is not configured".to_owned(),
+                ),
+            )
+        })
+    }
+
+    /// Supply the sole authority that may publish, replace, or revoke a slot's
+    /// resolved credential revision.
+    pub fn with_credential_activation_repository(
+        mut self,
+        repository: std::sync::Arc<dyn vestrace_application::CredentialActivationRepository>,
+    ) -> Self {
+        self.credential_activation_repository = Some(repository);
+        self
+    }
+
+    pub fn credential_activation_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::CredentialActivationRepository, crate::api::ApiError>
+    {
+        self.credential_activation_repository
+            .as_deref()
+            .ok_or_else(|| {
+                crate::api::ApiError::from_application(
+                    vestrace_application::ApplicationError::Unavailable(
+                        "governed credential activation authority is not configured".to_owned(),
+                    ),
+                )
+            })
+    }
+
+    /// Supply the sole authority that may accept a successor after an
+    /// acknowledged ambiguous embedding effect. Absence fails closed: the
+    /// acknowledgement must never report a replacement job it did not create.
+    pub fn with_embedding_job_repository(
+        mut self,
+        repository: vestrace_application::SharedEmbeddingJobRepository,
+    ) -> Self {
+        self.embedding_job_repository = Some(repository);
+        self
+    }
+
+    pub fn embedding_job_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::EmbeddingJobRepository, crate::api::ApiError> {
+        self.embedding_job_repository.as_deref().ok_or_else(|| {
+            crate::api::ApiError::from_application(
+                vestrace_application::ApplicationError::Unavailable(
+                    "governed embedding job acceptance is not configured".to_owned(),
+                ),
+            )
+        })
+    }
+
+    pub fn with_embedding_transition_repository(
+        mut self,
+        repository: vestrace_application::SharedEmbeddingTransitionRepository,
+    ) -> Self {
+        self.embedding_transition_repository = Some(repository);
+        self
+    }
+
+    pub fn embedding_transition_repository(
+        &self,
+    ) -> Result<&dyn vestrace_application::EmbeddingTransitionRepository, crate::api::ApiError>
+    {
+        self.embedding_transition_repository
+            .as_deref()
+            .ok_or_else(|| {
+                crate::api::ApiError::from_application(
+                    vestrace_application::ApplicationError::Unavailable(
+                        "governed embedding transition carry acknowledgement is not configured"
+                            .to_owned(),
+                    ),
+                )
+            })
+    }
+
     /// Enable credential-backed authentication. Without it the server keeps
     /// trusting identity headers, which is not authentication.
     pub fn with_authentication(mut self, authentication: crate::auth::Authentication) -> Self {
@@ -585,18 +780,30 @@ impl AppState {
 
 pub fn build_router(state: AppState) -> Router {
     let authentication = state.authentication.clone();
-    let router = Router::new()
-        .route("/health/live", get(health::live))
-        .route("/health/ready", get(health::ready))
-        .route("/metrics", get(crate::metrics::metrics_handler))
-        .nest("/v1", crate::api::api_routes())
-        .nest("/ag-ui", crate::api::ag_ui::ag_ui_routes())
-        .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(
-            state,
-            authorize_http_request,
-        ))
-        .layer(middleware::from_fn(add_request_context));
+    let router = Router::new();
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/health/live"),
+        get(health::live),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/health/ready"),
+        get(health::ready),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/metrics"),
+        get(crate::metrics::metrics_handler),
+    )
+    .nest("/v1", crate::api::api_routes())
+    .nest("/ag-ui", crate::api::ag_ui::ag_ui_routes())
+    .with_state(state.clone())
+    .layer(middleware::from_fn_with_state(
+        state,
+        authorize_http_request,
+    ))
+    .layer(middleware::from_fn(add_request_context));
 
     // Authentication runs outermost so an unauthenticated request never reaches
     // authorization, and so the identity headers authorization reads have
@@ -617,10 +824,16 @@ async fn authorize_http_request(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some(authorization_request) =
-        http_authorization_request(request.method(), request.uri().path())
-    else {
-        return next.run(request).await;
+    let authorization_request = match inventory_lookup(request.method(), request.uri().path()) {
+        RouteDecision::PublicBounded => return next.run(request).await,
+        RouteDecision::NotInInventory => {
+            return crate::api::ApiError::refused(
+                "route_not_in_inventory",
+                "the request path is not registered as a governed HTTP surface",
+            )
+            .into_response();
+        }
+        RouteDecision::Governed(request) => request,
     };
 
     let context = match crate::api::context::request_context(request.headers()) {
@@ -638,181 +851,19 @@ async fn authorize_http_request(
     }
 }
 
-fn http_authorization_request(method: &Method, path: &str) -> Option<AuthorizationRequest> {
-    let capability = http_capability(method, path)?;
-    Some(AuthorizationRequest::new(
-        capability,
-        format!("http.{}", method.as_str().to_ascii_lowercase()),
-        path,
-        http_risk(method, path),
-    ))
-}
-
-fn http_risk(method: &Method, path: &str) -> RiskCategory {
-    if path.ends_with("/approve") {
-        return RiskCategory::Critical;
-    }
-    // Writing or removing a credential is critical whatever the verb: a wrong
-    // value silently breaks every consumer of that secret, and a deletion is
-    // not recoverable from within the system.
-    if path.starts_with("/v1/secrets") && *method != Method::GET && *method != Method::HEAD {
-        return RiskCategory::Critical;
-    }
-    // Destroying a memory is irreversible and leaves no superseded revision to
-    // read back. Approving a run is already critical here; erasing the record a
-    // run might have been approved on the basis of is not less so.
-    if path.starts_with("/v1/memories") && *method == Method::DELETE {
-        return RiskCategory::Critical;
-    }
-    // Acting outside the process is not a write like the others: nothing here
-    // can undo it.
-    if path.starts_with("/v1/effects") {
-        return RiskCategory::Critical;
-    }
-    if *method == Method::GET || *method == Method::HEAD {
-        return RiskCategory::Low;
-    }
-    if path.starts_with("/ag-ui/")
-        || path.starts_with("/v1/runs")
-        || path.starts_with("/v1/executions")
-        || path.starts_with("/v1/workflow-executions")
-    {
-        RiskCategory::High
-    } else {
-        RiskCategory::Medium
+#[cfg(test)]
+fn http_authorization_request(
+    method: &Method,
+    path: &str,
+) -> Option<vestrace_domain::AuthorizationRequest> {
+    match inventory_lookup(method, path) {
+        RouteDecision::Governed(request) => Some(request),
+        RouteDecision::PublicBounded | RouteDecision::NotInInventory => None,
     }
 }
 
-/// Exposed for contract tests: a route with no mapping here bypasses the
-/// authorization middleware entirely.
-pub fn http_capability_for_test(method: &Method, path: &str) -> Option<Capability> {
-    http_capability(method, path)
-}
-
-fn http_capability(method: &Method, path: &str) -> Option<Capability> {
-    let relative = if let Some(path) = path.strip_prefix("/v1/") {
-        path
-    } else if matches!(
-        path,
-        "/ag-ui/endpoints" | "/ag-ui/events/stream" | "/ag-ui/run"
-    ) {
-        return Some(if *method == Method::GET {
-            Capability::ExecutionRead
-        } else {
-            Capability::ExecutionWrite
-        });
-    } else {
-        return None;
-    };
-
-    let base = relative.split('/').next()?;
-    let read = *method == Method::GET || *method == Method::HEAD;
-    Some(match base {
-        "runs" => {
-            if relative.ends_with("/pause")
-                || relative.ends_with("/resume")
-                || relative.ends_with("/cancel")
-                || relative.ends_with("/approve")
-            {
-                Capability::ExecutionWrite
-            } else if read {
-                Capability::ExecutionRead
-            } else {
-                Capability::ExecutionWrite
-            }
-        }
-        "events" => Capability::EventWrite,
-        "memories" => {
-            if read {
-                Capability::MemoryRead
-            } else if *method == Method::DELETE {
-                // Destroying a memory is not a write. It takes its own
-                // capability, which the local development configuration
-                // pointedly does not grant, so the surface is closed until
-                // somebody issues the grant deliberately.
-                Capability::MemoryPurge
-            } else {
-                Capability::MemoryWrite
-            }
-        }
-        "retrieval" => Capability::ContextRetrieve,
-        // An external effect leaves the process and cannot be recalled.
-        "effects" => Capability::ExecutionWrite,
-        // Settings change how the runtime behaves for the whole workspace.
-        "settings" => Capability::WorkspaceAdmin,
-        "agents" => {
-            if read {
-                Capability::AgentRead
-            } else {
-                Capability::AgentWrite
-            }
-        }
-        "skills" => {
-            if read {
-                Capability::SkillRead
-            } else {
-                Capability::SkillWrite
-            }
-        }
-        "workflows" => {
-            if read {
-                Capability::WorkflowRead
-            } else {
-                Capability::WorkflowWrite
-            }
-        }
-        "workflow-executions" | "executions" => {
-            if read {
-                Capability::ExecutionRead
-            } else {
-                Capability::ExecutionWrite
-            }
-        }
-        "models" => {
-            if read {
-                Capability::ModelRead
-            } else {
-                Capability::ModelWrite
-            }
-        }
-        "providers" => {
-            if read {
-                Capability::ProviderRead
-            } else {
-                Capability::ProviderWrite
-            }
-        }
-        "routing" => {
-            if read {
-                Capability::ModelRead
-            } else {
-                Capability::ModelWrite
-            }
-        }
-        "evaluations" | "evaluation-facts" => {
-            if read {
-                Capability::EvaluationRead
-            } else {
-                Capability::EvaluationWrite
-            }
-        }
-        "learning" => {
-            if read {
-                Capability::LearningRead
-            } else {
-                Capability::LearningWrite
-            }
-        }
-        "artifacts" => Capability::ExportRead,
-        "audit" => Capability::AuditRead,
-        "metrics" => Capability::AuditRead,
-        // Issuing, listing or revoking authority is the most consequential
-        // administrative act there is, so it takes the administrative
-        // capability rather than one of its own.
-        "capability-grants" => Capability::WorkspaceAdmin,
-        "triggers" | "connections" | "system" | "profile" | "secrets" => Capability::WorkspaceAdmin,
-        _ => return None,
-    })
+pub fn inventory_lookup_for_test(method: &Method, path: &str) -> RouteDecision {
+    inventory_lookup(method, path)
 }
 
 async fn add_request_context(mut request: Request<Body>, next: Next) -> Response {
@@ -867,7 +918,8 @@ fn header_value(id: Uuid) -> HeaderValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{http_authorization_request, http_capability};
+    use super::http_authorization_request;
+    use crate::route_inventory::{RouteDecision, inventory_lookup};
     use axum::http::Method;
     use vestrace_domain::{Capability, RiskCategory};
 
@@ -886,9 +938,18 @@ mod tests {
     }
 
     #[test]
-    fn unknown_transport_path_is_not_promoted_to_a_governed_action() {
-        assert!(http_capability(&Method::GET, "/v1/v1/runs").is_none());
-        assert!(http_capability(&Method::GET, "/ag-ui/unknown").is_none());
-        assert!(http_capability(&Method::GET, "/unmatched").is_none());
+    fn unknown_transport_path_is_denied() {
+        assert!(matches!(
+            inventory_lookup(&Method::GET, "/v1/v1/runs"),
+            RouteDecision::NotInInventory
+        ));
+        assert!(matches!(
+            inventory_lookup(&Method::GET, "/ag-ui/unknown"),
+            RouteDecision::NotInInventory
+        ));
+        assert!(matches!(
+            inventory_lookup(&Method::GET, "/unmatched"),
+            RouteDecision::NotInInventory
+        ));
     }
 }

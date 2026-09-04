@@ -108,14 +108,14 @@ Current runtime includes:
 
 Important semantic limitations confirmed during gap analysis:
 
-- only the text/FTS channel is wired into `RetrievalService` even though additional retriever ports exist;
-- wired FTS does not implement `AsOf`/Timeline semantics from `TimePerspective`;
-- FTS candidates currently return `revision_id: None`;
-- ContextPackBuilder uses retrieval candidate explanation text as `rendered_text` rather than hydrating the exact MemoryRevision content;
+- the HTTP server wires text/FTS and, when configured, the vector channel; MCP currently wires text/FTS only, while exact and structured retriever ports have no production composition root;
+- text/FTS resolves `Current`, `AsOf`, Timeline and History against explicit revision selections;
+- every discovered candidate carries an exact revision reference and is hydrated from that revision before fusion and reranking;
+- `ContextPackBuilder` renders the hydrated revision content and retains its stored source classification;
 - section assignment is currently a structural placeholder rather than semantic kind/authority-based placement;
 - the current overflow path truncates text and labels it `Reference`; it is not yet a true provenance-preserving semantic compression ladder;
 - reranking uses placeholder/neutral metadata for recency/provenance and derives importance/confidence from candidate score rather than canonical Memory metadata;
-- full capability/classification/share/conflict governance is not yet enforced by the retrieval pipeline.
+- exact-revision classification is enforced by the configured retrieval policy with structured, non-content-disclosing withholding; capability/share/conflict governance is not yet enforced by the retrieval pipeline.
 
 Therefore current retrieval is a useful **pipeline shell**, not yet target ContextPack 2.0.
 

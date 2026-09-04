@@ -24,8 +24,10 @@ struct FakeRunUseCases {
     runs: Mutex<Vec<AgentRun>>,
 }
 
+#[derive(Default)]
 struct FakeRunCommands {
     runs: Arc<FakeRunUseCases>,
+    accepted_inputs: Mutex<Vec<Vec<u8>>>,
 }
 
 #[async_trait::async_trait]
@@ -107,10 +109,35 @@ impl vestrace_application::run::RunOrchestrator for FakeRunCommands {
 
     async fn add_steps(
         &self,
-        _context: &RequestContext,
-        _command: vestrace_application::run::AddRunSteps,
+        context: &RequestContext,
+        command: vestrace_application::run::AddRunSteps,
     ) -> Result<vestrace_application::run::RunSnapshot, ApplicationError> {
-        unreachable!("these tests do not exercise step creation")
+        for step in command.steps {
+            if let vestrace_application::run::NewRunStepInput::Confidential(input) = step.input {
+                self.accepted_inputs
+                    .lock()
+                    .unwrap()
+                    .push(input.with_bytes(|bytes| bytes.to_vec()));
+            }
+        }
+        let run = AgentRun::create(
+            NewAgentRun {
+                id: AgentRunId::new(),
+                workspace_id: context.workspace_id,
+                objective: "safe step response".into(),
+                coordinator_snapshot_id: AgentRuntimeSnapshotId::new(),
+                execution_mode: RunExecutionMode::Supervised,
+                parent: None,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+            },
+            now(),
+        )?;
+        Ok(vestrace_application::run::RunSnapshot {
+            run,
+            steps: Vec::new(),
+            checkpoint: None,
+        })
     }
 
     async fn pause_run(
@@ -191,6 +218,14 @@ impl vestrace_application::MemoryUseCases for StubMemoryUseCases {
         _: &vestrace_application::RequestContext,
         _: vestrace_domain::id::MemoryId,
     ) -> Result<Option<vestrace_domain::Memory>, vestrace_application::ApplicationError> {
+        Ok(None)
+    }
+    async fn find_revision(
+        &self,
+        _: &vestrace_application::RequestContext,
+        _: vestrace_domain::id::MemoryRevisionId,
+    ) -> Result<Option<vestrace_domain::MemoryRevision>, vestrace_application::ApplicationError>
+    {
         Ok(None)
     }
 }
@@ -384,9 +419,21 @@ fn app_with_policy(
     run_use_cases: Arc<FakeRunUseCases>,
     policy: Arc<dyn PolicyDecisionEngine>,
 ) -> axum::Router {
-    let run_commands = Arc::new(FakeRunCommands {
-        runs: run_use_cases.clone(),
-    });
+    app_with_run_commands(
+        run_use_cases.clone(),
+        policy,
+        Arc::new(FakeRunCommands {
+            runs: run_use_cases,
+            ..Default::default()
+        }),
+    )
+}
+
+fn app_with_run_commands(
+    run_use_cases: Arc<FakeRunUseCases>,
+    policy: Arc<dyn PolicyDecisionEngine>,
+    run_commands: Arc<dyn vestrace_application::run::RunOrchestrator>,
+) -> axum::Router {
     build_router(
         AppState::new(
             Arc::new(HealthyRepository),
@@ -589,4 +636,119 @@ async fn malformed_run_id_returns_400() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Catches a route change that admits an agent step with no confidential input;
+/// such a step could otherwise enter the legacy execution path before Task 3.
+#[tokio::test]
+async fn governed_agent_input_requires_input_for_an_agent_step() {
+    let response = app(Arc::new(FakeRunUseCases::default()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/runs/{}/steps", AgentRunId::new()))
+                .header("content-type", "application/json")
+                .header("x-workspace-id", "00000000-0000-0000-0000-000000000001")
+                .header("x-principal-id", "00000000-0000-0000-0000-000000000002")
+                .header("x-request-id", AgentRunId::new().as_uuid().to_string())
+                .header("x-correlation-id", AgentRunId::new().as_uuid().to_string())
+                .header("if-match", "1")
+                .body(Body::from(r#"{"steps":[{"assigned_actor":"agent"}]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Catches accepting blank, oversized, or non-agent confidential input; each
+/// would either disclose an unbounded body or route it to a non-governed step.
+#[tokio::test]
+async fn governed_agent_input_enforces_the_actor_and_byte_matrix() {
+    for body in [
+        r#"{"steps":[{"assigned_actor":"agent","input":""}]}"#.to_owned(),
+        r#"{"steps":[{"assigned_actor":"agent","input":" \t\n "}]}"#.to_owned(),
+        format!(
+            r#"{{"steps":[{{"assigned_actor":"agent","input":"{}"}}]}}"#,
+            "a".repeat(32_769)
+        ),
+        r#"{"steps":[{"assigned_actor":"principal","input":"sentinel-secret"}]}"#.to_owned(),
+        r#"{"steps":[{"assigned_actor":"system","input":"sentinel-secret"}]}"#.to_owned(),
+    ] {
+        let response = app(Arc::new(FakeRunUseCases::default()))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/runs/{}/steps", AgentRunId::new()))
+                    .header("content-type", "application/json")
+                    .header("x-workspace-id", "00000000-0000-0000-0000-000000000001")
+                    .header("x-principal-id", "00000000-0000-0000-0000-000000000002")
+                    .header("x-request-id", AgentRunId::new().as_uuid().to_string())
+                    .header("x-correlation-id", AgentRunId::new().as_uuid().to_string())
+                    .header("if-match", "1")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+/// Catches dropping, copying into safe metadata, or echoing an accepted agent
+/// input. The test double consumes the move-only carrier exactly once.
+#[tokio::test]
+async fn governed_agent_input_is_consumed_once_and_never_echoed() {
+    let run_use_cases = Arc::new(FakeRunUseCases::default());
+    let commands = Arc::new(FakeRunCommands {
+        runs: run_use_cases.clone(),
+        ..Default::default()
+    });
+    let response =
+        app_with_run_commands(run_use_cases, Arc::new(TestAllowPolicy), commands.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/runs/{}/steps", AgentRunId::new()))
+                    .header("content-type", "application/json")
+                    .header("x-workspace-id", "00000000-0000-0000-0000-000000000001")
+                    .header("x-principal-id", "00000000-0000-0000-0000-000000000002")
+                    .header("x-request-id", AgentRunId::new().as_uuid().to_string())
+                    .header("x-correlation-id", AgentRunId::new().as_uuid().to_string())
+                    .header("if-match", "1")
+                    .body(Body::from(
+                        r#"{"steps":[{"assigned_actor":"agent","input":"sentinel-secret"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response_json(response).await.to_string();
+    assert!(!body.contains("sentinel-secret"));
+    assert_eq!(
+        commands.accepted_inputs.lock().unwrap().as_slice(),
+        [b"sentinel-secret"]
+    );
+}
+
+/// Catches AG-UI mapping a chat message into a run objective, which would make
+/// message plaintext a pre-governance execution input.
+#[tokio::test]
+async fn ag_ui_refuses_the_message_to_run_execution_bridge() {
+    let response = app(Arc::new(FakeRunUseCases::default()))
+        .oneshot(identity_request(
+            "POST",
+            "/ag-ui/run",
+            Body::from(r#"{"message":"sentinel-secret"}"#),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = response_json(response).await;
+    assert_eq!(body["code"], "governed_run_input_required");
+    assert!(!body.to_string().contains("sentinel-secret"));
 }

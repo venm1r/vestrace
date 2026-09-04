@@ -11,7 +11,7 @@
 //! most consequential thing an administrator does.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -23,14 +23,29 @@ use vestrace_domain::security::{
 };
 use vestrace_domain::{Capability, CapabilityGrantId, PrincipalId, RiskCategory, Timestamp};
 
-use crate::AppState;
+use crate::{
+    AppState,
+    route_inventory::{mount, route_descriptor},
+};
 
 use super::{ApiError, context::request_context};
 
 pub fn capability_grant_routes() -> Router<AppState> {
-    Router::new()
-        .route("/capability-grants", post(issue_grant).get(list_grants))
-        .route("/capability-grants/{id}/revoke", post(revoke_grant))
+    let router = mount(
+        Router::new(),
+        route_descriptor(&Method::GET, "/v1/capability-grants"),
+        axum::routing::get(list_grants),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/capability-grants"),
+        post(issue_grant),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::POST, "/v1/capability-grants/{id}/revoke"),
+        post(revoke_grant),
+    )
 }
 
 #[derive(Debug, Deserialize)]

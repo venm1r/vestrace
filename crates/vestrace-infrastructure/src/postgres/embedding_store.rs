@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 use vestrace_application::retrieval::{EmbeddingSpace, EmbeddingStore, PendingEmbedding};
 use vestrace_application::{ApplicationError, RequestContext};
+use vestrace_domain::MemoryRevision;
 use vestrace_domain::id::{EmbeddingSpaceId, MemoryId};
 
 use super::PgStore;
@@ -160,12 +161,21 @@ impl EmbeddingStore for PgEmbeddingStore {
 
         rows.into_iter()
             .map(|row| {
+                let classification: Option<String> =
+                    row.try_get("classification").map_err(storage_error)?;
+                MemoryRevision::validate_classification_shape(classification.as_deref()).map_err(
+                    |error| {
+                        ApplicationError::Storage(format!(
+                            "stored memory_revisions.classification is invalid: {error}"
+                        ))
+                    },
+                )?;
                 Ok(PendingEmbedding {
                     memory_id: MemoryId::from_uuid(
                         row.try_get("memory_id").map_err(storage_error)?,
                     ),
                     content: row.try_get("content").map_err(storage_error)?,
-                    classification: row.try_get("classification").map_err(storage_error)?,
+                    classification,
                 })
             })
             .collect()

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use sqlx::Row;
-use vestrace_application::{ApplicationError, AuditRepository, RequestContext};
+use vestrace_application::{ApplicationError, AuditRepository, RequestContext, UnitOfWork};
 use vestrace_domain::AuditEvent;
 
 use super::PgStore;
@@ -32,6 +32,15 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
 }
 
+fn transaction(
+    unit_of_work: &mut dyn UnitOfWork,
+) -> Result<&mut super::PgScopedTransaction, ApplicationError> {
+    unit_of_work
+        .as_any_mut()
+        .downcast_mut::<super::PgScopedTransaction>()
+        .ok_or_else(|| ApplicationError::Internal("expected a PostgreSQL unit of work".to_owned()))
+}
+
 #[async_trait]
 impl AuditRepository for PgAuditRepository {
     async fn record(
@@ -39,17 +48,28 @@ impl AuditRepository for PgAuditRepository {
         context: &RequestContext,
         event: &AuditEvent,
     ) -> Result<(), ApplicationError> {
-        if event.workspace_id != context.workspace_id {
-            return Err(ApplicationError::Policy(
-                "an audit event cannot be recorded into another workspace".into(),
-            ));
-        }
-
         let mut scoped = self
             .store
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
+
+        self.record_in(context, &mut scoped, event).await?;
+
+        scoped.commit().await.map_err(storage_error)
+    }
+
+    async fn record_in(
+        &self,
+        context: &RequestContext,
+        unit_of_work: &mut dyn UnitOfWork,
+        event: &AuditEvent,
+    ) -> Result<(), ApplicationError> {
+        if event.workspace_id != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "an audit event cannot be recorded into another workspace".into(),
+            ));
+        }
 
         sqlx::query(
             r#"
@@ -65,11 +85,11 @@ impl AuditRepository for PgAuditRepository {
         .bind(event.resource_id)
         .bind(&event.payload)
         .bind(event.created_at)
-        .execute(scoped.connection())
+        .execute(transaction(unit_of_work)?.connection())
         .await
         .map_err(storage_error)?;
 
-        scoped.commit().await.map_err(storage_error)
+        Ok(())
     }
 
     async fn list(

@@ -18,28 +18,32 @@ use vestrace_application::{
     FaultInjectionEnvironment, FaultInjectionSettings, ProcessFaultInjectionRuntime,
     QualificationBaselineRepository, QualificationRepository, QualificationRuntime,
     RecoveryQualificationEvidenceRepository, RecoveryRepository, ReleaseApprovalDecision,
-    ReleaseApprovalFailure, ReleaseApprovalService, ReleaseSignatureEvidence,
-    RestorationBlockReason, RestorationEvidence, RestorationStage, RuntimeQualificationDecision,
-    RuntimeQualificationEvidence, V1ReleaseEvidenceService, evaluate_runtime_qualification,
+    ReleaseApprovalFailure, ReleaseApprovalService, ReleaseSignatureEvidence, RequestContext,
+    RestorationBlockReason, RestorationEvidence, RestorationStage, RunCommandExecutor,
+    RunCommandService, RunRecoveryService, RuntimeQualificationDecision,
+    RuntimeQualificationEvidence, StartupRecoveryCandidate, StartupRecoveryService,
+    V1ReleaseEvidenceService, evaluate_runtime_qualification,
 };
 use vestrace_domain::conformance::gate::{EvidenceOrigin, GateEvidenceStatus, HardGateEvidence};
 use vestrace_domain::conformance::{
     CaseOrigin, CaseStatus, ConformanceReport, QualificationProfile, registry,
 };
+use vestrace_domain::id::{AgentRunId, CorrelationId, OperationId, PrincipalId};
 use vestrace_domain::now;
 use vestrace_domain::release::VestraceCapabilityManifest;
+use vestrace_domain::run::{RunActor, RunCommand, RunCommandEnvelope, RunVersion};
 use vestrace_domain::trust::{
     KeyProvider, KeyProviderError, KeyPurpose, KeyReference, PostIncidentQualificationEvidence,
     QualificationBaseline, QualificationBundle, QualificationLifecycle, QualificationStatus,
-    ResolvedKeyMaterial, RevalidationRun, SecretResolutionRequest, SignatureAlgorithm,
-    SignatureRecord, SignerTrustPolicy, SignerTrustRule, TrustStateRecord,
+    RecoveryTarget, ResolvedKeyMaterial, RevalidationRun, SecretResolutionRequest,
+    SignatureAlgorithm, SignatureRecord, SignerTrustPolicy, SignerTrustRule, TrustStateRecord,
     evaluate_recovery_qualification,
 };
 use vestrace_domain::{Capability, HealthScope, WorkspaceId};
 use vestrace_infrastructure::{
     AppConfig, ConfigOverrides, PgFaultSuiteEvidenceRepository, PgQualificationBaselineRepository,
     PgQualificationRepository, PgRecoveryQualificationEvidenceRepository, PgRecoveryRepository,
-    PgStore, QualificationConfig,
+    PgRunCommandCommitter, PgRunEventStore, PgRunRecoveryStore, PgStore, QualificationConfig,
 };
 
 const FAULT_POINT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -87,6 +91,11 @@ pub enum FaultSuiteIsolationArg {
     Ephemeral,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum RecoveryQualificationIsolationArg {
+    Ephemeral,
+}
+
 impl From<FaultSuiteIsolationArg> for FaultInjectionEnvironment {
     fn from(arg: FaultSuiteIsolationArg) -> Self {
         match arg {
@@ -124,6 +133,20 @@ pub async fn run(
                 program,
                 target_digest,
                 isolation.into(),
+                config_path,
+                &config_overrides,
+            )
+            .await
+        }
+        ConformanceAction::RecoveryQualification {
+            workspace_id,
+            principal_id,
+            isolation,
+        } => {
+            run_recovery_qualification(
+                workspace_id,
+                principal_id,
+                isolation,
                 config_path,
                 &config_overrides,
             )
@@ -332,6 +355,106 @@ pub async fn run(
     }
 }
 
+async fn run_recovery_qualification(
+    workspace_id: uuid::Uuid,
+    principal_id: uuid::Uuid,
+    _isolation: RecoveryQualificationIsolationArg,
+    config_path: Option<&Path>,
+    config_overrides: &ConfigOverrides,
+) -> anyhow::Result<()> {
+    let config = AppConfig::load_from_with_overrides(config_path, config_overrides.clone())
+        .map_err(|error| anyhow::anyhow!("recovery qualification configuration failed: {error}"))?;
+    let redacted = crate::commands::redact_url(config.database.url.expose_secret());
+    let store = PgStore::connect(&config.database).await.map_err(|error| {
+        anyhow::anyhow!(
+            "recovery qualification evidence database is unavailable at {redacted}: {error}"
+        )
+    })?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => {
+            anyhow::bail!("recovery qualification evidence migration history is incompatible")
+        }
+        Err(error) => {
+            anyhow::bail!("recovery qualification evidence migration verification failed: {error}")
+        }
+    }
+
+    let evidence = Arc::new(PgRecoveryQualificationEvidenceRepository::new(
+        store.clone(),
+    ));
+    let existing = evidence.list().await?;
+    if !existing.is_empty() {
+        anyhow::bail!(
+            "recovery qualification requires an empty recovery qualification evidence set; found {} append-only observations",
+            existing.len()
+        );
+    }
+
+    let workspace_id = WorkspaceId::from_uuid(workspace_id);
+    let principal_id = PrincipalId::from_uuid(principal_id);
+    let context = RequestContext::new(workspace_id, principal_id);
+    let commands = RunCommandService::new(
+        Arc::new(PgRunEventStore::new(store.clone())),
+        Arc::new(PgRunCommandCommitter::new(store.clone())),
+    );
+    let mut candidates = Vec::with_capacity(RecoveryTarget::required_targets().len());
+    for target in RecoveryTarget::required_targets() {
+        let run_id = AgentRunId::new();
+        commands
+            .execute(
+                &context,
+                RunCommandEnvelope {
+                    command_id: OperationId::new(),
+                    idempotency_key: None,
+                    workspace_id,
+                    run_id,
+                    actor: RunActor::Principal(principal_id),
+                    expected_version: RunVersion::ZERO,
+                    correlation_id: CorrelationId::new(),
+                    issued_at: now(),
+                    command: RunCommand::Create {
+                        principal_id,
+                        title: format!("Recovery qualification: {target:?}"),
+                    },
+                },
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "recovery qualification could not create the {target:?} canonical run: {error}"
+                )
+            })?;
+        candidates.push(StartupRecoveryCandidate::new(run_id, target));
+    }
+
+    let recovery = StartupRecoveryService::new(
+        Arc::new(RunRecoveryService::new(Arc::new(PgRunRecoveryStore::new(
+            store,
+        )))),
+        evidence.clone(),
+    );
+    recovery.run(&context, candidates).await?;
+
+    let observations = evidence
+        .list()
+        .await?
+        .iter()
+        .map(|stored| stored.to_observation())
+        .collect::<Vec<_>>();
+    let decision = evaluate_recovery_qualification(&observations);
+    let report = serde_json::json!({
+        "passed": decision.is_passed(),
+        "observation_count": observations.len(),
+        "failures": decision.failures(),
+    });
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !decision.is_passed() {
+        anyhow::bail!("recovery qualification scenario did not pass")
+    }
+    Ok(())
+}
+
 async fn run_fault_suite(
     program: PathBuf,
     target_digest: String,
@@ -350,9 +473,13 @@ async fn run_fault_suite(
     let store = PgStore::connect(&config.database).await.map_err(|error| {
         anyhow::anyhow!("fault-suite evidence database is unavailable at {redacted}: {error}")
     })?;
-    store.migrate().await.map_err(|error| {
-        anyhow::anyhow!("fault-suite evidence database migration failed: {error}")
-    })?;
+    match store.migrations_are_compatible().await {
+        Ok(true) => {}
+        Ok(false) => anyhow::bail!("fault-suite evidence migration history is incompatible"),
+        Err(error) => {
+            anyhow::bail!("fault-suite evidence migration verification failed: {error}")
+        }
+    }
 
     let database_url_file = DatabaseUrlFile::new(config.database.url.expose_secret())?;
     let runtime = ProcessFaultInjectionRuntime::new(
@@ -397,10 +524,6 @@ async fn baseline_repository(
     let store = PgStore::connect(&config.database).await.map_err(|error| {
         anyhow::anyhow!("baseline publication database is unavailable: {error}")
     })?;
-    store
-        .migrate()
-        .await
-        .map_err(|error| anyhow::anyhow!("baseline publication migration failed: {error}"))?;
     match store.migrations_are_compatible().await {
         Ok(true) => {}
         Ok(false) => anyhow::bail!("baseline publication migration history is incompatible"),
@@ -786,10 +909,6 @@ async fn persist_to_postgres(
     let store = PgStore::connect(&config.database).await.map_err(|error| {
         anyhow::anyhow!("qualification persistence database is unavailable: {error}")
     })?;
-    store
-        .migrate()
-        .await
-        .map_err(|error| anyhow::anyhow!("qualification persistence migration failed: {error}"))?;
     match store.migrations_are_compatible().await {
         Ok(true) => {}
         Ok(false) => anyhow::bail!("qualification persistence migration history is incompatible"),

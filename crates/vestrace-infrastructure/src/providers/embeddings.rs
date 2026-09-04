@@ -1,12 +1,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Serialize};
 use vestrace_application::retrieval::EmbeddingProvider;
-use vestrace_application::{ApplicationError, ProviderEgress};
+use vestrace_application::{ApplicationError, EmbeddingsRequest, ProviderEgress, ProviderError};
 
-use super::egress::destination_for_endpoint;
+use super::OpenAiCompatibleClient;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -17,10 +15,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 /// choice, and the space records which one it was so a later change cannot go
 /// unnoticed.
 pub struct OpenAiCompatibleEmbeddingClient {
-    client: Client,
+    transport: OpenAiCompatibleClient,
     egress: ProviderEgress,
     model: String,
-    api_key: Option<String>,
 }
 
 impl std::fmt::Debug for OpenAiCompatibleEmbeddingClient {
@@ -29,7 +26,7 @@ impl std::fmt::Debug for OpenAiCompatibleEmbeddingClient {
             .debug_struct("OpenAiCompatibleEmbeddingClient")
             .field("egress", &self.egress)
             .field("model", &self.model)
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("transport", &self.transport)
             .finish()
     }
 }
@@ -49,81 +46,41 @@ impl OpenAiCompatibleEmbeddingClient {
         api_key: Option<String>,
         timeout: Duration,
     ) -> Result<Self, ApplicationError> {
-        let base_url = base_url.into().trim_end_matches('/').to_string();
+        let base_url = base_url.into();
         let model = model.into();
         if base_url.trim().is_empty() || model.trim().is_empty() {
             return Err(ApplicationError::InvalidConfiguration(
                 "embedding base URL and model must not be empty".into(),
             ));
         }
-        let parsed = reqwest::Url::parse(&base_url).map_err(|error| {
-            ApplicationError::InvalidConfiguration(format!(
-                "embedding provider endpoint {base_url:?} is not a valid URL: {error}"
-            ))
-        })?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(ApplicationError::InvalidConfiguration(format!(
-                "embedding provider endpoint {base_url:?} must use http or https"
-            )));
-        }
-
-        // No fallback to `Client::default()`: that produces a client with no
-        // timeout, which is the one property this builder exists to set. The
-        // predecessor of this file had exactly that bug.
-        //
-        // Redirects and ambient system proxies are refused because the
-        // configured endpoint must be the whole embedding egress path. Memory
-        // contents and credentials must not acquire a second destination from
-        // an HTTP response or process environment.
-        let redirects_disabled = true;
-        let proxy_disabled = true;
-        let client = Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .build()
-            .map_err(|error| {
-                ApplicationError::InvalidConfiguration(format!(
-                    "embedding HTTP client could not be built: {error}"
-                ))
+        let transport = OpenAiCompatibleClient::with_timeout(&base_url, api_key, timeout)
+            .map_err(provider_configuration_error)?;
+        let transport_egress = transport.egress().clone();
+        let endpoint = transport_egress
+            .endpoint()
+            .strip_suffix("/chat/completions")
+            .map(|base| format!("{base}/embeddings"))
+            .ok_or_else(|| {
+                ApplicationError::InvalidConfiguration(
+                    "unified provider transport exposed an invalid base prefix".into(),
+                )
             })?;
 
-        let destination = destination_for_endpoint(&parsed, redirects_disabled, proxy_disabled);
-
         Ok(Self {
-            client,
+            transport,
             egress: ProviderEgress::new(
-                format!("{base_url}/embeddings"),
-                destination,
-                redirects_disabled,
-                proxy_disabled,
+                endpoint,
+                transport_egress.destination(),
+                transport_egress.redirects_disabled(),
+                transport_egress.proxy_disabled(),
             ),
             model,
-            api_key,
         })
     }
 
     pub fn egress(&self) -> &ProviderEgress {
         &self.egress
     }
-}
-
-#[derive(Serialize)]
-struct EmbeddingRequest<'a> {
-    model: &'a str,
-    input: &'a [String],
-}
-
-#[derive(Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingDatum>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingDatum {
-    embedding: Vec<f32>,
-    #[serde(default)]
-    index: usize,
 }
 
 #[async_trait]
@@ -137,59 +94,11 @@ impl EmbeddingProvider for OpenAiCompatibleEmbeddingClient {
             return Ok(Vec::new());
         }
 
-        let response = self
-            .client
-            .post(self.egress.endpoint())
-            .header("content-type", "application/json")
-            .bearer_auth(self.api_key.clone().unwrap_or_default())
-            .json(&EmbeddingRequest {
-                model: &self.model,
-                input: inputs,
-            })
-            .send()
+        let mut payload = self
+            .transport
+            .embeddings(EmbeddingsRequest::new(&self.model, inputs.to_vec()))
             .await
-            .map_err(|error| {
-                // A provider that cannot be reached is unavailable, not
-                // misconfigured: the distinction decides whether an operator
-                // checks the network or the settings.
-                ApplicationError::Unavailable(format!(
-                    "the embedding provider could not be reached: {error}"
-                ))
-            })?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            // Each status means a different thing to whoever is paged, which is
-            // why they are not collapsed into one error the way the completion
-            // client's used to be.
-            return Err(match status {
-                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                    ApplicationError::InvalidConfiguration(format!(
-                        "the embedding provider rejected the credential for model {}; replace \
-                         it rather than retrying",
-                        self.model
-                    ))
-                }
-                StatusCode::TOO_MANY_REQUESTS => ApplicationError::Unavailable(
-                    "the embedding provider is rate limiting; retry later".into(),
-                ),
-                StatusCode::NOT_FOUND => ApplicationError::InvalidConfiguration(format!(
-                    "the embedding provider does not serve model {}",
-                    self.model
-                )),
-                other => ApplicationError::Unavailable(format!(
-                    "the embedding provider answered {other}: {}",
-                    body.chars().take(200).collect::<String>()
-                )),
-            });
-        }
-
-        let mut payload: EmbeddingResponse = response.json().await.map_err(|error| {
-            ApplicationError::Unavailable(format!(
-                "the embedding provider returned an unreadable body: {error}"
-            ))
-        })?;
+            .map_err(provider_runtime_error)?;
 
         if payload.data.len() != inputs.len() {
             return Err(ApplicationError::Unavailable(format!(
@@ -208,6 +117,29 @@ impl EmbeddingProvider for OpenAiCompatibleEmbeddingClient {
             .into_iter()
             .map(|datum| datum.embedding)
             .collect())
+    }
+}
+
+fn provider_configuration_error(error: ProviderError) -> ApplicationError {
+    ApplicationError::InvalidConfiguration(format!(
+        "embedding provider transport is invalid: {error}"
+    ))
+}
+
+fn provider_runtime_error(error: ProviderError) -> ApplicationError {
+    match error {
+        ProviderError::CredentialRejected(message) => {
+            ApplicationError::InvalidConfiguration(message)
+        }
+        ProviderError::Timeout => {
+            ApplicationError::Unavailable("embedding provider timed out".into())
+        }
+        ProviderError::RateLimited => {
+            ApplicationError::Unavailable("embedding provider is rate limiting".into())
+        }
+        ProviderError::Unavailable(message) | ProviderError::InvalidResponse(message) => {
+            ApplicationError::Unavailable(message)
+        }
     }
 }
 
