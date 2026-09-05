@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 77] = [
+const EXPECTED_GUARDED_TABLES: [&str; 78] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -82,6 +82,7 @@ const EXPECTED_GUARDED_TABLES: [&str; 77] = [
     // grew where nobody was looking, which is the defect P03 shipped once.
     "embedding_space_registrations",
     "embedding_corpus_generations",
+    "embedding_corpus_generation_members",
     "embedding_jobs",
     "embedding_transition_plan_recipes",
     "embedding_transition_plans",

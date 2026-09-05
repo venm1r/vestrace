@@ -19,13 +19,15 @@
 //! query's own predicate.
 
 use sqlx::PgPool;
-use vestrace_application::{NormalizedRetrievalRequest, RequestContext, TextRetriever};
+use vestrace_application::{
+    NormalizedRetrievalRequest, RequestContext, TextRetriever, retrieval::EmbeddingStore,
+};
 use vestrace_domain::{
-    MemoryStatus, PrincipalId, TimePerspective, WorkspaceId,
+    CorpusGenerationId, MemoryStatus, PrincipalId, TimePerspective, WorkspaceId,
     id::{MemoryId, MemoryRevisionId},
     retrieval::RetrievalIntent,
 };
-use vestrace_infrastructure::{PgStore, PgTextRetriever};
+use vestrace_infrastructure::{PgEmbeddingStore, PgStore, PgTextRetriever};
 
 /// One memory, one active revision, and the search document that indexes it.
 async fn seed_memory(pool: &PgPool, workspace_id: WorkspaceId, content: &str) -> MemoryId {
@@ -101,7 +103,68 @@ async fn seed_workspace(pool: &PgPool) -> RequestContext {
     RequestContext::new(workspace_id, principal_id)
 }
 
-fn request(context: &RequestContext, query: &str) -> NormalizedRetrievalRequest {
+async fn ready_generation(
+    pool: &PgPool,
+    context: &RequestContext,
+    members: &[MemoryId],
+) -> CorpusGenerationId {
+    sqlx::query("DO $$ BEGIN EXECUTE format('ALTER FUNCTION public.vestrace_validate_embedding_corpus_generation_member() OWNER TO %I', current_user); END $$")
+        .execute(pool).await.unwrap();
+    let store = PgEmbeddingStore::new(PgStore::from_pool(pool.clone()));
+    let space = store
+        .ensure_space(context, "space", "model", 2)
+        .await
+        .unwrap();
+    for memory_id in members {
+        store
+            .upsert(context, &space, *memory_id, &[1.0, 0.0])
+            .await
+            .unwrap();
+    }
+    let registration_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM embedding_space_registrations WHERE workspace_id=$1 AND space_id=$2",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(space.id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let generation_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM embedding_corpus_generations WHERE workspace_id=$1 AND space_registration_id=$2 AND state='building'")
+        .bind(context.workspace_id.as_uuid()).bind(registration_id).fetch_one(pool).await.unwrap();
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM embedding_corpus_generations WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(generation_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(state, "building");
+    let mut publish = pool.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(context.workspace_id.to_string())
+        .fetch_one(&mut *publish)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, i64>(
+        "SELECT vestrace_publish_embedding_corpus_generation($1,$2,$3,$4)",
+    )
+    .bind(generation_id)
+    .bind(context.workspace_id.as_uuid())
+    .bind(registration_id)
+    .bind(members.len() as i64)
+    .fetch_one(&mut *publish)
+    .await
+    .unwrap();
+    publish.commit().await.unwrap();
+    CorpusGenerationId::from_uuid(generation_id)
+}
+
+fn request(
+    context: &RequestContext,
+    query: &str,
+    generation_id: CorpusGenerationId,
+) -> NormalizedRetrievalRequest {
     NormalizedRetrievalRequest {
         request_id: vestrace_domain::id::RetrievalRunId::new(),
         query: query.to_owned(),
@@ -113,6 +176,14 @@ fn request(context: &RequestContext, query: &str) -> NormalizedRetrievalRequest 
         channel_limit: 20,
         token_budget: None,
         include_explanation: true,
+        embedding_space_key: vestrace_domain::embedding::EmbeddingSpaceKey::new(
+            context.workspace_id,
+            "space",
+            "model",
+            2,
+        )
+        .unwrap(),
+        corpus_generation_id: generation_id,
     }
 }
 
@@ -122,11 +193,12 @@ async fn a_query_returns_the_memory_that_matches_it(pool: PgPool) {
     let retriever = PgTextRetriever::new(PgStore::from_pool(pool.clone()));
 
     let volcano = seed_memory(&pool, context.workspace_id, "the volcano erupted at dawn").await;
-    seed_memory(&pool, context.workspace_id, "the harbour was quiet").await;
-    seed_memory(&pool, context.workspace_id, "the ledger balanced").await;
+    let harbour = seed_memory(&pool, context.workspace_id, "the harbour was quiet").await;
+    let ledger = seed_memory(&pool, context.workspace_id, "the ledger balanced").await;
+    let generation = ready_generation(&pool, &context, &[volcano, harbour, ledger]).await;
 
     let candidates = retriever
-        .search(&context, &request(&context, "volcano"))
+        .search(&context, &request(&context, "volcano", generation))
         .await
         .expect("search");
 
@@ -147,11 +219,12 @@ async fn a_query_matching_nothing_returns_nothing(pool: PgPool) {
     let context = seed_workspace(&pool).await;
     let retriever = PgTextRetriever::new(PgStore::from_pool(pool.clone()));
 
-    seed_memory(&pool, context.workspace_id, "the harbour was quiet").await;
-    seed_memory(&pool, context.workspace_id, "the ledger balanced").await;
+    let harbour = seed_memory(&pool, context.workspace_id, "the harbour was quiet").await;
+    let ledger = seed_memory(&pool, context.workspace_id, "the ledger balanced").await;
+    let generation = ready_generation(&pool, &context, &[harbour, ledger]).await;
 
     let candidates = retriever
-        .search(&context, &request(&context, "volcano"))
+        .search(&context, &request(&context, "volcano", generation))
         .await
         .expect("search");
 
@@ -171,6 +244,7 @@ async fn a_revised_memory_is_found_by_its_new_text_and_not_its_old(pool: PgPool)
     let retriever = PgTextRetriever::new(PgStore::from_pool(pool.clone()));
 
     let memory = seed_memory(&pool, context.workspace_id, "the sky is green").await;
+    let generation = ready_generation(&pool, &context, &[memory]).await;
 
     let revision_id = MemoryRevisionId::new();
     sqlx::query(
@@ -197,14 +271,14 @@ async fn a_revised_memory_is_found_by_its_new_text_and_not_its_old(pool: PgPool)
         .expect("reindex");
 
     let blue = retriever
-        .search(&context, &request(&context, "blue"))
+        .search(&context, &request(&context, "blue", generation))
         .await
         .expect("search");
     assert_eq!(blue.len(), 1);
     assert_eq!(blue[0].revision_number, 2);
 
     let green = retriever
-        .search(&context, &request(&context, "green"))
+        .search(&context, &request(&context, "green", generation))
         .await
         .expect("search");
     assert!(
@@ -221,10 +295,13 @@ async fn a_matching_memory_in_another_workspace_is_not_a_candidate(pool: PgPool)
     let retriever = PgTextRetriever::new(PgStore::from_pool(pool.clone()));
 
     let ours = seed_memory(&pool, mine.workspace_id, "the volcano erupted at dawn").await;
-    seed_memory(&pool, theirs.workspace_id, "the volcano erupted at dawn").await;
+    let theirs_memory =
+        seed_memory(&pool, theirs.workspace_id, "the volcano erupted at dawn").await;
+    let mine_generation = ready_generation(&pool, &mine, &[ours]).await;
+    let _theirs_generation = ready_generation(&pool, &theirs, &[theirs_memory]).await;
 
     let candidates = retriever
-        .search(&mine, &request(&mine, "volcano"))
+        .search(&mine, &request(&mine, "volcano", mine_generation))
         .await
         .expect("search");
 
@@ -245,16 +322,17 @@ async fn ranking_puts_the_stronger_match_first(pool: PgPool) {
         "volcano volcano volcano eruption",
     )
     .await;
-    seed_memory(
+    let weak = seed_memory(
         &pool,
         context.workspace_id,
         "a passing mention of a volcano in a long paragraph about harbours and \
          ledgers and other unrelated matters entirely",
     )
     .await;
+    let generation = ready_generation(&pool, &context, &[strong, weak]).await;
 
     let candidates = retriever
-        .search(&context, &request(&context, "volcano"))
+        .search(&context, &request(&context, "volcano", generation))
         .await
         .expect("search");
 
@@ -263,4 +341,34 @@ async fn ranking_puts_the_stronger_match_first(pool: PgPool) {
         candidates[0].memory_id, strong,
         "the denser match did not rank first"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_ready_generation_omits_a_matching_memory_that_its_store_never_enrolled(pool: PgPool) {
+    let context = seed_workspace(&pool).await;
+    let enrolled = seed_memory(&pool, context.workspace_id, "enrolled fenceword").await;
+    let excluded = seed_memory(&pool, context.workspace_id, "excluded fenceword").await;
+    let generation = ready_generation(&pool, &context, &[enrolled]).await;
+    let candidates = PgTextRetriever::new(PgStore::from_pool(pool.clone()))
+        .search(&context, &request(&context, "fenceword", generation))
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].memory_id, enrolled,
+        "unenrolled matching memory {excluded} leaked"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_generation_pin_is_preserved_on_text_candidates(pool: PgPool) {
+    let context = seed_workspace(&pool).await;
+    let memory = seed_memory(&pool, context.workspace_id, "pinned fenceword").await;
+    let generation = ready_generation(&pool, &context, &[memory]).await;
+    let candidates = PgTextRetriever::new(PgStore::from_pool(pool.clone()))
+        .search(&context, &request(&context, "fenceword", generation))
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].corpus_generation_id, generation);
 }

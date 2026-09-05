@@ -1,5 +1,22 @@
+use crate::ApplicationError;
 use std::collections::HashMap;
-use vestrace_domain::{RetrievalCandidate, id::MemoryId};
+use vestrace_domain::{CorpusGenerationId, RetrievalCandidate, id::MemoryId};
+
+pub fn reciprocal_rank_fusion_pinned(
+    channel_results: &[Vec<RetrievalCandidate>],
+    k: f32,
+    corpus_generation_id: CorpusGenerationId,
+) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
+    for candidate in channel_results.iter().flatten() {
+        if candidate.corpus_generation_id != corpus_generation_id {
+            return Err(ApplicationError::Policy(format!(
+                "retrieval candidate generation {} does not match requested generation {}",
+                candidate.corpus_generation_id, corpus_generation_id
+            )));
+        }
+    }
+    Ok(reciprocal_rank_fusion(channel_results, k))
+}
 
 /// Reciprocal Rank Fusion: combines ranked channel results into a single
 /// ranked list. Each channel's rank starts at 1. Score is:
@@ -88,6 +105,7 @@ mod tests {
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
             source_generation: 1,
+            corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
             score,
             channel_rank: rank,
             channel: channel.to_owned(),

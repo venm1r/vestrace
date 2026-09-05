@@ -1572,12 +1572,197 @@ barrier gate removed, planning returned `Ok(...)` instead of the required
 refusal; with the partial unique index removed, the second open barrier inserted
 successfully.
 
+## Task 9 — the retrieval generation fence (2026-09-05)
+
+Migration 0191 adds corpus-generation membership, the `building -> ready -> stale`
+lifecycle and its guarded open/enrol/publish/stale functions; `PgEmbeddingStore`
+registers a space and enrols each embedding it writes; a resolver port turns a
+space name and model into a Ready generation; both retrievers filter their SQL by
+membership in that generation and report the generation they actually read;
+fusion refuses a candidate carrying any other generation.
+
+This is the package's headline exit criterion, and it took seven build rounds.
+Three of the defects those rounds surfaced were not in Task 9 at all.
+
+### The field that proved nothing
+
+The fifth adversarial review said a public `corpus_generation_id` on
+`RetrievalCandidate` "does not prove it came from the selected row — either
+retriever can copy the request pin". The finding was recorded and the
+implementation did not close it: both retrievers set the field from
+`request.corpus_generation_id`. The fence therefore compared the pin with itself,
+and every test passed.
+
+What caught it was not a review and not a test run. It was the attempt to build
+A3's mutation: an implementer asked to remove the SQL predicate and show the
+suite failing reported that it *could not*, because the intruding rows would
+still report the requested generation. A test that exists to catch a defect
+found it by being impossible to write against it.
+
+Both retrievers now select `member.corpus_generation_id` from the joined
+membership row. The value a candidate reports is a fact read from the row that
+produced it.
+
+### Three production failures that no test in this repository could see
+
+Task 9 exposed three separate defects that every suite passed straight through.
+They share one cause, and it is worth stating before the list: **each test builds
+a fresh database and grants itself whatever it needs.** A defect that only
+appears when data already exists, or when the caller has only production's
+authority, is invisible to all of them at once.
+
+**One — the backfill that silently did nothing, and it is Task 6's too.**
+0191's backfill opened `FOR workspace IN SELECT id FROM workspaces`, then set
+`vestrace.workspace_id` inside the loop. `workspaces` has FORCE ROW LEVEL
+SECURITY since 0003, and `docker-compose.yml:49` migrates as `vestrace`, which
+`init-runtime-role.sh` creates NOBYPASSRLS. The outer scan returned zero rows and
+the loop body — which was correct — was never entered.
+
+0191 is the only migration in the repository that reads `workspaces`; there was
+no pattern to follow and the one invented here does not work. **The same defect
+exists in 0188, which is Task 6, accepted and already pushed**: line 269
+backfills `model_binding_snapshot_scopes` by selecting from
+`model_binding_snapshots`, which has had FORCE RLS since 0178, and inserts zero
+rows under the migration role.
+
+Both fail closed, which is the only good news: `vestrace_snapshot_scope` returns
+NULL and all three consumers reject on `IS DISTINCT FROM 'ordinary'`, and the
+resolver refuses with "has no Ready generation". The upgrade failure mode is
+refusal, not wrong answers.
+
+No cross-workspace mechanism was invented to fix it. This system never
+enumerates across workspaces — the application contains no query against
+`workspaces` at all — and a BYPASSRLS role or a loosened policy would be a
+permanent hole bought for a one-time convenience. Both backfills now use the
+role-capability guard this package already used four times in 0187–0190: if the
+role can see across workspaces, backfill; if not, skip with a `RAISE WARNING`
+naming what was skipped. The migration succeeds either way and never again
+succeeds while doing nothing.
+
+**Two — the ACL gap a fixture was hiding.** The membership validator joins
+`memory_embeddings`, which 0187 deliberately leaves under legacy runtime
+ownership. In production the validator is owned by `vestrace_guarded_owner` and
+runs inside a SECURITY DEFINER call, so it cannot read that table: **no
+membership row could have been created in production at all**, no generation
+would ever gain members, and retrieval would have refused forever.
+
+Eleven passing tests passed because a fixture named
+`use_test_owner_for_legacy_embedding_validation` reassigned the validator's owner
+to the test superuser. The fixture is deleted, not kept as a fallback. The grant
+follows the pattern already at 0171:23, 0174:960, 0180:439-440 and 0184:279, but
+narrowed to `GRANT SELECT (id, workspace_id, space_id)` — the validator needs
+identity columns and has no business reading `embedding`. Red was reproduced
+after the deletion and before the grant, on a real store enrolment.
+
+**Three — Task 4's worker composition was never done.** Task 4's step-4 review
+item required "that the worker composes one executor that serves both callers".
+Its test proves the *authority* is shared — the same repository reconstructs an
+`Embeddings` request shape — which is real and stands. But no worker composes it:
+`worker.rs:423-455` holds only the legacy `EmbedMemoryHandler` wiring, and the
+live embedding path calls the raw provider and `store.upsert` directly with no
+job, MRE or dispatch. The machinery built by Tasks 1–8 is an HTTP-reachable
+governed surface with no internal driver. This is recorded, not fixed: building
+that worker is beyond Task 9 and beyond P04's stated scope. It is also why Task
+11's fifth fault point is unreachable — one root cause, two symptoms.
+
+### A position recorded where a rule was needed, for the fifth time
+
+0191 called its guarded helpers from the backfill while they were still owned by
+`vestrace`, so `SECURITY DEFINER` ran as `vestrace` and
+`vestrace_reject_raw_p03_mutation()` correctly refused with 42501. The guard was
+working.
+
+The cause was a lesson from Task 8 written down wrongly. 0190 had handed its
+functions back *before* it finished replacing them and lost the right to replace
+them; that was recorded as "hand back last", which is a position. The rule is
+**hand back after every definition is complete and before the first call that
+needs guarded ownership** — and the backfill, which only calls, belongs after.
+`vestrace_prepare_p04_generation_fence_upgrade()` turned out to be a two-way
+toggle rather than a one-way hand-back, which is why the ordering had a correct
+answer at all.
+
+This is the fifth time in this package a number or a position was recorded where
+a rule was needed.
+
+### A3, performed
+
+Seven rounds claimed the fence; none had broken it. With
+`AND member.corpus_generation_id = $6` removed from the vector SQL, the suite
+fails and names the intruding candidate and its generation individually rather
+than reporting a count of mismatches — `assert_candidate_generations` prints the
+offending `memory_id`. Restored, `vector_retriever.rs` returns to
+`5C0F400EFDC393C6ABD2FB94ED6309A830C378A4A101B6187CE2B884D894E012`. The earlier
+`45600A55…` is void as a restore target: it predates the provenance correction.
+
+A2 honours its three constraints, and two of them are established rather than
+assumed: `channel_limit > 2` is asserted, and the requirement that a
+stale-generation row would rank inside that limit is *measured* by asking the
+database for both distances through its own `<=>` operator and asserting
+`stale_distance < ready_distance`.
+
+### A6, both branches
+
+Branch (a): under a role that can see across workspaces, the backfill produces a
+Ready generation containing a pre-0191 embedding and retrieval serves it. Branch
+(b): under the restricted runtime role production actually migrates with, 0191
+succeeds, creates no generation, and retrieval refuses with exactly
+`unavailable: embedding space generation-fence has no Ready generation`.
+
+Branch (b) is the more valuable of the two and the first test in this repository
+that exercises an upgrade over pre-existing data. Its restricted connection is
+derived from the test pool's own `connect_options()` with only the username and
+password overridden, which is what keeps it from reaching the base database and
+passing on `42P01` instead of `42501`.
+
+### Runs, re-executed by the reviewer
+
+| Suite | Result |
+|---|---|
+| `retrieval_generation_fence` | 12 passed |
+| `text_retriever` | 7 passed, 15 assertions |
+| `vector_retriever_data_policy` | 3 passed, 7 assertions |
+| `embedding_schema_contract` | 10 passed |
+| `p03_upgrade_provisioning` | 6 passed |
+| `embedding_transition_planning` | 7 passed |
+| `embedding_dispatch_is_atomic` | 15 passed |
+| `runtime_role_cannot_write_directly` | 45 passed |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets` | 0 warnings |
+| P04-scoped dirty-baseline check | exit 0 |
+
+The reviewer's own first fence run reported 10 of 12 and both A6 branches
+failing. The cause was the reviewer's environment, not the code: those two tests
+read `VESTRACE_RUNTIME_DATABASE_URL`, which had not been set. With the restricted
+role available the suite is 12 of 12 in 7.24 seconds.
+
+Two figures the reviewer had been carrying as baselines were wrong: `text_retriever`
+and `vector_retriever_data_policy` hold 7 and 3 tests, not 10 and 6. The
+assertion counts that establish nothing was weakened — 15 and 7 — are unchanged.
+
 ## Not true yet
 
-- Tasks 9–12 are not started: retrieval generation fences, refusal and
-  mixed-space qualification, worker-restart and fault evidence, and integrated
-  verification. Tasks 1–7 are complete and reviewed; Task 8 is complete apart
-  from the concurrency mutation named below.
+- Tasks 10–12 are not started: refusal and mixed-space qualification,
+  worker-restart and fault evidence, and integrated verification. Tasks 1–7 and
+  9 are complete and reviewed; Task 8 is complete apart from the concurrency
+  mutation named below.
+- No worker composes the embedding-job executor. Task 4's step-4 review item
+  required it, its test proves only that the dispatch *authority* is shared, and
+  `worker.rs:423-455` still holds only the legacy `EmbedMemoryHandler` wiring.
+  The live embedding path calls the raw provider and `store.upsert` directly. The
+  job machinery is an HTTP-reachable governed surface with no internal driver.
+- There is no operator backfill command. A database upgraded under the
+  restricted runtime role gets no corpus generations and refuses retrieval until
+  one exists. The only shape compatible with a system that never enumerates
+  across workspaces is a per-workspace operator-invoked command, and it is
+  outside this package's change scope.
+- `embedding_spaces` and `memory_embeddings` are not guarded-owner tables and
+  escape the catalog-derived closed-world refusal test. 0187 preserves their
+  legacy ownership deliberately. The runtime role can write `memory_embeddings`
+  directly; the fence survives only because retrieval requires a membership row
+  and membership is guarded.
+- Modifying 0188 changed its checksum, so any database that had already applied
+  the earlier 0188 will refuse to migrate and must be rebuilt. Test databases are
+  built fresh per test and are unaffected; a persistent Compose volume is not.
 - Task 8's classifier-versus-supersession race passes and is **not**
   independently mutation-proven, and the attempt to prove it established why: the
   locks it targets are not load-bearing. Removing the barrier-header lock, and

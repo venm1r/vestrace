@@ -4,7 +4,8 @@ use vestrace_application::{
     ApplicationError, NormalizedRetrievalRequest, RequestContext, TextRetriever,
 };
 use vestrace_domain::{
-    MemoryKind, MemoryStatus, RetrievalCandidate, TimePerspective, id::MemoryId as DomainMemoryId,
+    CorpusGenerationId, MemoryKind, MemoryStatus, RetrievalCandidate, TimePerspective,
+    id::MemoryId as DomainMemoryId,
 };
 
 use super::PgStore;
@@ -97,8 +98,8 @@ fn temporal_query_plan(perspective: TimePerspective) -> TemporalQueryPlan {
                     FROM memory_revisions historical_mr
                     WHERE historical_mr.memory_id = m.id
                       AND historical_mr.workspace_id = m.workspace_id
-                      AND (historical_mr.valid_from IS NULL OR historical_mr.valid_from <= $6)
-                      AND (historical_mr.valid_until IS NULL OR $6 < historical_mr.valid_until)
+                      AND (historical_mr.valid_from IS NULL OR historical_mr.valid_from <= $7)
+                      AND (historical_mr.valid_until IS NULL OR $7 < historical_mr.valid_until)
                     ORDER BY historical_mr.revision_number DESC, historical_mr.created_at DESC
                     LIMIT 1
                 ) mr ON TRUE"#,
@@ -164,14 +165,19 @@ impl TextRetriever for PgTextRetriever {
                    m.state_revision AS source_generation, mr.id AS revision_id,
                    mr.revision_number, mr.content, mr.valid_from, mr.valid_until,
                    mr.created_at AS revision_created_at,
+                   member.corpus_generation_id AS corpus_generation_id,
                    {rank_expression} AS rank
             FROM search_documents sd
             INNER JOIN memories m ON m.id = sd.memory_id
+            INNER JOIN memory_embeddings e ON e.memory_id = m.id AND e.workspace_id = m.workspace_id
+            INNER JOIN embedding_corpus_generation_members member
+                    ON member.memory_embedding_id = e.id AND member.workspace_id = e.workspace_id
             {revision_join}
             WHERE sd.workspace_id = $1
               AND m.workspace_id = $1
               AND m.status = ANY($3)
               AND (cardinality($4::text[]) = 0 OR m.kind = ANY($4))
+              AND member.corpus_generation_id = $6
               AND {match_expression}
             ORDER BY {order_by}
             LIMIT $5
@@ -212,7 +218,8 @@ impl TextRetriever for PgTextRetriever {
                     })
                     .collect::<Vec<&str>>(),
             )
-            .bind(i64::from(request.channel_limit));
+            .bind(i64::from(request.channel_limit))
+            .bind(request.corpus_generation_id.as_uuid());
 
         if let Some(at) = as_of {
             query = query.bind(at);
@@ -257,6 +264,9 @@ impl TextRetriever for PgTextRetriever {
                     revision_created_at,
                     source_generation: u32::try_from(source_generation)
                         .map_err(|e| ApplicationError::Storage(e.to_string()))?,
+                    corpus_generation_id: CorpusGenerationId::from_uuid(
+                        row.try_get("corpus_generation_id").map_err(storage_error)?,
+                    ),
                     score: rank,
                     channel_rank: (idx + 1) as u32,
                     channel: "text".to_owned(),

@@ -1,10 +1,29 @@
 use async_trait::async_trait;
 use std::sync::Arc;
+use vestrace_domain::embedding::EmbeddingSpaceKey;
 use vestrace_domain::retrieval::{HydratedRevision, RevisionRef};
-use vestrace_domain::{RetrievalCandidate, WorkspaceId, id::RetrievalRunId};
+use vestrace_domain::{CorpusGenerationId, RetrievalCandidate, WorkspaceId, id::RetrievalRunId};
 
 use super::NormalizedRetrievalRequest;
 use crate::{ApplicationError, RequestContext};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCorpusGeneration {
+    pub embedding_space_key: EmbeddingSpaceKey,
+    pub corpus_generation_id: CorpusGenerationId,
+}
+
+#[async_trait]
+pub trait CorpusGenerationResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        context: &RequestContext,
+        space_name: &str,
+        model: &str,
+    ) -> Result<ResolvedCorpusGeneration, ApplicationError>;
+}
+
+pub type SharedCorpusGenerationResolver = Arc<dyn CorpusGenerationResolver>;
 
 #[async_trait]
 pub trait TextRetriever: Send + Sync {

@@ -14,13 +14,17 @@ use super::EmbeddingSpaceKey;
 /// transaction had already replaced.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CorpusGenerationState {
+    Building,
     Ready,
     Stale,
 }
 
 impl CorpusGenerationState {
     pub const fn may_advance_to(self, next: Self) -> bool {
-        matches!((self, next), (Self::Ready, Self::Stale))
+        matches!(
+            (self, next),
+            (Self::Building, Self::Ready) | (Self::Ready, Self::Stale)
+        )
     }
 
     pub const fn is_current(self) -> bool {

@@ -337,6 +337,7 @@ BEGIN
         'run_step_execution_attempts',
         'embedding_space_registrations',
         'embedding_corpus_generations',
+        'embedding_corpus_generation_members',
         'embedding_jobs',
         'embedding_transitions',
         'embedding_transition_plans',
@@ -442,6 +443,11 @@ DECLARE
         ,to_regprocedure('public.vestrace_enqueue_run_step_after_input_ready(UUID, UUID, UUID, UUID, UUID, BIGINT, TEXT)')
         ,to_regprocedure('public.vestrace_register_embedding_space(UUID, UUID, UUID, TEXT, TEXT, INTEGER)')
         ,to_regprocedure('public.vestrace_publish_embedding_corpus_generation(UUID, UUID, UUID, BIGINT)')
+        ,to_regprocedure('public.vestrace_open_embedding_corpus_generation(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_enrol_embedding_corpus_generation_member(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_stale_embedding_corpus_generations_for(UUID, UUID)')
+        ,to_regprocedure('public.vestrace_remove_embedding_corpus_generation_members_for(UUID, UUID)')
+        ,to_regprocedure('public.vestrace_validate_embedding_corpus_generation_member()')
         ,to_regprocedure('public.vestrace_publish_connection_admission_policy(UUID, UUID, UUID, BIGINT, SMALLINT, INTEGER, INTEGER, INTEGER)')
         ,to_regprocedure('public.vestrace_accept_embedding_job(UUID, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT)')
         ,to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(UUID, UUID)')
@@ -496,6 +502,11 @@ DECLARE
         to_regprocedure('public.vestrace_enqueue_run_step_after_input_ready(UUID, UUID, UUID, UUID, UUID, BIGINT, TEXT)'),
         to_regprocedure('public.vestrace_register_embedding_space(UUID, UUID, UUID, TEXT, TEXT, INTEGER)'),
         to_regprocedure('public.vestrace_publish_embedding_corpus_generation(UUID, UUID, UUID, BIGINT)'),
+        to_regprocedure('public.vestrace_open_embedding_corpus_generation(UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_enrol_embedding_corpus_generation_member(UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_stale_embedding_corpus_generations_for(UUID, UUID)'),
+        to_regprocedure('public.vestrace_remove_embedding_corpus_generation_members_for(UUID, UUID)'),
+        to_regprocedure('public.vestrace_validate_embedding_corpus_generation_member()'),
         to_regprocedure('public.vestrace_publish_connection_admission_policy(UUID, UUID, UUID, BIGINT, SMALLINT, INTEGER, INTEGER, INTEGER)'),
         to_regprocedure('public.vestrace_accept_embedding_job(UUID, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT)'),
         to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(UUID, UUID)'),
@@ -1398,6 +1409,58 @@ BEGIN
         $function$;
         REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade() FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade() TO vestrace;
+    END IF;
+END
+$bootstrap$;
+
+-- Task 9 alters the guarded generation table and replaces its publisher.  This
+-- is deliberately a fresh one-shot bridge: earlier P04 bridges have revoked
+-- themselves by the time 0191 runs.
+DO $bootstrap$
+DECLARE migration_0191_applied BOOLEAN := FALSE;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 191 AND success)
+          INTO migration_0191_applied;
+    END IF;
+    IF migration_0191_applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_generation_fence_upgrade();
+    ELSE
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
+            DECLARE target REGPROCEDURE; owner_name TEXT; table_owner TEXT;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 191 AND success) THEN
+                    RAISE EXCEPTION 'P04 generation-fence ownership hand-back is closed' USING ERRCODE = '42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO table_owner
+                  FROM pg_class WHERE oid = 'public.embedding_corpus_generations'::REGCLASS;
+                IF table_owner = 'vestrace_guarded_owner' THEN
+                    ALTER TABLE public.embedding_corpus_generations OWNER TO vestrace;
+                ELSIF table_owner = 'vestrace' THEN
+                    ALTER TABLE public.embedding_corpus_generations OWNER TO vestrace_guarded_owner;
+                ELSE
+                    RAISE EXCEPTION 'P04 generation-fence table has an unexpected owner' USING ERRCODE = '42501';
+                END IF;
+                target := to_regprocedure('public.vestrace_publish_embedding_corpus_generation(UUID, UUID, UUID, BIGINT)');
+                IF target IS NULL OR NOT has_function_privilege(current_user, target, 'EXECUTE') THEN
+                    RAISE EXCEPTION 'P04 generation-fence publisher is unavailable' USING ERRCODE = '42501';
+                END IF;
+                SELECT pg_get_userbyid(proowner) INTO owner_name FROM pg_proc WHERE oid = target;
+                IF owner_name = 'vestrace_guarded_owner' THEN
+                    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace', target);
+                ELSIF owner_name = 'vestrace' THEN
+                    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner', target);
+                    REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade() FROM vestrace;
+                ELSE
+                    RAISE EXCEPTION 'P04 generation-fence publisher has an unexpected owner' USING ERRCODE = '42501';
+                END IF;
+            END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade() TO vestrace;
     END IF;
 END
 $bootstrap$;

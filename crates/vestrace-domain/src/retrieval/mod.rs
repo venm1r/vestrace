@@ -7,7 +7,10 @@ pub use hydration::{
 
 use crate::{
     DomainError, EvidenceRef, MemoryKind, MemoryStatus,
-    id::{ContextPackId, MemoryId, MemoryRevisionId, PrincipalId, RetrievalRunId, WorkspaceId},
+    id::{
+        ContextPackId, CorpusGenerationId, MemoryId, MemoryRevisionId, PrincipalId, RetrievalRunId,
+        WorkspaceId,
+    },
     time::Timestamp,
 };
 use serde::{Deserialize, Serialize};
@@ -106,6 +109,7 @@ pub struct RetrievalCandidate {
     pub valid_until: Option<Timestamp>,
     pub revision_created_at: Timestamp,
     pub source_generation: u32,
+    pub corpus_generation_id: CorpusGenerationId,
     pub score: f32,
     pub channel_rank: u32,
     pub channel: String,

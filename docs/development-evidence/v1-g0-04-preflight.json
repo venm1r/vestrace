@@ -33,6 +33,7 @@
     "crates/vestrace-domain/src/embedding/space.rs",
     "crates/vestrace-domain/src/id.rs",
     "crates/vestrace-domain/src/lib.rs",
+    "crates/vestrace-domain/src/retrieval/mod.rs",
     "crates/vestrace-domain/src/security/mod.rs",
     "crates/vestrace-domain/tests/embedding_contract.rs",
     "crates/vestrace-fault-scenario/src/child.rs",
@@ -90,13 +91,15 @@
     "migrations/0188_embedding_transitions.sql",
     "migrations/0189_embedding_transition_carry.sql",
     "migrations/0190_embedding_transition_barriers.sql",
+    "migrations/0191_embedding_corpus_generation_members.sql",
     "schemas/openapi-v1.json",
     "scripts/p04-scope.mjs",
     "tests/c8_core_memory_qualification.rs",
     "tests/embedding_fault_scenario_e2e.rs",
     "tests/http_command_contract.rs",
     "tests/p04_scope.test.mjs",
-    "tests/retrieval_e2e.rs"
+    "tests/retrieval_e2e.rs",
+    "tests/v01_acceptance.rs"
   ],
   "dirty_files": [
     {
@@ -2431,6 +2434,29 @@
       "authorized_by": "lead-engineer decision (2026-09-04, this session), taken after Task 6 review ran the three provider suites the implementer had reported as inconclusive and found them failing rather than truncated.",
       "reason": "Task 6 adds a deferrable constraint trigger making every model_binding_snapshots row require a durable scope row by commit time. That is a global invariant on a P03 table, and it correctly refuses the six test fixtures across three suites that insert a snapshot directly rather than through vestrace_create_run_model_binding_snapshot: 64 tests fail with 23514 'model binding snapshot requires a durable scope'. Two of those three suites are outside the P04 allowlist. The alternative was to weaken the invariant so the fixtures' shortcut keeps working, which would let test convenience decide production semantics — the opposite of what this package tells its implementer. The implementer's own report attributed these suites to a terminal problem ('detached overlapping cargo processes ... partial output') and did not count them; that attribution was wrong and the review re-ran them to establish it.",
       "consequence": "Each affected fixture gains an INSERT into model_binding_snapshot_scopes beside its existing snapshot INSERT. No assertion, message comparison or expected count in either P03 suite may change; the amendment authorises additive fixture rows only. This is the first P04 amendment whose cause is a new invariant reaching beyond the package's own files, and it is recorded as such: a global constraint on a shared table is not a local change, however local its migration looks."
+    },
+    {
+      "amended_at_utc": "2026-09-05T00:00:00.000Z",
+      "added_paths": [
+        "crates/vestrace-domain/src/retrieval/mod.rs",
+        "migrations/0191_embedding_corpus_generation_members.sql"
+      ],
+      "previous_change_scope_size": 96,
+      "new_change_scope_size": 98,
+      "authorized_by": "operator decision (2026-09-05, this session): correct the Task 9 scope contradiction before implementation.",
+      "reason": "Task 9 requires a required corpus_generation_id field on RetrievalCandidate and a new migration that models, produces, and backfills generation membership. The frozen list omitted both paths although the approved plan requires them; no substitute implementation can satisfy the task without them.",
+      "consequence": "The domain retrieval model and migration 0191 are authorised for Task 9. Both are inserted in sorted order; no other path is added."
+    },
+    {
+      "amended_at_utc": "2026-09-05T02:07:39.000Z",
+      "added_paths": [
+        "tests/v01_acceptance.rs"
+      ],
+      "previous_change_scope_size": 98,
+      "new_change_scope_size": 99,
+      "authorized_by": "lead-engineer decision (2026-09-05, this session), after the Task 9 builder stopped on a construction site the reviewer had not enumerated.",
+      "reason": "Task 9 adds required fields to RetrievalCandidate, so every struct literal of it must gain one. The blast radius was enumerated before the plan was written and reported as 25 sites across eleven files — but that enumeration searched `crates/` only and missed the repository-root `tests/` directory. Two files live there: `tests/c8_core_memory_qualification.rs`, already in scope, and `tests/v01_acceptance.rs`, which is not. It holds five RetrievalCandidate literals, at lines 754, 829, 847, 885 and 1132. A complete search of the whole repository finds thirteen files, not eleven.",
+      "consequence": "Five struct literals gain the new field. No assertion in that acceptance suite changes. The ninth amendment covered the domain type and the new migration; this one covers the site the incomplete search hid. Recorded separately rather than folded into the ninth, because an amendment that quietly grows is an amendment nobody can audit — and the cause here is worth keeping visible: a blast-radius count is only as wide as the directory it searched."
     }
   ]
 }

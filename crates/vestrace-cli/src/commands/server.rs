@@ -14,14 +14,14 @@ use vestrace_http::{AppState, MetricsRegistry, build_router};
 use vestrace_infrastructure::{
     AppConfig, LogFormat, ObservabilityConfig, PgAgUiRepository, PgAgentRepository,
     PgArtifactRepository, PgAuditRepository, PgCapabilityGrantRepository, PgConnectionRepository,
-    PgConnectionRevisionRepository, PgEmbeddingDataPolicyDecisionRepository,
-    PgEvaluationRepository, PgEventRepository, PgExecutionHistoryRepository,
-    PgExternalEffectRepository, PgHealthFindingRepository, PgIdempotencyRepository,
-    PgInstallationFingerprintReadiness, PgInvariantObserver, PgMemoryRepository,
-    PgModelExecutionRepository, PgModelRepository, PgModelRevisionRepository, PgOutboxRepository,
-    PgProvenanceRepository, PgProviderRepository, PgPurgeRepository, PgRelationRepository,
-    PgRetrievalJournal, PgRevisionHydrator, PgRoutingDecisionRepository, PgRunLeasePort,
-    PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
+    PgConnectionRevisionRepository, PgCorpusGenerationResolver,
+    PgEmbeddingDataPolicyDecisionRepository, PgEvaluationRepository, PgEventRepository,
+    PgExecutionHistoryRepository, PgExternalEffectRepository, PgHealthFindingRepository,
+    PgIdempotencyRepository, PgInstallationFingerprintReadiness, PgInvariantObserver,
+    PgMemoryRepository, PgModelExecutionRepository, PgModelRepository, PgModelRevisionRepository,
+    PgOutboxRepository, PgProvenanceRepository, PgProviderRepository, PgPurgeRepository,
+    PgRelationRepository, PgRetrievalJournal, PgRevisionHydrator, PgRoutingDecisionRepository,
+    PgRunLeasePort, PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
     PgTriggerRepository, PgVectorRetriever, PgWorkQueuePort, PgWorkflowRepository,
     PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
@@ -149,6 +149,11 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
             None,
             None,
             retrieval_journal,
+        )
+        .with_corpus_generation_resolver(
+            Arc::new(PgCorpusGenerationResolver::new(store.clone())),
+            config.embedding.space_name.clone(),
+            config.embedding.model_name.clone(),
         )
         .with_hydration(
             Arc::new(PgRevisionHydrator::new(store.clone())),

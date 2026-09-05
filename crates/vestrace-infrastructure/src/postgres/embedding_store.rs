@@ -117,6 +117,22 @@ impl EmbeddingStore for PgEmbeddingStore {
             }
         };
 
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT vestrace_register_embedding_space($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(context.workspace_id.as_uuid())
+        .bind(space.id.as_uuid())
+        .bind(&space.name)
+        .bind(&space.model)
+        .bind(
+            i32::try_from(space.dimensions)
+                .map_err(|error| ApplicationError::Storage(error.to_string()))?,
+        )
+        .fetch_one(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
         scoped.commit().await.map_err(storage_error)?;
         Ok(space)
     }
@@ -203,20 +219,65 @@ impl EmbeddingStore for PgEmbeddingStore {
             .await
             .map_err(storage_error)?;
 
-        sqlx::query(
+        let existing_embedding_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM memory_embeddings WHERE workspace_id = $1 AND memory_id = $2 AND space_id = $3",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(memory_id.as_uuid())
+        .bind(space.id.as_uuid())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+
+        if let Some(existing_embedding_id) = existing_embedding_id {
+            sqlx::query("SELECT vestrace_stale_embedding_corpus_generations_for($1,$2)")
+                .bind(context.workspace_id.as_uuid())
+                .bind(existing_embedding_id)
+                .execute(scoped.connection())
+                .await
+                .map_err(storage_error)?;
+        }
+
+        let embedding_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "INSERT INTO memory_embeddings (id, memory_id, workspace_id, space_id, embedding)
              VALUES ($1, $2, $3, $4, $5::vector)
              ON CONFLICT (workspace_id, memory_id, space_id) DO UPDATE SET
-                 embedding = EXCLUDED.embedding",
+                 embedding = EXCLUDED.embedding
+             RETURNING id",
         )
         .bind(uuid::Uuid::now_v7())
         .bind(memory_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
         .bind(space.id.as_uuid())
         .bind(vector_literal(embedding))
-        .execute(scoped.connection())
+        .fetch_one(scoped.connection())
         .await
         .map_err(storage_error)?;
+
+        let registration_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM embedding_space_registrations WHERE workspace_id = $1 AND space_id = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(space.id.as_uuid())
+        .fetch_one(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        let generation_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT vestrace_open_embedding_corpus_generation($1,$2,$3)",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(context.workspace_id.as_uuid())
+        .bind(registration_id)
+        .fetch_one(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        sqlx::query("SELECT vestrace_enrol_embedding_corpus_generation_member($1,$2,$3)")
+            .bind(context.workspace_id.as_uuid())
+            .bind(generation_id)
+            .bind(embedding_id)
+            .execute(scoped.connection())
+            .await
+            .map_err(storage_error)?;
 
         scoped.commit().await.map_err(storage_error)
     }

@@ -98,6 +98,7 @@ mod tests {
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
             source_generation: 1,
+            corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
             score,
             channel_rank: 0,
             channel: channel.to_owned(),

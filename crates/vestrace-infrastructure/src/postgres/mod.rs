@@ -141,7 +141,7 @@ pub use startup_recovery_source::PgStartupRecoverySource;
 pub use text_retriever::PgTextRetriever;
 pub use transaction::{PgScopedTransaction, PgTransactionManager};
 pub use trigger_repository::PgTriggerRepository;
-pub use vector_retriever::PgVectorRetriever;
+pub use vector_retriever::{PgCorpusGenerationResolver, PgVectorRetriever};
 pub use vestrace_application::RuntimeQualificationEvidence;
 pub use workflow_evaluation_repository::{PgEvaluationRepository, PgWorkflowRepository};
 pub use workspace_counts::PgWorkspaceCounts;

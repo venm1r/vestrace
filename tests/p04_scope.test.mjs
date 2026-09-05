@@ -129,7 +129,7 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // file the shared dispatch trait can be implemented in (1), and the shared
   // test fixture two suites would otherwise duplicate (1). A literal is the
   // point: scope that grows without an amendment fails here.
-  assert.equal(changeScopePaths.length, 96);
+  assert.equal(changeScopePaths.length, 99);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });

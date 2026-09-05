@@ -1,11 +1,16 @@
 use async_trait::async_trait;
 use sqlx::Row;
-use vestrace_application::retrieval::EmbeddingSpace;
+use vestrace_application::retrieval::{
+    CorpusGenerationResolver, EmbeddingSpace, ResolvedCorpusGeneration,
+};
 use vestrace_application::{
     ApplicationError, NormalizedRetrievalRequest, RequestContext, SharedGovernedEmbeddingProvider,
     VectorRetriever,
 };
-use vestrace_domain::{MemoryKind, MemoryStatus, RetrievalCandidate, id::MemoryId};
+use vestrace_domain::embedding::EmbeddingSpaceKey;
+use vestrace_domain::{
+    CorpusGenerationId, MemoryKind, MemoryStatus, RetrievalCandidate, id::MemoryId,
+};
 
 use super::PgStore;
 
@@ -39,6 +44,16 @@ pub struct PgVectorRetriever {
     store: PgStore,
     provider: SharedGovernedEmbeddingProvider,
     space_name: String,
+}
+
+pub struct PgCorpusGenerationResolver {
+    store: PgStore,
+}
+
+impl PgCorpusGenerationResolver {
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
+    }
 }
 
 impl PgVectorRetriever {
@@ -110,6 +125,15 @@ impl VectorRetriever for PgVectorRetriever {
         context: &RequestContext,
         request: &NormalizedRetrievalRequest,
     ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
+        if request.embedding_space_key.workspace_id() != context.workspace_id
+            || request.embedding_space_key.name() != self.space_name
+            || request.embedding_space_key.model() != self.provider.model()
+        {
+            return Err(ApplicationError::Policy(
+                "vector retriever configured embedding space disagrees with retrieval request"
+                    .to_owned(),
+            ));
+        }
         // The query is embedded by the same provider that produced the stored
         // vectors. Comparing a query embedded by one model against vectors from
         // another gives distances that are arithmetically valid and meaningless.
@@ -128,10 +152,16 @@ impl VectorRetriever for PgVectorRetriever {
             .map_err(storage_error)?;
 
         let space = sqlx::query(
-            "SELECT id, dimensions FROM embedding_spaces WHERE workspace_id = $1 AND name = $2",
+            "SELECT space_id AS id, dimensions FROM embedding_space_registrations
+             WHERE workspace_id = $1 AND name = $2 AND model = $3 AND dimensions = $4",
         )
         .bind(context.workspace_id.as_uuid())
-        .bind(&self.space_name)
+        .bind(request.embedding_space_key.name())
+        .bind(request.embedding_space_key.model())
+        .bind(
+            i32::try_from(request.embedding_space_key.dimensions())
+                .map_err(|error| ApplicationError::Storage(error.to_string()))?,
+        )
         .fetch_optional(scoped.connection())
         .await
         .map_err(storage_error)?;
@@ -169,22 +199,68 @@ impl VectorRetriever for PgVectorRetriever {
             )));
         }
 
+        let generation_state = sqlx::query_scalar::<_, String>(
+            "SELECT generation.state
+               FROM embedding_corpus_generations generation
+               JOIN embedding_space_registrations registration
+                 ON registration.id = generation.space_registration_id
+                AND registration.workspace_id = generation.workspace_id
+              WHERE generation.workspace_id = $1
+                AND generation.id = $2
+                AND registration.name = $3
+                AND registration.model = $4",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(request.corpus_generation_id.as_uuid())
+        .bind(request.embedding_space_key.name())
+        .bind(request.embedding_space_key.model())
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        match generation_state.as_deref() {
+            Some("ready") => {}
+            Some("stale") => {
+                return Err(ApplicationError::Unavailable(format!(
+                    "embedding corpus generation {} for space {} is stale",
+                    request.corpus_generation_id,
+                    request.embedding_space_key.name()
+                )));
+            }
+            Some(_) => {
+                return Err(ApplicationError::Unavailable(format!(
+                    "embedding corpus generation {} for space {} is not ready",
+                    request.corpus_generation_id,
+                    request.embedding_space_key.name()
+                )));
+            }
+            None => {
+                return Err(ApplicationError::Unavailable(format!(
+                    "embedding corpus generation {} does not exist for space {}",
+                    request.corpus_generation_id,
+                    request.embedding_space_key.name()
+                )));
+            }
+        }
+
         let rows = sqlx::query(
             "SELECT e.memory_id, m.kind AS memory_kind, m.status AS memory_status,
                     m.state_revision AS source_generation, r.id AS revision_id,
                     r.revision_number, r.content, r.valid_from, r.valid_until,
                     r.created_at AS revision_created_at,
+                    member.corpus_generation_id AS corpus_generation_id,
                     e.embedding <=> $3::vector AS distance
              FROM memory_embeddings e
+             INNER JOIN embedding_corpus_generation_members member ON member.memory_embedding_id = e.id AND member.workspace_id = e.workspace_id
              INNER JOIN memories m ON m.id = e.memory_id AND m.workspace_id = e.workspace_id
              INNER JOIN memory_revisions r
                      ON r.id = m.active_revision_id AND r.workspace_id = m.workspace_id
              WHERE e.workspace_id = $1
                AND e.space_id = $2
+               AND member.corpus_generation_id = $6
                AND m.status = ANY($4)
                AND (cardinality($5::text[]) = 0 OR m.kind = ANY($5))
              ORDER BY distance ASC
-             LIMIT $6",
+             LIMIT $7",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(space.id.as_uuid())
@@ -220,6 +296,7 @@ impl VectorRetriever for PgVectorRetriever {
                 })
                 .collect::<Vec<&str>>(),
         )
+        .bind(request.corpus_generation_id.as_uuid())
         .bind(i64::from(request.channel_limit))
         .fetch_all(scoped.connection())
         .await
@@ -265,6 +342,9 @@ impl VectorRetriever for PgVectorRetriever {
                             .map_err(storage_error)?,
                     )
                     .map_err(|error| ApplicationError::Storage(error.to_string()))?,
+                    corpus_generation_id: CorpusGenerationId::from_uuid(
+                        row.try_get("corpus_generation_id").map_err(storage_error)?,
+                    ),
                     // Cosine distance inverted into a score, so higher is better
                     // here as it is in every other channel.
                     score: (1.0 - distance) as f32,
@@ -275,5 +355,62 @@ impl VectorRetriever for PgVectorRetriever {
                 })
             })
             .collect()
+    }
+}
+
+#[async_trait]
+impl CorpusGenerationResolver for PgCorpusGenerationResolver {
+    async fn resolve(
+        &self,
+        context: &vestrace_application::RequestContext,
+        space_name: &str,
+        model: &str,
+    ) -> Result<ResolvedCorpusGeneration, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let rows = sqlx::query(
+            "SELECT registration.name, registration.model, registration.dimensions, generation.id
+               FROM embedding_space_registrations registration
+               JOIN embedding_corpus_generations generation
+                 ON generation.workspace_id = registration.workspace_id
+                AND generation.space_registration_id = registration.id
+              WHERE registration.workspace_id = $1 AND registration.name = $2
+                AND registration.model = $3 AND generation.state = 'ready'",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(space_name)
+        .bind(model)
+        .fetch_all(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+        if rows.is_empty() {
+            return Err(ApplicationError::Unavailable(format!(
+                "embedding space {space_name} has no Ready generation"
+            )));
+        }
+        if rows.len() != 1 {
+            return Err(ApplicationError::Unavailable(format!(
+                "embedding space {space_name} has ambiguous Ready generations"
+            )));
+        }
+        let row = &rows[0];
+        let dimensions: i32 = row.try_get("dimensions").map_err(storage_error)?;
+        Ok(ResolvedCorpusGeneration {
+            embedding_space_key: EmbeddingSpaceKey::new(
+                context.workspace_id,
+                space_name,
+                model,
+                u32::try_from(dimensions)
+                    .map_err(|error| ApplicationError::Storage(error.to_string()))?,
+            )
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?,
+            corpus_generation_id: CorpusGenerationId::from_uuid(
+                row.try_get("id").map_err(storage_error)?,
+            ),
+        })
     }
 }

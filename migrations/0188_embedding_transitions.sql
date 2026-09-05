@@ -264,12 +264,6 @@ REVOKE ALL ON embedding_transition_plans FROM PUBLIC;
 REVOKE ALL ON embedding_transition_plan_recipes FROM PUBLIC;
 REVOKE ALL ON model_binding_snapshot_scopes FROM PUBLIC;
 
--- Existing P03 snapshots predate positive scopes.  This is intentionally before
--- the deferred trigger: a trigger first would reject its own migration commit.
-INSERT INTO model_binding_snapshot_scopes (workspace_id, snapshot_id, scope, transition_plan_id)
-SELECT workspace_id, id, 'ordinary', NULL
-  FROM model_binding_snapshots;
-
 CREATE CONSTRAINT TRIGGER embedding_transition_plan_recipes_deferred_invariant
     AFTER INSERT OR UPDATE OR DELETE ON embedding_transition_plan_recipes
     DEFERRABLE INITIALLY DEFERRED
@@ -1409,3 +1403,27 @@ GRANT EXECUTE ON FUNCTION vestrace_validate_model_binding_snapshot_scope()
     TO vestrace_guarded_owner;
 GRANT EXECUTE ON FUNCTION vestrace_snapshot_scope(UUID, UUID)
     TO vestrace_guarded_owner;
+
+-- Existing P03 snapshots predate positive scopes. This is intentionally before
+-- the deferred trigger: a trigger first would reject its own migration commit.
+-- A restricted migration role cannot enumerate the forced-RLS source table
+-- across workspaces, so it must say that it skipped the backfill rather than
+-- quietly succeeding with zero scope rows.
+DO $$
+DECLARE caller_can_see_all_workspaces BOOLEAN;
+BEGIN
+    SELECT COALESCE(rolsuper, FALSE) OR COALESCE(rolbypassrls, FALSE)
+      INTO caller_can_see_all_workspaces
+      FROM pg_roles
+     WHERE rolname = current_user;
+    IF NOT COALESCE(caller_can_see_all_workspaces, FALSE) THEN
+        RAISE WARNING
+            'P04 model-binding snapshot-scope backfill skipped: migration role % cannot see across workspace RLS; affected workspaces will refuse ordinary snapshot consumers until an operator backfill runs',
+            current_user;
+        RETURN;
+    END IF;
+    INSERT INTO model_binding_snapshot_scopes (workspace_id, snapshot_id, scope, transition_plan_id)
+    SELECT workspace_id, id, 'ordinary', NULL
+      FROM model_binding_snapshots;
+END
+$$;

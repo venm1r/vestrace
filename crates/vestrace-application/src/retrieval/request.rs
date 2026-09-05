@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use vestrace_domain::embedding::EmbeddingSpaceKey;
 use vestrace_domain::{
-    MemoryKind, MemoryStatus, RetrievalIntent, TimePerspective, WorkspaceId, id::RetrievalRunId,
+    CorpusGenerationId, MemoryKind, MemoryStatus, RetrievalIntent, TimePerspective, WorkspaceId,
+    id::RetrievalRunId,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -74,10 +76,26 @@ pub struct NormalizedRetrievalRequest {
     pub channel_limit: u32,
     pub token_budget: Option<u32>,
     pub include_explanation: bool,
+    pub embedding_space_key: EmbeddingSpaceKey,
+    pub corpus_generation_id: CorpusGenerationId,
 }
 
 impl NormalizedRetrievalRequest {
     pub fn normalize(req: RetrievalRequest) -> Result<Self, crate::ApplicationError> {
+        let workspace_id = req.workspace_id;
+        Self::normalize_with_pin(
+            req,
+            EmbeddingSpaceKey::new(workspace_id, "unresolved", "unresolved", 1)
+                .expect("constant unresolved key is valid"),
+            CorpusGenerationId::new(),
+        )
+    }
+
+    pub fn normalize_with_pin(
+        req: RetrievalRequest,
+        embedding_space_key: EmbeddingSpaceKey,
+        corpus_generation_id: CorpusGenerationId,
+    ) -> Result<Self, crate::ApplicationError> {
         let query = req.query.trim().to_owned();
         if query.is_empty() {
             return Err(crate::ApplicationError::Domain(
@@ -116,6 +134,8 @@ impl NormalizedRetrievalRequest {
             channel_limit,
             token_budget: req.token_budget,
             include_explanation: req.include_explanation,
+            embedding_space_key,
+            corpus_generation_id,
         })
     }
 }

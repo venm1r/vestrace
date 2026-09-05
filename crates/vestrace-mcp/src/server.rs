@@ -1110,6 +1110,7 @@ mod tests {
                 valid_until: None,
                 revision_created_at: vestrace_domain::now(),
                 source_generation: 1,
+                corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
                 score: 0.9,
                 channel_rank: 1,
                 channel: "fused".to_owned(),

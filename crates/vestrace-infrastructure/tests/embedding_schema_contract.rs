@@ -21,8 +21,9 @@ use vestrace_domain::embedding::{
     BarrierState, CarryHeaderState, CarryMappingState, EmbeddingJobKind, EmbeddingJobState,
 };
 
-const NEW_TABLES: [&str; 11] = [
+const NEW_TABLES: [&str; 12] = [
     "embedding_corpus_generations",
+    "embedding_corpus_generation_members",
     "embedding_jobs",
     "embedding_space_registrations",
     "embedding_transition_plan_recipes",
@@ -409,10 +410,18 @@ async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
     .await
     .expect("a complete space key is registrable");
 
+    let first_generation = Uuid::now_v7();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_open_embedding_corpus_generation($1,$2,$3)")
+        .bind(first_generation)
+        .bind(workspace_id)
+        .bind(registration)
+        .fetch_one(&mut *transaction)
+        .await
+        .expect("the first generation opens");
     let first = sqlx::query_scalar::<_, i64>(
         "SELECT vestrace_publish_embedding_corpus_generation($1,$2,$3,7)",
     )
-    .bind(Uuid::now_v7())
+    .bind(first_generation)
     .bind(workspace_id)
     .bind(registration)
     .fetch_one(&mut *transaction)
@@ -420,10 +429,18 @@ async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
     .expect("the first generation publishes");
     assert_eq!(first, 1);
 
+    let second_generation = Uuid::now_v7();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_open_embedding_corpus_generation($1,$2,$3)")
+        .bind(second_generation)
+        .bind(workspace_id)
+        .bind(registration)
+        .fetch_one(&mut *transaction)
+        .await
+        .expect("the second generation opens");
     let second = sqlx::query_scalar::<_, i64>(
         "SELECT vestrace_publish_embedding_corpus_generation($1,$2,$3,9)",
     )
-    .bind(Uuid::now_v7())
+    .bind(second_generation)
     .bind(workspace_id)
     .bind(registration)
     .fetch_one(&mut *transaction)

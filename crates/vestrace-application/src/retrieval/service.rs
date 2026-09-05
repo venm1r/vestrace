@@ -9,9 +9,9 @@ use crate::{
     ApplicationError, RequestContext,
     retrieval::{
         ChannelRecord, ContextPackBuilder, NormalizedRetrievalRequest, RetrievalRequest,
-        RetrievalRunRecord, SharedExactRetriever, SharedRetrievalJournal, SharedRevisionHydrator,
-        SharedStructuredRetriever, SharedTextRetriever, SharedVectorRetriever,
-        reciprocal_rank_fusion, rerank,
+        RetrievalRunRecord, SharedCorpusGenerationResolver, SharedExactRetriever,
+        SharedRetrievalJournal, SharedRevisionHydrator, SharedStructuredRetriever,
+        SharedTextRetriever, SharedVectorRetriever, reciprocal_rank_fusion_pinned, rerank,
     },
 };
 
@@ -24,6 +24,7 @@ pub struct RetrievalService {
     revision_hydrator: Option<SharedRevisionHydrator>,
     classification_policy: Option<ClassificationPolicy>,
     retrieval_policy_version: Option<String>,
+    corpus_generation_resolver: Option<(SharedCorpusGenerationResolver, String, String)>,
 }
 
 impl RetrievalService {
@@ -47,6 +48,7 @@ impl RetrievalService {
             revision_hydrator: None,
             classification_policy: None,
             retrieval_policy_version: None,
+            corpus_generation_resolver: None,
         }
     }
 
@@ -61,6 +63,16 @@ impl RetrievalService {
         self.classification_policy = Some(classification_policy);
         self.retrieval_policy_version =
             (!retrieval_policy_version.trim().is_empty()).then_some(retrieval_policy_version);
+        self
+    }
+
+    pub fn with_corpus_generation_resolver(
+        mut self,
+        resolver: SharedCorpusGenerationResolver,
+        space_name: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        self.corpus_generation_resolver = Some((resolver, space_name.into(), model.into()));
         self
     }
 
@@ -84,7 +96,17 @@ impl RetrievalService {
         }
 
         let workspace_id = request.workspace_id;
-        let normalized = NormalizedRetrievalRequest::normalize(request)?;
+        let Some((resolver, space_name, model)) = &self.corpus_generation_resolver else {
+            return Err(ApplicationError::Unavailable(
+                "retrieval corpus generation resolver is not configured".to_owned(),
+            ));
+        };
+        let pin = resolver.resolve(context, space_name, model).await?;
+        let normalized = NormalizedRetrievalRequest::normalize_with_pin(
+            request,
+            pin.embedding_space_key,
+            pin.corpus_generation_id,
+        )?;
         let run_id = normalized.request_id;
 
         let start = Instant::now();
@@ -195,7 +217,8 @@ impl RetrievalService {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let fused = reciprocal_rank_fusion(&channels, 60.0);
+        let fused =
+            reciprocal_rank_fusion_pinned(&channels, 60.0, normalized.corpus_generation_id)?;
         let ranked = rerank(fused);
         let candidates: Vec<RetrievalCandidate> = ranked
             .iter()
@@ -526,6 +549,7 @@ mod tests {
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
             source_generation: 1,
+            corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
             score: 0.9,
             channel_rank: 1,
             channel: channel.to_owned(),

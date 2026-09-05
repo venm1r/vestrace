@@ -39,6 +39,7 @@ export const changeScopePaths = [
   'crates/vestrace-domain/src/embedding/space.rs',
   'crates/vestrace-domain/src/id.rs',
   'crates/vestrace-domain/src/lib.rs',
+  'crates/vestrace-domain/src/retrieval/mod.rs',
   'crates/vestrace-domain/src/security/mod.rs',
   'crates/vestrace-domain/tests/embedding_contract.rs',
   'crates/vestrace-fault-scenario/src/child.rs',
@@ -96,6 +97,7 @@ export const changeScopePaths = [
   'migrations/0188_embedding_transitions.sql',
   'migrations/0189_embedding_transition_carry.sql',
   'migrations/0190_embedding_transition_barriers.sql',
+  'migrations/0191_embedding_corpus_generation_members.sql',
   'schemas/openapi-v1.json',
   'scripts/p04-scope.mjs',
   'tests/c8_core_memory_qualification.rs',
@@ -103,6 +105,7 @@ export const changeScopePaths = [
   'tests/http_command_contract.rs',
   'tests/p04_scope.test.mjs',
   'tests/retrieval_e2e.rs',
+  'tests/v01_acceptance.rs',
 ];
 
 export const protectedAuthorityPaths = [

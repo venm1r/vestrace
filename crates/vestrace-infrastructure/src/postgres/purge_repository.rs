@@ -78,6 +78,29 @@ impl PurgeRepository for PgPurgeRepository {
             .removed
             .insert("knowledge_relations".to_string(), relations.rows_affected());
 
+        let embedding_ids = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM memory_embeddings WHERE memory_id = $1 AND workspace_id = $2",
+        )
+        .bind(memory_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .fetch_all(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        for embedding_id in embedding_ids {
+            sqlx::query("SELECT vestrace_stale_embedding_corpus_generations_for($1,$2)")
+                .bind(context.workspace_id.as_uuid())
+                .bind(embedding_id)
+                .execute(scoped.connection())
+                .await
+                .map_err(storage_error)?;
+            sqlx::query("SELECT vestrace_remove_embedding_corpus_generation_members_for($1,$2)")
+                .bind(context.workspace_id.as_uuid())
+                .bind(embedding_id)
+                .execute(scoped.connection())
+                .await
+                .map_err(storage_error)?;
+        }
+
         for (table, statement) in [
             (
                 "memory_embeddings",

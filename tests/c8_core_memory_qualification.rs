@@ -214,6 +214,7 @@ fn c8_temporal_retrieval_and_context_fixture_preserve_perspective_provenance_and
         valid_until: Some(as_of + Duration::hours(1)),
         revision_created_at: as_of,
         source_generation: 4,
+        corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
         score: 1.0,
         channel_rank: 1,
         channel: "text".to_owned(),
