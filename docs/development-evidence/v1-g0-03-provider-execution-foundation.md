@@ -1097,3 +1097,82 @@ next package must not be.
   `idempotency_keys` after taking its advisory lock. That path is not exercised
   under the restricted runtime role today, so the same `42501` that broke the
   dispatch suite is latent there.
+
+## Corrections (2026-09-05, after the adversarial review this package shipped without)
+
+P03 Tasks 11–13 were completed without the adversarial review the gate program's
+planning rule requires, and P04 carried that omission forward without closing
+it. The review was finally run on 2026-09-05, against the tree as it stands
+after P04 rather than as it stood when these tasks shipped. Its findings are
+recorded here. The statements above are left as written: this document is a
+record of what was believed at the time, and rewriting it in place would destroy
+that record.
+
+### A production gap this document claims is closed
+
+**Requested q1 qualification jobs are never processed.**
+`POST /v1/connections/{id}/qualifications` and
+`POST /v1/models/{id}/qualifications` persist `Requested` jobs through the real
+repository (`connections.rs:484-508`, `models.rs:270-293`,
+`qualification_job_repository.rs:70-112`). The worker loop polls Run work, the
+outbox, reconciliation and outcome delivery (`worker.rs:239-245`) and never
+constructs or calls `QualificationJobService` or `PgQualificationProbeRunner`.
+The concrete runner's only callers are integration tests
+(`provider_dispatch_is_atomic.rs:5826`, `:5951`).
+
+Task 11's claim that "Worker qualification processing resumes durable
+`Requested`/`Running` jobs" is therefore false. A job accepted over production
+HTTP is persisted and never executed, and neither is the recovery of its
+ambiguous dispatches.
+
+This is the same shape as a defect P04 found in its own work: a surface exists,
+its route is mounted, its repository is real, and no production caller drives
+it. There it was the retrieval corpus-generation resolver missing from the MCP
+composition root. Here it has stood since P03 and through the whole of P04.
+
+### Statements that P04 has since made untrue
+
+- "**No production embedding path.** … P03 created no embedding transition,
+  corpus generation, carry, barrier or retrieval fence." P04 added
+  `embedding_jobs` and the third dispatch cause
+  (`0187_embedding_jobs_and_corpus_generations.sql:84-136`, `:459-507`) and made
+  retrieval corpus-generation resolution mandatory
+  (`retrieval/service.rs:98-109`), wired at `server.rs:153-157`.
+- "**Rotation with live embedding dependencies remains a typed refusal** until
+  P04 supplies exact transition evidence." P04 supplied it
+  (`0188_embedding_transitions.sql:292-347`); the sentence is historical.
+- "P04 and P05 are entirely unstarted." P04 is complete and pushed. Only the P05
+  half of that sentence still holds.
+- "A governed step on a freshly created Connection still cannot be dispatched …
+  no production route publishes [an admission policy]." P04 added the guarded
+  publisher (`0187…sql:301-388`) and the governed route
+  (`route_inventory.rs:187-190`) backed by
+  `connection_revision_repository.rs:207-230`.
+- "All three are complete to their last self-executable step." False, and not
+  merely for want of review: the qualification worker named above is absent.
+
+### Two qualification claims weaker than recorded
+
+- **Task 12's connection-guard race is not falsifiable.** This document already
+  records that removing the supposedly load-bearing `FOR UPDATE` produced eight
+  green runs. The barrier at `run_acceptance_binding_race.rs:947-978`
+  synchronises only the start and never observes either side reaching the
+  vulnerable window, so the test cannot support the lock-isolation claim it is
+  cited for.
+- **One refusal assertion is overstated.** This document says every database
+  refusal in the two new suites asserts an exact message or constraint name. The
+  catalog-derived test asserts SQLSTATE `42501` alone
+  (`provider_runtime_role_refusals.rs:178-187`). It does independently check
+  that the runtime lacks each table privilege (`:161-171`), so this is not the
+  ACL-hole pattern the requirement guards against — but the wording claimed more
+  than the test does.
+
+### The three carried warnings, re-checked
+
+All three still hold. Workspace tests and the ordinary CI build are debug-profile
+commands (`ci.yml:52`, `:62`); release compilation happens only through
+Compose/Docker (`ci.yml:95-107`, `Dockerfile:29-31`). P03 source still carries
+undeclared `include_str!`/`include_bytes!` dependencies
+(`openai_q1.rs:21-26`), though the Dockerfile now copies `schemas` and
+`tests/fixtures` into its narrowed context (`Dockerfile:10-17`). And the CI
+pattern now includes `failures:` and tails the full log (`ci.yml:52-59`).
