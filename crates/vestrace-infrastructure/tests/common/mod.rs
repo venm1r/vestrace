@@ -23,7 +23,7 @@ use vestrace_application::{
     ApplicationError, CredentialDispatchLeaseRepository, ExternalEffectRepository,
     IdempotencyRecord, ModelRequestEvidenceRepository, OutboxMessage, ProviderDispatchCause,
     ProviderDispatchFaultInjector, ProviderDispatchFaultPoint, ProviderDispatchPolicyEvaluator,
-    ProviderDispatchRequest, RequestContext,
+    ProviderDispatchRequest, RequestContext, retrieval::EmbeddingStore,
 };
 use vestrace_domain::{
     AuditEvent, AuthorizationRequest, Capability, ConnectionId, ConnectionRevisionId,
@@ -33,8 +33,9 @@ use vestrace_domain::{
     WorkerId, WorkspaceId, id::AuditEventId, security::PolicyInputState,
 };
 use vestrace_infrastructure::{
-    PgExternalEffectRepository, PgGovernedMutationRepository, PgInstallationMutationPermit,
-    PgModelDataPolicyDecisionRepository, PgProviderDispatchRepository, PgStore,
+    PgEmbeddingStore, PgExternalEffectRepository, PgGovernedMutationRepository,
+    PgInstallationMutationPermit, PgModelDataPolicyDecisionRepository,
+    PgProviderDispatchRepository, PgStore,
 };
 
 const RUNTIME_DATABASE_URL_ENV: &str = "VESTRACE_RUNTIME_DATABASE_URL";
@@ -62,6 +63,38 @@ pub async fn runtime_pool(source: &PgPool) -> PgPool {
         )
         .await
         .expect("runtime must connect to the SQLx test database")
+}
+
+/// SQLx provisions its disposable databases as the test migrator, whereas the
+/// deployment bootstrap has `vestrace` own these legacy runtime/retrieval tables.
+/// Mirror that production ownership before exercising the real runtime paths;
+/// no function owner or runtime privilege is changed here.
+pub async fn prepare_legacy_embedding_runtime_ownership(pool: &PgPool) {
+    for table in [
+        "embedding_spaces",
+        "memory_embeddings",
+        "memories",
+        "memory_revisions",
+        "search_documents",
+    ] {
+        sqlx::query(&format!("ALTER TABLE public.{table} OWNER TO vestrace"))
+            .execute(pool)
+            .await
+            .unwrap();
+        let owner: String = sqlx::query_scalar(
+            "SELECT pg_get_userbyid(class.relowner) FROM pg_class AS class \
+              JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace \
+             WHERE namespace.nspname='public' AND class.relname=$1",
+        )
+        .bind(table)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            owner, "vestrace",
+            "fixture must mirror the production owner for {table}"
+        );
+    }
 }
 
 /// One embedding effect intent, scoped to the workspace rather than a run.
@@ -145,7 +178,6 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     let connection_qualification_id = Uuid::now_v7();
     let model_qualification_id = Uuid::now_v7();
     let snapshot_id = Uuid::now_v7();
-    let space_registration_id = Uuid::now_v7();
     let job_id = EmbeddingJobId::new();
     let evidence_id = Uuid::now_v7();
 
@@ -202,6 +234,20 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .await
     .unwrap();
 
+    prepare_legacy_embedding_runtime_ownership(owner).await;
+    // The legacy space remains runtime-owned until its later replacement, so
+    // seed it through the production writer before the guarded registration
+    // function verifies its identity.
+    let space = PgEmbeddingStore::new(PgStore::from_pool(runtime.clone()))
+        .ensure_space(
+            &context,
+            "nomic-768",
+            "text-embedding-nomic-embed-text-v1.5",
+            768,
+        )
+        .await
+        .expect("the runtime role creates and registers its legacy embedding space");
+
     let mut governed = runtime.begin().await.unwrap();
     sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
         .bind(workspace_id.to_string())
@@ -248,18 +294,14 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .fetch_one(&mut *governed)
     .await
     .unwrap();
-    // The space is authorized by name, model and dimensions, not minted as a
-    // side effect of the first vector written into it.
-    sqlx::query_scalar::<_, Uuid>(
-        "SELECT vestrace_register_embedding_space($1,$2,$3,'nomic-768',\
-           'text-embedding-nomic-embed-text-v1.5',768)",
+    let space_registration_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM embedding_space_registrations WHERE workspace_id=$1 AND space_id=$2",
     )
-    .bind(space_registration_id)
     .bind(workspace_id.as_uuid())
-    .bind(connection_id)
+    .bind(space.id.as_uuid())
     .fetch_one(&mut *governed)
     .await
-    .unwrap();
+    .expect("the production space writer registered the exact legacy space");
     governed.commit().await.unwrap();
 
     let intent = workspace_scoped_intent(&context, snapshot_id);

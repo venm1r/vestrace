@@ -266,6 +266,7 @@ async fn independent_planning_target(
     let connection_revision_id = Uuid::now_v7();
     let no_auth_binding_id = Uuid::now_v7();
     let model_revision_id = Uuid::now_v7();
+    let space_id = Uuid::now_v7();
     let space_registration_id = Uuid::now_v7();
     let model_id: Uuid =
         sqlx::query_scalar("SELECT model_id FROM model_revisions WHERE workspace_id=$1 AND id=$2")
@@ -300,6 +301,15 @@ async fn independent_planning_target(
     .bind(workspace_id)
     .bind(fixture.context.principal_id.as_uuid())
     .bind(format!("embedding-race-{connection_id}"))
+    .execute(owner)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO embedding_spaces(id,workspace_id,name,dimensions,model) \
+         VALUES($1,$2,'nomic-768-race',768,'text-embedding-nomic-embed-text-v1.5')",
+    )
+    .bind(space_id)
+    .bind(workspace_id)
     .execute(owner)
     .await
     .unwrap();
@@ -357,7 +367,7 @@ async fn independent_planning_target(
     )
     .bind(space_registration_id)
     .bind(workspace_id)
-    .bind(connection_id)
+    .bind(space_id)
     .fetch_one(&mut *governed)
     .await
     .unwrap();

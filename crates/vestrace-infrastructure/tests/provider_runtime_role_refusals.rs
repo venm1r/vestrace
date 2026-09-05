@@ -6,6 +6,21 @@ use sqlx::{
 };
 use uuid::Uuid;
 
+const P04_GUARDED_TABLES: [&str; 12] = [
+    "embedding_space_registrations",
+    "embedding_corpus_generations",
+    "embedding_jobs",
+    "embedding_transitions",
+    "embedding_transition_plans",
+    "embedding_transition_plan_recipes",
+    "model_binding_snapshot_scopes",
+    "embedding_transition_ambiguity_carries",
+    "embedding_transition_ambiguity_carry_recipes",
+    "embedding_transition_barriers",
+    "embedding_transition_barrier_recipes",
+    "embedding_corpus_generation_members",
+];
+
 async fn runtime_pool(source: &PgPool) -> PgPool {
     let runtime_url = std::env::var("VESTRACE_RUNTIME_DATABASE_URL")
         .expect("VESTRACE_RUNTIME_DATABASE_URL must authenticate as vestrace");
@@ -34,6 +49,16 @@ async fn runtime_pool(source: &PgPool) -> PgPool {
 #[sqlx::test(migrations = "../../migrations")]
 async fn governed_run_step_input_runtime_direct_attempt_dml_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
+    let has_insert_privilege: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege('vestrace', 'public.run_step_execution_attempts', 'INSERT')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !has_insert_privilege,
+        "the direct write refusal must be caused by an absent runtime INSERT privilege"
+    );
     let refusal = sqlx::query(
         "INSERT INTO run_step_execution_attempts (
             id, workspace_id, run_id, step_id, model_binding_snapshot_id,
@@ -64,12 +89,6 @@ async fn governed_run_step_input_runtime_direct_attempt_dml_is_refused(pool: PgP
             .and_then(|database| database.code())
             .as_deref(),
         Some("42501")
-    );
-    assert_eq!(
-        refusal
-            .as_database_error()
-            .map(|database| database.message()),
-        Some("permission denied for table run_step_execution_attempts")
     );
     runtime.close().await;
 }
@@ -118,6 +137,13 @@ async fn every_guarded_owner_table_refuses_runtime_dml_including_undeclared_ones
         tables.len(),
         tables.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
+    for expected in P04_GUARDED_TABLES {
+        assert!(
+            tables.iter().any(|(table, _)| table == expected),
+            "the catalog-derived guarded table set omitted P04 table {expected}: {:?}",
+            tables.iter().map(|(table, _)| table).collect::<Vec<_>>()
+        );
+    }
 
     let runtime = runtime_pool(&pool).await;
     for (table, first_column) in &tables {
@@ -132,6 +158,17 @@ async fn every_guarded_owner_table_refuses_runtime_dml_including_undeclared_ones
             ),
             ("DELETE", format!("DELETE FROM public.{table}")),
         ] {
+            let has_privilege: bool =
+                sqlx::query_scalar("SELECT has_table_privilege('vestrace', $1, $2)")
+                    .bind(format!("public.{table}"))
+                    .bind(verb)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert!(
+                !has_privilege,
+                "{verb} on {table} must be refused because the runtime role lacks that table privilege"
+            );
             let refusal = sqlx::query(&statement)
                 .execute(&runtime)
                 .await
@@ -147,11 +184,6 @@ async fn every_guarded_owner_table_refuses_runtime_dml_including_undeclared_ones
                 "{verb} on {table} must be refused by the table ACL, got {}: {}",
                 database.code().as_deref().unwrap_or("no SQLSTATE"),
                 database.message()
-            );
-            assert_eq!(
-                database.message(),
-                format!("permission denied for table {table}"),
-                "{verb} on {table} must be refused by the ACL rather than by RLS or a check"
             );
         }
     }

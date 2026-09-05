@@ -394,6 +394,16 @@ async fn the_job_kind_check_matches_the_declared_enum(pool: PgPool) {
 async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
     let (workspace_id, principal_id) = workspace(&pool).await;
     let registration = Uuid::now_v7();
+    let space_id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO embedding_spaces(id,workspace_id,name,dimensions,model) \
+         VALUES($1,$2,'nomic-768',768,'nomic-embed-text')",
+    )
+    .bind(space_id)
+    .bind(workspace_id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let mut transaction = scope(&pool, workspace_id, principal_id).await;
     sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
@@ -405,7 +415,7 @@ async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
     )
     .bind(registration)
     .bind(workspace_id)
-    .bind(Uuid::now_v7())
+    .bind(space_id)
     .fetch_one(&mut *transaction)
     .await
     .expect("a complete space key is registrable");
@@ -471,6 +481,18 @@ async fn registration_is_idempotent_on_the_tuple_and_refuses_a_second_space(pool
     let (workspace_id, principal_id) = workspace(&pool).await;
     let registration = Uuid::now_v7();
     let space = Uuid::now_v7();
+    let crossed_space = Uuid::now_v7();
+    for space_id in [space, crossed_space] {
+        sqlx::query(
+            "INSERT INTO embedding_spaces(id,workspace_id,name,dimensions,model) \
+             VALUES($1,$2,'space',768,'model')",
+        )
+        .bind(space_id)
+        .bind(workspace_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
 
     let mut transaction = scope(&pool, workspace_id, principal_id).await;
     sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
@@ -509,7 +531,7 @@ async fn registration_is_idempotent_on_the_tuple_and_refuses_a_second_space(pool
     )
     .bind(Uuid::now_v7())
     .bind(workspace_id)
-    .bind(Uuid::now_v7())
+    .bind(crossed_space)
     .fetch_one(&mut *transaction)
     .await
     .expect_err("one key may not name two spaces");

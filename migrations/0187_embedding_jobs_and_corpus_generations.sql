@@ -186,6 +186,18 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
+    PERFORM 1
+      FROM embedding_spaces AS legacy_space
+     WHERE legacy_space.id = target_space_id
+       AND legacy_space.workspace_id = target_workspace_id
+       AND legacy_space.name = target_name
+       AND legacy_space.model = target_model
+       AND legacy_space.dimensions = target_dimensions;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'embedding space registration requires a matching legacy embedding space'
+            USING ERRCODE = '23514';
+    END IF;
+
     -- Registration is idempotent on the exact tuple: the same key registered
     -- twice returns the first registration rather than conflicting, because the
     -- caller that retries after a crash must converge on one identity.
@@ -213,6 +225,9 @@ BEGIN
     RETURN target_registration_id;
 END
 $$;
+
+-- Column-level so the guarded owner can validate identity without reading legacy vectors.
+GRANT SELECT (id, workspace_id, name, model, dimensions) ON embedding_spaces TO vestrace_guarded_owner;
 
 -- Publish a Ready generation and supersede the one it replaces, in one
 -- transaction.

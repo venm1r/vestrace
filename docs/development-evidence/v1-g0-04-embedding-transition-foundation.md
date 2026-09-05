@@ -1739,12 +1739,152 @@ Two figures the reviewer had been carrying as baselines were wrong: `text_retrie
 and `vector_retriever_data_policy` hold 7 and 3 tests, not 10 and 6. The
 assertion counts that establish nothing was weakened — 15 and 7 — are unchanged.
 
+## Task 10 — refusal, mixed-space and duplicate-dispatch qualification (2026-09-05)
+
+Two new suites qualify what Tasks 1–9 built: every P04 guarded table refuses the
+runtime role for a named reason, and two spaces that are indistinguishable by
+model and geometry cannot leak into each other. The plan for this task was
+reviewed adversarially before any code was written, and the review returned
+three blockers. Two of them were errors in the plan. The third was a security
+defect in already-shipped code, and it is the substance of this task.
+
+### The registration that accepted spaces which did not exist
+
+`vestrace_register_embedding_space` validated that its arguments were non-null
+and non-empty and that the `(workspace_id, name, model, dimensions)` tuple was
+idempotent. It never checked that an `embedding_spaces` row with
+`id = target_space_id` existed in that workspace, or that its name, model and
+dimensions matched what was being registered.
+
+The runtime role holds EXECUTE on that function and on the generation open and
+enrol functions (`init-runtime-role.sh:503-506`), and `memory_embeddings` is
+deliberately left unguarded by 0187. So the runtime role could write a vector
+under an arbitrary `space_id`, register a logical space naming it with any name
+and model, enrol it, publish, and retrieval — which resolves a space by name and
+model — would serve it. The membership trigger does not catch this: it compares
+the registration's `space_id` against the embedding's, and under a forge both
+hold the same invented value.
+
+That is a mixed-space leak available to the exact role the fence exists to
+constrain, and it was reachable before this task.
+
+**It was not theoretical: three test files were already using it.** Fixing the
+function turned `embedding_schema_contract` from 10/10 to 8/10, because
+`a_space_has_at_most_one_ready_generation` and
+`registration_is_idempotent_on_the_tuple_and_refuses_a_second_space` had been
+registering spaces with a freshly minted `Uuid::now_v7()` since they were
+written, and `embedding_carry_classification` had been passing a connection id
+where a space id belonged. None of that was noticed by the tests themselves, by
+the five adversarial reviews Task 9 went through, or by any acceptance this
+package has performed.
+
+The fixtures were corrected to create the legacy row first, as the production
+store does. The validation was not relaxed and no assertion was weakened. One
+call site was deliberately left registering a space that does not exist — the
+refusal probe in `embedding_runtime_role_refusals`, which exists to prove the
+refusal happens. Telling that apart from a fixture leaning on the hole is
+exactly where a "fix" can quietly delete its own proof.
+
+The check needs
+`GRANT SELECT (id, workspace_id, name, model, dimensions) ON embedding_spaces TO
+vestrace_guarded_owner` — column-narrowed for the same reason Task 9 narrowed
+the `memory_embeddings` grant: the validator needs identity and has no business
+reading vectors. 0187 was amended rather than a new migration added; it is this
+package's own and unreleased, and 0188's checksum had already changed, so the
+"rebuild any database that applied the earlier file" consequence was already
+recorded and gains nothing new.
+
+### Two acceptance criteria that could not have been met as written
+
+**A3 was impossible.** The original wording asked for two spaces
+"distinguishable only by pinned identities". `embedding_space_registrations`
+enforces `UNIQUE (workspace_id, name, model, dimensions)` (0187:28) and the
+resolver looks a space up by name and model, so two same-model, same-dimension
+spaces are *required* to differ by name. The criterion was rewritten to the
+property that is both achievable and worth having: nothing about the vectors,
+the provider or the wire model distinguishes them — both are
+`same-wire-model` at 2 dimensions — so any leak would have to come from the
+identity plumbing rather than from the geometry.
+
+**A4's counter would have counted nothing.** The original asked for zero further
+adapter calls across a crash, read from a real counter. No worker composes an
+embedding-job executor, so an embedding recovery never invokes an adapter and
+the counter would have established only that an uncalled test double stayed
+uncalled. The duplicate-dispatch property is proved at the transition level
+instead, and this evidence states plainly that no embedding adapter call was
+counted, because the missing worker recorded in Task 9's evidence is the reason.
+
+### The closed-world test cannot detect the forgetting that matters
+
+The catalog-derived test in `provider_runtime_role_refusals.rs` selects tables
+where `pg_get_userbyid(class.relowner) = 'vestrace_guarded_owner'` and then
+asserts `tables.len() >= 64`. Its own doc comment says "the cost of forgetting
+is a red test rather than a silent write path". That is true for one kind of
+forgetting — a table handed to the guarded owner but declared in no matrix — and
+false for the kind that matters more: a table never handed over at all simply
+does not appear in the query, and 64 remains satisfied because P02 and P03
+supply 64 on their own.
+
+This document previously repeated that claim. It was wrong. The test now also
+asserts, without any change to its catalog derivation, that all twelve P04
+tables appear in the derived set, naming any that is missing.
+
+### Runs, re-executed by the reviewer
+
+| Suite | Result |
+|---|---|
+| `embedding_runtime_role_refusals` | 2 passed |
+| `embedding_space_isolation` | 4 passed |
+| `provider_runtime_role_refusals` | 2 passed |
+| `embedding_schema_contract` | 10 passed |
+| `embedding_carry_classification` | 8 passed |
+| `retrieval_generation_fence` | 12 passed |
+| `p03_upgrade_provisioning` | 6 passed |
+| `runtime_role_cannot_write_directly` | 45 passed |
+| `embedding_dispatch_is_atomic` | 15 passed |
+| `embedding_effect_recovery` | 11 passed |
+| `embedding_transition_planning` | 7 passed |
+| `embedding_transition_barriers` | 10 passed |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets` | 0 warnings |
+| P04-scoped dirty-baseline check | exit 0 |
+
+Mutations performed and restored: a temporary runtime INSERT grant on
+`embedding_jobs` made the refusal suite fail on its catalog-privilege assertion;
+replacing the generation/member space comparison with `IF FALSE` made the
+cross-space test fail reporting `rows_affected: 1`. 0187 restored to
+`4F899665EBF6F5AC8F58B00DA2EF08AF18ED9C9A42B3CE7DCF54EECE7ACD3543` and 0191 to
+`2A658619F599BDF23176241FC16EF3C876AA6DDDD653F236C5BD9E730A0C990F`.
+
+`embedding_schema_contract`'s regression was caught by a run the reviewer added
+because 0187 had changed, not by the verification matrix the reviewer had given
+the implementer. The matrix was the reviewer's and the omission was the
+reviewer's.
+
+### A fixture that reduces its own authority
+
+`prepare_legacy_embedding_runtime_ownership` in the shared test module hands the
+legacy tables to `vestrace` before the runtime paths are exercised, mirroring
+what the deployment bootstrap does, and asserts the resulting owner. SQLx
+provisions its disposable databases as the test migrator, which owns everything;
+that is precisely the discrepancy that hid three separate production failures in
+Task 9. This fixture moves a test toward production authority instead of away
+from it, and it is the pattern the remaining tasks should follow.
+
 ## Not true yet
 
-- Tasks 10–12 are not started: refusal and mixed-space qualification,
-  worker-restart and fault evidence, and integrated verification. Tasks 1–7 and
-  9 are complete and reviewed; Task 8 is complete apart from the concurrency
-  mutation named below.
+- Tasks 11 and 12 are not started: worker-restart and fault evidence, and
+  integrated verification. Tasks 1–7, 9 and 10 are complete and reviewed; Task 8
+  is complete apart from the concurrency mutation named below.
+- Duplicate dispatch is proved at the transition level and **not** by an adapter
+  call counter. No worker composes an embedding-job executor, so an embedding
+  recovery never reaches an adapter and a counter would only establish that an
+  uncalled test double stayed uncalled.
+- The catalog-derived closed-world refusal test cannot detect a table that was
+  never handed to `vestrace_guarded_owner`: such a table is absent from its
+  query and its `>= 64` floor is satisfied by P02 and P03 alone. The twelve P04
+  tables are now asserted by name, which covers this package but not the next
+  one.
 - No worker composes the embedding-job executor. Task 4's step-4 review item
   required it, its test proves only that the dispatch *authority* is shared, and
   `worker.rs:423-455` still holds only the legacy `EmbedMemoryHandler` wiring.
