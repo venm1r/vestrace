@@ -2098,8 +2098,12 @@ obligation are untouched here and remain P05's.
 
 ## Not true yet
 
-- All twelve tasks are complete and reviewed, apart from the concurrency
-  mutation named below. The debts listed here are recorded, not closed.
+- **P04 is reopened as of 2026-09-06.** Tasks 1–12 are complete and reviewed
+  apart from the concurrency mutation named below, but the package did not meet
+  its own gate-program row: four of six embedding-job states are unreachable,
+  there is no completion authority, and the specification's
+  `RetrievalGenerationFence` does not exist. See "Reopened" at the end of this
+  document.
 - The P04 plan has not been independently reviewed, and P03 Tasks 11–13 have not
   been adversarially reviewed. Both were carried into this package and neither
   was discharged by it.
@@ -2176,3 +2180,88 @@ obligation are untouched here and remain P05's.
 - No embedding job is dispatched outside a test. The governed graph composes
   acceptance and dispatch, but the worker registers no handler for embedding
   work, because no work-item kind leases it yet.
+
+## Reopened (2026-09-06)
+
+P04 was declared complete on 2026-09-05 and pushed. Planning P05 required
+reading specification section 11.6 against this package's output, and that
+reading found P04 had not met its own gate-program row. The operator decided to
+reopen it rather than carry the gap forward. This section records what was
+found; the sections above are left as written.
+
+### Four of six embedding-job states are unreachable
+
+`EmbeddingJobState` declares `Requested`, `Running`, `Succeeded`,
+`FailedDefinite`, `InconclusiveUnknown` and `Cancelled`
+(`crates/vestrace-domain/src/embedding/job.rs:98-105`). The only
+`UPDATE embedding_jobs` in the entire migration set is
+`migrations/0187_embedding_jobs_and_corpus_generations.sql:819-821`, inside
+`vestrace_finalize_embedding_job_unknown`, writing `inconclusive_unknown`.
+`Requested` arrives from the column default at `0187:103`.
+
+Nothing writes `Running`, `Succeeded`, `FailedDefinite` or `Cancelled`. An
+embedding job can be accepted and declared unknown, and nothing else. The
+evidence above describes the job lifecycle as built; what was built is its
+acceptance and its unknown finalization.
+
+### There is no completion authority, and the specification names a chain
+
+Section 11.6 requires, before `Succeeded`: one repository transaction that
+writes each ciphertext and its non-live `ResultFinalizing`
+`EmbeddingProjectionEntry` as a provider-result-specialized
+`PreparedMaterialAttachment`, appends the definite provider receipt and the
+immutable `EmbeddingJobResultPrepared` marker, and **deliberately neither
+activates a projection nor appends `Succeeded`**; then a reconciler that binds
+each provisional key to that exact marker and records bound receipts; then one
+database finalizer that atomically promotes every attachment to typed
+vector/projection rows and `Live` materials, advances the space corpus, marks
+the current Ready generation stale, emits the rebuild event, and appends
+`Succeeded`.
+
+Of the artefacts that chain names, the generic material-attachment machinery
+exists from P02 (`prepared_material_attachment` in four migrations). Everything
+embedding-specific does not: `EmbeddingProjectionEntry`,
+`RetrievalGenerationFence`, `RetrievalGenerationChanged`, and — as this
+document already recorded under Task 8 — `EmbeddingJobResultPrepared` and
+`waiting_for_result_keys`, which appear only in comments.
+
+`PreparedProviderResult` is Run/Step-bound
+(`crates/vestrace-application/src/provider_result.rs:117-126`) and its finalizer
+commits a Run result
+(`crates/vestrace-infrastructure/src/postgres/provider_result_repository.rs:444-479`),
+so it cannot serve as the embedding completion authority.
+
+### "Retrieval generation fences" was built in a different sense than the row means
+
+The gate program's P04 row promises retrieval generation fences. Task 9 built
+the corpus-generation filter: both retrievers restrict candidates to membership
+in a resolved Ready generation and report the generation they read. That is real
+and it is proved.
+
+Section 11.6's `RetrievalGenerationFence` is a different object — an immutable
+tuple captured by a `retrieval_query` job at acceptance, holding the exact
+`EmbeddingSpaceKey`, the Ready generation id and epoch, the captured corpus
+revision and member watermark, and the generation-guard CAS version, serving as
+reconstruction and effect-input authority for one attempt. It does not exist.
+
+Two related things share a name here, and this document previously implied the
+row was satisfied.
+
+### What reopening covers
+
+The unbuilt half of this package's own row: the job completion chain, the
+terminal transitions other than `InconclusiveUnknown`, the cancellation path,
+the pre-dispatch `FailedDefinite` paths, the waiting-for-result-keys phase, and
+the specification's `RetrievalGenerationFence`.
+
+It also covers the driver debts this package recorded and did not close: nothing
+composes an embedding-job executor
+(`crates/vestrace-cli/src/commands/worker.rs:102-134`, `:416-455`).
+
+An earlier draft of this correction claimed the composition root could not be
+tested by any Rust test and that this was why the driver defects escaped. That
+is false and is not the reason. Integration tests already launch the binary
+through `CARGO_BIN_EXE_vestrace`, `RunWorker::run_once` and
+`OutboxDispatcher::drain_once` are public, and `command_contract.rs` and
+`runtime_schema_gate.rs` inspect composition too. The means existed; the tests
+were not written.
