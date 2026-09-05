@@ -1,7 +1,0 @@
-interface:
-  display_name: "Cdx"
-  short_description: "Codex Sol leads; Codex worker implements"
-  default_prompt: "Use $cdx to lead this software-development task with Codex Sol and delegate implementation to a worker."
-
-policy:
-  allow_implicit_invocation: false
