@@ -337,9 +337,10 @@ pub struct RetrievalResult {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use vestrace_domain::{
-        MemoryKind, MemoryStatus, PrincipalId, RetrievalCandidate, WorkspaceId,
+        CorpusGenerationId, MemoryKind, MemoryStatus, PrincipalId, RetrievalCandidate, WorkspaceId,
+        embedding::EmbeddingSpaceKey,
         retrieval::{ClassificationPolicy, HydratedRevision, RevisionRef, WithholdingReason},
     };
 
@@ -493,6 +494,34 @@ mod tests {
         )
     }
 
+    struct StubCorpusGenerationResolver;
+
+    #[async_trait]
+    impl crate::retrieval::CorpusGenerationResolver for StubCorpusGenerationResolver {
+        async fn resolve(
+            &self,
+            context: &RequestContext,
+            space_name: &str,
+            model: &str,
+        ) -> Result<crate::retrieval::ResolvedCorpusGeneration, ApplicationError> {
+            Ok(crate::retrieval::ResolvedCorpusGeneration {
+                embedding_space_key: EmbeddingSpaceKey::new(
+                    context.workspace_id,
+                    space_name,
+                    model,
+                    3,
+                )
+                .expect("test resolver receives valid space configuration"),
+                corpus_generation_id: test_corpus_generation_id(),
+            })
+        }
+    }
+
+    fn test_corpus_generation_id() -> CorpusGenerationId {
+        static ID: OnceLock<CorpusGenerationId> = OnceLock::new();
+        *ID.get_or_init(CorpusGenerationId::new)
+    }
+
     struct FailingExactRetriever;
 
     #[async_trait]
@@ -549,7 +578,7 @@ mod tests {
             valid_until: None,
             revision_created_at: vestrace_domain::now(),
             source_generation: 1,
-            corpus_generation_id: vestrace_domain::CorpusGenerationId::new(),
+            corpus_generation_id: test_corpus_generation_id(),
             score: 0.9,
             channel_rank: 1,
             channel: channel.to_owned(),
@@ -709,6 +738,11 @@ mod tests {
             Arc::new(OneRevisionHydrator { revision: hydrated }),
             ClassificationPolicy::new(["internal"], false).unwrap(),
             "retrieval-policy-v2",
+        )
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
         );
 
         let result = service
@@ -759,6 +793,11 @@ mod tests {
             Arc::new(OneRevisionHydrator { revision: hydrated }),
             ClassificationPolicy::new(["internal"], false).unwrap(),
             "retrieval-policy-v2",
+        )
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
         );
 
         let result = service
@@ -833,6 +872,11 @@ mod tests {
             Arc::new(ManyRevisionHydrator { revisions }),
             ClassificationPolicy::new(["internal"], false).unwrap(),
             "retrieval-policy-v2",
+        )
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
         );
 
         let result = service
@@ -1086,6 +1130,11 @@ mod tests {
             Arc::new(OneRevisionHydrator { revision: hydrated }),
             ClassificationPolicy::new(["internal"], false).unwrap(),
             "retrieval-policy-v2",
+        )
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
         );
         let context = RequestContext::new(workspace, PrincipalId::new());
         let result = service
@@ -1108,7 +1157,12 @@ mod tests {
             Some(Arc::new(FailingExactRetriever)),
             None,
             Arc::new(StubJournal),
-        ));
+        ))
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
+        );
 
         let result = service
             .search(&context, RetrievalRequest::new(workspace, "fact"))
@@ -1136,7 +1190,12 @@ mod tests {
             None,
             None,
             Arc::new(StubJournal),
-        ));
+        ))
+        .with_corpus_generation_resolver(
+            Arc::new(StubCorpusGenerationResolver),
+            "test-space",
+            "test-model",
+        );
 
         let error = service
             .search(&context, RetrievalRequest::new(workspace, "fact"))

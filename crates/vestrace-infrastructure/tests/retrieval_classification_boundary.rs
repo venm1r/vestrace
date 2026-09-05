@@ -3,13 +3,21 @@
 use std::sync::Arc;
 
 use sqlx::PgPool;
-use vestrace_application::{RequestContext, RetrievalRequest, RetrievalService};
+use vestrace_application::{
+    RequestContext, RetrievalRequest, RetrievalService, retrieval::EmbeddingStore,
+};
 use vestrace_domain::{
     MemoryStatus, PrincipalId, TimePerspective, WorkspaceId,
     id::{MemoryId, MemoryRevisionId},
     retrieval::{ClassificationPolicy, WithholdingReason},
 };
-use vestrace_infrastructure::{PgRetrievalJournal, PgRevisionHydrator, PgStore, PgTextRetriever};
+use vestrace_infrastructure::{
+    PgCorpusGenerationResolver, PgEmbeddingStore, PgRetrievalJournal, PgRevisionHydrator, PgStore,
+    PgTextRetriever,
+};
+
+const EMBEDDING_SPACE_NAME: &str = "retrieval-classification";
+const EMBEDDING_MODEL_NAME: &str = "retrieval-classification-model";
 
 async fn seed_workspace(pool: &PgPool) -> RequestContext {
     let workspace_id = WorkspaceId::new();
@@ -78,6 +86,58 @@ async fn seed_memory(
     (memory_id, revision_id)
 }
 
+async fn seed_ready_corpus_generation(
+    pool: &PgPool,
+    context: &RequestContext,
+    memory_ids: &[MemoryId],
+) {
+    let embedding_store = PgEmbeddingStore::new(PgStore::from_pool(pool.clone()));
+    let space = embedding_store
+        .ensure_space(context, EMBEDDING_SPACE_NAME, EMBEDDING_MODEL_NAME, 2)
+        .await
+        .expect("embedding space");
+    for memory_id in memory_ids {
+        embedding_store
+            .upsert(context, &space, *memory_id, &[1.0, 0.0])
+            .await
+            .expect("embedding");
+    }
+
+    let registration_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM embedding_space_registrations WHERE workspace_id = $1 AND space_id = $2",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(space.id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("embedding space registration");
+    let generation_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM embedding_corpus_generations \
+         WHERE workspace_id = $1 AND space_registration_id = $2 AND state = 'building'",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(registration_id)
+    .fetch_one(pool)
+    .await
+    .expect("building corpus generation");
+    let mut publish = pool.begin().await.expect("publish transaction");
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id', $1, true)")
+        .bind(context.workspace_id.to_string())
+        .fetch_one(&mut *publish)
+        .await
+        .expect("publish workspace scope");
+    sqlx::query_scalar::<_, i64>(
+        "SELECT vestrace_publish_embedding_corpus_generation($1, $2, $3, 0)",
+    )
+    .bind(generation_id)
+    .bind(context.workspace_id.as_uuid())
+    .bind(registration_id)
+    .fetch_one(&mut *publish)
+    .await
+    .expect("publish corpus generation");
+    publish.commit().await.expect("published corpus generation");
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn postgres_retrieval_withholds_inadmissible_content_without_hiding_the_gap(pool: PgPool) {
     let context = seed_workspace(&pool).await;
@@ -95,6 +155,7 @@ async fn postgres_retrieval_withholds_inadmissible_content_without_hiding_the_ga
         "restricted",
     )
     .await;
+    seed_ready_corpus_generation(&pool, &context, &[internal_memory, restricted_memory]).await;
     let store = PgStore::from_pool(pool.clone());
     let service = RetrievalService::new(
         Arc::new(PgTextRetriever::new(store.clone())),
@@ -104,6 +165,13 @@ async fn postgres_retrieval_withholds_inadmissible_content_without_hiding_the_ga
         Arc::new(PgRevisionHydrator::new(store)),
         ClassificationPolicy::new(["internal"], false).unwrap(),
         "retrieval-policy-test-v1",
+    )
+    .with_corpus_generation_resolver(
+        Arc::new(PgCorpusGenerationResolver::new(PgStore::from_pool(
+            pool.clone(),
+        ))),
+        EMBEDDING_SPACE_NAME,
+        EMBEDDING_MODEL_NAME,
     );
     let request = RetrievalRequest::new(context.workspace_id, "volcano")
         .with_time_perspective(TimePerspective::Timeline)

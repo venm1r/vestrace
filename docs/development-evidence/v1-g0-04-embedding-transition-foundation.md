@@ -1976,11 +1976,133 @@ is the crash behaviour of a state that production cannot yet lawfully construct
 by itself. That is a real limitation and it is stated here rather than left for
 a reader to infer.
 
+## Task 12 — integrated verification (2026-09-05)
+
+Source revision `834805d41a6e59c3c3cc93df3b7bbc0b5ee7f707`. Preflight
+`docs/development-evidence/v1-g0-04-preflight.json`, SHA-256
+`808b80f00e4a82447273171e9b2713a692b95c400ec94d8dc64cb4bd9c4cc42f`, captured
+against head `6aba953c684fc60ad822cafa283f3cda8966e799`, holding 102 scoped
+paths after twelve amendments and 343 dirty files.
+
+### The sweep
+
+Every command run by the reviewer, each in its own invocation.
+
+| Gate | Result |
+|---|---|
+| `verify-dirty-baseline.mjs --check` with `p04-scope.mjs` | exit 0 |
+| `node --test tests/p02_scope.test.mjs tests/p03_scope.test.mjs tests/p04_scope.test.mjs` | 16 passed |
+| `scripts/protocol-lock.mjs --check` | exit 0 |
+| `scripts/verify-p01-text-hygiene.mjs --check` | exit 0 |
+| `cargo fmt --all -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | exit 0, 3m20s |
+| `cargo test --workspace --locked` | **219 suites, 1901 passed, 0 failed** |
+| `node --test apps/console/tests/providerClientContract.test.mjs` | 3 passed |
+| `npm --prefix apps/console run typecheck` | exit 0 |
+| `cargo test --test compose_smoke -- --ignored --test-threads=1` | 4 passed, 425.92s |
+| `git diff --check` | exit 0 |
+
+All 23 protected authority paths were recomputed from the tree: 23 of 23 match
+by digest and byte count, against zero authorized revisions.
+
+`compose_smoke` rebuilt the release images — `vestrace-server`,
+`vestrace-worker` and `vestrace-migrate`, all stamped 18:10:58 during the run.
+The plan carries a warning that this is the only gate in the repository that
+compiles the release profile, and that P03 once shipped a tree whose release
+build failed while every other gate was green. This tree's release build
+compiles.
+
+### What the sweep found, which is the point of having it
+
+Three defects in work already reviewed, accepted and pushed.
+
+**Task 9 broke seven tests and the reviewer's matrix missed all of them.** The
+generation fence made the corpus-generation resolver mandatory, and
+`RetrievalService::search` now refuses with
+`Unavailable("retrieval corpus generation resolver is not configured")` when
+none is set. That refusal is correct and was kept. But six unit tests in
+`crates/vestrace-application/src/retrieval/service.rs` and one in
+`crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs`
+construct the service without one. Task 9's verification covered infrastructure
+suites and never ran `cargo test -p vestrace-application --lib`, although Task 9
+changed that very crate's retrieval service. The matrix was the reviewer's and
+so was the omission.
+
+**And it broke a production path.** `crates/vestrace-cli/src/commands/server.rs`
+was wired with the resolver; `crates/vestrace-cli/src/commands/mcp.rs` was not.
+Every retrieval through the MCP server refused, for two pushes. It failed
+closed, so no wrong answer was ever returned — but no answer was returned
+either. Both composition roots now take the space and model names from
+`AppConfig`, so they cannot drift apart silently again.
+
+Neither was found by five adversarial reviews of Task 9, nor by any acceptance
+this package performed. Both were found by the one run that looks at the whole
+tree rather than at chosen suites — and only once its output stopped being
+filtered. The plan carries that warning from P03 for exactly this reason.
+
+**Two failures were environmental and were proved so rather than assumed.**
+`installation_permit_excludes::exclusive_excludes_shared` failed once with
+`duplicate key value violates unique constraint "databases_pkey"` in
+`_sqlx_test.databases` — sqlx's own disposable-database bookkeeping colliding
+under a parallel workspace run. `q9_key_provider_trust_cli` failed once on
+`sign.status.success()` while a builder was rebuilding the CLI into a separate
+target directory. Each passes in isolation; each was re-run rather than
+dismissed.
+
+### What P04 established
+
+- Guarded embedding jobs, space registrations, and corpus generations with a
+  `building -> ready -> stale` lifecycle.
+- Embedding transitions with recipe-granular classification, ambiguity carry,
+  and barriers with a closed five-state lifecycle.
+- The retrieval generation fence: both channels filter by membership in a
+  resolved Ready generation and report the generation they actually read, and
+  fusion refuses a candidate carrying any other.
+- Runtime-role refusal for all twelve new guarded tables, mixed-space isolation
+  for two spaces sharing a wire model and dimensions, and a real
+  `std::process::abort()` fault scenario for governed embedding dispatch.
+
+### Dispatch reuses P03's authorities and adds none of its own
+
+The five guarded functions an embedding dispatch calls are exactly the five a
+Run step calls. 0187 does contain a whole-body `CREATE OR REPLACE` of
+`vestrace_try_admit_provider_dispatch` with the same signature, which is not a
+second admission function: 0184 is historical and immutable so a forward
+migration cannot patch it, and P03 itself set this precedent in 0185 when
+qualification probes became a second dispatch cause. Embedding is the third.
+No second admission, throttle, credential-lease or recovery authority exists.
+
+### A production path does publish a connection admission policy
+
+`POST /v1/connections/{id}/admission-policies` is mounted at
+`crates/vestrace-http/src/api/connections.rs:133-136`, its handler calls
+`publish_admission_policy_governed`, and `connection_routes()` is merged into
+the router at `crates/vestrace-http/src/api/mod.rs:236`. Publication runs
+through `ConnectionAdmissionPolicyMutation`, inside P02's atomic authority. So
+neither Run-step nor embedding dispatch is unreachable in production for want of
+a policy. This was checked against the tree rather than carried forward from
+P03's record, where the same line stood as a limitation.
+
+### What P04 did not do
+
+No backup, no WAL archive, no restore or activation supervisor. No console
+screen, no AG-UI change, no A2A change, no real Agent publication. No call to LM
+Studio and none to any remote provider: every provider interaction in this
+package is a loopback stub inside the test process.
+
+Loopback success is semantic development evidence. It is not real-provider
+evidence and it is not release evidence.
+
+P02's pre-existing-table ownership obligation and its fingerprint backup
+obligation are untouched here and remain P05's.
+
 ## Not true yet
 
-- Task 12 is not started: integrated verification. Tasks 1–7 and 9–11 are
-  complete and reviewed; Task 8 is complete apart from the concurrency mutation
-  named below.
+- All twelve tasks are complete and reviewed, apart from the concurrency
+  mutation named below. The debts listed here are recorded, not closed.
+- The P04 plan has not been independently reviewed, and P03 Tasks 11–13 have not
+  been adversarially reviewed. Both were carried into this package and neither
+  was discharged by it.
 - The fifth external-effect fault point, `AfterOutcomeBeforeRunCommit`, is
   **unproved**. Nothing composes an embedding-job executor, so there is no
   worker to crash at that boundary.

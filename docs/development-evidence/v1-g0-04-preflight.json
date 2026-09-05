@@ -21,6 +21,7 @@
     "crates/vestrace-application/src/retrieval/service.rs",
     "crates/vestrace-application/tests/embedding_data_policy.rs",
     "crates/vestrace-cli/src/commands/conformance.rs",
+    "crates/vestrace-cli/src/commands/mcp.rs",
     "crates/vestrace-cli/src/commands/rebuild.rs",
     "crates/vestrace-cli/src/commands/schema.rs",
     "crates/vestrace-cli/src/commands/server.rs",
@@ -79,6 +80,7 @@
     "crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs",
     "crates/vestrace-infrastructure/tests/provider_runtime_role_refusals.rs",
     "crates/vestrace-infrastructure/tests/provider_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
     "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
     "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
     "crates/vestrace-infrastructure/tests/text_retriever.rs",
@@ -2469,6 +2471,18 @@
       "authorized_by": "operator decision (2026-09-05), answering the question the P04 plan reserves for them: Task 11 requires a process that actually dies, and narrowing that is not a builder's call. The operator chose to build the real scenario rather than record the fault points unproved.",
       "reason": "Task 11's plan review established that an injected error cannot stand in for process death: it proves in-process transactional rollback and not abort semantics, loss of in-memory state, a fresh worker's recovery, or a counter read across a process boundary. Building the real child/parent scenario requires one new file. The harness's two existing scenarios, `material_intent_crash.rs` and `credential_intent_crash.rs`, are self-contained — each carries its own child and parent logic and imports only `ScenarioSettings` — so an embedding scenario needs a third file beside them and nothing else out of scope. `main.rs`, `settings.rs`, `child.rs`, `report.rs` and `tests/embedding_fault_scenario_e2e.rs` are already in the allowlist; `observe.rs`, `adapter_stub.rs` and `lib.rs` are not, and are not needed.",
       "consequence": "One new file. The `Scenario` enum gains a variant and `main.rs` gains a `#[path]` declaration and two dispatch arms, both already in scope. This amendment names one path because the harness's own structure was read before it was written, rather than estimated: the tenth amendment exists because a blast radius was counted across `crates/` only and missed the repository root. If the builder finds it needs `observe.rs`, `adapter_stub.rs` or `lib.rs` after all, that is a stop-and-ask and a twelfth amendment, not a silent widening of this one."
+    },
+    {
+      "amended_at_utc": "2026-09-05T11:49:17.000Z",
+      "added_paths": [
+        "crates/vestrace-cli/src/commands/mcp.rs",
+        "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs"
+      ],
+      "previous_change_scope_size": 100,
+      "new_change_scope_size": 102,
+      "authorized_by": "lead-engineer decision (2026-09-05, this session), after Task 12's full workspace run found a defect Task 9 had shipped.",
+      "reason": "Task 9 made the corpus-generation resolver mandatory: RetrievalService::search refuses with \"retrieval corpus generation resolver is not configured\" when none is set, which is the fence failing closed and is correct. Task 9's scope covered `crates/vestrace-cli/src/commands/server.rs`, which was wired accordingly, but not the second composition root. `crates/vestrace-cli/src/commands/mcp.rs:53` builds a RetrievalService with `with_hydration` and no resolver, so every retrieval through the MCP server refuses. That is a shipped production defect, not a test problem. `crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs:112` is the only infrastructure test that constructs the service directly and fails for the same reason. A repository-wide search for `RetrievalService::new` and `RetrievalService::with_channels` finds fourteen sites; twelve are already in scope and these two are not.",
+      "consequence": "The MCP composition root gains the same `with_corpus_generation_resolver` call `server.rs:153` already has, and the classification-boundary test gains a resolver in its fixture. No assertion changes and the refusal itself is not relaxed — relaxing it would delete the fence to make callers pass. Recorded as its own amendment rather than folded into an earlier one: this was found by Task 12's integrated run, after Task 9 was reviewed, accepted and pushed, and the record should show that the package's own verification caught it rather than implying Task 9 was complete. The search this time covered the whole repository rather than `crates/` alone, which is the correction the tenth amendment exists to remember."
     }
   ]
 }

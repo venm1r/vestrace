@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use vestrace_application::{DenyAllPolicyEngine, MemoryService, RetrievalService};
 use vestrace_infrastructure::{
-    AppConfig, PgAgentRepository, PgEvaluationRepository, PgEventRepository,
-    PgExecutionHistoryRepository, PgIdempotencyRepository, PgMemoryRepository, PgModelRepository,
-    PgOutboxRepository, PgProvenanceRepository, PgRelationRepository, PgRetrievalJournal,
-    PgRevisionHydrator, PgSkillRepository, PgStore, PgTextRetriever, PgWorkflowRepository,
+    AppConfig, PgAgentRepository, PgCorpusGenerationResolver, PgEvaluationRepository,
+    PgEventRepository, PgExecutionHistoryRepository, PgIdempotencyRepository, PgMemoryRepository,
+    PgModelRepository, PgOutboxRepository, PgProvenanceRepository, PgRelationRepository,
+    PgRetrievalJournal, PgRevisionHydrator, PgSkillRepository, PgStore, PgTextRetriever,
+    PgWorkflowRepository,
 };
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
@@ -50,11 +51,17 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let retrieval_journal: vestrace_application::SharedRetrievalJournal =
         Arc::new(PgRetrievalJournal::new(store_for_journal));
     let retrieval_service = Arc::new(
-        RetrievalService::new(text_retriever, retrieval_journal).with_hydration(
-            Arc::new(PgRevisionHydrator::new(store.clone())),
-            retrieval_policy,
-            config.policy.version.clone(),
-        ),
+        RetrievalService::new(text_retriever, retrieval_journal)
+            .with_corpus_generation_resolver(
+                Arc::new(PgCorpusGenerationResolver::new(store.clone())),
+                config.embedding.space_name.clone(),
+                config.embedding.model_name.clone(),
+            )
+            .with_hydration(
+                Arc::new(PgRevisionHydrator::new(store.clone())),
+                retrieval_policy,
+                config.policy.version.clone(),
+            ),
     );
 
     let model_repository: vestrace_application::SharedModelRepository =
