@@ -2,7 +2,8 @@
 
 use async_trait::async_trait;
 use vestrace_application::{
-    AcknowledgeCarriedTransitionBatchAfterUnknown, ApplicationError, EmbeddingTransitionRepository,
+    AcknowledgeCarriedTransitionBatchAfterUnknown, ApplicationError,
+    EmbeddingTransitionBarrierRepository, EmbeddingTransitionRepository,
     PlanEmbeddingTransitionVersion, RequestContext, TransitionAuthBinding,
 };
 
@@ -169,6 +170,9 @@ impl EmbeddingTransitionRepository for PgEmbeddingTransitionRepository {
         Ok(accepted)
     }
 }
+
+#[async_trait]
+impl EmbeddingTransitionBarrierRepository for PgEmbeddingTransitionRepository {}
 
 fn map_planning_error(error: sqlx::Error) -> ApplicationError {
     match error

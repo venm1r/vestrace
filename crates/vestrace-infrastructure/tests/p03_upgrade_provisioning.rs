@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 75] = [
+const EXPECTED_GUARDED_TABLES: [&str; 77] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -88,6 +88,8 @@ const EXPECTED_GUARDED_TABLES: [&str; 75] = [
     "embedding_transitions",
     "embedding_transition_ambiguity_carries",
     "embedding_transition_ambiguity_carry_recipes",
+    "embedding_transition_barriers",
+    "embedding_transition_barrier_recipes",
     "model_data_policy_decisions",
 ];
 

@@ -128,9 +128,10 @@ pub use effect_repository::{
 };
 pub use embedding::{AcceptEmbeddingJob, EmbeddingJobRepository, SharedEmbeddingJobRepository};
 pub use embedding::{
-    AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping,
-    EmbeddingTransitionRepository, PlanEmbeddingTransitionVersion,
-    SharedEmbeddingTransitionRepository, TransitionAuthBinding, TransitionPlanRecipe,
+    AcknowledgeCarriedTransitionBatchAfterUnknown, BarrierBatchDispatch, CarryRecipeMapping,
+    EmbeddingTransitionBarrierRepository, EmbeddingTransitionRepository,
+    PlanEmbeddingTransitionVersion, SharedEmbeddingTransitionRepository, TransitionAuthBinding,
+    TransitionPlanRecipe,
 };
 pub use embedding_data_policy::{
     EmbeddingDataPolicyDecisionRecord, EmbeddingDataPolicyDecisionRepository,

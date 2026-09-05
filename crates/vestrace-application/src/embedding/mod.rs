@@ -5,10 +5,12 @@
 //! uses, and this module exists only for the step before that — turning a
 //! request to embed something into a durable job with its identities fixed.
 
+pub mod barrier;
 pub mod carry;
 pub mod job;
 pub mod transition;
 
+pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
 pub use carry::{AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping};
 pub use job::{AcceptEmbeddingJob, EmbeddingJobRepository, SharedEmbeddingJobRepository};
 pub use transition::{

@@ -343,6 +343,8 @@ BEGIN
         'embedding_transition_plan_recipes',
         'embedding_transition_ambiguity_carries',
         'embedding_transition_ambiguity_carry_recipes',
+        'embedding_transition_barriers',
+        'embedding_transition_barrier_recipes',
         'model_binding_snapshot_scopes',
         'model_data_policy_decisions'
     ]::TEXT[]) THEN
@@ -447,6 +449,9 @@ DECLARE
         ,to_regprocedure('public.vestrace_plan_embedding_transition_version(UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, BIGINT, UUID, UUID, UUID, UUID, UUID[], JSONB)')
         ,to_regprocedure('public.vestrace_classify_embedding_transition_ambiguity_carries(UUID, UUID, UUID)')
         ,to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_validate_embedding_transition_barrier_header()')
+        ,to_regprocedure('public.vestrace_observe_embedding_transition_barriers(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_abandon_embedding_transition_barrier_candidate(UUID, UUID, UUID)')
     ];
     runtime_executable_targets REGPROCEDURE[] := ARRAY[
         to_regprocedure('public.vestrace_create_connection_revision_and_advance_head(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, UUID, BIGINT)'),
@@ -496,7 +501,10 @@ DECLARE
         to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(UUID, UUID)'),
         to_regprocedure('public.vestrace_finalize_embedding_job_unknown(UUID, UUID)'),
         to_regprocedure('public.vestrace_plan_embedding_transition_version(UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, BIGINT, UUID, UUID, UUID, UUID, UUID[], JSONB)'),
-        to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)')
+        to_regprocedure('public.vestrace_classify_embedding_transition_ambiguity_carries(UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_observe_embedding_transition_barriers(UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_abandon_embedding_transition_barrier_candidate(UUID, UUID, UUID)')
     ];
     migration_trigger_targets REGPROCEDURE[] := ARRAY[
         to_regprocedure('public.vestrace_reject_p03_immutable_mutation()'),
@@ -1315,6 +1323,81 @@ BEGIN
         $function$;
         REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_transition_carry_upgrade() FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_transition_carry_upgrade() TO vestrace;
+    END IF;
+END
+$bootstrap$;
+
+-- Task 8 forward-replaces the guarded transition planner, classifier, and
+-- acknowledgement.  It needs its own one-shot bridge: 0189's bridge has
+-- already revoked itself once its migration committed.
+DO $bootstrap$
+DECLARE
+    migration_0190_applied BOOLEAN := FALSE;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS (
+            SELECT 1 FROM public._sqlx_migrations WHERE version = 190 AND success
+        ) INTO migration_0190_applied;
+    END IF;
+    IF migration_0190_applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_transition_barriers_upgrade();
+    ELSE
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade()
+            RETURNS VOID
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog
+            AS $body$
+            DECLARE
+                target_function REGPROCEDURE;
+                target_owner TEXT;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS (
+                        SELECT 1 FROM public._sqlx_migrations
+                         WHERE version = 190 AND success
+                    ) THEN
+                    RAISE EXCEPTION 'P04 transition-barrier ownership hand-back is closed'
+                        USING ERRCODE = '42501';
+                END IF;
+                FOREACH target_function IN ARRAY ARRAY[
+                    to_regprocedure('public.vestrace_plan_embedding_transition_version(UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, BIGINT, UUID, UUID, UUID, UUID, UUID[], JSONB)'),
+                    to_regprocedure('public.vestrace_classify_embedding_transition_ambiguity_carries(UUID, UUID, UUID)'),
+                    to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)')
+                ]::REGPROCEDURE[] LOOP
+                    IF target_function IS NULL THEN
+                        RAISE EXCEPTION 'P04 transition-barrier function is absent'
+                            USING ERRCODE = '42501';
+                    END IF;
+                    SELECT pg_get_userbyid(proowner) INTO target_owner
+                      FROM pg_proc WHERE oid = target_function;
+                    IF target_owner <> ALL (ARRAY[
+                        'vestrace', 'vestrace_guarded_owner', current_user
+                    ]::TEXT[]) THEN
+                        RAISE EXCEPTION 'P04 transition-barrier function has an unexpected owner'
+                            USING ERRCODE = '42501';
+                    END IF;
+                    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace', target_function);
+                END LOOP;
+                -- Keep this explicit postcondition beside the one-shot revoke:
+                -- 0190 re-declares acknowledgement after the preamble, and a
+                -- missing hand-off fails only under the restricted migrator.
+                target_function := to_regprocedure(
+                    'public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)'
+                );
+                IF target_function IS NULL THEN
+                    RAISE EXCEPTION 'P04 transition-barrier acknowledgement function is absent'
+                        USING ERRCODE = '42501';
+                END IF;
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace', target_function);
+                REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade()
+                    FROM vestrace;
+            END
+            $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_transition_barriers_upgrade() TO vestrace;
     END IF;
 END
 $bootstrap$;

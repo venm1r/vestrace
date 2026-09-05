@@ -17,9 +17,11 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use uuid::Uuid;
-use vestrace_domain::embedding::{EmbeddingJobKind, EmbeddingJobState};
+use vestrace_domain::embedding::{
+    BarrierState, CarryHeaderState, CarryMappingState, EmbeddingJobKind, EmbeddingJobState,
+};
 
-const NEW_TABLES: [&str; 9] = [
+const NEW_TABLES: [&str; 11] = [
     "embedding_corpus_generations",
     "embedding_jobs",
     "embedding_space_registrations",
@@ -28,6 +30,8 @@ const NEW_TABLES: [&str; 9] = [
     "embedding_transitions",
     "embedding_transition_ambiguity_carries",
     "embedding_transition_ambiguity_carry_recipes",
+    "embedding_transition_barriers",
+    "embedding_transition_barrier_recipes",
     "model_binding_snapshot_scopes",
 ];
 
@@ -240,7 +244,7 @@ async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
     }
 }
 
-/// The database CHECK and the Rust enum must name the same ten states.
+/// The database CHECK and the Rust enum must name the same six states.
 ///
 /// They are written in two languages in two files, and nothing but this test
 /// keeps them in step. A state added to one and not the other would be found by
@@ -273,6 +277,74 @@ async fn the_job_state_check_matches_the_declared_enum(pool: PgPool) {
         EmbeddingJobState::ALL.len(),
         "the CHECK constraint names {quoted} literals for {} declared states: {definition}",
         EmbeddingJobState::ALL.len()
+    );
+}
+
+async fn check_definition(pool: &PgPool, table: &str, marker: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT pg_get_constraintdef(constraint_.oid) \
+           FROM pg_constraint AS constraint_ \
+           JOIN pg_class AS class ON class.oid = constraint_.conrelid \
+          WHERE class.relname = $1 AND constraint_.contype = 'c' \
+            AND pg_get_constraintdef(constraint_.oid) LIKE $2",
+    )
+    .bind(table)
+    .bind(format!("%{marker}%"))
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|error| panic!("{table} must carry its {marker} CHECK constraint: {error}"))
+}
+
+fn assert_closed_check<T: Copy>(
+    definition: &str,
+    states: &[T],
+    as_str: impl Fn(T) -> &'static str,
+) {
+    for state in states {
+        assert!(
+            definition.contains(as_str(*state)),
+            "the CHECK constraint omits declared state {}: {definition}",
+            as_str(*state)
+        );
+    }
+    let quoted = definition.matches('\'').count() / 2;
+    assert_eq!(
+        quoted,
+        states.len(),
+        "the CHECK constraint names {quoted} literals for {} declared states: {definition}",
+        states.len()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_barrier_state_check_matches_the_declared_enum(pool: PgPool) {
+    let definition = check_definition(&pool, "embedding_transition_barriers", "state").await;
+    assert_closed_check(&definition, &BarrierState::ALL, BarrierState::as_str);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_carry_header_state_check_matches_the_declared_enum(pool: PgPool) {
+    let definition =
+        check_definition(&pool, "embedding_transition_ambiguity_carries", "state").await;
+    assert_closed_check(
+        &definition,
+        &CarryHeaderState::ALL,
+        CarryHeaderState::as_str,
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_carry_mapping_state_check_matches_the_declared_enum(pool: PgPool) {
+    let definition = check_definition(
+        &pool,
+        "embedding_transition_ambiguity_carry_recipes",
+        "state",
+    )
+    .await;
+    assert_closed_check(
+        &definition,
+        &CarryMappingState::ALL,
+        CarryMappingState::as_str,
     );
 }
 

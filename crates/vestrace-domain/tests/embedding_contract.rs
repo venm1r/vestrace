@@ -116,6 +116,62 @@ fn a_carry_mapping_has_two_states_and_no_more() {
     assert!(!NoLongerRequired.may_advance_to(AwaitingAcknowledgement));
 }
 
+/// SQL persists each of these three closed vocabularies independently.  Their
+/// `ALL` sets are the contract-test authority that prevents a migration from
+/// accepting a state Rust cannot name (or the reverse).
+#[test]
+fn persisted_transition_state_vocabularies_are_closed() {
+    assert_eq!(
+        CarryHeaderState::ALL,
+        [
+            CarryHeaderState::AwaitingAcknowledgement,
+            CarryHeaderState::SuccessorCreated,
+            CarryHeaderState::NoLongerRequired,
+        ]
+    );
+    assert_eq!(
+        CarryHeaderState::ALL.map(CarryHeaderState::as_str),
+        [
+            "awaiting_acknowledgement",
+            "successor_created",
+            "no_longer_required",
+        ]
+    );
+    assert_eq!(
+        CarryMappingState::ALL,
+        [
+            CarryMappingState::AwaitingAcknowledgement,
+            CarryMappingState::NoLongerRequired,
+        ]
+    );
+    assert_eq!(
+        CarryMappingState::ALL.map(CarryMappingState::as_str),
+        ["awaiting_acknowledgement", "no_longer_required"]
+    );
+    assert_eq!(
+        BarrierState::ALL,
+        [
+            BarrierState::AwaitingPredecessorTerminal,
+            BarrierState::ResolvedToCarry,
+            BarrierState::ResolvedSatisfiedExisting,
+            BarrierState::ResolvedDefinite,
+            BarrierState::NoLongerRequired,
+            BarrierState::Superseded,
+        ]
+    );
+    assert_eq!(
+        BarrierState::ALL.map(BarrierState::as_str),
+        [
+            "awaiting_predecessor_terminal",
+            "resolved_to_carry",
+            "resolved_satisfied_existing",
+            "resolved_definite",
+            "no_longer_required",
+            "superseded",
+        ]
+    );
+}
+
 /// Spec line 256: `AwaitingPredecessorTerminal -> ResolvedToCarry |
 /// ResolvedSatisfiedExisting | ResolvedDefinite | NoLongerRequired | Superseded`.
 #[test]

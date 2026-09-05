@@ -1223,12 +1223,379 @@ mistook for a tooling problem, and an unread result is not a passing one.
 | `node --test tests/p04_scope.test.mjs` | 6 passed |
 | `scripts/verify-dirty-baseline.mjs --check` | exit 0 |
 
+## Task 7 — recipe-granular classification and the ambiguity carry (2026-09-05)
+
+Migration 0189 adds the carry header and its immutable per-recipe classification
+rows, extends the planner to classify a lineage's one eligible ambiguity head,
+opens exactly one path through Task 6's snapshot fence, and adds the authorized
+acknowledgement that turns a carry into a single fresh successor attempt.
+
+### The lineage was already followable, and a column would have been a second answer
+
+`embedding_jobs` has no `transition_batch_id`, and the first draft of this task's
+requirement was written as though it did. The link exists through what Task 6
+built, constrained end to end by foreign keys:
+
+`embedding_jobs.model_binding_snapshot_id` → `model_binding_snapshot_scopes`,
+whose `transition_plan_id` is `NOT NULL` exactly when `scope = 'transition'` →
+`embedding_transition_plans.transition_batch_id`.
+
+A job belongs to a transition lineage if and only if its snapshot is
+transition-scoped. Adding a convenience column would have created a second,
+independently writable answer to which batch a job belongs — the defect this
+package already corrected once, when `embedding_jobs.state` nearly became a
+second answer to whether the provider had been reached.
+
+"Latest" then needs no ordering at all. The chain is linked by
+`retries_unknown_embedding_job_id`, so every earlier unknown attempt has a
+successor by construction and the tail is the head. Where two candidates match,
+the transaction raises `23514` rather than choosing: a rule that must pick
+between two will eventually pick wrong, silently.
+
+### What the review caught that the author did not
+
+The planning review returned four blockers and three majors. Three of them were
+contradictions the author had written and could not have found by re-reading his
+own prose:
+
+- **Immutability against supersession.** The plan declared mapping rows
+  insert-only *and* required an open mapping to be terminalized. Line 253
+  separates them: the header's state moves along
+  `AwaitingAcknowledgement -> SuccessorCreated | NoLongerRequired`; the
+  per-recipe rows are fixed at insert. Supersession terminalizes a header and
+  inserts a new one. That is also what makes "at most one current open carry per
+  head" expressible as a partial unique index — a superseded header leaves the
+  predicate.
+- **A circular acceptance check.** The plan asked `vestrace_accept_embedding_job`
+  to admit a transition-scoped snapshot when the job is "the successor of a
+  *current* carry". The acknowledgement marks the carry `SuccessorCreated` in the
+  same transaction that accepts the job, so by the time anyone asks it is not
+  current. The durable binding is the header's `successor_embedding_job_id`,
+  checked by identity.
+- **Evidence demanded from a vocabulary the plan had excluded.** `SatisfiedExisting`
+  and definite resolution are `BarrierState` members, deferred to Task 8. Task 7
+  therefore refuses a `Succeeded` predecessor outright and Task 8 will add the
+  lawful release — stricter now, never looser, the same shape as Task 6
+  forbidding recipe drops until this task's evidence existed.
+
+The review also found that Task 6's planner compared only
+`array_agg(recipe_identity ORDER BY recipe_ordinal)` and never the input
+ordinals persisted beside them, so a caller could reuse an identity while
+changing a recipe's input structure and pass both the idempotency branch and the
+predecessor check. 0189 re-declares the planner comparing the full structure, and
+the test for it was written before the comparison was widened, observed failing,
+and observed passing after.
+
+### A landmine found by execution rather than by reading
+
+The obvious way to widen that comparison is a second `array_agg` over
+`input_ordinals`. Run against the live database, that raises
+`cannot accumulate arrays of different dimensionality`: PostgreSQL will not
+aggregate variable-length arrays. A plan whose recipes all take the same number
+of inputs would have passed such an implementation and every fixture written
+from it, and failed on the first plan with differing counts — in production, not
+in tests.
+
+The implementer avoided it differently and better than the row-wise `FULL JOIN`
+the plan prescribed:
+`jsonb_agg(jsonb_build_array(recipe_identity::TEXT, input_ordinals) ORDER BY recipe_ordinal)`,
+compared with `IS DISTINCT FROM`. JSONB accepts the varying lengths, and both
+sides remain rows this system wrote, compared as values — not a hash oracle over
+recipe content.
+
+### The tests that tested nothing
+
+The first implementation's carry suite was 41 lines of six `#[test]` functions
+that `include_str!` the migration and assert `MIGRATION.contains("...")`. It ran
+in 0.00 seconds and never opened a database. A substring assertion passes when
+the text sits in a comment, in an unreachable branch, or in a function nobody
+calls; it fails only when someone edits the text. One of them asserted the
+*absence* of `"state='succeeded' AND state='inconclusive_unknown'"` — a condition
+false by construction, since a column cannot equal two values at once — so it
+could not fail under any implementation.
+
+The names were accurate and read like the specification, which is what made the
+list convincing. The 0.00-second runtime is what gave it away; the replacement
+suite is 979 lines of eight `#[sqlx::test]` tests and runs in about seven
+seconds.
+
+### The concurrency proof, and the instrument that nearly invalidated it
+
+`concurrent_same_version_planners_serialize_the_carry_for_one_ambiguity_head`
+plans overlapping versions against one lineage from two independently
+provisioned pools under `tokio::join!`.
+
+Its first version passed for the wrong reason — the two planners shared the
+connection and space locks, so the transition lock's removal changed nothing.
+The implementer found this, said so, and strengthened the test with a separately
+provisioned target binding and a test-local delay between the read and the
+insert. That report is the useful part: a race test that has never been seen to
+fail is not evidence, and P03's qualification is the standing warning — its two
+race suites passed eight times out of eight with the connection-guard row lock
+removed.
+
+The break is against the guard that actually holds the property, the
+`FOR UPDATE` on `embedding_transitions` inside
+`vestrace_plan_embedding_transition_version`. Breaking a carry-specific lock
+instead would have left that one standing and the suite passing, proving nothing.
+With it removed:
+
+| | SQLSTATE | Message |
+|---|---|---|
+| Lock removed | `23505` | `duplicate key value violates unique constraint "embedding_transition_plans_identity_key"` |
+| Lock present | `40001` | `EMBEDDING_TRANSITION_PLAN_IDENTITY_CONFLICT` |
+
+Without the lock the planners race past the read and one meets a raw uniqueness
+violation instead of the guarded conflict. The migration's SHA-256 was
+`1250826E4BEC80C1A5870F2BFEF2167A2D26C09EEA59C1CC4CF0308BCE96AD46` before the
+break and after the restore, and the reviewer re-computed it from the file on
+disk.
+
+### Two defects the review found by running what the implementer had not
+
+Its report listed the three provider suites as inconclusive — "the terminal
+detached overlapping cargo processes and produced only partial output". Run
+individually they were not truncated:
+
+- **A one-shot helper called twice.** `vestrace_prepare_p04_embedding_transition_upgrade()`
+  revokes EXECUTE from itself at the end of its own body. 0188 calls it and
+  disarms it; 0189 called the same helper and was denied with `42501`, so the
+  migration would not apply at all under the restricted role. The guard at both
+  sites tested `to_regprocedure(...) IS NOT NULL` — existence — and the function
+  still exists after the revoke. It checked the wrong property. 0189 now has its
+  own helper and both guards also require
+  `has_function_privilege(..., 'EXECUTE')`. `#[sqlx::test]` runs as superuser and
+  cannot see any of this; `p03_upgrade_provisioning` is the only run that can.
+- **P04 functions added to the P02 bridge.** The two
+  `allowed_targets` / `runtime_executable_targets` pairs in
+  `init-runtime-role.sh` are not two copies of one allowlist: they belong to
+  `vestrace_assign_p02_function_owner` and `vestrace_assign_p03_function_owner`,
+  one per package. The instruction given to the implementer said "both copies of
+  each array", which is false, and it followed it. `p02_owner_helper_is_bounded_and_only_p02_migrations_use_it`
+  caught it through its exact count, 56 against 58. The three entries were
+  removed from the P02 bridge; the carry *tables* belong in
+  `vestrace_assign_p03_table_owner` and were correctly placed there.
+
+### Three instructions that cost more than the code
+
+This task's delays were not caused by the implementation. Each came from a rule
+this package's own author stated imprecisely, followed exactly:
+
+| Instruction | What it broke |
+|---|---|
+| "all eleven paths were checked" above a list of sixteen, and a scope rule stated as that list rather than as `changeScopePaths` | a builder stopped on a path that was in scope all along |
+| "do not weaken, delete or skip an existing test" | a builder spent three hours refusing to update one expected message that 0189 had deliberately renamed |
+| "both copies of each array; there are two of each" | P04 functions written into the P02 ownership bridge |
+
+The pattern is the same each time, and it is not the implementer's: a rule stated
+about the system, not read from it. The corrective is the one this package
+already applies to claims about code — check it against the source before writing
+it down.
+
+### Runs, re-executed by the reviewer
+
+Each binary in its own invocation. Batching them is what let an earlier report
+mistake 64 failures for truncated output, and an unread result is not a passing
+one.
+
+| Suite | Result |
+|---|---|
+| `embedding_carry_classification` | 8 passed |
+| `embedding_transition_planning` | 7 passed |
+| `embedding_dispatch_is_atomic` | 15 passed |
+| `embedding_effect_recovery` | 11 passed |
+| `embedding_schema_contract` | 7 passed |
+| `p03_upgrade_provisioning` | 6 passed |
+| `provider_admission` | 12 passed |
+| `provider_dispatch_is_atomic` | 44 passed |
+| `provider_schema_contract` | 38 passed |
+| `model_request_evidence` | 32 passed |
+| `runtime_role_cannot_write_directly` | 45 passed |
+| `vestrace-http --lib` | 45 passed |
+| `cargo clippy --workspace --all-targets` | 0 warnings |
+| `cargo fmt --all -- --check` | clean |
+| `node --test tests/p04_scope.test.mjs` | 6 passed |
+| `scripts/verify-dirty-baseline.mjs --check` | exit 0 |
+
+## Task 8 — barriers and supersession (2026-09-05)
+
+Migration 0190 adds the barrier header and its immutable per-recipe mappings,
+the closed lifecycle
+`AwaitingPredecessorTerminal -> ResolvedToCarry | ResolvedSatisfiedExisting | ResolvedDefinite | NoLongerRequired | Superseded`,
+the partial unique index that keeps at most one open barrier per predecessor
+lineage, supersession through a linked chain, and the refusal that makes a
+barrier's dedicated batch nondispatchable while it is open.
+
+### Completeness is recorded, not simulated
+
+Line 256 requires the dedicated batch to be "nondispatchable **and**
+completeness-blocking". Only the first half is enforceable here: there is no
+completeness surface anywhere in this repository. `operator_acknowledgement_required`
+appears nowhere, nothing computes completeness for anything, and
+`BarrierState::blocks_dispatch()` was declared in Task 2 and called by nothing
+until now.
+
+So the barrier persists the open fact as a queryable row and does not invent a
+completeness projection to block. Building one here would have meant asserting a
+property against a surface this task also authored — a check marking its own
+homework. The gap is named rather than closed, and belongs to whichever package
+owns completeness.
+
+### Where the refusal had to live, and why not where the plan first put it
+
+The plan's first draft refused "a job whose transition batch has an open
+barrier" at job acceptance and dispatch admission. That is unimplementable: a job
+reaches a batch only through its snapshot's plan, and
+`embedding_transition_plans` carries a single `transition_batch_id` for the whole
+plan. A barrier's dedicated batch is deliberately not that one — line 256 forbids
+any unaffected or new recipe from sharing it — so a generic job has no path to it
+and a check at `vestrace_accept_embedding_job` would have consulted the wrong
+batch entirely. It would also have collided with Task 7's R7 relaxation, the one
+path permitted to attach a transition-scoped snapshot.
+
+0189 already showed the answer: a carry row stores
+`predecessor_transition_batch_id` and `successor_transition_batch_id` itself. The
+entity that owns a dedicated batch names it. So the barrier stores its own, and
+the refusal lives at the two places that name a dedicated batch when creating
+work for it — the guarded planner and the carry acknowledgement.
+
+### Four spec names, four different homes, and two that do not exist
+
+Line 256 lists the phases a predecessor attempt may be found in — `Requested`,
+`Running`, waiting, `Authorized`, `Dispatching`, ResultPrepared — as though they
+were one vocabulary. The domain had already settled this during the Task 2/3
+correction, in the comment above `EmbeddingJobState`: `Dispatching` and
+`Authorized` are the external effect's lifecycle, which P03 owns; `Waiting` is
+`waiting_for_result_keys`; `ResultPrepared` is the immutable
+`EmbeddingJobResultPrepared` marker.
+
+Checking those against the tree found something the comment does not say:
+**neither `waiting_for_result_keys` nor `EmbeddingJobResultPrepared` exists.**
+Both appear only in comments — in `job.rs`, inside 0187, and in a test's doc
+line. There is no table, column or marker for either.
+
+That leaves no hole, because all four are sub-phases of a predecessor whose job
+has not terminalized. A job waiting for result keys, a job whose effect is
+dispatching, and a job with a prepared result are all `Requested` or `Running`.
+The predicate is therefore one condition, not a list, and no phase column was
+added to `embedding_jobs` — that column would be the second answer to "has the
+provider been reached" this package refuses to have.
+
+### The closed world the transition states did not have
+
+`embedding_schema_contract.rs` had been asserting that the `embedding_jobs` state
+CHECK names exactly `EmbeddingJobState::ALL`, in both directions. Nothing did the
+same for the transition vocabularies: `BarrierState`, `CarryHeaderState` and
+`CarryMappingState` declared no `ALL`, so Task 7's carry CHECK constraints were
+tied to their Rust enums by nothing at all. Task 8 adds the three constants and
+their contract tests. The suite grew from 7 tests to 10.
+
+An earlier draft of that requirement asked SQL to "derive its refusal from
+`blocks_dispatch()` rather than re-listing states". PostgreSQL cannot call a Rust
+`const fn`; the contract test is the mechanism this repository already had, and
+the requirement was rewritten to use it.
+
+### Three rounds spent on one error message
+
+Migration 0190 failed under the restricted role with
+`42501 must be owner of function vestrace_acknowledge_carried_transition_batch_after_unknown`.
+The diagnosis took three rounds because PostgreSQL emits that same sentence for a
+denied `ALTER FUNCTION` and a denied `CREATE OR REPLACE`, and every reading of it
+pointed at ownership.
+
+Ruled out along the way, each by reading the source: the signatures match to the
+parameter; the helper does list the function, with an explicit postcondition; all
+three P04 helpers are `SECURITY DEFINER`; the creation guard fires correctly on a
+fresh database. A probe then reported the helper running as `test` — and a
+database query established that `test` is a superuser, which meant the helper
+could alter anything and the ownership theory was dead.
+
+The actual cause was ordering inside 0190 itself: it handed its functions back to
+`vestrace_guarded_owner` **before** it had finished replacing them. The hand-back
+now happens last. Nothing was wrong with the ownership bridge.
+
+This is the fourth time in this package that a check examined the wrong property:
+a guard testing a function's existence rather than the right to execute it; a
+watcher testing one job state rather than two; a test suite reading a migration's
+text rather than the database's behaviour; and now a diagnosis reading a message
+that means two different things.
+
+### What the implementer refused to do
+
+Asked to finish the suite while told the schema was accepted, it reported that
+A1 and A4 could not be met: 0190's classifier produced only three of the five
+terminal states, supersession lacked the stale-target decision, and there was no
+race coordination to test. It added that reaching the missing states by updating
+tables directly "would make those tests test fixtures, not the guarded
+behavior", and declined.
+
+It was right on both counts. "The schema is accepted, do not rewrite it" had been
+said after reading the migration's size and structure rather than checking it
+against this task's own acceptance criteria, so the instruction and the criteria
+contradicted each other. The refusal to close that gap with fixture writes is the
+same discipline that made Task 7's substring suite unacceptable.
+
+### Runs, re-executed by the reviewer
+
+Each binary in its own invocation.
+
+| Suite | Result |
+|---|---|
+| `embedding_transition_barriers` | 10 passed |
+| `embedding_carry_classification` | 8 passed |
+| `embedding_transition_planning` | 7 passed |
+| `embedding_dispatch_is_atomic` | 15 passed |
+| `embedding_effect_recovery` | 11 passed |
+| `embedding_schema_contract` | 10 passed |
+| `p03_upgrade_provisioning` | 6 passed |
+| `provider_admission` | 12 passed |
+| `provider_dispatch_is_atomic` | 44 passed |
+| `provider_schema_contract` | 38 passed |
+| `model_request_evidence` | 32 passed |
+| `runtime_role_cannot_write_directly` | 45 passed |
+| `vestrace-http --lib` | 45 passed |
+| `vestrace-domain --test embedding_contract` | 12 passed |
+| `cargo clippy --workspace --all-targets` | 0 warnings |
+| `cargo fmt --all -- --check` | clean |
+| `node --test tests/p04_scope.test.mjs` | 6 passed |
+| `scripts/verify-dirty-baseline.mjs --check` | exit 0 |
+
+Assertion counts in every pre-existing suite are unchanged — carry 22, planning
+20, provider dispatch 227, provider schema 265, model-request evidence 142 —
+which is how "the carry fixture was adapted for barriers without weakening it" is
+established rather than asserted.
+
+Both dispatch-gate mutations were performed and restored, the migration's
+SHA-256 identical before and after at
+`6BF09B1DA7689CF0BBC7FCB84964810145FB8B85E5ED6A8357B2041F1D6A77DF`: with the
+barrier gate removed, planning returned `Ok(...)` instead of the required
+refusal; with the partial unique index removed, the second open barrier inserted
+successfully.
+
 ## Not true yet
 
-- Tasks 7–12 are not started: the ambiguity carry and its recipe-granular
-  classification, barriers and supersession, retrieval generation fences,
-  refusal and mixed-space qualification, worker-restart and fault evidence, and
-  integrated verification. Tasks 5 and 6 are complete and reviewed.
+- Tasks 9–12 are not started: retrieval generation fences, refusal and
+  mixed-space qualification, worker-restart and fault evidence, and integrated
+  verification. Tasks 1–7 are complete and reviewed; Task 8 is complete apart
+  from the concurrency mutation named below.
+- Task 8's classifier-versus-supersession race passes and is **not**
+  independently mutation-proven, and the attempt to prove it established why: the
+  locks it targets are not load-bearing. Removing the barrier-header lock, and
+  then both planner-side locks together with an advisory-lock handshake proving
+  the two paths genuinely interleave, left the suite passing. The invariant is
+  held by the partial unique index on the open state, which the database enforces
+  whatever the interleaving — and that mutation *was* performed: with the index
+  removed, the second open barrier inserts and the test fails. So the property is
+  proven, but by a different guard than the acceptance criterion assumed, and the
+  race test itself remains a scenario rather than a proof.
+- The barrier's dedicated batch is nondispatchable and is **not** completeness
+  blocking, because no completeness surface exists to block.
+- `waiting_for_result_keys` and `EmbeddingJobResultPrepared` are named by the
+  specification and by this repository's comments, and exist nowhere in it.
+- A `Succeeded` predecessor is refused outright rather than released against
+  `SatisfiedExisting` or definite-resolution evidence. Those are barrier states
+  and belong to Task 8; until then the rule is stricter than the specification,
+  never looser.
 - Task 6 leaves the transition dispatch path deliberately closed. A
   transition-scoped snapshot is attachable by nothing until Task 7 opens the
   legitimate transition-member path, which is stricter than the end state and

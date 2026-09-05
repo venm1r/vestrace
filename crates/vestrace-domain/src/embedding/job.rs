@@ -212,6 +212,21 @@ pub enum CarryHeaderState {
 }
 
 impl CarryHeaderState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AwaitingAcknowledgement => "awaiting_acknowledgement",
+            Self::SuccessorCreated => "successor_created",
+            Self::NoLongerRequired => "no_longer_required",
+        }
+    }
+
+    /// The exact set the database CHECK constraint must carry.
+    pub const ALL: [Self; 3] = [
+        Self::AwaitingAcknowledgement,
+        Self::SuccessorCreated,
+        Self::NoLongerRequired,
+    ];
+
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::SuccessorCreated | Self::NoLongerRequired)
     }
@@ -236,6 +251,16 @@ pub enum CarryMappingState {
 }
 
 impl CarryMappingState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AwaitingAcknowledgement => "awaiting_acknowledgement",
+            Self::NoLongerRequired => "no_longer_required",
+        }
+    }
+
+    /// The exact set the database CHECK constraint must carry.
+    pub const ALL: [Self; 2] = [Self::AwaitingAcknowledgement, Self::NoLongerRequired];
+
     pub const fn may_advance_to(self, next: Self) -> bool {
         matches!(
             (self, next),
@@ -260,6 +285,27 @@ pub enum BarrierState {
 }
 
 impl BarrierState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AwaitingPredecessorTerminal => "awaiting_predecessor_terminal",
+            Self::ResolvedToCarry => "resolved_to_carry",
+            Self::ResolvedSatisfiedExisting => "resolved_satisfied_existing",
+            Self::ResolvedDefinite => "resolved_definite",
+            Self::NoLongerRequired => "no_longer_required",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    /// The exact set the database CHECK constraint must carry.
+    pub const ALL: [Self; 6] = [
+        Self::AwaitingPredecessorTerminal,
+        Self::ResolvedToCarry,
+        Self::ResolvedSatisfiedExisting,
+        Self::ResolvedDefinite,
+        Self::NoLongerRequired,
+        Self::Superseded,
+    ];
+
     pub const fn is_terminal(self) -> bool {
         !matches!(self, Self::AwaitingPredecessorTerminal)
     }

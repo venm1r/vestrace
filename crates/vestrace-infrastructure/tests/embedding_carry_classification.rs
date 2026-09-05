@@ -778,7 +778,7 @@ async fn acknowledgement_attaches_its_transition_snapshot_and_no_other_job_can_u
     )
     .await;
     let target_snapshot_id = Uuid::now_v7();
-    plan(
+    let target_plan_id = plan(
         &runtime,
         &fixture,
         PlanCall {
@@ -801,6 +801,39 @@ async fn acknowledgement_attaches_its_transition_snapshot_and_no_other_job_can_u
     .fetch_one(&pool)
     .await
     .unwrap();
+    let effect_id: Uuid =
+        sqlx::query_scalar("SELECT external_effect_id FROM embedding_jobs WHERE id=$1")
+            .bind(head_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) VALUES($1,$2,'carry_test','{}')")
+        .bind(effect_id)
+        .bind(fixture.context.workspace_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO external_effect_lifecycle_transitions(id,effect_id,workspace_id,status,cause,cause_ref,recorded_at) VALUES($1,$2,$3,'unknown','receipt_recorded','carry-test',NOW())")
+        .bind(Uuid::now_v7())
+        .bind(effect_id)
+        .bind(fixture.context.workspace_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut classified = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *classified)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_classify_embedding_transition_ambiguity_carries($1,$2,$3)")
+        .bind(fixture.context.workspace_id.as_uuid())
+        .bind(transition_id)
+        .bind(target_plan_id)
+        .execute(&mut *classified)
+        .await
+        .unwrap();
+    classified.commit().await.unwrap();
     let successor_id = acknowledge(
         &runtime,
         &fixture,
