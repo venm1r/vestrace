@@ -95,6 +95,7 @@ export const changeScopePaths = [
   'docker/postgres/init-runtime-role.sh',
   'docs/development-evidence/v1-g0-04-embedding-transition-foundation.md',
   'docs/development-evidence/v1-g0-04-preflight.json',
+  'docs/development-evidence/v1-g0-04r-preflight.json',
   'docs/getting-started.md',
   'migrations/0187_embedding_jobs_and_corpus_generations.sql',
   'migrations/0188_embedding_transitions.sql',
