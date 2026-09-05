@@ -1,0 +1,258 @@
+{
+  "captured_at_utc": "2026-09-05T20:52:34.000Z",
+  "change_scope_paths": [
+    "crates/vestrace-application/src/conformance_cases.rs",
+    "crates/vestrace-application/src/connections.rs",
+    "crates/vestrace-application/src/embedding/barrier.rs",
+    "crates/vestrace-application/src/embedding/carry.rs",
+    "crates/vestrace-application/src/embedding/job.rs",
+    "crates/vestrace-application/src/embedding/mod.rs",
+    "crates/vestrace-application/src/embedding/transition.rs",
+    "crates/vestrace-application/src/lib.rs",
+    "crates/vestrace-application/src/memory/services.rs",
+    "crates/vestrace-application/src/provider_dispatch.rs",
+    "crates/vestrace-application/src/retrieval/context_builder.rs",
+    "crates/vestrace-application/src/retrieval/embedding.rs",
+    "crates/vestrace-application/src/retrieval/fusion.rs",
+    "crates/vestrace-application/src/retrieval/mod.rs",
+    "crates/vestrace-application/src/retrieval/ports.rs",
+    "crates/vestrace-application/src/retrieval/request.rs",
+    "crates/vestrace-application/src/retrieval/rerank.rs",
+    "crates/vestrace-application/src/retrieval/service.rs",
+    "crates/vestrace-application/tests/embedding_data_policy.rs",
+    "crates/vestrace-cli/src/commands/conformance.rs",
+    "crates/vestrace-cli/src/commands/mcp.rs",
+    "crates/vestrace-cli/src/commands/rebuild.rs",
+    "crates/vestrace-cli/src/commands/schema.rs",
+    "crates/vestrace-cli/src/commands/server.rs",
+    "crates/vestrace-cli/src/commands/worker.rs",
+    "crates/vestrace-cli/tests/provider_openapi_contract.rs",
+    "crates/vestrace-cli/tests/provider_runtime_wiring.rs",
+    "crates/vestrace-domain/src/embedding/generation.rs",
+    "crates/vestrace-domain/src/embedding/job.rs",
+    "crates/vestrace-domain/src/embedding/mod.rs",
+    "crates/vestrace-domain/src/embedding/space.rs",
+    "crates/vestrace-domain/src/id.rs",
+    "crates/vestrace-domain/src/lib.rs",
+    "crates/vestrace-domain/src/retrieval/mod.rs",
+    "crates/vestrace-domain/src/security/mod.rs",
+    "crates/vestrace-domain/tests/embedding_contract.rs",
+    "crates/vestrace-fault-scenario/src/child.rs",
+    "crates/vestrace-fault-scenario/src/main.rs",
+    "crates/vestrace-fault-scenario/src/report.rs",
+    "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
+    "crates/vestrace-fault-scenario/src/settings.rs",
+    "crates/vestrace-http/src/api/connections.rs",
+    "crates/vestrace-http/src/api/embedding_jobs.rs",
+    "crates/vestrace-http/src/api/mod.rs",
+    "crates/vestrace-http/src/api/runs.rs",
+    "crates/vestrace-http/src/route_inventory.rs",
+    "crates/vestrace-http/src/router.rs",
+    "crates/vestrace-http/tests/health.rs",
+    "crates/vestrace-http/tests/request_span.rs",
+    "crates/vestrace-http/tests/route_inventory_is_exhaustive.rs",
+    "crates/vestrace-http/tests/router_contract.rs",
+    "crates/vestrace-http/tests/run_routes.rs",
+    "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/invariant_observer.rs",
+    "crates/vestrace-infrastructure/src/postgres/mod.rs",
+    "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/purge_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
+    "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
+    "crates/vestrace-infrastructure/tests/common/mod.rs",
+    "crates/vestrace-infrastructure/tests/embedding_carry_classification.rs",
+    "crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs",
+    "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
+    "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
+    "crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs",
+    "crates/vestrace-infrastructure/tests/embedding_transition_planning.rs",
+    "crates/vestrace-infrastructure/tests/embedding_worker_restart.rs",
+    "crates/vestrace-infrastructure/tests/memory_classification.rs",
+    "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
+    "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
+    "crates/vestrace-infrastructure/tests/provider_admission.rs",
+    "crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/provider_runtime_role_refusals.rs",
+    "crates/vestrace-infrastructure/tests/provider_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
+    "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
+    "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
+    "crates/vestrace-infrastructure/tests/text_retriever.rs",
+    "crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs",
+    "crates/vestrace-mcp/src/server.rs",
+    "docker/postgres/init-runtime-role.sh",
+    "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+    "docs/development-evidence/v1-g0-04-preflight.json",
+    "docs/development-evidence/v1-g0-04r-preflight.json",
+    "docs/getting-started.md",
+    "migrations/0187_embedding_jobs_and_corpus_generations.sql",
+    "migrations/0188_embedding_transitions.sql",
+    "migrations/0189_embedding_transition_carry.sql",
+    "migrations/0190_embedding_transition_barriers.sql",
+    "migrations/0191_embedding_corpus_generation_members.sql",
+    "schemas/openapi-v1.json",
+    "scripts/p04-scope.mjs",
+    "tests/c8_core_memory_qualification.rs",
+    "tests/embedding_fault_scenario_e2e.rs",
+    "tests/http_command_contract.rs",
+    "tests/p04_scope.test.mjs",
+    "tests/retrieval_e2e.rs",
+    "tests/v01_acceptance.rs"
+  ],
+  "dirty_files": [],
+  "baseline_amendments": [],
+  "head": "3679cf96259b5c25f723b4d40ee9b1da59659766",
+  "protected_authority_digests": [
+    {
+      "bytes": 20039,
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "sha256": "761951d2526b12f387afa6ad57824377645f8627f86ff61a99e9fd81512c24b0"
+    },
+    {
+      "bytes": 7090,
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "sha256": "c06a317a34437a18b6c938cae6dea355adccb7808979d2f27def4edd6ac27757"
+    },
+    {
+      "bytes": 30118,
+      "path": "docs/development-evidence/v1-g0-01-preflight.json",
+      "sha256": "3894e421966e53b4c1aca5c9544497241376d5172ed7e0e12fd850b9ccd27283"
+    },
+    {
+      "bytes": 5307,
+      "path": "docs/development-evidence/v1-g0-01-protocol-lock.md",
+      "sha256": "8c8a620e3394f57bdc7d117996957e17e371e4668a24db2ed647ad331be9f1f4"
+    },
+    {
+      "bytes": 70228,
+      "path": "docs/development-evidence/v1-g0-02-preflight.json",
+      "sha256": "19eab44516e6891fc5aedea52810128897f19af979f2fe706f53cb9fdac48368"
+    },
+    {
+      "bytes": 50796,
+      "path": "docs/development-evidence/v1-g0-02-security-material-foundation.md",
+      "sha256": "d03b5d68ee834c91ca5b25f7f18c7bebd257200660cd4c40c1010d6eca147dd4"
+    },
+    {
+      "bytes": 119860,
+      "path": "docs/development-evidence/v1-g0-03-preflight.json",
+      "sha256": "21244311725fefb6eb1b80a4d8ae3a8295908f462c6c9baaedf8b0de681de2ec"
+    },
+    {
+      "bytes": 69764,
+      "path": "docs/development-evidence/v1-g0-03-provider-execution-foundation.md",
+      "sha256": "6d7ca3ca6888010e425d865502203fc89d8568830db64d4097164f554415bebc"
+    },
+    {
+      "bytes": 7007,
+      "path": "docs/external-corpus/vestrace-docss-2026-08-19.manifest.json",
+      "sha256": "f8100e1bcb070da6c6f540644d2fcae0862dd5c7cc3337cfa7c5bd29d10aac02"
+    },
+    {
+      "bytes": 39445,
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+      "sha256": "ca02673b85f85641d131a96af704b0f075740a097eb2a0e6115e0b7ffd6c0097"
+    },
+    {
+      "bytes": 8843,
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "sha256": "9b917a2c589d860e3c4e199581adecbde927bf4d4db2a2810998a4d23b489dd3"
+    },
+    {
+      "bytes": 61312,
+      "path": "docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md",
+      "sha256": "6d5e817ffdb7543983377b59df5e859288194bceabcb9990d1639eee9920d85b"
+    },
+    {
+      "bytes": 140806,
+      "path": "docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md",
+      "sha256": "300d588142bb3cfc5fc7a5985cdd0531403307758375cdca244e5338949dcc18"
+    },
+    {
+      "bytes": 50365,
+      "path": "docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "18e939977a5610bbd522e42fa65c6a13a3b56353f60eb83a00bc7c0c7e7558ee"
+    },
+    {
+      "bytes": 419382,
+      "path": "docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md",
+      "sha256": "b31b5be62504e1a65f411cd31b446cd41b3d032b7282f1aa42907706ef9c1473"
+    },
+    {
+      "bytes": 19181,
+      "path": "schemas/openai-compatible/openai-chat-completions-v1-q1.json",
+      "sha256": "6797ff6a7af2543f812ca9f050f4d2324eaa75e1ba2dd72bda9eddd2de91f528"
+    },
+    {
+      "bytes": 4094,
+      "path": "schemas/protocol-lock.json",
+      "sha256": "dc643aa2f974e122d4272efa0e34053b9cf73ce98523833dbef39475b4a68e16"
+    },
+    {
+      "bytes": 9336,
+      "path": "scripts/p03-scope.mjs",
+      "sha256": "4bb1987bed54700ee690cd1b3b67f8841fa67db617ec87e81f8780812d5f07fe"
+    },
+    {
+      "bytes": 8470,
+      "path": "scripts/protocol-lock.mjs",
+      "sha256": "0b461773554835a4ad5717c664e54cf1229cc50f51e8d8cd89534e8f07c2c8ed"
+    },
+    {
+      "bytes": 3680,
+      "path": "scripts/protocol-provenance.mjs",
+      "sha256": "244d29296814944036eb87cd01f5a76ade17f6801d57eaab0a1f1c7ac6c05e5f"
+    },
+    {
+      "bytes": 14140,
+      "path": "scripts/verify-dirty-baseline.mjs",
+      "sha256": "aceeffbf91404b9e81a2b01dcf20a8638cc30a0c14a4fa8289a9fd205e05f9b2"
+    },
+    {
+      "bytes": 509,
+      "path": "tests/fixtures/openai-q1/marker.png",
+      "sha256": "b0343846f3c9f250e25edb45b73993b747bc85143f040c207cd76b6936af4de6"
+    },
+    {
+      "bytes": 17784,
+      "path": "tests/p03_scope.test.mjs",
+      "sha256": "23b3cb982e2cc9183e9beadc470df32942843d6865961dcea4580c4bdd41df79"
+    }
+  ],
+  "protected_authority_paths": [
+    "crates/vestrace-http/src/api/memory.rs",
+    "crates/vestrace-http/src/api/retrieval.rs",
+    "docs/development-evidence/v1-g0-01-preflight.json",
+    "docs/development-evidence/v1-g0-01-protocol-lock.md",
+    "docs/development-evidence/v1-g0-02-preflight.json",
+    "docs/development-evidence/v1-g0-02-security-material-foundation.md",
+    "docs/development-evidence/v1-g0-03-preflight.json",
+    "docs/development-evidence/v1-g0-03-provider-execution-foundation.md",
+    "docs/external-corpus/vestrace-docss-2026-08-19.manifest.json",
+    "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+    "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+    "docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md",
+    "docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md",
+    "docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md",
+    "docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md",
+    "schemas/openai-compatible/openai-chat-completions-v1-q1.json",
+    "schemas/protocol-lock.json",
+    "scripts/p03-scope.mjs",
+    "scripts/protocol-lock.mjs",
+    "scripts/protocol-provenance.mjs",
+    "scripts/verify-dirty-baseline.mjs",
+    "tests/fixtures/openai-q1/marker.png",
+    "tests/p03_scope.test.mjs"
+  ],
+  "schema_version": 1,
+  "status_porcelain_v1_z_base64": "",
+  "status_porcelain_v1_z_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "protected_authority_revisions": [],
+  "scope_amendments": []
+}
