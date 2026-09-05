@@ -45,6 +45,7 @@ export const changeScopePaths = [
   'crates/vestrace-fault-scenario/src/child.rs',
   'crates/vestrace-fault-scenario/src/main.rs',
   'crates/vestrace-fault-scenario/src/report.rs',
+  'crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs',
   'crates/vestrace-fault-scenario/src/settings.rs',
   'crates/vestrace-http/src/api/connections.rs',
   'crates/vestrace-http/src/api/embedding_jobs.rs',

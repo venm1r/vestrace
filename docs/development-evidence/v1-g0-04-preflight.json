@@ -39,6 +39,7 @@
     "crates/vestrace-fault-scenario/src/child.rs",
     "crates/vestrace-fault-scenario/src/main.rs",
     "crates/vestrace-fault-scenario/src/report.rs",
+    "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
     "crates/vestrace-fault-scenario/src/settings.rs",
     "crates/vestrace-http/src/api/connections.rs",
     "crates/vestrace-http/src/api/embedding_jobs.rs",
@@ -2457,6 +2458,17 @@
       "authorized_by": "lead-engineer decision (2026-09-05, this session), after the Task 9 builder stopped on a construction site the reviewer had not enumerated.",
       "reason": "Task 9 adds required fields to RetrievalCandidate, so every struct literal of it must gain one. The blast radius was enumerated before the plan was written and reported as 25 sites across eleven files — but that enumeration searched `crates/` only and missed the repository-root `tests/` directory. Two files live there: `tests/c8_core_memory_qualification.rs`, already in scope, and `tests/v01_acceptance.rs`, which is not. It holds five RetrievalCandidate literals, at lines 754, 829, 847, 885 and 1132. A complete search of the whole repository finds thirteen files, not eleven.",
       "consequence": "Five struct literals gain the new field. No assertion in that acceptance suite changes. The ninth amendment covered the domain type and the new migration; this one covers the site the incomplete search hid. Recorded separately rather than folded into the ninth, because an amendment that quietly grows is an amendment nobody can audit — and the cause here is worth keeping visible: a blast-radius count is only as wide as the directory it searched."
+    },
+    {
+      "amended_at_utc": "2026-09-05T08:04:11.000Z",
+      "added_paths": [
+        "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs"
+      ],
+      "previous_change_scope_size": 99,
+      "new_change_scope_size": 100,
+      "authorized_by": "operator decision (2026-09-05), answering the question the P04 plan reserves for them: Task 11 requires a process that actually dies, and narrowing that is not a builder's call. The operator chose to build the real scenario rather than record the fault points unproved.",
+      "reason": "Task 11's plan review established that an injected error cannot stand in for process death: it proves in-process transactional rollback and not abort semantics, loss of in-memory state, a fresh worker's recovery, or a counter read across a process boundary. Building the real child/parent scenario requires one new file. The harness's two existing scenarios, `material_intent_crash.rs` and `credential_intent_crash.rs`, are self-contained — each carries its own child and parent logic and imports only `ScenarioSettings` — so an embedding scenario needs a third file beside them and nothing else out of scope. `main.rs`, `settings.rs`, `child.rs`, `report.rs` and `tests/embedding_fault_scenario_e2e.rs` are already in the allowlist; `observe.rs`, `adapter_stub.rs` and `lib.rs` are not, and are not needed.",
+      "consequence": "One new file. The `Scenario` enum gains a variant and `main.rs` gains a `#[path]` declaration and two dispatch arms, both already in scope. This amendment names one path because the harness's own structure was read before it was written, rather than estimated: the tenth amendment exists because a blast radius was counted across `crates/` only and missed the repository root. If the builder finds it needs `observe.rs`, `adapter_stub.rs` or `lib.rs` after all, that is a stop-and-ask and a twelfth amendment, not a silent widening of this one."
     }
   ]
 }

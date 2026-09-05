@@ -39,6 +39,8 @@ use vestrace_infrastructure::{
 
 #[path = "scenarios/credential_intent_crash.rs"]
 mod credential_intent_crash;
+#[path = "scenarios/embedding_dispatch_crash.rs"]
+mod embedding_dispatch_crash;
 #[path = "scenarios/material_intent_crash.rs"]
 mod material_intent_crash;
 
@@ -192,6 +194,9 @@ mod intent_support {
             vestrace_fault_scenario::settings::Scenario::ExternalEffect => {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
+            vestrace_fault_scenario::settings::Scenario::EmbeddingDispatch => {
+                return Err("the intent child runs only for an intent scenario".to_owned());
+            }
         };
         let output = tokio::process::Command::new(&program)
             .arg("--database-url-file")
@@ -340,6 +345,12 @@ async fn main() {
                 credential_intent_crash::run_child(&settings).await;
             }
             finish(credential_intent_crash::run_parent(&settings).await);
+        }
+        Scenario::EmbeddingDispatch => {
+            if settings.is_child() {
+                embedding_dispatch_crash::run_child(&settings).await;
+            }
+            finish(embedding_dispatch_crash::run_parent(&settings).await);
         }
     }
 

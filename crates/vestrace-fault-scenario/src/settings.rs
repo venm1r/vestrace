@@ -10,6 +10,7 @@ pub enum Scenario {
     ExternalEffect,
     MaterialIntent,
     CredentialIntent,
+    EmbeddingDispatch,
 }
 
 impl Scenario {
@@ -18,6 +19,7 @@ impl Scenario {
             "external_effect" => Ok(Self::ExternalEffect),
             "material_intent_crash" => Ok(Self::MaterialIntent),
             "credential_intent_crash" => Ok(Self::CredentialIntent),
+            "embedding_dispatch_crash" => Ok(Self::EmbeddingDispatch),
             other => Err(format!("unknown scenario '{other}'")),
         }
     }
@@ -28,6 +30,7 @@ impl Scenario {
 enum ScenarioPoint {
     Effect(EffectFaultPoint),
     Intent(EffectFaultPoint),
+    Embedding(EffectFaultPoint),
 }
 
 /// What one invocation was asked to do, and whether it is allowed to.
@@ -98,6 +101,9 @@ impl ScenarioSettings {
             Scenario::MaterialIntent | Scenario::CredentialIntent => {
                 ScenarioPoint::Intent(parse_intent_point(&requested)?)
             }
+            Scenario::EmbeddingDispatch => {
+                ScenarioPoint::Embedding(parse_embedding_dispatch_point(&requested)?)
+            }
         };
 
         let url_file = url_file
@@ -137,6 +143,12 @@ impl ScenarioSettings {
                 self.scenario,
                 point.as_str()
             ),
+            ScenarioPoint::Embedding(point) => panic!(
+                "point() is defined only for the external-effect scenario, but this \
+                 invocation is {:?} at {}",
+                self.scenario,
+                point.as_str()
+            ),
         }
     }
 
@@ -144,7 +156,15 @@ impl ScenarioSettings {
     pub fn intent_point(&self) -> Option<EffectFaultPoint> {
         match self.point {
             ScenarioPoint::Intent(point) => Some(point),
-            ScenarioPoint::Effect(_) => None,
+            ScenarioPoint::Effect(_) | ScenarioPoint::Embedding(_) => None,
+        }
+    }
+
+    /// The embedding-dispatch boundary.
+    pub fn embedding_dispatch_point(&self) -> EffectFaultPoint {
+        match self.point {
+            ScenarioPoint::Embedding(point) => point,
+            _ => panic!("embedding_dispatch_point() is defined only for the embedding scenario"),
         }
     }
 
@@ -186,6 +206,10 @@ fn parse_intent_point(value: &str) -> Result<EffectFaultPoint, String> {
         .into_iter()
         .find(|point| point.as_str() == value)
         .ok_or_else(|| format!("unknown fault point '{value}'"))
+}
+
+fn parse_embedding_dispatch_point(value: &str) -> Result<EffectFaultPoint, String> {
+    parse_external_effect_point(value)
 }
 
 #[cfg(test)]

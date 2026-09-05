@@ -1871,11 +1871,123 @@ that is precisely the discrepancy that hid three separate production failures in
 Task 9. This fixture moves a test toward production authority instead of away
 from it, and it is the pattern the remaining tasks should follow.
 
+## Task 11 — worker-restart and fault evidence (2026-09-05)
+
+A real child process runs real services, drives a governed embedding dispatch to
+a named point, and dies by `std::process::abort()`. A parent then reads back
+what survived and a loopback listener outside the process counts what the
+provider saw.
+
+### The plan this task nearly shipped instead
+
+The first version of this task's plan declined to build the standalone scenario
+and proposed proving two of the five fault points *impossible* using
+`ProviderDispatchFaultInjector`, calling that substitute "stronger" than the
+evidence the task asks for. Its own adversarial review rejected it on three
+counts, and all three were right.
+
+**Its central premise was false.** It claimed points 1 and 2 were structurally
+unreachable because `provider_dispatch_repository.rs:649-753` writes intent,
+authorization, admission, dispatch transition and the governed mutation through
+one unit of work with a single commit. That is the *allowed* branch. The
+**denied** branch at `provider_dispatch_repository.rs:546-585` durably writes
+intent and authorization, commits, and returns with no dispatch transition — so
+a durable authorization without a dispatch is an ordinary outcome, and the
+universal claim was drawn from one branch.
+
+**The intent pre-exists.** An accepted embedding job persists its effect intent
+at acceptance, and the dispatch-side insert is `ON CONFLICT DO NOTHING`. "No
+intent row survives" could never have been observed at `AfterIntent`, whatever
+the transaction did.
+
+**And the substitution was not the builder's to make.** An injected
+`ApplicationError` proves in-process transactional rollback on an error return.
+It does not prove abort semantics, the loss of in-memory state, a fresh
+process's recovery, or a count taken outside the process. Naming one a stronger
+form of the other is the same substitution of one property for another that this
+package caught seven times in other people's work; this was the eighth, and the
+first written by the reviewer. The operator was asked, because the P04 plan
+reserves this decision for them, and chose to pay the cost.
+
+### What the scenario does
+
+The fixture is built inside the scenario file — 31 setup operations covering
+tenancy, guarded connection and model revisions, space registration, the
+accepted job's pre-existing durable intent, qualification and snapshot fixtures,
+acceptance, admission policy and complete evidence.
+
+An earlier attempt reached for the existing fixture with
+`#[path = "../../../vestrace-infrastructure/tests/common/mod.rs"]`, pulling
+another crate's test module into a binary crate. That produced sixteen compile
+errors, and adding the missing dependencies would have meant amending a manifest
+outside the change scope to couple a shipping binary to test-only code. The two
+existing scenarios are self-contained for a reason and this one now is too. No
+manifest was changed and the twelfth scope amendment was not needed.
+
+### Results, re-executed by the reviewer
+
+Every count below is read back from PostgreSQL or counted by the loopback
+listener; none is stated by the process under test, which is this crate's own
+stated rule and a test forbids violating it by name.
+
+| Point | Surviving state |
+|---|---|
+| `after_intent_persistence` | intent 1; authorization, admission, dispatch, receipt, loopback all 0 |
+| `after_authorization_before_dispatch` | intent 1; authorization, admission, dispatch, receipt, loopback all 0 |
+| `after_dispatch_before_receipt` | intent 1; authorization, admission, dispatch, receipt, loopback all 0 |
+| `after_receipt_before_outcome_confirmation` | authorization, admission, dispatch, deadline, receipt and loopback all 1 |
+| `after_outcome_before_run_commit` | **unproved** |
+
+A control child runs beside every one of them and reports authorization 1,
+admission 1, dispatch 1, deadline 1. That is what makes the zeros mean
+something: an absence is only evidence when the presence has been shown.
+
+`after_dispatch_before_receipt` reports zero loopback requests despite its name.
+That is correct and worth stating rather than glossing: the dispatch transition
+is written inside the same transaction, and the provider is reached only after
+that transaction commits. The point names a position in the code, not a call
+that crossed the wire.
+
+### The mutation that makes this a proof
+
+Without it the scenario would pass whether the governed dispatch were atomic or
+not, which is what "unfalsifiable" means and what Task 8's race test turned out
+to be. Inverting an assertion was explicitly refused as a substitute: that
+proves only that an assertion can fail.
+
+The authorization was committed before the abort, and the scenario then FAILED
+at `after_authorization_before_dispatch` reporting `authorization_count=1`,
+`admission_count=1`, `dispatching_count=0` — a surviving authorization without
+a dispatch. Restored, the file returns to
+`7C86C1309391EE932A6E6B0E5383EE8B4A8D14557BF9DA9C09A191EAB948A08C`.
+
+### What is not proved, and why
+
+`after_outcome_before_run_commit` has nothing to crash. No worker composes an
+embedding-job executor: `worker.rs:119-134` composes a Run-step executor and
+`worker.rs:423-455` the legacy `EmbedMemoryHandler`, which calls the embedding
+provider and upserts directly. This is the Task 4 debt recorded in Task 9's
+evidence, surfacing a second time. It is a finding about the system, not a
+narrowed exit criterion, and no worker was invented to make the point reachable.
+
+The scenario's fixture seeds qualification and snapshot rows as
+`vestrace_guarded_owner` because their producers do not exist. So what is proved
+is the crash behaviour of a state that production cannot yet lawfully construct
+by itself. That is a real limitation and it is stated here rather than left for
+a reader to infer.
+
 ## Not true yet
 
-- Tasks 11 and 12 are not started: worker-restart and fault evidence, and
-  integrated verification. Tasks 1–7, 9 and 10 are complete and reviewed; Task 8
-  is complete apart from the concurrency mutation named below.
+- Task 12 is not started: integrated verification. Tasks 1–7 and 9–11 are
+  complete and reviewed; Task 8 is complete apart from the concurrency mutation
+  named below.
+- The fifth external-effect fault point, `AfterOutcomeBeforeRunCommit`, is
+  **unproved**. Nothing composes an embedding-job executor, so there is no
+  worker to crash at that boundary.
+- Task 11's scenario proves the crash behaviour of a state whose qualification
+  and snapshot rows are seeded as `vestrace_guarded_owner` because their
+  producers do not exist. Production cannot yet construct that state lawfully by
+  itself.
 - Duplicate dispatch is proved at the transition level and **not** by an adapter
   call counter. No worker composes an embedding-job executor, so an embedding
   recovery never reaches an adapter and a counter would only establish that an
