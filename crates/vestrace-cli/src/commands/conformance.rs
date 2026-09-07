@@ -2781,7 +2781,7 @@ fn evaluate_requirement(
              be passed where an AgentRunId is expected, and every durable table carries \
              workspace_id with FORCE ROW LEVEL SECURITY naming the workspace as authority \
              owner".to_string(),
-            Some("crates/vestrace-domain/src/id.rs + docs/security-and-rls.md".to_string()),
+            Some("crates/vestrace-domain/src/id.rs + migrations/0134_artifact_content_storage.sql".to_string()),
         ),
         (F::Arc, 5, V::Static) => (
             CaseStatus::Pass,

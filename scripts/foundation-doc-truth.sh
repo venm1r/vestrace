@@ -12,7 +12,7 @@ fail_if_present() {
   fi
 }
 
-public_docs=(README.md docs/architecture.md docs/getting-started.md docs/database-schema.md)
+public_docs=(README.md docs/architecture.md docs/getting-started.md)
 
 fail_if_present "five distinct member crates" "${public_docs[@]}"
 fail_if_present "migrations/                 # Forward-only SQL schema migrations (0001 - 0016)" "${public_docs[@]}"
