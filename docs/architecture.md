@@ -10,6 +10,7 @@ Vestrace has deliberately separate documentation layers:
 2. **Current implementation snapshot** — what was actually wired in the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
 3. **Transition planning** — the evidence/migration/PR contracts for moving from that inspected baseline toward the target.
 4. **Post-v0.2 architecture extensions** — accepted system-level decisions that preserve the frozen v0.2 laws but are not silently inserted into the existing implementation roadmap.
+5. **Proposed implementation extensions** — source-pinned feature designs and executable acceptance plans, registered separately from Accepted ADRs and frozen release programs. See [Memory Workspace](implementation/memory-workspace/README.md).
 
 Do not infer current runtime availability from target architecture or planning documents.
 
@@ -120,6 +121,14 @@ See [`plans/README.md`](plans/README.md) and [`plans/v0.2-to-v1.0-pr-specificati
 The frozen transition package includes all 36 planned future implementation PRs, dependency ordering, migration/backfill contracts, conformance cases, release evidence gates and review rules.
 
 The Brain–Face–Organ extension requires a separate future transition plan before implementation. It is not silently inserted into those 36 PRs.
+
+## Memory Workspace implementation extension
+
+The [Memory Workspace package](implementation/memory-workspace/README.md) develops the selected Memory/Context API, Console editing, and source import/synchronization/export cycle against code baseline `6f6102536e9a535b7086db14573bf45fe750ad71`.
+
+Its [integration contract](implementation/memory-workspace/12-integration.md) maps those changes to the existing authority, revision, provenance, ContextPack, material and qualification boundaries. Canonical documents remain in this repository; the package references them rather than maintaining another copy. Console and the local scanner are clients, not independent memory authorities. Source versions remain distinct from editorial revisions.
+
+**Status:** integrated proposed implementation design. It is not an Accepted architectural amendment, an implementation completion claim, a new named qualification profile, or an amendment to the 36-PR/P01–P12 programs. Start with [MW-00](implementation/memory-workspace/plans/00-preflight.md); do not execute later tasks before their prerequisite and scope gates have been accepted.
 
 ## Architectural laws
 

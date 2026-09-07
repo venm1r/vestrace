@@ -1,0 +1,28 @@
+{
+  "id": "00000000-0000-4000-8000-000000000010",
+  "kind": "observation",
+  "status": "active",
+  "state_revision": 1,
+  "active_revision": {
+    "id": "00000000-0000-4000-8000-000000000011",
+    "memory_id": "00000000-0000-4000-8000-000000000010",
+    "number": 1,
+    "content": "Решение: первая интеграция использует HTTP API.",
+    "classification": "internal",
+    "confidence": 0.5,
+    "importance": 0.5,
+    "created_at": "2026-09-07T10:00:00Z",
+    "valid_from": null,
+    "valid_until": null,
+    "change_reason": "Первичный импорт источника",
+    "sources": [
+      {
+        "kind": "source_revision",
+        "reference_id": "00000000-0000-4000-8000-000000000031",
+        "attribution": "exact"
+      }
+    ],
+    "provenance_status": "exact"
+  },
+  "can_correct": true
+}

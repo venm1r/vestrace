@@ -1,0 +1,38 @@
+{
+  "id": "00000000-0000-4000-8000-000000000090",
+  "rendered_context": "Выбран HTTP API. [1]",
+  "sections": [
+    {
+      "label": "decisions",
+      "items": [
+        {
+          "memory_id": "00000000-0000-4000-8000-000000000010",
+          "revision_id": "00000000-0000-4000-8000-000000000011",
+          "representation": "full",
+          "text": "Выбран HTTP API.",
+          "sources": [
+            {
+              "kind": "source_revision",
+              "reference_id": "00000000-0000-4000-8000-000000000031",
+              "attribution": "exact"
+            }
+          ],
+          "inclusion_reason": "Соответствует запросу о выбранном интерфейсе"
+        }
+      ]
+    }
+  ],
+  "policy_version": "example-policy-1",
+  "memory_epoch": 1,
+  "degraded": false,
+  "warnings": [],
+  "budget": {
+    "max_utf8_bytes": 8192,
+    "used_utf8_bytes": 26,
+    "estimated_tokens": 7,
+    "estimator": "utf8_div4_estimate",
+    "token_budget_enforced": false,
+    "tokenizer_id": null,
+    "used_tokens": null
+  }
+}

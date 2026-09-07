@@ -2,6 +2,10 @@
 
 Vestrace is an evidence-first knowledge and execution platform. The current foundation provides a Rust service, PostgreSQL persistence with transaction-scoped workspace isolation, health checks, event-sourced run records with deterministic replay and checkpoint recovery, run worker lifecycle (AdvanceRun/ResumeRun/ExecuteStep handlers), HTTP run lifecycle endpoints (create/list/detail/pause/resume/cancel), memory lifecycle services, retrieval, security domain types, and an MCP server.
 
+> **Documentation map:** start with the [documentation index](docs/README.md) for the distinction between the frozen architecture, source-pinned implementation snapshots, and proposed changes. The foundation descriptions below include historical setup and availability assumptions; they are not a new qualification of the current code. The normative product boundary is memory-first persistent cognition, as explained in the [Architecture Guide](docs/architecture.md).
+>
+> **Memory Workspace implementation design:** [API, Console, import/sync and portability](docs/implementation/memory-workspace/README.md), based on `6f6102536e9a535b7086db14573bf45fe750ad71`. Documentation integration does not make its proposed endpoints available or add MW-00–MW-07 to the frozen P01–P12 release program.
+
 ## Current maturity
 
 Implemented:
@@ -157,6 +161,11 @@ docker compose config --quiet
 ## Documentation
 
 Project references are under `docs/`:
+
+- [Documentation Index and Status](docs/README.md)
+- [Implementation Extensions](docs/implementation/README.md)
+- [Memory Workspace Implementation Package](docs/implementation/memory-workspace/README.md)
+- [Memory Workspace Preflight](docs/implementation/memory-workspace/plans/00-preflight.md)
 
 - [Architecture Guide](docs/architecture.md)
 - [Domain Model Reference](docs/domain-model.md)

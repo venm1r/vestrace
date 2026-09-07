@@ -1,0 +1,128 @@
+[
+  {
+    "path": "examples/valid/memory-detail.json",
+    "schema": "MemoryDetail",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/correction.json",
+    "schema": "CorrectionRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/restore.json",
+    "schema": "CorrectionRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/context-request.json",
+    "schema": "ContextRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/import-preview-request.json",
+    "schema": "ImportPreviewRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/import-preview.json",
+    "schema": "ImportPreview",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/apply-import.json",
+    "schema": "ApplyImportRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/conflict-merge.json",
+    "schema": "ResolveConflictRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/export-request.json",
+    "schema": "ExportRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/portable-package.json",
+    "schema": "PortablePackage",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/portable-import.json",
+    "schema": "ImportPreviewRequest",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/valid/mutation-receipt.json",
+    "schema": "MutationReceipt",
+    "expected": "valid"
+  },
+  {
+    "path": "examples/invalid/correction-label-bypass.json",
+    "schema": "CorrectionRequest",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/invalid/correction-missing-precondition.json",
+    "schema": "CorrectionRequest",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/invalid/token-budget-without-counter.json",
+    "schema": "ContextRequest",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/invalid/path-traversal.json",
+    "schema": "ImportPreviewRequest",
+    "expected": "invalid",
+    "rejection_layer": "semantic"
+  },
+  {
+    "path": "examples/invalid/duplicate-external-id.json",
+    "schema": "ImportPreviewRequest",
+    "expected": "invalid",
+    "rejection_layer": "semantic"
+  },
+  {
+    "path": "examples/invalid/utf8-byte-limit.json",
+    "schema": "ImportPreviewRequest",
+    "expected": "invalid",
+    "rejection_layer": "semantic",
+    "generated_fixture": true
+  },
+  {
+    "path": "examples/invalid/imported-authority.json",
+    "schema": "PortablePackage",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/invalid/future-format.json",
+    "schema": "PortablePackage",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/invalid/dangling-provenance.json",
+    "schema": "PortablePackage",
+    "expected": "invalid",
+    "rejection_layer": "semantic"
+  },
+  {
+    "path": "examples/invalid/automatic-semantic-merge.json",
+    "schema": "ResolveConflictRequest",
+    "expected": "invalid",
+    "rejection_layer": "schema"
+  },
+  {
+    "path": "examples/valid/context-response.json",
+    "schema": "ContextResponse",
+    "expected": "valid"
+  }
+]

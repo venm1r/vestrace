@@ -1,0 +1,1107 @@
+{
+  "baseline_commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+  "status": "proposed",
+  "requirements": [
+    {
+      "id": "MW-R01",
+      "requirement": "Зафиксировать свежий baseline, source hashes и индивидуальный разрешённый scope; отделить MW от P04/P12.",
+      "spec": "00-baseline.md",
+      "package": "MW-00",
+      "task": "T00.1",
+      "tests": [
+        "A01"
+      ],
+      "plan": "plans/00-preflight.md"
+    },
+    {
+      "id": "MW-R02",
+      "requirement": "Отдельный detail возвращает реальное разрешённое содержимое и согласованную текущую revision; metadata route не расширяется автоматически.",
+      "spec": "03-api.md",
+      "package": "MW-01",
+      "task": "T01.1",
+      "tests": [
+        "A02"
+      ],
+      "plan": "plans/01-memory-read-context.md"
+    },
+    {
+      "id": "MW-R03",
+      "requirement": "Browse/history используют bounded pagination, scope-bound cursor, повторную авторизацию и CURSOR_EXPIRED при изменении допустимого снимка.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-01",
+      "task": "T01.2",
+      "tests": [
+        "A03",
+        "A04"
+      ],
+      "plan": "plans/01-memory-read-context.md"
+    },
+    {
+      "id": "MW-R04",
+      "requirement": "Источники конкретной новой revision связываются точно; исторический provenance без доказательства помечен legacy_unattributed.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-02",
+      "task": "T02.1",
+      "tests": [
+        "A05"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R05",
+      "requirement": "Context возвращает sections и rendered_context из одних данных, без подмены отсутствующего content строкой explanation.",
+      "spec": "03-api.md",
+      "package": "MW-01",
+      "task": "T01.3",
+      "tests": [
+        "A06"
+      ],
+      "plan": "plans/01-memory-read-context.md"
+    },
+    {
+      "id": "MW-R06",
+      "requirement": "Лимит UTF-8 учитывает весь отрендеренный контекст; строгий token_budget принимается только с квалифицированным счётчиком.",
+      "spec": "03-api.md",
+      "package": "MW-01",
+      "task": "T01.3",
+      "tests": [
+        "A07",
+        "A08"
+      ],
+      "plan": "plans/01-memory-read-context.md"
+    },
+    {
+      "id": "MW-R07",
+      "requirement": "Все read surfaces, MCP и export проверяют content/disclosure права до выдачи текста и диагностических metadata.",
+      "spec": "07-security-operations.md",
+      "package": "MW-01",
+      "task": "T01.1",
+      "tests": [
+        "A09"
+      ],
+      "plan": "plans/01-memory-read-context.md"
+    },
+    {
+      "id": "MW-R08",
+      "requirement": "Correction/import используют текущую authority и один caller-owned UoW для данных, audit, outbox и receipt.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-02",
+      "task": "T02.1",
+      "tests": [
+        "A10"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R09",
+      "requirement": "Exact committed replay после нового запроса авторизуется сегодня, возвращает те же IDs и не повторяет mutation.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-02",
+      "task": "T02.2",
+      "tests": [
+        "A11"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R10",
+      "requirement": "Два разных намерения с одним key конфликтуют; случайные IDs ответа не участвуют в semantic equality.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-02",
+      "task": "T02.2",
+      "tests": [
+        "A12",
+        "A13"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R11",
+      "requirement": "Correction требует expected revision/state; restore создаёт новую revision и не может понизить классификацию старого содержимого.",
+      "spec": "03-api.md",
+      "package": "MW-02",
+      "task": "T02.3",
+      "tests": [
+        "A14",
+        "A15"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R12",
+      "requirement": "Legacy write adapters не обходят новый writer и не затрагивают исторические receipts без явной compatibility policy.",
+      "spec": "10-migrations.md",
+      "package": "MW-02",
+      "task": "T02.3",
+      "tests": [
+        "A16"
+      ],
+      "plan": "plans/02-atomic-corrections.md"
+    },
+    {
+      "id": "MW-R13",
+      "requirement": "Console использует HTTP SDK и существующую design system, без прямого доступа к БД.",
+      "spec": "04-console.md",
+      "package": "MW-03",
+      "task": "T03.1",
+      "tests": [
+        "A17"
+      ],
+      "plan": "plans/03-console.md"
+    },
+    {
+      "id": "MW-R14",
+      "requirement": "Редактор сохраняет draft при conflict/unknown, повторяет неизвестный POST тем же key и не выполняет auto-overwrite.",
+      "spec": "04-console.md",
+      "package": "MW-03",
+      "task": "T03.2",
+      "tests": [
+        "A18"
+      ],
+      "plan": "plans/03-console.md"
+    },
+    {
+      "id": "MW-R15",
+      "requirement": "Workspace switch не допускает поздний чужой response в UI; content caches/drafts очищаются.",
+      "spec": "04-console.md",
+      "package": "MW-03",
+      "task": "T03.2",
+      "tests": [
+        "A19"
+      ],
+      "plan": "plans/03-console.md"
+    },
+    {
+      "id": "MW-R16",
+      "requirement": "Imported text не исполняется как HTML/скрипт; keyboard/focus/error states проверяются в реальном браузере.",
+      "spec": "04-console.md",
+      "package": "MW-03",
+      "task": "T03.3",
+      "tests": [
+        "A20",
+        "A21"
+      ],
+      "plan": "plans/03-console.md"
+    },
+    {
+      "id": "MW-R17",
+      "requirement": "Source identity — scoped external UUID, path и content hash не заменяют identity.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.1",
+      "tests": [
+        "A22"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R18",
+      "requirement": "SourceRevision immutable; source content отличается от effective памяти и human correction.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-04",
+      "task": "T04.1",
+      "tests": [
+        "A23"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R19",
+      "requirement": "Preview привязан к durably stored exact bytes/base versions и не разрешает изменённый input.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.2",
+      "tests": [
+        "A24"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R20",
+      "requirement": "Staging/export используют ordinary material lifecycle и не хранят plaintext в новой временной папке/таблице.",
+      "spec": "07-security-operations.md",
+      "package": "MW-04",
+      "task": "T04.2",
+      "tests": [
+        "A25"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R21",
+      "requirement": "Scanner читает только явный root, не следует symlink/junction/reparse, не принимает traversal/absolute paths.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.3",
+      "tests": [
+        "A26"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R22",
+      "requirement": "Ограничения 64 KiB/file,100 items,8 MiB/batch проверяются по decoded UTF-8, JSON duplicate keys/depth отклоняются.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.3",
+      "tests": [
+        "A27"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R23",
+      "requirement": "Импорт по умолчанию не вызывает LLM и создаёт source-excerpt observation, не подтверждённый факт.",
+      "spec": "01-design.md",
+      "package": "MW-04",
+      "task": "T04.4",
+      "tests": [
+        "A28"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R24",
+      "requirement": "Apply идёт через зарегистрированный existing OutboxHandler с атомарным item receipt; 202 не означает success/indexed.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.4",
+      "tests": [
+        "A29"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R25",
+      "requirement": "Повтор worker после item commit до ack не создаёт дополнительной revision/audit/outbox.",
+      "spec": "05-import-sync.md",
+      "package": "MW-04",
+      "task": "T04.4",
+      "tests": [
+        "A30"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R26",
+      "requirement": "Original actor reauthorized при apply; worker service identity не обходит отозванное разрешение.",
+      "spec": "07-security-operations.md",
+      "package": "MW-04",
+      "task": "T04.4",
+      "tests": [
+        "A31"
+      ],
+      "plan": "plans/04-import.md"
+    },
+    {
+      "id": "MW-R27",
+      "requirement": "Unchanged source не создаёт canonical revision; rename с доказанной identity меняет locator, не memory content.",
+      "spec": "05-import-sync.md",
+      "package": "MW-05",
+      "task": "T05.1",
+      "tests": [
+        "A32"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R28",
+      "requirement": "B/I/M сравнение сохраняет ручную правку; конфликт никогда не разрешается silent latest-wins или LLM merge.",
+      "spec": "05-import-sync.md",
+      "package": "MW-05",
+      "task": "T05.2",
+      "tests": [
+        "A33"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R29",
+      "requirement": "Accept/keep/merge требует всех preconditions и атомарного resolution/binding/memory receipt.",
+      "spec": "05-import-sync.md",
+      "package": "MW-05",
+      "task": "T05.2",
+      "tests": [
+        "A34",
+        "A35"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R30",
+      "requirement": "Missing source — наблюдение, не Delete; неполный scan не объявляет отсутствующими непросмотренные файлы.",
+      "spec": "05-import-sync.md",
+      "package": "MW-05",
+      "task": "T05.1",
+      "tests": [
+        "A36"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R31",
+      "requirement": "Одна коллекция имеет один активный apply; mutation guards/сортировка locks проверяются реальной гонкой.",
+      "spec": "02-data-and-transactions.md",
+      "package": "MW-05",
+      "task": "T05.3",
+      "tests": [
+        "A37"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R32",
+      "requirement": "Cancellation сохраняет committed items, останавливает непроведённые; expiry/cleanup не принимает timeout за доказательство смерти.",
+      "spec": "05-import-sync.md",
+      "package": "MW-05",
+      "task": "T05.3",
+      "tests": [
+        "A38",
+        "A39"
+      ],
+      "plan": "plans/05-sync.md"
+    },
+    {
+      "id": "MW-R33",
+      "requirement": "JSON export содержит разрешённый bounded selection, не secrets/keys/grants/vectors/qualification verdicts.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.1",
+      "tests": [
+        "A40"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R34",
+      "requirement": "Export download reauthorizes весь pinned selection; revoke/purge блокирует старый результат и запускает lawful erasure.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.1",
+      "tests": [
+        "A41"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R35",
+      "requirement": "Portable import проверяет version/shape/limits/intra-package refs до canonical apply и выделяет новые local IDs.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.2",
+      "tests": [
+        "A42",
+        "A43"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R36",
+      "requirement": "Foreign actor/time/trust/labels — annotations, не local authority; selected history не объявляется полной историей установки.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.2",
+      "tests": [
+        "A44"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R37",
+      "requirement": "Source links portable batch закрываются вторым idempotent pass того же handler; partial status честно отражён.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.2",
+      "tests": [
+        "A45"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R38",
+      "requirement": "Markdown export — human-readable representation, не гарантированное roundtrip-восстановление всех метаданных.",
+      "spec": "06-portability.md",
+      "package": "MW-06",
+      "task": "T06.3",
+      "tests": [
+        "A46"
+      ],
+      "plan": "plans/06-portability.md"
+    },
+    {
+      "id": "MW-R39",
+      "requirement": "Forward migrations и exact grants проходят fresh/upgrade/refusal проверки, старые migrations не редактируются.",
+      "spec": "10-migrations.md",
+      "package": "MW-07",
+      "task": "T07.1",
+      "tests": [
+        "A47",
+        "A48"
+      ],
+      "plan": "plans/07-qualification.md"
+    },
+    {
+      "id": "MW-R40",
+      "requirement": "Приёмка запускает штатный binary/worker/HTTP/Console и не подменяет отсутствующие producers raw seed.",
+      "spec": "09-acceptance.md",
+      "package": "MW-07",
+      "task": "T07.2",
+      "tests": [
+        "A49"
+      ],
+      "plan": "plans/07-qualification.md"
+    },
+    {
+      "id": "MW-R41",
+      "requirement": "Код, schema, SDK и manual совпадают; новый OpenAPI subset не подменяет весь served OpenAPI.",
+      "spec": "03-api.md",
+      "package": "MW-07",
+      "task": "T07.2",
+      "tests": [
+        "A50"
+      ],
+      "plan": "plans/07-qualification.md"
+    },
+    {
+      "id": "MW-R42",
+      "requirement": "Doctests проверяются отдельно от --all-targets; UI scripts и browser dependency считаются proposed до внесения.",
+      "spec": "08-program.md",
+      "package": "MW-00",
+      "task": "T00.2",
+      "tests": [
+        "A51"
+      ],
+      "plan": "plans/00-preflight.md"
+    },
+    {
+      "id": "MW-R43",
+      "requirement": "Readiness/index states проверяются через существующие generation/material authorities; нет raw provider fallback.",
+      "spec": "00-baseline.md",
+      "package": "MW-07",
+      "task": "T07.2",
+      "tests": [
+        "A52"
+      ],
+      "plan": "plans/07-qualification.md"
+    },
+    {
+      "id": "MW-R44",
+      "requirement": "Raw content/source names/host paths не попадают в logs/metrics/denial details; scoped diagnostics доступны отдельно.",
+      "spec": "07-security-operations.md",
+      "package": "MW-07",
+      "task": "T07.2",
+      "tests": [
+        "A53"
+      ],
+      "plan": "plans/07-qualification.md"
+    },
+    {
+      "id": "MW-R45",
+      "requirement": "Перед публичным claims фиксируются build/env/version/limitations; source inspection не выдаётся за runtime evidence.",
+      "spec": "11-handoff.md",
+      "package": "MW-07",
+      "task": "T07.2",
+      "tests": [
+        "A54"
+      ],
+      "plan": "plans/07-qualification.md"
+    }
+  ],
+  "acceptance_cases": [
+    {
+      "id": "A01",
+      "requirement": "MW-R01",
+      "name": "Сверка revision",
+      "given": "main отличается от pinned SHA либо найден одноимённый module/migration",
+      "then": "Не начинать запись; обновить baseline/gap/scope явным diff",
+      "counterexample": "Продолжить по старому scope"
+    },
+    {
+      "id": "A02",
+      "requirement": "MW-R02",
+      "name": "Detail hydrate",
+      "given": "Memory r2 в W1, source event разрешён; у W2 известен тот же UUID",
+      "then": "W1 получает exact r2 text/state; W2 одинаковый 404 без text/ID источника",
+      "counterexample": "Выдать metadata source W1 через denial"
+    },
+    {
+      "id": "A03",
+      "requirement": "MW-R03",
+      "name": "Browse pagination",
+      "given": "3 записи с одинаковым created_at, page size=2; между page1/page2 correction",
+      "then": "Первые страницы используют id tie-breaker; после mutation CURSOR_EXPIRED",
+      "counterexample": "Пропустить/повторить запись молча"
+    },
+    {
+      "id": "A04",
+      "requirement": "MW-R03",
+      "name": "История",
+      "given": "r1 закрыта, r2 разрешена; запрос history и прямой r1 URL",
+      "then": "r1 content/тайный source не раскрываются; r2 доступна",
+      "counterexample": "Проверить только label r2 для всего history"
+    },
+    {
+      "id": "A05",
+      "requirement": "MW-R04",
+      "name": "Точная provenance",
+      "given": "Старая memory_sources без revision link и новая correction с link",
+      "then": "Старое legacy_unattributed; новое exact; timestamps не создают link",
+      "counterexample": "Привязать legacy source к ближайшей revision"
+    },
+    {
+      "id": "A06",
+      "requirement": "MW-R05",
+      "name": "Реальный context",
+      "given": "Candidate содержит пустой content и непустой technical explanation",
+      "then": "Technical explanation не выдаётся как знание; explicit omission",
+      "counterexample": "Отрендерить explanation как факт"
+    },
+    {
+      "id": "A07",
+      "requirement": "MW-R06",
+      "name": "Бюджет UTF-8",
+      "given": "Русский/emoji text и длинные citations у верхнего byte cap",
+      "then": "Final rendered_context UTF-8 <= max, separators учтены",
+      "counterexample": "Считать только content до citations"
+    },
+    {
+      "id": "A08",
+      "requirement": "MW-R06",
+      "name": "Tokenizer",
+      "given": "token_budget задан без tokenizer или неизвестный tokenizer",
+      "then": "Структурный отказ либо TOKEN_COUNTER_UNAVAILABLE, не ложный enforced=true",
+      "counterexample": "Использовать ceil(bytes/4) как точный count"
+    },
+    {
+      "id": "A09",
+      "requirement": "MW-R07",
+      "name": "Disclosure",
+      "given": "Разрешённый список IDs включает источник с denied label/destination",
+      "then": "Нет запрещённого text/snippet/title в context/detail/source/ошибке",
+      "counterexample": "Применить фильтр после отправки в reranker"
+    },
+    {
+      "id": "A10",
+      "requirement": "MW-R08",
+      "name": "Atomic rollback",
+      "given": "Fault после revision INSERT, перед Audit/outbox/receipt",
+      "then": "Rollback всех canonical изменений; прежний active head и epoch",
+      "counterexample": "Memory committed, а outbox отсутствует"
+    },
+    {
+      "id": "A11",
+      "requirement": "MW-R09",
+      "name": "Lost response replay",
+      "given": "Correction committed; HTTP response потерян; повтор same body/key",
+      "then": "Exact original receipt; одна revision/audit/outbox",
+      "counterexample": "Повторно проверить старый CAS и вернуть ложный conflict"
+    },
+    {
+      "id": "A12",
+      "requirement": "MW-R10",
+      "name": "Same key race",
+      "given": "Два независимых соединения same key+same body, разные generated UUID",
+      "then": "Один winner, тот же receipt у второго, без дублей",
+      "counterexample": "Сравнить случайный audit UUID и конфликтовать"
+    },
+    {
+      "id": "A13",
+      "requirement": "MW-R10",
+      "name": "Changed intent",
+      "given": "Два body с одним key; разные target/content/reason",
+      "then": "409 без второй mutation",
+      "counterexample": "Считать одинаковыми только key"
+    },
+    {
+      "id": "A14",
+      "requirement": "MW-R11",
+      "name": "Two editors",
+      "given": "A/B читают r3/state4, A commits, B sends same base",
+      "then": "B получает conflict, A content сохранён",
+      "counterexample": "Silent last-write-wins"
+    },
+    {
+      "id": "A15",
+      "requirement": "MW-R11",
+      "name": "Restore",
+      "given": "Активная r4; разрешённая r1; restore r1 под base r4",
+      "then": "Новая r5 с content r1; r2–r4 остаются; label не понижается",
+      "counterexample": "Переместить active на r1 и уничтожить историю"
+    },
+    {
+      "id": "A16",
+      "requirement": "MW-R12",
+      "name": "Legacy compatibility",
+      "given": "Повтор старого create/revise и новый correction той же memory",
+      "then": "Старый wire shape/числовой If-Match работают через общий writer",
+      "counterexample": "Legacy route сохраняет неатомарный bypass"
+    },
+    {
+      "id": "A17",
+      "requirement": "MW-R13",
+      "name": "SDK error",
+      "given": "Сервер отдаёт 503 unavailable, не []",
+      "then": "UI unavailable; стандартный request_id доступен",
+      "counterexample": "Empty библиотека вместо ошибки"
+    },
+    {
+      "id": "A18",
+      "requirement": "MW-R14",
+      "name": "Unknown draft",
+      "given": "POST timeout после отправки; пользователь жмёт «проверить/повторить»",
+      "then": "Тот же key/body, draft сохранён; не новый save",
+      "counterexample": "Автоматически создать новый UUIDkey"
+    },
+    {
+      "id": "A19",
+      "requirement": "MW-R15",
+      "name": "Scope switching",
+      "given": "W1 request медленный, пользователь переключается на W2",
+      "then": "Late W1 response отброшен, caches/draft W1 очищены",
+      "counterexample": "Показать W1 текст внутри W2"
+    },
+    {
+      "id": "A20",
+      "requirement": "MW-R16",
+      "name": "Hostile rendering",
+      "given": "Markdown содержит script/img/javascripts URL и чужой tracking pixel",
+      "then": "Text view не исполняет и не загружает remote ресурс",
+      "counterexample": "dangerouslySetInnerHTML"
+    },
+    {
+      "id": "A21",
+      "requirement": "MW-R16",
+      "name": "Keyboard",
+      "given": "Открыть editor/restore/conflict только клавиатурой",
+      "then": "Focus/label/error/status доступны, после dialog focus возвращается",
+      "counterexample": "Недоступная кнопка без причины или потерянный focus"
+    },
+    {
+      "id": "A22",
+      "requirement": "MW-R17",
+      "name": "Identity",
+      "given": "Два source UUID имеют одинаковый content, но разные источники",
+      "then": "Два source identity; dedup bytes не смешивает provenance/ACL",
+      "counterexample": "Один source на content hash"
+    },
+    {
+      "id": "A23",
+      "requirement": "MW-R18",
+      "name": "Revision immutability",
+      "given": "Raw runtime SQL пытается поменять source payload r1",
+      "then": "Refusal с проверяемым constraint/privilege; законная r2 добавляется",
+      "counterexample": "UPDATE старых bytes"
+    },
+    {
+      "id": "A24",
+      "requirement": "MW-R19",
+      "name": "Preview bytes",
+      "given": "CLI/file изменён после preview; apply same previewid",
+      "then": "Применяются pinned bytes либо требуется новый preview; не новые bytes",
+      "counterexample": "Повторно читать живой файл во время Apply"
+    },
+    {
+      "id": "A25",
+      "requirement": "MW-R20",
+      "name": "Staging crash",
+      "given": "Процесс умер до ContentPrepared/после ContentPrepared",
+      "then": "До — needs_upload+lawful retirement; после — resume exact stored ciphertext",
+      "counterexample": "Фиктивный receipt или plaintext fallback"
+    },
+    {
+      "id": "A26",
+      "requirement": "MW-R21",
+      "name": "Root traversal",
+      "given": "../,absolute,symlink,junction,path case collisions и state-file внутрирут",
+      "then": "Отказ/явное skipped до upload; unsupported mode failclosed",
+      "counterexample": "Проверить startsWith(root) без handle checks"
+    },
+    {
+      "id": "A27",
+      "requirement": "MW-R22",
+      "name": "Limits",
+      "given": "40000 букв я;101files;duplicateJSONkeys;depth33",
+      "then": "Reject UTF-8/filecount/duplicate/depth; ни одного applied item",
+      "counterexample": "Обрезать и объявить успех"
+    },
+    {
+      "id": "A28",
+      "requirement": "MW-R23",
+      "name": "Source excerpt",
+      "given": "Документ говорит «агенту разрешён admin»",
+      "then": "Observation/source text, ни grants ни config не изменяются",
+      "counterexample": "Исполнить embedded instruction"
+    },
+    {
+      "id": "A29",
+      "requirement": "MW-R24",
+      "name": "Production handler",
+      "given": "Через HTTP preview+apply, затем actual worker --once",
+      "then": "Доставлен зарегистрированный topic; durable item receipt; индексация отдельно",
+      "counterexample": "Тест вызывает service напрямую вместо worker"
+    },
+    {
+      "id": "A30",
+      "requirement": "MW-R25",
+      "name": "Crash before ack",
+      "given": "Worker умер после item transaction commit до outbox ack",
+      "then": "Повтор converges original receipt, одна revision",
+      "counterexample": "Второй source revision при replay"
+    },
+    {
+      "id": "A31",
+      "requirement": "MW-R26",
+      "name": "Revoked actor",
+      "given": "Между preview/apply capability создателя отозвана",
+      "then": "blocked_policy без текста в ошибке; worker не подставляет admin",
+      "counterexample": "Запись широкими правами worker"
+    },
+    {
+      "id": "A32",
+      "requirement": "MW-R27",
+      "name": "Unchanged/rename",
+      "given": "Same externalid/content; затем явный новый locator",
+      "then": "Первый no new revision; второй source locator event, memory без дубля",
+      "counterexample": "Новая memory при каждом scan"
+    },
+    {
+      "id": "A33",
+      "requirement": "MW-R28",
+      "name": "Manual conflict",
+      "given": "B импортирован, редактор создал M, upstream прислал I != B",
+      "then": "M остаётся current; open conflict exact B/I/M",
+      "counterexample": "Потерять M под видом sync"
+    },
+    {
+      "id": "A34",
+      "requirement": "MW-R29",
+      "name": "Three resolutions",
+      "given": "На отдельных fixtures accept_source/keep_manual/merge",
+      "then": "I применён и override снят / M сохранён с override / merged новаяrevision; везде audit+receipt",
+      "counterexample": "Изменить исходный I при keep_manual"
+    },
+    {
+      "id": "A35",
+      "requirement": "MW-R29",
+      "name": "Stale conflict",
+      "given": "После просмотра конфликта M изменён ещё раз",
+      "then": "Resolve409 без потери новой manualrevision; новые bases; после свежего detail новое явное решение проходит, сохраняя M0 detection evidence",
+      "counterexample": "Применить resolution к невиданному current"
+    },
+    {
+      "id": "A36",
+      "requirement": "MW-R30",
+      "name": "Partial vs missing",
+      "given": "Partialscan не включает файл; completemanifest отдельно не включает его",
+      "then": "Partial ничего не объявляет missing; complete записывает Missing без Delete",
+      "counterexample": "Удалить память при исчезновении файла"
+    },
+    {
+      "id": "A37",
+      "requirement": "MW-R31",
+      "name": "Batch collision",
+      "given": "Два Apply к одной collection и edit в середине items",
+      "then": "Один active batch; edit учитывается per-item CAS и conflict",
+      "counterexample": "Две независимые очереди overwrites"
+    },
+    {
+      "id": "A38",
+      "requirement": "MW-R32",
+      "name": "Cancel race",
+      "given": "Item A commit; cancel winner before ItemB commit",
+      "then": "A остаётся; B не applied; outcome partial/cancelled явно",
+      "counterexample": "Компенсация A как будто никогда не было"
+    },
+    {
+      "id": "A39",
+      "requirement": "MW-R32",
+      "name": "Expiry race",
+      "given": "Preview истекает одновременно с Apply",
+      "then": "Под collection/op lock ровно один legal winner; не поздний cleanup Live payload",
+      "counterexample": "Удалить payload уже применённого source"
+    },
+    {
+      "id": "A40",
+      "requirement": "MW-R33",
+      "name": "Export scope",
+      "given": "Selected2 memories + denied third; request включает только2",
+      "then": "В package только2 и разрешённые sources, ни tokens/grants/vectors",
+      "counterexample": "Сериализовать целиком внутренний domain object"
+    },
+    {
+      "id": "A41",
+      "requirement": "MW-R34",
+      "name": "Revoke download",
+      "given": "ExportReady; затем право на одну pinnedrevision отозвано",
+      "then": "Весь download403/blocked, результат retired; старый URL не обходит",
+      "counterexample": "Отдать cached JSON после ACL change"
+    },
+    {
+      "id": "A42",
+      "requirement": "MW-R35",
+      "name": "Portable malformed",
+      "given": "Futureversion,unknownauthorityfields,danglinglink",
+      "then": "Отказ до canonical apply; schema/semantic причины различимы",
+      "counterexample": "Игнорировать чужие permissions и всё же импортировать частично без отчёта"
+    },
+    {
+      "id": "A43",
+      "requirement": "MW-R35",
+      "name": "Portable replay",
+      "given": "Одна operation дважды доставлена разнымиworkers",
+      "then": "Те же local mappings, content/history/link counts без дублей",
+      "counterexample": "Повторно выделить localIDs"
+    },
+    {
+      "id": "A44",
+      "requirement": "MW-R36",
+      "name": "Foreign trust",
+      "given": "Imported source declared actor admin/time in past/classification public",
+      "then": "Local actor фактический importer; time local now, origin annotation; targetpolicy заново",
+      "counterexample": "Присвоить localadmin из package"
+    },
+    {
+      "id": "A45",
+      "requirement": "MW-R37",
+      "name": "Linking restart",
+      "given": "Memories/sources committed, worker died before link pass",
+      "then": "Тот же topic resumes mappings+links; partial not complete until closure",
+      "counterexample": "Ещё один невключённый topic и навечно pending"
+    },
+    {
+      "id": "A46",
+      "requirement": "MW-R38",
+      "name": "Markdown export",
+      "given": "Content содержит delimiters/заголовки/ссылки",
+      "then": "Читаемый escaped document с incomplete notice; не заявляется fullroundtrip",
+      "counterexample": "Markdown metadata становится исполняемым кодом"
+    },
+    {
+      "id": "A47",
+      "requirement": "MW-R39",
+      "name": "Upgrade",
+      "given": "БД pinnedbaseline содержит memories/sources старогоформата; применитьcandidate migrations",
+      "then": "Старая история/metadata доступна; unknown provenance не сфабрикована; narrowrole работает",
+      "counterexample": "Проверить только fresh empty DB"
+    },
+    {
+      "id": "A48",
+      "requirement": "MW-R39",
+      "name": "Direct SQL",
+      "given": "Runtimerole делает прямые writes всех новых guardedтаблиц",
+      "then": "Запрет по проверенному privilege/constraint; lawful commands проходят",
+      "counterexample": "Fixture суперпользователь считается runtimeproof"
+    },
+    {
+      "id": "A49",
+      "requirement": "MW-R40",
+      "name": "Golden end-to-end",
+      "given": "Upload→find→edit→syncconflict→resolve→export→newtarget",
+      "then": "Штатные binary/worker/browser; no admin data seeding except installbootstrap",
+      "counterexample": "Фикстура напрямую вставила outcome"
+    },
+    {
+      "id": "A50",
+      "requirement": "MW-R41",
+      "name": "Contract parity",
+      "given": "ServedOpenAPI/typedclient/actualJSON сверяются на каждый newroute",
+      "then": "Все fields/statuses одинаковы;старый metadata-контракт не изменён",
+      "counterexample": "Проверить только статический файл schemas/openapi-v1.json"
+    },
+    {
+      "id": "A51",
+      "requirement": "MW-R42",
+      "name": "Docs tests",
+      "given": "В type doc compile_fail, в CI alltargets отдельным шагом",
+      "then": "Отдельный --doc реально run; запущенные scripts существуют",
+      "counterexample": "Засчитать alltargetsкакdoctests"
+    },
+    {
+      "id": "A52",
+      "requirement": "MW-R43",
+      "name": "Readiness",
+      "given": "Canonical sourceapplied, generation notready",
+      "then": "Показывается pending/blocked и typedretrievalerror",
+      "counterexample": "Считать imported=searchready"
+    },
+    {
+      "id": "A53",
+      "requirement": "MW-R44",
+      "name": "No log leak",
+      "given": "Invalidsecret-containing document и deniedhistory operation",
+      "then": "Logs содержат safe IDs/code, не document/absolutepath/key",
+      "counterexample": "Печатать requestbody или SQLbinds"
+    },
+    {
+      "id": "A54",
+      "requirement": "MW-R45",
+      "name": "Release claim",
+      "given": "Только unit/typecheckпрогон без Postgres/browser",
+      "then": "Block releaseclaim, record notrun; docscheck не productqualification",
+      "counterexample": "Green syntax=resultcomplete"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T00.1",
+      "title": "Установить свежую архитектурную и файловую границу",
+      "package": "MW-00",
+      "plan": "plans/00-preflight.md",
+      "test_command": "git status --porcelain=v1 -z --untracked-files=all\ngit rev-parse HEAD\ngit diff 6f6102536e9a535b7086db14573bf45fe750ad71 --stat"
+    },
+    {
+      "id": "T00.2",
+      "title": "Установить честный verification entrypoint",
+      "package": "MW-00",
+      "plan": "plans/00-preflight.md",
+      "test_command": "cargo test --workspace --doc --all-features --locked\nnpm --prefix apps/console run typecheck"
+    },
+    {
+      "id": "T01.1",
+      "title": "Единое содержательное чтение с полномочиями",
+      "package": "MW-01",
+      "plan": "plans/01-memory-read-context.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_read_contract --locked\ncargo test -p vestrace-cli --test memory_read_wiring --locked"
+    },
+    {
+      "id": "T01.2",
+      "title": "Browse и history без несогласованных страниц",
+      "package": "MW-01",
+      "plan": "plans/01-memory-read-context.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_read_contract --locked\ncargo test -p vestrace-http --test memory_workspace_api --locked"
+    },
+    {
+      "id": "T01.3",
+      "title": "Полезный context и честный учёт размера",
+      "package": "MW-01",
+      "plan": "plans/01-memory-read-context.md",
+      "test_command": "cargo test -p vestrace-application --test context_delivery --locked\ncargo test -p vestrace-http --test memory_workspace_api --locked"
+    },
+    {
+      "id": "T02.1",
+      "title": "Единый transaction participant для memory mutation",
+      "package": "MW-02",
+      "plan": "plans/02-atomic-corrections.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_mutation_atomicity --locked"
+    },
+    {
+      "id": "T02.2",
+      "title": "Устойчивый replay и конфликт разных намерений",
+      "package": "MW-02",
+      "plan": "plans/02-atomic-corrections.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_mutation_replay --locked -- --test-threads=1"
+    },
+    {
+      "id": "T02.3",
+      "title": "Correction/restore и legacy-adapter closure",
+      "package": "MW-02",
+      "plan": "plans/02-atomic-corrections.md",
+      "test_command": "cargo test -p vestrace-http --test memory_correction_api --locked\ncargo test -p vestrace-infrastructure --test memory_classification --locked"
+    },
+    {
+      "id": "T03.1",
+      "title": "Типизированный клиент и маршруты библиотеки",
+      "package": "MW-03",
+      "plan": "plans/03-console.md",
+      "test_command": "npm --prefix apps/console run typecheck\nnpm --prefix apps/console run test:memory"
+    },
+    {
+      "id": "T03.2",
+      "title": "Редактор и источник конфликтующего черновика",
+      "package": "MW-03",
+      "plan": "plans/03-console.md",
+      "test_command": "npm --prefix apps/console run test:memory\nnpm --prefix apps/console run typecheck"
+    },
+    {
+      "id": "T03.3",
+      "title": "Реальный browser gate и безопасное отображение",
+      "package": "MW-03",
+      "plan": "plans/03-console.md",
+      "test_command": "npm --prefix apps/console run test:memory\nnpm --prefix apps/console run test:e2e:memory\nnpm --prefix apps/console run build"
+    },
+    {
+      "id": "T04.1",
+      "title": "Канонические источники и whole-document binding",
+      "package": "MW-04",
+      "plan": "plans/04-import.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test source_import_contract --locked"
+    },
+    {
+      "id": "T04.2",
+      "title": "Защищённый snapshot и durable preview",
+      "package": "MW-04",
+      "plan": "plans/04-import.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test source_payload_lifecycle --locked -- --test-threads=1\ncargo test -p vestrace-http --test source_import_api --locked"
+    },
+    {
+      "id": "T04.3",
+      "title": "Локальный scanner и bounded parser",
+      "package": "MW-04",
+      "plan": "plans/04-import.md",
+      "test_command": "cargo test -p vestrace-cli --test source_scanner --locked"
+    },
+    {
+      "id": "T04.4",
+      "title": "Штатный apply handler и интерфейс импорта",
+      "package": "MW-04",
+      "plan": "plans/04-import.md",
+      "test_command": "cargo test -p vestrace-cli --test source_import_worker --locked -- --test-threads=1\ncargo test -p vestrace-infrastructure --test source_import_contract --locked"
+    },
+    {
+      "id": "T05.1",
+      "title": "Чистая классификация sync, rename и Missing",
+      "package": "MW-05",
+      "plan": "plans/05-sync.md",
+      "test_command": "cargo test -p vestrace-domain --test source_sync --locked"
+    },
+    {
+      "id": "T05.2",
+      "title": "Конфликт B/I/M и явное разрешение",
+      "package": "MW-05",
+      "plan": "plans/05-sync.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test source_sync_races --locked -- --test-threads=1\nnpm --prefix apps/console run test:e2e:memory"
+    },
+    {
+      "id": "T05.3",
+      "title": "Две стороны cancel/apply и сериализация коллекции",
+      "package": "MW-05",
+      "plan": "plans/05-sync.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test source_sync_races --locked -- --test-threads=1"
+    },
+    {
+      "id": "T06.1",
+      "title": "Защищённый export snapshot и скачивание",
+      "package": "MW-06",
+      "plan": "plans/06-portability.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_export_authority --locked -- --test-threads=1"
+    },
+    {
+      "id": "T06.2",
+      "title": "Portable parser, mappings и повторяемая linking фаза",
+      "package": "MW-06",
+      "plan": "plans/06-portability.md",
+      "test_command": "cargo test -p vestrace-application --test portable_contract --locked\ncargo test -p vestrace-cli --test memory_portability --locked -- --test-threads=1"
+    },
+    {
+      "id": "T06.3",
+      "title": "UI/CLI переносимости и human-readable Markdown",
+      "package": "MW-06",
+      "plan": "plans/06-portability.md",
+      "test_command": "cargo test -p vestrace-cli --test memory_portability --locked\nnpm --prefix apps/console run test:e2e:memory"
+    },
+    {
+      "id": "T07.1",
+      "title": "Fresh и populated-upgrade authority квалификация",
+      "package": "MW-07",
+      "plan": "plans/07-qualification.md",
+      "test_command": "cargo test -p vestrace-infrastructure --test memory_workspace_upgrade --locked -- --test-threads=1"
+    },
+    {
+      "id": "T07.2",
+      "title": "Полный пользовательский цикл и final review",
+      "package": "MW-07",
+      "plan": "plans/07-qualification.md",
+      "test_command": "bash scripts/memory-workspace-acceptance.sh\ncargo test --workspace --doc --all-features --locked\nnpm --prefix apps/console run test:e2e:memory"
+    }
+  ]
+}

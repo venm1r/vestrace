@@ -25,6 +25,14 @@ This directory contains the frozen v0.2 target architecture plus explicitly acce
 
 Post-v0.2 extensions MUST NOT be interpreted as retroactively changing v0.2 implementation availability, qualification claims, or the frozen 36-PR v0.2→v1.0 transition package unless a later transition document explicitly amends that package.
 
+## Proposed implementation extensions (not normative amendments)
+
+- [Memory Workspace](../implementation/memory-workspace/README.md) — source-pinned implementation design for Memory/Context API, Console editing and source import/sync/export; baseline `6f6102536e9a535b7086db14573bf45fe750ad71`.
+- [Integration and precedence](../implementation/memory-workspace/12-integration.md) — correspondence with the frozen architecture, reused authorities, release-program boundary and unresolved implementation gates.
+- [MW-00–MW-07 plans](../implementation/memory-workspace/plans/README.md) — proposed tasks and future acceptance, not evidence of available functionality.
+
+This registration does not mark MW-D01–MW-D12 as Accepted ADRs and does not change any frozen normative requirement, protocol lock, migration, or P01–P12 gate. The design's MUST clauses govern the proposed extension only after the relevant design decisions and execution scope are approved. In a conflict, the existing normative hierarchy wins; the package must be revised rather than silently weakening it. In particular, a byte-bounded response must not claim the hard-token guarantees of the normative ContextPack.
+
 ## Legacy files in this directory
 
 The pre-v0.2 `r1-*` specifications are historical implementation/design artifacts, not part of the normative v0.2 set. See [LEGACY.md](LEGACY.md).
