@@ -854,6 +854,37 @@ impl ProviderDispatchRepository for PgProviderDispatchRepository {
         Ok(())
     }
 
+    async fn lock_embedding_result_completion_authority_in(
+        &self,
+        context: &vestrace_application::RequestContext,
+        unit_of_work: &mut dyn vestrace_application::UnitOfWork,
+        authority: &ProviderDispatchAuthority,
+        job_id: vestrace_domain::EmbeddingJobId,
+    ) -> Result<(), ApplicationError> {
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT vestrace_lock_embedding_result_completion_authority($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(job_id.as_uuid())
+        .bind(authority.effect_id.as_uuid())
+        .bind(authority.connection_id.as_uuid())
+        .bind(authority.connection_revision_id.as_uuid())
+        .bind(authority.dispatch_transition_id.as_uuid())
+        .bind(authority.concurrency_lease_id)
+        .fetch_one(postgres_transaction(unit_of_work)?.connection())
+        .await
+        .map_err(map_completion_error)
+        .and_then(|locked| {
+            if locked == job_id.as_uuid() {
+                Ok(())
+            } else {
+                Err(ApplicationError::Conflict(
+                    "EMBEDDING_RESULT_DISPATCH_REFUSED".to_owned(),
+                ))
+            }
+        })
+    }
+
     async fn lock_provider_result_publication_authority_in(
         &self,
         context: &vestrace_application::RequestContext,
@@ -1037,6 +1068,44 @@ impl ProviderDispatchRepository for PgProviderDispatchRepository {
         .map_err(map_embedding_job_recovery_error)?;
         if row.workspace_id != context.workspace_id.as_uuid() || row.job_id != job_id.as_uuid() {
             return Err(embedding_job_recovery_refused());
+        }
+
+        if row.state == "cancelled" || row.state == "failed_definite" {
+            let has_matching_terminal_receipt: bool = sqlx::query_scalar(
+                "SELECT EXISTS( \
+                   SELECT 1 \
+                     FROM embedding_job_termination_receipts AS receipt \
+                     JOIN embedding_jobs AS job \
+                       ON job.workspace_id=receipt.workspace_id \
+                      AND job.id=receipt.job_id \
+                    WHERE receipt.workspace_id=$1 AND receipt.job_id=$2 \
+                      AND receipt.terminal_state=$3 \
+                      AND receipt.external_effect_id=job.external_effect_id \
+                      AND receipt.terminal_version=job.version)",
+            )
+            .bind(context.workspace_id.as_uuid())
+            .bind(job_id.as_uuid())
+            .bind(&row.state)
+            .fetch_one(transaction.connection())
+            .await
+            .map_err(map_embedding_job_recovery_error)?;
+            let has_exact_terminal_evidence = row.phase == row.state
+                && row.dispatch_transition_id.is_none()
+                && !row.has_receipt
+                && !row.has_result_preparation;
+            let outcome = match row.state.as_str() {
+                "cancelled" if has_exact_terminal_evidence && has_matching_terminal_receipt => {
+                    EmbeddingJobAttemptRecovery::Cancelled
+                }
+                "failed_definite"
+                    if has_exact_terminal_evidence && has_matching_terminal_receipt =>
+                {
+                    EmbeddingJobAttemptRecovery::FailedDefinite
+                }
+                _ => return Err(embedding_job_recovery_refused()),
+            };
+            permit.commit().await?;
+            return Ok(outcome);
         }
 
         // Every arm states the whole evidence tuple it expects, not just the

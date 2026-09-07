@@ -13,6 +13,8 @@ pub mod credential_guard;
 pub mod credential_intent;
 pub mod embedding_data_policy_decision_repository;
 pub mod embedding_job_repository;
+pub mod embedding_key_repository;
+pub mod embedding_result_repository;
 pub mod embedding_store;
 pub mod embedding_transition_repository;
 pub mod erasure;
@@ -85,6 +87,8 @@ pub use credential_guard::PgCredentialGuardRepository;
 pub use credential_intent::PgCredentialIntentRepository;
 pub use embedding_data_policy_decision_repository::PgEmbeddingDataPolicyDecisionRepository;
 pub use embedding_job_repository::PgEmbeddingJobRepository;
+pub use embedding_key_repository::PgEmbeddingOutputKeyRepository;
+pub use embedding_result_repository::PgEmbeddingResultRepository;
 pub use embedding_store::PgEmbeddingStore;
 pub use embedding_transition_repository::PgEmbeddingTransitionRepository;
 pub use erasure::PgMaterialErasureRepository;
@@ -161,6 +165,7 @@ pub struct GovernedProviderRuntime {
     dispatch: vestrace_application::SharedProviderDispatchRepository,
     results: std::sync::Arc<provider_result_repository::PgProviderResultRepository>,
     embedding_jobs: vestrace_application::SharedEmbeddingJobRepository,
+    embedding_termination: std::sync::Arc<vestrace_application::EmbeddingJobTerminationService>,
     embedding_transitions: vestrace_application::SharedEmbeddingTransitionRepository,
 }
 
@@ -207,7 +212,7 @@ impl GovernedProviderRuntime {
                 Arc::new(pool::PgGovernedMutationRepository::new(store.clone())),
                 Arc::new(
                     vestrace_application::ConfiguredProviderDispatchPolicyEvaluator::new(
-                        policy,
+                        policy.clone(),
                         data_policy,
                     ),
                 ),
@@ -216,6 +221,11 @@ impl GovernedProviderRuntime {
         let embedding_jobs: vestrace_application::SharedEmbeddingJobRepository = Arc::new(
             embedding_job_repository::PgEmbeddingJobRepository::new(store.clone()),
         );
+        let embedding_termination =
+            Arc::new(vestrace_application::EmbeddingJobTerminationService::new(
+                embedding_jobs.clone(),
+                policy,
+            ));
         let embedding_transitions: vestrace_application::SharedEmbeddingTransitionRepository =
             Arc::new(
                 embedding_transition_repository::PgEmbeddingTransitionRepository::new(
@@ -240,6 +250,7 @@ impl GovernedProviderRuntime {
             dispatch,
             results,
             embedding_jobs,
+            embedding_termination,
             embedding_transitions,
         }
     }
@@ -259,6 +270,14 @@ impl GovernedProviderRuntime {
     /// method is shaped to prevent.
     pub fn embedding_jobs(&self) -> vestrace_application::SharedEmbeddingJobRepository {
         self.embedding_jobs.clone()
+    }
+
+    /// The configured-policy authority for a cancellation that is still known
+    /// to be before provider dispatch.
+    pub fn embedding_termination(
+        &self,
+    ) -> std::sync::Arc<vestrace_application::EmbeddingJobTerminationService> {
+        self.embedding_termination.clone()
     }
 
     /// The one authority that creates immutable transition versions.

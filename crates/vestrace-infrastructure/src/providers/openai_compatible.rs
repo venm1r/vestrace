@@ -14,9 +14,10 @@ use vestrace_application::{
     ChatSseEvent, ConnectionAuth, ConnectionKind, EffectiveChatCompletionsRequest,
     EffectiveChatEvidence, EffectiveChatFinishReason, EffectiveChatResult,
     EffectiveEmbeddingsRequest, EffectiveModelRequest, EffectiveModelResponse, EmbeddingsRequest,
-    EmbeddingsResponse, GenerationRequest, GenerationResponse, MAX_EFFECTIVE_MATERIAL_BYTES,
-    ModelsListRequest, ModelsListResponse, ProviderEgress, ProviderError, ProviderResponseError,
-    ProviderUsage, Q1ChatMessage, Q1ChatProbeRequest, Q1ChatProbeResult, Q1EmbeddingUsage,
+    EmbeddingsResponse, GenerationRequest, GenerationResponse, GovernedEmbeddingVector,
+    GovernedEmbeddingsResponse, MAX_EFFECTIVE_MATERIAL_BYTES, ModelsListRequest,
+    ModelsListResponse, ProviderEgress, ProviderError, ProviderResponseError, ProviderUsage,
+    Q1ChatMessage, Q1ChatProbeRequest, Q1ChatProbeResult, Q1EmbeddingUsage,
     Q1EmbeddingsProbeRequest, Q1EmbeddingsProbeResult, Q1ModelsListProbeResult, Q1ProbeFailure,
     Q1ProbeRequest, Q1ProbeResponse, Q1ResponseFormat, Q1ToolChoice, Q1ToolSet,
     TextGenerationProvider, run::GovernedModelAdapter,
@@ -79,6 +80,91 @@ struct EffectiveEmbeddingsWireRequest<'a> {
     model: &'a str,
     input: Vec<&'a str>,
     encoding_format: &'static str,
+}
+
+#[derive(serde::Deserialize)]
+struct GovernedEmbeddingsWireResponse {
+    model: String,
+    data: Vec<GovernedEmbeddingWireVector>,
+}
+
+struct GovernedEmbeddingWireVector {
+    index: usize,
+    embedding: ZeroizingEmbeddingWireComponents,
+}
+
+#[derive(serde::Deserialize)]
+struct GovernedEmbeddingWireVectorWire {
+    index: usize,
+    embedding: ZeroizingEmbeddingWireComponents,
+}
+
+impl<'de> serde::Deserialize<'de> for GovernedEmbeddingWireVector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = GovernedEmbeddingWireVectorWire::deserialize(deserializer)?;
+        Ok(Self {
+            index: wire.index,
+            embedding: wire.embedding,
+        })
+    }
+}
+
+/// Owns a provider vector until it crosses into `GovernedEmbeddingVector`.
+///
+/// Serde can successfully construct an early array element and then reject a
+/// later one.  An ordinary `Vec<f32>` in that early element would be freed
+/// without clearing it.  This wrapper closes that error path as well as the
+/// normal success transfer.  It intentionally has no `Clone`, `Debug`, or
+/// serialization implementation.
+struct ZeroizingEmbeddingWireComponents {
+    components: Vec<f32>,
+}
+
+impl<'de> serde::Deserialize<'de> for ZeroizingEmbeddingWireComponents {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::<f32>::deserialize(deserializer).map(|components| Self { components })
+    }
+}
+
+impl ZeroizingEmbeddingWireComponents {
+    fn into_components(mut self) -> Vec<f32> {
+        std::mem::take(&mut self.components)
+    }
+}
+
+impl Drop for ZeroizingEmbeddingWireComponents {
+    fn drop(&mut self) {
+        // Clear in place before Vec drops its allocation.  `Vec::zeroize()`
+        // also resets the length, which is safe but prevents the narrowly
+        // scoped test observer from proving the bytes were cleared first.
+        for component in &mut self.components {
+            component.zeroize();
+        }
+        #[cfg(test)]
+        observe_governed_embedding_wire_zeroization(&self.components);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static GOVERNED_EMBEDDING_WIRE_ZEROIZATION: std::cell::RefCell<Option<Vec<Vec<f32>>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn observe_governed_embedding_wire_zeroization(components: &[f32]) {
+    GOVERNED_EMBEDDING_WIRE_ZEROIZATION.with(|observed| {
+        if let Some(observed) = observed.borrow_mut().as_mut() {
+            observed.push(components.to_vec());
+        }
+    });
 }
 
 #[derive(serde::Serialize)]
@@ -1255,7 +1341,7 @@ impl OpenAiCompatibleClient {
     async fn execute_effective_embeddings(
         &self,
         request: EffectiveEmbeddingsRequest,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    ) -> Result<GovernedEmbeddingsResponse, ProviderError> {
         let http_request = self.request(Method::POST, "embeddings")?;
         self.execute_effective_embeddings_with_request(request, http_request)
             .await
@@ -1265,14 +1351,37 @@ impl OpenAiCompatibleClient {
         &self,
         request: EffectiveEmbeddingsRequest,
         http_request: RequestBuilder,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    ) -> Result<GovernedEmbeddingsResponse, ProviderError> {
+        let expected_model = request.model().to_owned();
+        let expected_outputs = request.inputs().count();
         let wire = EffectiveEmbeddingsWireRequest {
             model: request.model(),
             input: request.inputs().collect(),
             encoding_format: "float",
         };
         let http_request = http_request.json(&wire);
-        self.execute_json(http_request).await
+        let response = http_request.send().await.map_err(map_request_error)?;
+        self.peer_observer
+            .validate(&self.accepted_peers, response.remote_addr())?;
+        let status = response.status();
+        let correlation_id = allowlisted_correlation_id(&response);
+        let body = read_zeroizing_bounded_body(
+            response,
+            self.chat_bounds.nonstream_bytes,
+            self.buffer_metadata,
+            DebugGovernedBufferKind::JsonBody,
+        )
+        .await?;
+        if !status.is_success() {
+            let safe = ProviderResponseError {
+                status: status.as_u16(),
+                code: None,
+                error_type: None,
+                correlation_id,
+            };
+            return Err(map_safe_status(status, &safe));
+        }
+        parse_governed_embeddings(body.as_slice(), &expected_model, expected_outputs)
     }
 
     pub fn safe_error_for_status(&self, status: u16) -> ProviderResponseError {
@@ -1927,6 +2036,27 @@ async fn read_zeroizing_bounded_body(
 
 fn invalid_governed_json() -> ProviderError {
     ProviderError::InvalidResponse("provider returned invalid governed JSON".into())
+}
+
+fn parse_governed_embeddings(
+    body: &[u8],
+    expected_model: &str,
+    expected_outputs: usize,
+) -> Result<GovernedEmbeddingsResponse, ProviderError> {
+    let response: GovernedEmbeddingsWireResponse = serde_json::from_slice(body).map_err(|_| {
+        ProviderError::InvalidResponse("provider returned invalid embeddings JSON".into())
+    })?;
+    let vectors = response
+        .data
+        .into_iter()
+        .map(|vector| {
+            GovernedEmbeddingVector::from_provider_components(
+                vector.index,
+                vector.embedding.into_components(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    GovernedEmbeddingsResponse::new(expected_model, response.model, vectors, expected_outputs)
 }
 
 const Q1_MAX_MODEL_ID_BYTES: usize = 256;
@@ -3399,6 +3529,54 @@ mod tests {
 
     use super::*;
     use vestrace_domain::DataDestination;
+
+    #[test]
+    fn governed_embedding_response_requires_exact_model_count_order_and_finite_components() {
+        let accepted = parse_governed_embeddings(
+            br#"{"model":"governed-model","data":[{"index":0,"embedding":[1.0,0.0]},{"index":1,"embedding":[-1.0,2.0]}]}"#,
+            "governed-model",
+            2,
+        )
+        .unwrap();
+        assert_eq!(accepted.model(), "governed-model");
+        assert_eq!(accepted.vectors()[1].components(), &[-1.0, 2.0]);
+
+        for invalid in [
+            br#"{"model":"other-model","data":[{"index":0,"embedding":[1.0]},{"index":1,"embedding":[2.0]}]}"#.as_slice(),
+            br#"{"model":"governed-model","data":[{"index":1,"embedding":[1.0]},{"index":0,"embedding":[2.0]}]}"#.as_slice(),
+            br#"{"model":"governed-model","data":[{"index":0,"embedding":[1.0]}]}"#.as_slice(),
+            br#"{"model":"governed-model","data":[{"index":0,"embedding":[1.0]},{"index":0,"embedding":[2.0]}]}"#.as_slice(),
+        ] {
+            assert!(parse_governed_embeddings(invalid, "governed-model", 2).is_err());
+        }
+        assert!(GovernedEmbeddingVector::new(0, Zeroizing::new(vec![f32::INFINITY])).is_err());
+    }
+
+    #[test]
+    fn malformed_later_embedding_entry_zeroizes_an_earlier_wire_vector_before_drop() {
+        GOVERNED_EMBEDDING_WIRE_ZEROIZATION.with(|observed| {
+            assert!(
+                observed.borrow().is_none(),
+                "the thread-local observer leaked"
+            );
+            *observed.borrow_mut() = Some(Vec::new());
+        });
+
+        let result = parse_governed_embeddings(
+            br#"{"model":"governed-model","data":[{"index":0,"embedding":[7.25,-3.5]},{"index":"malformed","embedding":[1.0]}]}"#,
+            "governed-model",
+            2,
+        );
+        assert!(result.is_err());
+
+        let observed = GOVERNED_EMBEDDING_WIRE_ZEROIZATION.with(|observed| {
+            observed
+                .borrow_mut()
+                .take()
+                .expect("the observer was armed for this parser call")
+        });
+        assert_eq!(observed, vec![vec![0.0, 0.0]]);
+    }
 
     #[test]
     fn mixed_public_and_forbidden_remote_addresses_are_refused() {

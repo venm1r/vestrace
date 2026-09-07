@@ -6,10 +6,12 @@ use sqlx::{
 };
 use uuid::Uuid;
 
-const P04_GUARDED_TABLES: [&str; 12] = [
+const P04_GUARDED_TABLES: [&str; 14] = [
     "embedding_space_registrations",
     "embedding_corpus_generations",
     "embedding_jobs",
+    "embedding_job_material_intents",
+    "embedding_job_termination_receipts",
     "embedding_transitions",
     "embedding_transition_plans",
     "embedding_transition_plan_recipes",
@@ -212,5 +214,40 @@ async fn every_p04_guarded_table_refuses_runtime_insert_update_and_delete(pool: 
     for table in P04_GUARDED_TABLES {
         assert_runtime_dml_is_refused(&runtime, &pool, table).await;
     }
+    runtime.close().await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn runtime_cannot_execute_embedding_pre_dispatch_gate_directly(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let gate = "public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)";
+    let executable: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege('vestrace', $1::regprocedure, 'EXECUTE')",
+    )
+    .bind(gate)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !executable,
+        "the routing-only embedding pre-dispatch gate must not be a runtime command"
+    );
+
+    let refusal =
+        sqlx::query("SELECT public.vestrace_lock_embedding_job_pre_dispatch_gate($1,$2,$3)")
+            .bind(Uuid::now_v7())
+            .bind(Uuid::now_v7())
+            .bind(false)
+            .execute(&runtime)
+            .await
+            .expect_err("the runtime role must not call the embedding pre-dispatch gate directly");
+    assert_eq!(
+        refusal
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("42501"),
+        "direct embedding pre-dispatch gate execution must fail before argument validation: {refusal}"
+    );
     runtime.close().await;
 }

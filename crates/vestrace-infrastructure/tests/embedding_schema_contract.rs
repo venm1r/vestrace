@@ -9,22 +9,93 @@
 //! every existing test. It passed against this package's two new functions for
 //! that reason, which is not the same as having checked them.
 
-use std::collections::BTreeSet;
-use std::str::FromStr;
+use std::{collections::BTreeSet, fs, str::FromStr, time::Duration};
 
 use sqlx::{
     PgPool, Row,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
+use tempfile::TempDir;
 use uuid::Uuid;
+use vestrace_application::{MaterialKeyVault, VaultError};
 use vestrace_domain::embedding::{
     BarrierState, CarryHeaderState, CarryMappingState, EmbeddingJobKind, EmbeddingJobState,
 };
+use vestrace_domain::trust::{KeyPurpose, KeyReference, SecretResolutionRequest};
+use vestrace_domain::{IntentNonce, MaterialKeyId};
+use vestrace_infrastructure::crypto::{HostMaterialKeyVault, MOUNTED_SECRET_STORE_PROVIDER};
 
-const NEW_TABLES: [&str; 12] = [
+mod common;
+
+const VAULT_BOOTSTRAP_KEY_ID: &str = "embedding-schema-material-vault-bootstrap";
+const VAULT_BOOTSTRAP_SCOPE: &str = "embedding-schema-material-vault-bootstrap";
+const VAULT_BOOTSTRAP_ALGORITHM: &str = "aes-256-gcm-v1";
+
+/// Keeps an actual host vault and its mounted bootstrap authority alive for the
+/// output-abandonment fixture. The vault has no PostgreSQL dependency.
+struct VaultFixture {
+    bootstrap_root: TempDir,
+    vault_root: TempDir,
+    bootstrap_reference: KeyReference,
+    bootstrap_request: SecretResolutionRequest,
+}
+
+impl VaultFixture {
+    fn new() -> Self {
+        let bootstrap_root = TempDir::new().expect("bootstrap mount");
+        let bootstrap_key = bootstrap_root.path().join(VAULT_BOOTSTRAP_KEY_ID);
+        let bootstrap_version = bootstrap_key.join("v1");
+        fs::create_dir_all(&bootstrap_version).expect("bootstrap key directory");
+        fs::write(bootstrap_key.join("scope"), VAULT_BOOTSTRAP_SCOPE).expect("bootstrap scope");
+        fs::write(bootstrap_key.join("purpose"), "storage").expect("bootstrap purpose");
+        fs::write(bootstrap_key.join("algorithm"), VAULT_BOOTSTRAP_ALGORITHM)
+            .expect("bootstrap algorithm");
+        fs::write(bootstrap_version.join("state"), "active").expect("bootstrap state");
+        fs::write(bootstrap_version.join("private.pkcs8"), [0x5A; 32])
+            .expect("bootstrap key material");
+        Self {
+            vault_root: TempDir::new().expect("material vault"),
+            bootstrap_reference: KeyReference::new(
+                MOUNTED_SECRET_STORE_PROVIDER,
+                VAULT_BOOTSTRAP_KEY_ID,
+                "v1",
+                KeyPurpose::Storage,
+                VAULT_BOOTSTRAP_SCOPE,
+                VAULT_BOOTSTRAP_ALGORITHM,
+            )
+            .expect("bootstrap reference"),
+            bootstrap_request: SecretResolutionRequest::new(
+                vestrace_domain::WorkspaceId::new(),
+                VAULT_BOOTSTRAP_SCOPE,
+                "test://embedding-schema-material-vault",
+            ),
+            bootstrap_root,
+        }
+    }
+
+    fn vault(&self) -> HostMaterialKeyVault {
+        HostMaterialKeyVault::new(
+            self.vault_root.path(),
+            self.bootstrap_root.path(),
+            self.bootstrap_reference.clone(),
+            self.bootstrap_request.clone(),
+        )
+        .expect("separate host vault")
+    }
+}
+
+const NEW_TABLES: [&str; 20] = [
     "embedding_corpus_generations",
     "embedding_corpus_generation_members",
     "embedding_jobs",
+    "embedding_job_material_intents",
+    "embedding_job_termination_receipts",
+    "embedding_space_corpus_states",
+    "embedding_index_generation_guards",
+    "embedding_job_result_preparations",
+    "embedding_projection_entries",
+    "embedding_job_result_prepared_attachments",
+    "embedding_projection_source_dependencies",
     "embedding_space_registrations",
     "embedding_transition_plan_recipes",
     "embedding_transition_plans",
@@ -210,7 +281,8 @@ fn array_regions<'a>(bootstrap: &'a str, declaration: &str) -> Vec<&'a str> {
     regions
 }
 
-/// The three new tables carry the same guard every P02 and P03 table carries.
+/// Every governed transition table carries the same owner, forced-RLS, and
+/// explicit-ACL posture as the earlier P02/P03 tables.
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
     for table in NEW_TABLES {
@@ -224,7 +296,9 @@ async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
         .bind(table)
         .fetch_one(&pool)
         .await
-        .unwrap_or_else(|error| panic!("{table} must exist after migration 0187: {error}"));
+        .unwrap_or_else(|error| {
+            panic!("{table} must exist after the guarded migration set: {error}")
+        });
         assert_eq!(
             row.get::<String, _>("owner"),
             "vestrace_guarded_owner",
@@ -242,6 +316,41 @@ async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
             row.get::<bool, _>("has_acl"),
             "{table} must retain an explicit ACL"
         );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn termination_tables_force_workspace_rls_before_row_constraints(pool: PgPool) {
+    let (active_workspace, active_principal) = workspace(&pool).await;
+    let (cross_workspace, _) = workspace(&pool).await;
+
+    for table in [
+        "embedding_job_material_intents",
+        "embedding_job_termination_receipts",
+    ] {
+        let mut transaction = scope(&pool, active_workspace, active_principal).await;
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        let refusal = sqlx::query(&format!(
+            "INSERT INTO public.{table}(workspace_id) VALUES($1)"
+        ))
+        .bind(cross_workspace)
+        .execute(&mut *transaction)
+        .await
+        .expect_err(
+            "forced workspace RLS must reject the crossed row before its other constraints",
+        );
+        assert_eq!(
+            refusal
+                .as_database_error()
+                .and_then(|database| database.code())
+                .as_deref(),
+            Some("42501"),
+            "{table} must reject a guarded-owner cross-workspace insert through RLS: {refusal}"
+        );
+        transaction.rollback().await.unwrap();
     }
 }
 
@@ -281,19 +390,21 @@ async fn the_job_state_check_matches_the_declared_enum(pool: PgPool) {
     );
 }
 
-async fn check_definition(pool: &PgPool, table: &str, marker: &str) -> String {
+async fn check_definition(pool: &PgPool, table: &str, constraint_name: &str) -> String {
     sqlx::query_scalar(
         "SELECT pg_get_constraintdef(constraint_.oid) \
            FROM pg_constraint AS constraint_ \
            JOIN pg_class AS class ON class.oid = constraint_.conrelid \
           WHERE class.relname = $1 AND constraint_.contype = 'c' \
-            AND pg_get_constraintdef(constraint_.oid) LIKE $2",
+            AND constraint_.conname = $2",
     )
     .bind(table)
-    .bind(format!("%{marker}%"))
+    .bind(constraint_name)
     .fetch_one(pool)
     .await
-    .unwrap_or_else(|error| panic!("{table} must carry its {marker} CHECK constraint: {error}"))
+    .unwrap_or_else(|error| {
+        panic!("{table} must carry CHECK constraint {constraint_name}: {error}")
+    })
 }
 
 fn assert_closed_check<T: Copy>(
@@ -319,14 +430,23 @@ fn assert_closed_check<T: Copy>(
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_barrier_state_check_matches_the_declared_enum(pool: PgPool) {
-    let definition = check_definition(&pool, "embedding_transition_barriers", "state").await;
+    let definition = check_definition(
+        &pool,
+        "embedding_transition_barriers",
+        "embedding_transition_barriers_state_check",
+    )
+    .await;
     assert_closed_check(&definition, &BarrierState::ALL, BarrierState::as_str);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_carry_header_state_check_matches_the_declared_enum(pool: PgPool) {
-    let definition =
-        check_definition(&pool, "embedding_transition_ambiguity_carries", "state").await;
+    let definition = check_definition(
+        &pool,
+        "embedding_transition_ambiguity_carries",
+        "embedding_transition_ambiguity_carries_state_check",
+    )
+    .await;
     assert_closed_check(
         &definition,
         &CarryHeaderState::ALL,
@@ -339,7 +459,7 @@ async fn the_carry_mapping_state_check_matches_the_declared_enum(pool: PgPool) {
     let definition = check_definition(
         &pool,
         "embedding_transition_ambiguity_carry_recipes",
-        "state",
+        "embedding_transition_ambiguity_carry_recipes_state_check",
     )
     .await;
     assert_closed_check(
@@ -569,5 +689,646 @@ async fn the_runtime_cannot_write_the_new_tables_directly(pool: PgPool) {
         );
     }
     let _ = workspace_id;
+    runtime.close().await;
+}
+
+async fn reserve_embedding_output(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace_id: Uuid,
+    job_id: Uuid,
+    intent_id: Uuid,
+    material_id: Uuid,
+    material_key_id: Uuid,
+    nonce: Uuid,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar("SELECT vestrace_reserve_embedding_job_output_intent($1,$2,$3,0,$4,$5,$6)")
+        .bind(intent_id)
+        .bind(workspace_id)
+        .bind(job_id)
+        .bind(material_id)
+        .bind(material_key_id)
+        .bind(nonce)
+        .fetch_one(&mut **transaction)
+        .await
+}
+
+async fn terminate_embedding_job(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace_id: Uuid,
+    principal_id: Uuid,
+    job_id: Uuid,
+    idempotency_key: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT * FROM vestrace_terminate_embedding_job_pre_dispatch( \
+         $1,$2,$3,$4,1,$5,'cancelled','cancellation_authorization',$6, \
+         'fixture-policy','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(principal_id)
+    .bind(job_id)
+    .bind(idempotency_key)
+    .bind(Uuid::now_v7())
+    .execute(&mut **transaction)
+    .await
+    .map(|_| ())
+}
+
+async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let blockers: Vec<i32> = sqlx::query_scalar("SELECT unnest(pg_blocking_pids($1))")
+                .bind(waiting_pid)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+            if blockers.contains(&blocker_pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("session never reached the required observed lock wait");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn embedding_output_membership_reservation_is_exact_and_replayable(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    let workspace_id = fixture.context.workspace_id.as_uuid();
+    let job_id = fixture.job_id.as_uuid();
+    let intent_id = Uuid::now_v7();
+    let material_id = Uuid::now_v7();
+    let material_key_id = Uuid::now_v7();
+    let nonce = Uuid::now_v7();
+
+    let mut first = scope(
+        &runtime,
+        workspace_id,
+        fixture.context.principal_id.as_uuid(),
+    )
+    .await;
+    assert_eq!(
+        reserve_embedding_output(
+            &mut first,
+            workspace_id,
+            job_id,
+            intent_id,
+            material_id,
+            material_key_id,
+            nonce,
+        )
+        .await
+        .unwrap(),
+        intent_id
+    );
+    first.commit().await.unwrap();
+
+    let mut observer = scope(
+        &runtime,
+        workspace_id,
+        fixture.context.principal_id.as_uuid(),
+    )
+    .await;
+    let persisted: (String, Uuid, i64, String) = sqlx::query_as(
+        "SELECT intent.owner_kind,intent.owner_id,membership.output_ordinal,intent.state \
+           FROM embedding_job_material_intents AS membership \
+           JOIN material_key_creation_intents AS intent \
+             ON intent.workspace_id=membership.workspace_id AND intent.id=membership.intent_id \
+          WHERE membership.workspace_id=$1 AND membership.job_id=$2",
+    )
+    .bind(workspace_id)
+    .bind(job_id)
+    .fetch_one(&mut *observer)
+    .await
+    .unwrap();
+    observer.commit().await.unwrap();
+    assert_eq!(
+        persisted,
+        (
+            "embedding_job_output".to_owned(),
+            job_id,
+            0,
+            "reserved".to_owned()
+        )
+    );
+
+    let mut replay = scope(
+        &runtime,
+        workspace_id,
+        fixture.context.principal_id.as_uuid(),
+    )
+    .await;
+    assert_eq!(
+        reserve_embedding_output(
+            &mut replay,
+            workspace_id,
+            job_id,
+            intent_id,
+            material_id,
+            material_key_id,
+            nonce,
+        )
+        .await
+        .unwrap(),
+        intent_id,
+        "an exact reservation replay must return the enrolled identity"
+    );
+    replay.commit().await.unwrap();
+
+    for (changed_material, changed_key, changed_nonce) in [
+        (Uuid::now_v7(), material_key_id, nonce),
+        (material_id, Uuid::now_v7(), nonce),
+        (material_id, material_key_id, Uuid::now_v7()),
+    ] {
+        let mut changed = scope(
+            &runtime,
+            workspace_id,
+            fixture.context.principal_id.as_uuid(),
+        )
+        .await;
+        let refusal = reserve_embedding_output(
+            &mut changed,
+            workspace_id,
+            job_id,
+            intent_id,
+            changed_material,
+            changed_key,
+            changed_nonce,
+        )
+        .await
+        .expect_err("a replay that changes the material tuple must not converge");
+        assert!(
+            refusal.as_database_error().is_some(),
+            "the guarded reservation must reject a changed replay structurally: {refusal}"
+        );
+        changed.rollback().await.unwrap();
+    }
+
+    let mut shared_gate = scope(&pool, workspace_id, fixture.context.principal_id.as_uuid()).await;
+    let shared_refusal =
+        sqlx::query("SELECT vestrace_lock_embedding_job_pre_dispatch_gate($1,$2,false)")
+            .bind(workspace_id)
+            .bind(fixture.external_effect_id)
+            .execute(&mut *shared_gate)
+            .await
+            .expect_err("an enrolled output job must not reach shared provider dispatch");
+    assert_eq!(
+        shared_refusal
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+    shared_gate.rollback().await.unwrap();
+
+    let mut direct = scope(
+        &runtime,
+        workspace_id,
+        fixture.context.principal_id.as_uuid(),
+    )
+    .await;
+    let direct_refusal = sqlx::query(
+        "INSERT INTO external_effect_lifecycle_transitions(\
+           effect_id,workspace_id,status,cause,cause_ref,recorded_at,dispatch_owner,dispatch_expires_at) \
+         VALUES($1,$2,'dispatching','dispatch_started',$3,NOW(),$4,NOW()+interval '5 minutes')",
+    )
+    .bind(fixture.external_effect_id)
+    .bind(workspace_id)
+    .bind(fixture.external_effect_id.to_string())
+    .bind(Uuid::now_v7())
+    .execute(&mut *direct)
+    .await
+    .expect_err("an enrolled output job must refuse the direct lifecycle dispatch writer");
+    assert_eq!(
+        direct_refusal
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+    direct.rollback().await.unwrap();
+    runtime.close().await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn embedding_output_membership_deferred_validator_rejects_orphans_and_mismatches(
+    pool: PgPool,
+) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    let workspace_id = fixture.context.workspace_id.as_uuid();
+    let principal_id = fixture.context.principal_id.as_uuid();
+    let job_id = fixture.job_id.as_uuid();
+
+    let mut orphan = scope(&runtime, workspace_id, principal_id).await;
+    sqlx::query_scalar::<_, ()>(
+        "SELECT vestrace_reserve_material_key_creation_intent($1,$2,$3,$4,$5,'embedding_job_output',$6,0)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(job_id)
+    .fetch_one(&mut *orphan)
+    .await
+    .unwrap();
+    let error = orphan
+        .commit()
+        .await
+        .expect_err("a canonical embedding output without membership must fail at commit");
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+
+    for (owner_kind, owner_id, member_ordinal) in [
+        ("other_owner", job_id, 0_i64),
+        ("embedding_job_output", Uuid::now_v7(), 0_i64),
+        ("embedding_job_output", job_id, 1_i64),
+    ] {
+        let intent_id = Uuid::now_v7();
+        let mut mismatch = scope(&pool, workspace_id, principal_id).await;
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *mismatch)
+            .await
+            .unwrap();
+        sqlx::query_scalar::<_, ()>(
+            "SELECT vestrace_reserve_material_key_creation_intent($1,$2,$3,$4,$5,$6,$7,0)",
+        )
+        .bind(intent_id)
+        .bind(workspace_id)
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(owner_kind)
+        .bind(owner_id)
+        .fetch_one(&mut *mismatch)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO embedding_job_material_intents(workspace_id,job_id,output_ordinal,intent_id) \
+             VALUES($1,$2,$3,$4)",
+        )
+        .bind(workspace_id)
+        .bind(job_id)
+        .bind(member_ordinal)
+        .bind(intent_id)
+        .execute(&mut *mismatch)
+        .await
+        .unwrap();
+        let error = mismatch
+            .commit()
+            .await
+            .expect_err("a mismatched membership must fail its deferred validator at commit");
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|database| database.code())
+                .as_deref(),
+            Some("23514"),
+            "owner={owner_kind}, ordinal={member_ordinal}"
+        );
+    }
+    runtime.close().await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn only_a_witnessed_abandoned_output_member_allows_pre_dispatch_termination(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    let workspace_id = fixture.context.workspace_id.as_uuid();
+    let principal_id = fixture.context.principal_id.as_uuid();
+    let job_id = fixture.job_id.as_uuid();
+    let intent_id = Uuid::now_v7();
+    let material_key_id = Uuid::now_v7();
+    let nonce = Uuid::now_v7();
+    let termination_receipt_id = Uuid::now_v7();
+    let termination_evidence_id = Uuid::now_v7();
+
+    let mut reserve = scope(&runtime, workspace_id, principal_id).await;
+    reserve_embedding_output(
+        &mut reserve,
+        workspace_id,
+        job_id,
+        intent_id,
+        Uuid::now_v7(),
+        material_key_id,
+        nonce,
+    )
+    .await
+    .unwrap();
+    reserve.commit().await.unwrap();
+
+    let mut active = scope(&runtime, workspace_id, principal_id).await;
+    let active_refusal = sqlx::query(
+        "SELECT * FROM vestrace_terminate_embedding_job_pre_dispatch( \
+         $1,$2,$3,$4,1,'active-member','cancelled','cancellation_authorization',$5, \
+         'fixture-policy','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(principal_id)
+    .bind(job_id)
+    .bind(Uuid::now_v7())
+    .execute(&mut *active)
+    .await
+    .expect_err("a reserved output member must block cancellation");
+    assert_eq!(
+        active_refusal
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+    active.rollback().await.unwrap();
+
+    // Commit the output-owned retirement authority before touching the
+    // independent host vault. The generic abandonment helper must no longer be
+    // a public bypass for an active embedding output.
+    let mut abandon = scope(&runtime, workspace_id, principal_id).await;
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_request_embedding_output_retirement( \
+         $1,$2,$3,$4,1,'witnessed-member','cancelled','cancellation_authorization',$5, \
+         'fixture-policy','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(termination_receipt_id)
+    .bind(workspace_id)
+    .bind(principal_id)
+    .bind(job_id)
+    .bind(termination_evidence_id)
+    .fetch_one(&mut *abandon)
+    .await
+    .unwrap();
+    abandon.commit().await.unwrap();
+
+    // The actual host-vault sequence is outside every database transaction.
+    // Reopening verifies durable erased state and exact-replay receipt stability.
+    let vault_fixture = VaultFixture::new();
+    let key_id = MaterialKeyId::from_uuid(material_key_id);
+    let intent_nonce = IntentNonce::from_uuid(nonce);
+    let vault = vault_fixture.vault();
+    vault
+        .create_if_absent(key_id, intent_nonce)
+        .expect("the host vault creates the exact reserved output key");
+    vault
+        .prepare_erasure(key_id)
+        .expect("the host vault records the erasure fence");
+    let erasure_receipt = vault
+        .erase(key_id)
+        .expect("the host vault performs the witnessed erase");
+    let reopened = vault_fixture.vault();
+    assert_eq!(
+        reopened
+            .erase(key_id)
+            .expect("an erased key replays its receipt"),
+        erasure_receipt,
+        "the host-vault witness must be stable after reopening"
+    );
+    assert!(matches!(
+        reopened.unwrap(key_id, &mut |_| panic!("an erased DEK must not be exposed")),
+        Err(VaultError::Erased)
+    ));
+
+    let mut record_witness = scope(&runtime, workspace_id, principal_id).await;
+    sqlx::query_scalar::<_, ()>("SELECT vestrace_record_embedding_output_key_retirement($1,$2,$3)")
+        .bind(workspace_id)
+        .bind(intent_id)
+        .bind(erasure_receipt.as_uuid())
+        .fetch_one(&mut *record_witness)
+        .await
+        .unwrap();
+    record_witness.commit().await.unwrap();
+
+    // The P02 receipt table is intentionally opaque to the runtime role. Use
+    // the independent owner observer only to prove the host-vault receipt was
+    // durably recorded; all guarded transitions above remain runtime-scoped.
+    let witness: Uuid = sqlx::query_scalar(
+        "SELECT erasure_receipt FROM material_key_creation_intent_erasure_receipts \
+          WHERE workspace_id=$1 AND intent_id=$2",
+    )
+    .bind(workspace_id)
+    .bind(intent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        witness,
+        erasure_receipt.as_uuid(),
+        "the durable witness must name this output intent exactly"
+    );
+
+    let mut terminate = scope(&runtime, workspace_id, principal_id).await;
+    sqlx::query(
+        "SELECT * FROM vestrace_terminate_embedding_job_pre_dispatch( \
+         $1,$2,$3,$4,1,'witnessed-member','cancelled','cancellation_authorization',$5, \
+         'fixture-policy','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(termination_receipt_id)
+    .bind(workspace_id)
+    .bind(principal_id)
+    .bind(job_id)
+    .bind(termination_evidence_id)
+    .execute(&mut *terminate)
+    .await
+    .expect("the exact output retirement receipt and abandoned intent must authorize termination");
+    terminate.commit().await.unwrap();
+
+    let mut state_observer = scope(&runtime, workspace_id, principal_id).await;
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(workspace_id)
+            .bind(job_id)
+            .fetch_one(&mut *state_observer)
+            .await
+            .unwrap();
+    state_observer.commit().await.unwrap();
+    assert_eq!(state, "cancelled");
+    runtime.close().await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn enrollment_and_termination_serialize_on_the_embedding_job_lock_chain(pool: PgPool) {
+    // Enrollment owns the canonical guards first. Cancellation must visibly
+    // wait, then inspect the committed active member and refuse.
+    let runtime = runtime_pool(&pool).await;
+    let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    let workspace_id = fixture.context.workspace_id.as_uuid();
+    let principal_id = fixture.context.principal_id.as_uuid();
+    let job_id = fixture.job_id.as_uuid();
+    let mut enrollment = scope(&runtime, workspace_id, principal_id).await;
+    let enrollment_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *enrollment)
+        .await
+        .unwrap();
+    reserve_embedding_output(
+        &mut enrollment,
+        workspace_id,
+        job_id,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    )
+    .await
+    .unwrap();
+
+    let cancellation_pool = runtime_pool(&pool).await;
+    let (cancellation_pid_sender, cancellation_pid_receiver) = tokio::sync::oneshot::channel();
+    let cancelling = tokio::spawn(async move {
+        let mut transaction = scope(&cancellation_pool, workspace_id, principal_id).await;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+        cancellation_pid_sender.send(pid).unwrap();
+        let outcome = terminate_embedding_job(
+            &mut transaction,
+            workspace_id,
+            principal_id,
+            job_id,
+            "enrollment-first-cancellation",
+        )
+        .await;
+        match outcome {
+            Ok(()) => {
+                transaction.commit().await?;
+                Ok(())
+            }
+            Err(error) => {
+                transaction.rollback().await.unwrap();
+                Err(error)
+            }
+        }
+    });
+    let cancellation_pid = cancellation_pid_receiver.await.unwrap();
+    wait_for_blocker(&pool, cancellation_pid, enrollment_pid).await;
+    enrollment.commit().await.unwrap();
+    let cancellation_error = tokio::time::timeout(Duration::from_secs(5), cancelling)
+        .await
+        .expect("cancellation task must complete after enrollment commits")
+        .expect("cancellation task must join")
+        .expect_err("committed enrollment must make cancellation refuse its active member");
+    assert_eq!(
+        cancellation_error
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+
+    let mut first_observer = scope(&runtime, workspace_id, principal_id).await;
+    let first_persisted: (String, i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT state FROM embedding_jobs WHERE workspace_id=$1 AND id=$2), \
+            (SELECT version FROM embedding_jobs WHERE workspace_id=$1 AND id=$2), \
+            (SELECT COUNT(*) FROM embedding_job_material_intents WHERE workspace_id=$1 AND job_id=$2), \
+            (SELECT COUNT(*) FROM embedding_job_termination_receipts WHERE workspace_id=$1 AND job_id=$2)",
+    )
+    .bind(workspace_id)
+    .bind(job_id)
+    .fetch_one(&mut *first_observer)
+    .await
+    .unwrap();
+    first_observer.commit().await.unwrap();
+    assert_eq!(
+        first_persisted,
+        ("requested".to_owned(), 1, 1, 0),
+        "enrollment-first ordering must persist only the requested job and its one active member"
+    );
+    runtime.close().await;
+
+    // Termination owns the same chain first. A concurrent enrollment visibly
+    // waits, then sees a persisted terminal job and leaves no output facts.
+    let runtime = runtime_pool(&pool).await;
+    let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    let workspace_id = fixture.context.workspace_id.as_uuid();
+    let principal_id = fixture.context.principal_id.as_uuid();
+    let job_id = fixture.job_id.as_uuid();
+    let mut cancellation = scope(&runtime, workspace_id, principal_id).await;
+    let cancellation_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *cancellation)
+        .await
+        .unwrap();
+    terminate_embedding_job(
+        &mut cancellation,
+        workspace_id,
+        principal_id,
+        job_id,
+        "termination-first-enrollment",
+    )
+    .await
+    .unwrap();
+
+    let enrollment_pool = runtime_pool(&pool).await;
+    let (enrollment_pid_sender, enrollment_pid_receiver) = tokio::sync::oneshot::channel();
+    let enroll = tokio::spawn(async move {
+        let mut transaction = scope(&enrollment_pool, workspace_id, principal_id).await;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+        enrollment_pid_sender.send(pid).unwrap();
+        let outcome = reserve_embedding_output(
+            &mut transaction,
+            workspace_id,
+            job_id,
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+        )
+        .await;
+        match outcome {
+            Ok(_) => {
+                transaction.commit().await?;
+                Ok(())
+            }
+            Err(error) => {
+                transaction.rollback().await.unwrap();
+                Err(error)
+            }
+        }
+    });
+    let enrollment_pid = enrollment_pid_receiver.await.unwrap();
+    wait_for_blocker(&pool, enrollment_pid, cancellation_pid).await;
+    cancellation.commit().await.unwrap();
+    let enrollment_error = tokio::time::timeout(Duration::from_secs(5), enroll)
+        .await
+        .expect("enrollment task must complete after cancellation commits")
+        .expect("enrollment task must join")
+        .expect_err("committed terminal cancellation must refuse enrollment");
+    assert_eq!(
+        enrollment_error
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+
+    let mut observer = scope(&runtime, workspace_id, principal_id).await;
+    let persisted: (i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT COUNT(*) FROM embedding_job_material_intents WHERE workspace_id=$1 AND job_id=$2), \
+            (SELECT COUNT(*) FROM material_key_creation_intents WHERE workspace_id=$1 \
+              AND owner_kind='embedding_job_output' AND owner_id=$2)",
+    )
+    .bind(workspace_id)
+    .bind(job_id)
+    .fetch_one(&mut *observer)
+    .await
+    .unwrap();
+    observer.commit().await.unwrap();
+    assert_eq!(
+        persisted,
+        (0, 0),
+        "a terminated job must leave no enrolled output membership or intent"
+    );
     runtime.close().await;
 }

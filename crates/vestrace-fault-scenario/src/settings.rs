@@ -11,6 +11,7 @@ pub enum Scenario {
     MaterialIntent,
     CredentialIntent,
     EmbeddingDispatch,
+    EmbeddingResultPreparation,
 }
 
 impl Scenario {
@@ -20,6 +21,7 @@ impl Scenario {
             "material_intent_crash" => Ok(Self::MaterialIntent),
             "credential_intent_crash" => Ok(Self::CredentialIntent),
             "embedding_dispatch_crash" => Ok(Self::EmbeddingDispatch),
+            "embedding_result_preparation_crash" => Ok(Self::EmbeddingResultPreparation),
             other => Err(format!("unknown scenario '{other}'")),
         }
     }
@@ -31,6 +33,7 @@ enum ScenarioPoint {
     Effect(EffectFaultPoint),
     Intent(EffectFaultPoint),
     Embedding(EffectFaultPoint),
+    EmbeddingResultPreparation,
 }
 
 /// What one invocation was asked to do, and whether it is allowed to.
@@ -104,6 +107,12 @@ impl ScenarioSettings {
             Scenario::EmbeddingDispatch => {
                 ScenarioPoint::Embedding(parse_embedding_dispatch_point(&requested)?)
             }
+            Scenario::EmbeddingResultPreparation => {
+                if requested != "after_result_prepared_before_return" {
+                    return Err(format!("unknown fault point '{requested}'"));
+                }
+                ScenarioPoint::EmbeddingResultPreparation
+            }
         };
 
         let url_file = url_file
@@ -149,6 +158,10 @@ impl ScenarioSettings {
                 self.scenario,
                 point.as_str()
             ),
+            ScenarioPoint::EmbeddingResultPreparation => panic!(
+                "point() is defined only for the external-effect scenario, but this \
+                 invocation is result preparation"
+            ),
         }
     }
 
@@ -156,7 +169,9 @@ impl ScenarioSettings {
     pub fn intent_point(&self) -> Option<EffectFaultPoint> {
         match self.point {
             ScenarioPoint::Intent(point) => Some(point),
-            ScenarioPoint::Effect(_) | ScenarioPoint::Embedding(_) => None,
+            ScenarioPoint::Effect(_)
+            | ScenarioPoint::Embedding(_)
+            | ScenarioPoint::EmbeddingResultPreparation => None,
         }
     }
 
@@ -165,6 +180,16 @@ impl ScenarioSettings {
         match self.point {
             ScenarioPoint::Embedding(point) => point,
             _ => panic!("embedding_dispatch_point() is defined only for the embedding scenario"),
+        }
+    }
+
+    /// The result-preparation scenario has one fixed point: immediately after
+    /// its atomic marker transaction commits and before the child returns.
+    pub fn embedding_result_preparation_point(&self) {
+        if !matches!(self.point, ScenarioPoint::EmbeddingResultPreparation) {
+            panic!(
+                "embedding_result_preparation_point() is defined only for the result-preparation scenario"
+            );
         }
     }
 
@@ -275,6 +300,23 @@ mod tests {
     fn an_intent_boundary_is_not_accepted_by_the_effect_scenario() {
         let error = settings_for(None, "after_reserved")
             .expect_err("an intent boundary must not name an effect boundary");
+        assert!(error.contains("unknown fault point"), "{error}");
+    }
+
+    #[test]
+    fn result_preparation_has_only_its_post_commit_abort_boundary() {
+        let settings = settings_for(
+            Some("embedding_result_preparation_crash"),
+            "after_result_prepared_before_return",
+        )
+        .unwrap();
+        assert_eq!(settings.scenario(), Scenario::EmbeddingResultPreparation);
+        settings.embedding_result_preparation_point();
+        let error = settings_for(
+            Some("embedding_result_preparation_crash"),
+            "after_dispatch_before_receipt",
+        )
+        .expect_err("the result scenario must not borrow dispatch fault points");
         assert!(error.contains("unknown fault point"), "{error}");
     }
 

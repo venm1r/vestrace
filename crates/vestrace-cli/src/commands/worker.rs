@@ -25,7 +25,20 @@ use vestrace_infrastructure::{
 /// so a backlog still clears at full speed.
 const OUTBOX_BATCH: u32 = 32;
 
-pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
+#[derive(Clone, Copy, Debug, Default)]
+struct PollOutcome {
+    did_work: bool,
+    failed: bool,
+}
+
+impl PollOutcome {
+    fn merge(&mut self, other: Self) {
+        self.did_work |= other.did_work;
+        self.failed |= other.failed;
+    }
+}
+
+pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
     // Without this the worker installs no subscriber, and every warning it
     // emits is discarded — which is how it ran silently until now.
     super::server::init_tracing(&config.observability)?;
@@ -207,12 +220,13 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     );
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
-    let shutdown_clone = shutdown_notify.clone();
-
-    tokio::spawn(async move {
-        shutdown_signal().await;
-        shutdown_clone.notify_waiters();
-    });
+    if !once {
+        let shutdown_clone = shutdown_notify.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown_clone.notify_waiters();
+        });
+    }
 
     // The two pollers run one after the other, not raced against each other.
     //
@@ -226,32 +240,50 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     //
     // Only shutdown is raced, and cancelling a poll at shutdown is exactly what
     // is wanted there.
-    let run_result = async {
-        loop {
-            let outcome = tokio::select! {
-                biased;
+    let once_outcome = once.then_some(async {
+        let mut outcome = poll_run_work(&run_worker, &run_contexts).await;
+        outcome.merge(drain_outbox(&outbox, &run_contexts).await);
+        outcome.merge(reconcile_effects(reconciliation.as_ref(), &run_contexts).await);
+        outcome.merge(deliver_outcomes(&outcome_delivery, &run_contexts).await);
+        outcome
+    });
+    let once_outcome = match once_outcome {
+        Some(outcome) => Some(outcome.await),
+        None => None,
+    };
 
-                _ = shutdown_notify.notified() => {
-                    tracing::info!("worker shutdown requested, draining current work");
-                    break;
-                }
-
-                outcome = async {
-                    let runs = poll_run_work(&run_worker, &run_contexts).await;
-                    let messages = drain_outbox(&outbox, &run_contexts).await;
-                    let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
-                    let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
-                    Ok::<_, anyhow::Error>(runs || messages || reconciled || delivered)
-                } => outcome?,
-            };
-
-            if !outcome {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
+    let run_result = if once {
         Ok::<(), anyhow::Error>(())
-    }
-    .await;
+    } else {
+        async {
+            loop {
+                let outcome = tokio::select! {
+                    biased;
+
+                    _ = shutdown_notify.notified() => {
+                        tracing::info!("worker shutdown requested, draining current work");
+                        break;
+                    }
+
+                    outcome = async {
+                        let runs = poll_run_work(&run_worker, &run_contexts).await;
+                        let messages = drain_outbox(&outbox, &run_contexts).await;
+                        let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
+                        let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
+                        Ok::<_, anyhow::Error>(
+                            runs.did_work || messages.did_work || reconciled.did_work || delivered.did_work,
+                        )
+                    } => outcome?,
+                };
+
+                if !outcome {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+        .await
+    };
 
     let _ = presence_shutdown.send(true);
     let heartbeat_result = presence_heartbeat
@@ -263,8 +295,13 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     heartbeat_result?;
     clear_result?;
 
+    let once_outcome = once_outcome.unwrap_or_default();
+    if once_outcome.failed {
+        return Err(anyhow::anyhow!("worker single pass failed"));
+    }
+
     tracing::info!("worker stopped gracefully");
-    Ok(())
+    Ok(once_outcome.did_work || !once)
 }
 
 /// Register every workspace before the worker starts polling.
@@ -382,13 +419,14 @@ async fn clear_worker_presence(
 ///
 /// A failure in one workspace is logged and does not stop the others: one
 /// workspace's storage problem must not stall every other workspace's runs.
-async fn poll_run_work(worker: &Arc<RunWorker>, contexts: &[RequestContext]) -> bool {
-    let mut processed = false;
+async fn poll_run_work(worker: &Arc<RunWorker>, contexts: &[RequestContext]) -> PollOutcome {
+    let mut outcome = PollOutcome::default();
     for context in contexts {
         match worker.run_once(context).await {
-            Ok(true) => processed = true,
+            Ok(true) => outcome.did_work = true,
             Ok(false) => {}
             Err(error) => {
+                outcome.failed = true;
                 tracing::warn!(
                     error = %error,
                     workspace = %context.workspace_id,
@@ -397,7 +435,7 @@ async fn poll_run_work(worker: &Arc<RunWorker>, contexts: &[RequestContext]) -> 
             }
         }
     }
-    processed
+    outcome
 }
 
 /// The outbox drain, and the handlers that give it something to deliver.
@@ -460,8 +498,11 @@ fn build_outbox_dispatcher(
 /// One workspace's failure is logged and does not stop the others, and an
 /// undelivered message stays pending: the backlog is the signal, and a drain
 /// that discarded what it could not deliver would erase it.
-async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestContext]) -> bool {
-    let mut worked = false;
+async fn drain_outbox(
+    dispatcher: &Arc<OutboxDispatcher>,
+    contexts: &[RequestContext],
+) -> PollOutcome {
+    let mut outcome = PollOutcome::default();
     for context in contexts {
         match dispatcher.drain_once(context, OUTBOX_BATCH).await {
             Ok(report) => {
@@ -475,9 +516,15 @@ async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestCon
                         "outbox drained"
                     );
                 }
-                worked = worked || report.did_work();
+                outcome.did_work |= report.did_work();
+                // A failed handler leaves durable retry/dead-letter evidence,
+                // but the bounded process must still tell its caller that the
+                // pass failed. Otherwise `--once` reports success after a
+                // mixed cycle merely because another poll completed work.
+                outcome.failed |= report.failed > 0;
             }
             Err(error) => {
+                outcome.failed = true;
                 tracing::warn!(
                     error = %error,
                     workspace = %context.workspace_id,
@@ -486,7 +533,7 @@ async fn drain_outbox(dispatcher: &Arc<OutboxDispatcher>, contexts: &[RequestCon
             }
         }
     }
-    worked
+    outcome
 }
 
 /// The sweep that answers "did that actually happen".
@@ -618,11 +665,11 @@ fn build_effect_read_back_registry(
 async fn reconcile_effects(
     service: Option<&Arc<vestrace_application::ExternalEffectRecoveryService>>,
     contexts: &[RequestContext],
-) -> bool {
+) -> PollOutcome {
     let Some(service) = service else {
-        return false;
+        return PollOutcome::default();
     };
-    let mut worked = false;
+    let mut outcome = PollOutcome::default();
     for context in contexts {
         match service.sweep(context, vestrace_domain::now()).await {
             Ok(report) => {
@@ -640,7 +687,7 @@ async fn reconcile_effects(
                         run = run_id.map(|id| id.to_string()).unwrap_or_else(|| "none".into()),
                         "an unknown external effect outcome was settled"
                     );
-                    worked = true;
+                    outcome.did_work = true;
                 }
                 // Every outcome used to be logged with the line above, so
                 // "the provider could not tell us" and "a human has to decide"
@@ -676,6 +723,7 @@ async fn reconcile_effects(
                 }
             }
             Err(error) => {
+                outcome.failed = true;
                 tracing::warn!(
                     error = %error,
                     workspace = %context.workspace_id,
@@ -684,7 +732,7 @@ async fn reconcile_effects(
             }
         }
     }
-    worked
+    outcome
 }
 
 /// Tell each configured workspace's runs what became of their effects.
@@ -696,8 +744,8 @@ async fn reconcile_effects(
 async fn deliver_outcomes(
     service: &Arc<vestrace_application::EffectOutcomeDeliveryService>,
     contexts: &[RequestContext],
-) -> bool {
-    let mut worked = false;
+) -> PollOutcome {
+    let mut outcome = PollOutcome::default();
     for context in contexts {
         match vestrace_application::deliver_effect_outcomes(service, context).await {
             Ok(report) => {
@@ -712,9 +760,10 @@ async fn deliver_outcomes(
                 }
                 // A deferred debt is not work: counting it would keep the worker
                 // spinning while nothing was being resolved.
-                worked = worked || report.did_work();
+                outcome.did_work |= report.did_work();
             }
             Err(error) => {
+                outcome.failed = true;
                 tracing::warn!(
                     error = %error,
                     workspace = %context.workspace_id,
@@ -723,7 +772,7 @@ async fn deliver_outcomes(
             }
         }
     }
-    worked
+    outcome
 }
 
 async fn shutdown_signal() {

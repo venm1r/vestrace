@@ -41,6 +41,8 @@ use vestrace_infrastructure::{
 mod credential_intent_crash;
 #[path = "scenarios/embedding_dispatch_crash.rs"]
 mod embedding_dispatch_crash;
+#[path = "scenarios/embedding_result_preparation_crash.rs"]
+mod embedding_result_preparation_crash;
 #[path = "scenarios/material_intent_crash.rs"]
 mod material_intent_crash;
 
@@ -71,7 +73,7 @@ mod intent_support {
     /// makes these directories throwaway with it. The vault must outlive the
     /// child — a key created before the crash is exactly what several boundaries
     /// are about — so it cannot be a temporary directory the child owns.
-    pub fn vault_roots() -> Result<(PathBuf, PathBuf), String> {
+    pub(super) fn vault_roots() -> Result<(PathBuf, PathBuf), String> {
         let url_file = crate::argument(std::env::args().skip(1), "--database-url-file")
             .ok_or_else(|| "database url file is required: pass --database-url-file".to_owned())?;
         let base = Path::new(&url_file);
@@ -195,6 +197,9 @@ mod intent_support {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
             vestrace_fault_scenario::settings::Scenario::EmbeddingDispatch => {
+                return Err("the intent child runs only for an intent scenario".to_owned());
+            }
+            vestrace_fault_scenario::settings::Scenario::EmbeddingResultPreparation => {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
         };
@@ -351,6 +356,12 @@ async fn main() {
                 embedding_dispatch_crash::run_child(&settings).await;
             }
             finish(embedding_dispatch_crash::run_parent(&settings).await);
+        }
+        Scenario::EmbeddingResultPreparation => {
+            if settings.is_child() {
+                embedding_result_preparation_crash::run_child(&settings).await;
+            }
+            finish(embedding_result_preparation_crash::run_parent(&settings).await);
         }
     }
 

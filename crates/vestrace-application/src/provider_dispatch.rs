@@ -422,6 +422,28 @@ impl<T: crate::MaterialKeyVault + ?Sized> crate::MaterialKeyVault for std::sync:
         (**self).create_if_absent(key_id, nonce)
     }
 
+    fn create_embedding_output_if_absent(
+        &self,
+        binding: &crate::EmbeddingOutputKeyBinding,
+    ) -> Result<vestrace_domain::VaultReceipt, crate::VaultError> {
+        (**self).create_embedding_output_if_absent(binding)
+    }
+
+    fn retire_embedding_output(
+        &self,
+        binding: &crate::EmbeddingOutputKeyBinding,
+    ) -> Result<vestrace_domain::ErasureReceipt, crate::VaultError> {
+        (**self).retire_embedding_output(binding)
+    }
+
+    fn with_embedding_output_key(
+        &self,
+        binding: &crate::EmbeddingOutputKeyBinding,
+        use_dek: &mut dyn FnMut(&vestrace_domain::ZeroizingDek),
+    ) -> Result<(), crate::VaultError> {
+        (**self).with_embedding_output_key(binding, use_dek)
+    }
+
     fn unwrap(
         &self,
         key_id: MaterialKeyId,
@@ -847,12 +869,20 @@ pub struct RunStepDispatchPlan {
 /// never calls an adapter while deciding one of these actions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EmbeddingJobAttemptRecovery {
+    /// A durable pre-dispatch cancellation receipt proves no provider outcome
+    /// can be recovered or resumed.
+    Cancelled,
+    /// A durable denial or expired admission wait proved definite failure
+    /// before the provider boundary.
+    FailedDefinite,
     ResumeReserved,
     ResumeAdmitted,
     AwaitDispatchDeadline,
     AdoptedUnknown,
     AlreadyUnknown,
-    ResumeResultPrepared { effect_id: ExternalEffectId },
+    ResumeResultPrepared {
+        effect_id: ExternalEffectId,
+    },
     Succeeded,
 }
 
@@ -1044,6 +1074,22 @@ pub trait ProviderDispatchRepository: Send + Sync {
     ) -> Result<(), ApplicationError> {
         Err(ApplicationError::Unavailable(
             "provider-result completion authority is not configured".to_owned(),
+        ))
+    }
+
+    /// Locks the original embedding-job dispatch cause for a delivery
+    /// result-preparation transaction. This is intentionally separate from the
+    /// Run/Step completion lock above: widening that method would let an
+    /// embedding result borrow Run publication authority.
+    async fn lock_embedding_result_completion_authority_in(
+        &self,
+        _context: &RequestContext,
+        _unit_of_work: &mut dyn UnitOfWork,
+        _authority: &ProviderDispatchAuthority,
+        _job_id: EmbeddingJobId,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "embedding result completion authority is not configured".to_owned(),
         ))
     }
 

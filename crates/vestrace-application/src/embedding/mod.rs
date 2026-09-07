@@ -8,11 +8,30 @@
 pub mod barrier;
 pub mod carry;
 pub mod job;
+pub mod keys;
+pub mod result;
 pub mod transition;
 
 pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
 pub use carry::{AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping};
-pub use job::{AcceptEmbeddingJob, EmbeddingJobRepository, SharedEmbeddingJobRepository};
+pub use job::{
+    AcceptEmbeddingJob, EmbeddingJobRepository, EmbeddingJobTerminationReceipt,
+    EmbeddingJobTerminationService, PreDispatchTerminalState, PreDispatchTerminationEvidence,
+    SharedEmbeddingJobRepository, TerminateEmbeddingJobPreDispatch,
+};
+pub use keys::{
+    AcceptDeliveryOutputs, DeliveryOutputAcceptanceReceipt, DeliveryOutputIdentity,
+    EmbeddingOutputKeyPlan, EmbeddingOutputKeyProgress, EmbeddingOutputKeyRepository,
+    EmbeddingOutputKeyService, RequestEmbeddingOutputRetirement,
+    SharedEmbeddingOutputKeyRepository,
+};
+pub use result::{
+    EMBEDDING_RESULT_CONFLICT, EmbeddingResultDispatchAuthority, EmbeddingResultEligibility,
+    EmbeddingResultEligibilityPlan, EmbeddingResultOutputPlan, EmbeddingResultPreparationId,
+    EmbeddingResultPreparationIdentities, EmbeddingResultPreparationOutcome,
+    EmbeddingResultPreparationService, EmbeddingResultPreparedAttachment,
+    EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
+};
 pub use transition::{
     EmbeddingTransitionRepository, PlanEmbeddingTransitionVersion,
     SharedEmbeddingTransitionRepository, TransitionAuthBinding, TransitionPlanRecipe,

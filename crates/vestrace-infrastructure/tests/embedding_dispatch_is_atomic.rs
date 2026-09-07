@@ -8,17 +8,24 @@
 //! A second admission, throttle, lease or recovery function existing for
 //! embeddings would be the defect this suite is here to make visible.
 
+use std::{str::FromStr, sync::Arc, time::Duration};
+
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use uuid::Uuid;
 use vestrace_application::{
     AcceptEmbeddingJob, ApplicationError, EmbeddingJobAttemptRecovery, EmbeddingJobDispatchPlan,
-    EmbeddingJobRepository, ProviderDispatchCause, ProviderDispatchFaultPoint,
-    ProviderDispatchRepository, RequestContext,
+    EmbeddingJobRepository, EmbeddingJobTerminationService, PolicyDecisionEngine,
+    ProviderDispatchCause, ProviderDispatchFaultPoint, ProviderDispatchRepository, RequestContext,
 };
 use vestrace_domain::{
-    AuditEvent, EmbeddingJobId, EmbeddingSpaceId, ExternalEffectIntent, ModelRequestEvidenceId,
-    PrincipalId, WorkspaceId, embedding::EmbeddingJobKind, id::AuditEventId,
+    AuditEvent, AuthorizationRequest, EmbeddingJobId, EmbeddingSpaceId, ExternalEffectIntent,
+    ModelRequestEvidenceId, PolicyDecision, PolicyDecisionId, PolicyDecisionReason,
+    PolicyDecisionResult, PolicyInputState, PrincipalId, WorkspaceId, embedding::EmbeddingJobKind,
+    id::AuditEventId,
 };
 use vestrace_infrastructure::{PgEmbeddingJobRepository, PgStore};
 
@@ -66,6 +73,102 @@ impl ProviderDispatchRepository for UnconfiguredDispatch {
     ) -> Result<vestrace_application::ProviderLostDispatchRecovery, ApplicationError> {
         unreachable!("this fixture never dispatches")
     }
+}
+
+struct AllowCancellationPolicy;
+
+#[derive(sqlx::FromRow)]
+struct AuditRollbackState {
+    job_state: String,
+    job_version: i64,
+    receipt_count: i64,
+    admission_released_at: Option<chrono::DateTime<Utc>>,
+    wait_count: i64,
+    admission_count: i64,
+    cancellation_audit_count: i64,
+    active_lease_count: i32,
+    admission_state_version: i64,
+    audit_mark_count: i64,
+    watermark: i64,
+    credential_lease_count: i64,
+}
+
+#[async_trait::async_trait]
+impl PolicyDecisionEngine for AllowCancellationPolicy {
+    async fn decide(
+        &self,
+        context: &RequestContext,
+        request: AuthorizationRequest,
+    ) -> Result<PolicyDecision, ApplicationError> {
+        Ok(PolicyDecision {
+            id: PolicyDecisionId::new(),
+            policy_id: None,
+            policy_version: "embedding-cancellation-test-v1".to_owned(),
+            workspace_id: context.workspace_id,
+            subject_id: context.principal_id,
+            capability: request.capability.clone(),
+            operation: request.operation.clone(),
+            resource_scope: request.resource_scope.clone(),
+            result: PolicyDecisionResult::Allow,
+            reason: PolicyDecisionReason::ConfiguredAllowance,
+            input_state: PolicyInputState::from_request(
+                context.workspace_id,
+                context.principal_id,
+                &request,
+            ),
+            matched_grant_id: None,
+            decided_at: Utc::now(),
+        })
+    }
+}
+
+fn termination_service(runtime: &PgPool) -> EmbeddingJobTerminationService {
+    EmbeddingJobTerminationService::new(
+        Arc::new(PgEmbeddingJobRepository::new(PgStore::from_pool(
+            runtime.clone(),
+        ))),
+        Arc::new(AllowCancellationPolicy),
+    )
+}
+
+async fn cancel(
+    runtime: &PgPool,
+    fixture: &AcceptedJob,
+    idempotency_key: &str,
+) -> Result<vestrace_application::EmbeddingJobTerminationReceipt, ApplicationError> {
+    termination_service(runtime)
+        .cancel(
+            fixture.context.clone(),
+            fixture.job_id,
+            1,
+            idempotency_key.to_owned(),
+        )
+        .await
+}
+
+async fn runtime_pool_single(source: &PgPool) -> PgPool {
+    let runtime_url = std::env::var("VESTRACE_RUNTIME_DATABASE_URL")
+        .expect("VESTRACE_RUNTIME_DATABASE_URL must authenticate as vestrace");
+    let parsed = PgConnectOptions::from_str(&runtime_url)
+        .expect("VESTRACE_RUNTIME_DATABASE_URL must be a PostgreSQL URL");
+    let password = runtime_url
+        .split_once("://")
+        .and_then(|(_, authority)| authority.rsplit_once('@'))
+        .and_then(|(credentials, _)| credentials.split_once(':'))
+        .map(|(_, password)| password)
+        .expect("runtime URL must contain a password");
+    PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            source
+                .connect_options()
+                .as_ref()
+                .clone()
+                .username(parsed.get_username())
+                .password(password),
+        )
+        .await
+        .expect("single-session runtime pool must connect to the SQLx test database")
 }
 
 /// The fail-closed default names `Unavailable`, not merely some error.
@@ -336,6 +439,137 @@ async fn dispatch_traces(pool: &PgPool, fixture: &AcceptedJob) -> (i64, i64, i64
     .unwrap()
 }
 
+async fn admit_embedding_without_dispatch(runtime: &PgPool, fixture: &AcceptedJob) -> Uuid {
+    type AdmissionDecision = (
+        String,
+        Option<i32>,
+        Option<Uuid>,
+        Option<chrono::DateTime<Utc>>,
+        Option<chrono::DateTime<Utc>>,
+    );
+
+    let lease_id = Uuid::now_v7();
+    let mut transaction = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+    let decision: AdmissionDecision = sqlx::query_as(
+        "SELECT decision,retry_after_seconds,concurrency_lease_id,wait_deadline_at,dispatch_expires_at \
+           FROM public.vestrace_try_admit_provider_dispatch( \
+             $1,$2,$3,$4,$5,$6,$7,$8,'embedding_job',NULL,NULL,$9,NULL,NULL,NULL,60)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(lease_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.connection_id)
+    .bind(fixture.connection_revision_id)
+    .bind(fixture.external_effect_id)
+    .bind(fixture.evidence_id)
+    .bind(fixture.snapshot_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .unwrap();
+    assert_eq!(decision.0, "admitted");
+    assert_eq!(decision.2, Some(lease_id));
+    assert!(decision.1.is_none() && decision.3.is_none() && decision.4.is_some());
+    transaction.commit().await.unwrap();
+    lease_id
+}
+
+async fn authorize_embedding_effect_for_credential_lease(
+    owner: &PgPool,
+    fixture: &AcceptedJob,
+) -> Uuid {
+    let authorization_id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO external_effect_authorizations(\
+         id,effect_id,workspace_id,policy_version,subject_id,capability,operation,resource_scope,\
+         result,reason,input_state,decided_at,payload) \
+         VALUES($1,$2,$3,'embedding-credential-fixture-v1',$4,'provider.dispatch','dispatch',\
+         'effect','allow','configured_allowance','{}'::jsonb,NOW(),'{}'::jsonb)",
+    )
+    .bind(authorization_id)
+    .bind(fixture.external_effect_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.context.principal_id.as_uuid())
+    .execute(owner)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO external_effect_lifecycle_transitions(\
+         effect_id,workspace_id,status,cause,cause_ref,recorded_at) \
+         VALUES($1,$2,'authorized','authorization_recorded',$3,NOW())",
+    )
+    .bind(fixture.external_effect_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(authorization_id.to_string())
+    .execute(owner)
+    .await
+    .unwrap();
+    authorization_id
+}
+
+async fn issue_unconsumed_pinned_credential_lease(
+    owner: &PgPool,
+    runtime: &PgPool,
+    fixture: &AcceptedJob,
+) -> Uuid {
+    let credential = fixture
+        .credential
+        .as_ref()
+        .expect("the credential-branch fixture must retain its exact pinned tuple");
+    let authorization_id = authorize_embedding_effect_for_credential_lease(owner, fixture).await;
+    let lease_id = Uuid::now_v7();
+    let mut issue = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *issue)
+        .await
+        .unwrap();
+    let issued: Uuid = sqlx::query_scalar(
+        "SELECT vestrace_issue_credential_dispatch_lease(\
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(lease_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.connection_id)
+    .bind(fixture.external_effect_id)
+    .bind(authorization_id)
+    .bind(credential.slot_id)
+    .bind(credential.revision_id)
+    .bind(credential.activation_guard_id)
+    .bind("api.example.test")
+    .bind("bearer")
+    .bind(Utc::now() + chrono::Duration::minutes(5))
+    .fetch_one(&mut *issue)
+    .await
+    .expect("the runtime role must issue the credential lease through its guarded function");
+    assert_eq!(issued, lease_id);
+    issue.commit().await.unwrap();
+    lease_id
+}
+
+async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let blockers: Vec<i32> = sqlx::query_scalar("SELECT unnest(pg_blocking_pids($1))")
+                .bind(waiting_pid)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+            if blockers.contains(&blocker_pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the competing admission never reached the observed termination lock");
+}
+
 /// An embedding job reaches the provider through the Run step's authority.
 ///
 /// Nothing about this dispatch is embedding-specific except the cause: the same
@@ -419,6 +653,490 @@ async fn an_embedding_job_dispatches_through_the_shared_authority(pool: PgPool) 
             "vestrace_try_admit_provider_dispatch"
         ],
         "embedding dispatch must not have grown its own admission or throttle authority"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatching_first_refuses_cancellation_without_a_terminal_receipt(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+    dispatching_repository(&runtime, None)
+        .prepare_dispatch(embedding_dispatch_request(&fixture))
+        .await
+        .expect("the first actor must durably enter Dispatching");
+
+    let refusal = cancel(&runtime, &fixture, "dispatching-first-cancellation").await;
+    assert!(
+        matches!(
+            refusal,
+            Err(ApplicationError::Conflict(_)) | Err(ApplicationError::Policy(_))
+        ),
+        "Dispatching must refuse cancellation rather than terminalize it: {refusal:?}"
+    );
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM embedding_job_termination_receipts WHERE workspace_id=$1 AND job_id=$2",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.job_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 0, "Dispatching must leave no terminal receipt");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admitted_but_not_dispatched_embedding_job_cancels_and_releases_its_lease(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+    let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
+
+    let receipt = cancel(&runtime, &fixture, "admitted-cancellation")
+        .await
+        .expect("an admitted but undispatched embedding job remains cancellable");
+    assert_eq!(receipt.job_id, fixture.job_id);
+    let persisted: (
+        String,
+        i64,
+        Option<chrono::DateTime<Utc>>,
+        Option<Uuid>,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT (SELECT state FROM embedding_jobs WHERE id=$1), \
+                (SELECT version FROM embedding_jobs WHERE id=$1), \
+                (SELECT released_at FROM provider_concurrency_leases WHERE id=$2), \
+                (SELECT released_termination_id FROM provider_concurrency_leases WHERE id=$2), \
+                (SELECT COUNT(*) FROM provider_admission_waits WHERE external_effect_id=$3), \
+                (SELECT COUNT(*) FROM connection_dispatch_admissions WHERE external_effect_id=$3)",
+    )
+    .bind(fixture.job_id.as_uuid())
+    .bind(lease_id)
+    .bind(fixture.external_effect_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, "cancelled");
+    assert_eq!(persisted.1, 2);
+    assert!(persisted.2.is_some());
+    assert_eq!(persisted.3, Some(receipt.receipt_id));
+    assert_eq!((persisted.4, persisted.5), (0, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancellation_revokes_an_unconsumed_pinned_credential_lease(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job_with_pinned_credential(&pool, &runtime).await;
+    let credential = fixture
+        .credential
+        .as_ref()
+        .expect("the helper must produce a credential binding snapshot");
+    let lease_id = issue_unconsumed_pinned_credential_lease(&pool, &runtime, &fixture).await;
+
+    let before: (
+        String,
+        Uuid,
+        Uuid,
+        Uuid,
+        Option<chrono::DateTime<Utc>>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT snapshot.branch,lease.credential_slot_id,lease.credential_revision_id,\
+                    lease.credential_activation_guard_id,lease.consumed_at,lease.terminal_state \
+               FROM model_binding_snapshots AS snapshot \
+               JOIN credential_dispatch_leases AS lease \
+                 ON lease.workspace_id=snapshot.workspace_id \
+              WHERE snapshot.id=$1 AND lease.id=$2",
+    )
+    .bind(fixture.snapshot_id)
+    .bind(lease_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(before.0, "credential");
+    assert_eq!(
+        (before.1, before.2, before.3),
+        (
+            credential.slot_id,
+            credential.revision_id,
+            credential.activation_guard_id
+        )
+    );
+    assert!(before.4.is_none() && before.5.is_none());
+
+    cancel(&runtime, &fixture, "credential-lease-cancellation")
+        .await
+        .expect("an undispatched credential-backed embedding job remains cancellable");
+
+    let after: (Option<chrono::DateTime<Utc>>, Option<String>) = sqlx::query_as(
+        "SELECT consumed_at,terminal_state FROM credential_dispatch_leases WHERE id=$1",
+    )
+    .bind(lease_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        after.0.is_none(),
+        "cancellation must not consume the credential"
+    );
+    assert_eq!(after.1.as_deref(), Some("revoked"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancellation_audit_failure_rolls_back_terminalization_and_lease_release(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job_with_pinned_credential(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+    let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
+    let credential_lease_id =
+        issue_unconsumed_pinned_credential_lease(&pool, &runtime, &fixture).await;
+    let baseline: (i32, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT active_lease_count FROM connection_admission_states \
+                  WHERE workspace_id=$1 AND connection_id=$2), \
+                (SELECT version FROM connection_admission_states \
+                  WHERE workspace_id=$1 AND connection_id=$2), \
+                (SELECT COUNT(*) FROM governed_mutation_audit_marks WHERE workspace_id=$1), \
+                (SELECT watermark FROM installation_mutation_watermark WHERE singleton), \
+                (SELECT COUNT(*) FROM credential_dispatch_leases WHERE external_effect_id=$3)",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.connection_id)
+    .bind(fixture.external_effect_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION public.reject_embedding_cancellation_audit() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN \
+           IF NEW.action='embedding.job.cancelled' THEN \
+             RAISE EXCEPTION 'injected cancellation audit refusal' USING ERRCODE='23514'; \
+           END IF; \
+           RETURN NEW; \
+         END $$; \
+         CREATE TRIGGER reject_embedding_cancellation_audit \
+         BEFORE INSERT ON public.audit_events FOR EACH ROW \
+         EXECUTE FUNCTION public.reject_embedding_cancellation_audit();",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = cancel(&runtime, &fixture, "audit-rollback-cancellation")
+        .await
+        .expect_err("the injected audit trigger must reject cancellation");
+    assert!(
+        format!("{error:?}").contains("injected cancellation audit refusal"),
+        "the real termination service must surface the injected audit error: {error:?}"
+    );
+    let persisted: AuditRollbackState = sqlx::query_as(
+        "SELECT (SELECT state FROM embedding_jobs WHERE id=$1) AS job_state, \
+                (SELECT version FROM embedding_jobs WHERE id=$1) AS job_version, \
+                (SELECT COUNT(*) FROM embedding_job_termination_receipts WHERE job_id=$1) AS receipt_count, \
+                (SELECT released_at FROM provider_concurrency_leases WHERE id=$2) AS admission_released_at, \
+                (SELECT COUNT(*) FROM provider_admission_waits WHERE external_effect_id=$3) AS wait_count, \
+                (SELECT COUNT(*) FROM connection_dispatch_admissions WHERE external_effect_id=$3) AS admission_count, \
+                (SELECT COUNT(*) FROM audit_events WHERE workspace_id=$4 AND action='embedding.job.cancelled') AS cancellation_audit_count, \
+                (SELECT active_lease_count FROM connection_admission_states WHERE workspace_id=$4 AND connection_id=$5) AS active_lease_count, \
+                (SELECT version FROM connection_admission_states WHERE workspace_id=$4 AND connection_id=$5) AS admission_state_version, \
+                (SELECT COUNT(*) FROM governed_mutation_audit_marks WHERE workspace_id=$4) AS audit_mark_count, \
+                (SELECT watermark FROM installation_mutation_watermark WHERE singleton) AS watermark, \
+                (SELECT COUNT(*) FROM credential_dispatch_leases WHERE external_effect_id=$3) AS credential_lease_count",
+    )
+    .bind(fixture.job_id.as_uuid())
+    .bind(lease_id)
+    .bind(fixture.external_effect_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.connection_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.job_state, "requested");
+    assert_eq!(persisted.job_version, 1);
+    assert_eq!(persisted.receipt_count, 0);
+    assert!(
+        persisted.admission_released_at.is_none(),
+        "the existing admission lease must remain live"
+    );
+    assert_eq!(
+        (
+            persisted.wait_count,
+            persisted.admission_count,
+            persisted.cancellation_audit_count
+        ),
+        (0, 1, 0)
+    );
+    assert_eq!(
+        (
+            persisted.active_lease_count,
+            persisted.admission_state_version,
+            persisted.audit_mark_count,
+            persisted.watermark,
+            persisted.credential_lease_count
+        ),
+        baseline
+    );
+    let credential_state: (Option<String>, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+        "SELECT terminal_state,consumed_at FROM credential_dispatch_leases WHERE id=$1",
+    )
+    .bind(credential_lease_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(credential_state, (None, None));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn termination_first_blocks_shared_admission_then_leaves_no_admission_trace(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+
+    let mut termination = runtime.begin().await.unwrap();
+    let termination_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *termination)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *termination)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.principal_id',$1,true)")
+        .bind(fixture.context.principal_id.to_string())
+        .fetch_one(&mut *termination)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT receipt_id FROM public.vestrace_terminate_embedding_job_pre_dispatch( \
+          $1,$2,$3,$4,1,$5,'cancelled','cancellation_authorization',$6, \
+          'embedding-cancellation-test-v1','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.context.principal_id.as_uuid())
+    .bind(fixture.job_id.as_uuid())
+    .bind("termination-first-race")
+    .bind(Uuid::now_v7())
+    .fetch_one(&mut *termination)
+    .await
+    .expect("the first transaction must terminalize while retaining its canonical locks");
+
+    let competing_runtime = runtime_pool(&pool).await;
+    let competing_fixture = fixture.context.clone();
+    let connection_id = fixture.connection_id;
+    let connection_revision_id = fixture.connection_revision_id;
+    let effect_id = fixture.external_effect_id;
+    let evidence_id = fixture.evidence_id;
+    let snapshot_id = fixture.snapshot_id;
+    let (started, waiting_pid) = tokio::sync::oneshot::channel();
+    let competing = tokio::spawn(async move {
+        let mut transaction = competing_runtime.begin().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+        sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+            .bind(competing_fixture.workspace_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+        started.send(pid).unwrap();
+        let result = sqlx::query_as::<_, (String,)>(
+            "SELECT decision FROM public.vestrace_try_admit_provider_dispatch( \
+              $1,$2,$3,$4,$5,$6,$7,$8,'embedding_job',NULL,NULL,$9,NULL,NULL,NULL,60)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(competing_fixture.workspace_id.as_uuid())
+        .bind(connection_id)
+        .bind(connection_revision_id)
+        .bind(effect_id)
+        .bind(evidence_id)
+        .bind(snapshot_id)
+        .fetch_one(&mut *transaction)
+        .await;
+        if result.is_ok() {
+            transaction.commit().await.unwrap();
+        } else {
+            transaction.rollback().await.unwrap();
+        }
+        competing_runtime.close().await;
+        result
+    });
+    let waiting_pid = waiting_pid.await.unwrap();
+    wait_for_blocker(&pool, waiting_pid, termination_pid).await;
+    termination.commit().await.unwrap();
+    let refusal = tokio::time::timeout(Duration::from_secs(5), competing)
+        .await
+        .expect("the competing admission did not resume after termination committed")
+        .unwrap()
+        .expect_err("a terminated job must refuse the resumed admission");
+    assert_eq!(
+        refusal
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+    let traces: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM connection_dispatch_admissions WHERE external_effect_id=$1), \
+                (SELECT COUNT(*) FROM provider_admission_waits WHERE external_effect_id=$1), \
+                (SELECT COUNT(*) FROM provider_concurrency_leases WHERE external_effect_id=$1)",
+    )
+    .bind(fixture.external_effect_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(traces, (0, 0, 0));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatching_first_blocks_cancellation_then_refuses_without_terminal_receipt(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+    let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
+    let dispatch_expires_at: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT dispatch_expires_at FROM connection_dispatch_admissions WHERE external_effect_id=$1",
+    )
+    .bind(fixture.external_effect_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let dispatching_runtime = runtime_pool(&pool).await;
+    let mut dispatching = dispatching_runtime.begin().await.unwrap();
+    let dispatching_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *dispatching)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *dispatching)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO external_effect_lifecycle_transitions( \
+          effect_id,workspace_id,status,cause,cause_ref,recorded_at,dispatch_owner,dispatch_expires_at) \
+         VALUES($1,$2,'dispatching','dispatch_started',$3,NOW(),$4,$5)",
+    )
+    .bind(fixture.external_effect_id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(lease_id.to_string())
+    .bind(Uuid::now_v7())
+    .bind(dispatch_expires_at)
+    .execute(&mut *dispatching)
+    .await
+    .expect("the admitted embedding job must enter its real Dispatching transition");
+
+    let cancellation_runtime = runtime_pool_single(&pool).await;
+    let cancellation_fixture = fixture.context.clone();
+    let job_id = fixture.job_id;
+    let (started, waiting_pid) = tokio::sync::oneshot::channel();
+    let cancellation = tokio::spawn(async move {
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&cancellation_runtime)
+            .await
+            .unwrap();
+        started.send(pid).unwrap();
+        let service = termination_service(&cancellation_runtime);
+        let result = service
+            .cancel(
+                cancellation_fixture,
+                job_id,
+                1,
+                "dispatching-first-blocked-cancellation".to_owned(),
+            )
+            .await;
+        cancellation_runtime.close().await;
+        result
+    });
+    let waiting_pid = waiting_pid.await.unwrap();
+    wait_for_blocker(&pool, waiting_pid, dispatching_pid).await;
+    dispatching.commit().await.unwrap();
+    dispatching_runtime.close().await;
+    let refusal = tokio::time::timeout(Duration::from_secs(5), cancellation)
+        .await
+        .expect("cancellation did not resume after Dispatching committed")
+        .unwrap();
+    assert!(
+        matches!(
+            refusal,
+            Err(ApplicationError::Conflict(_)) | Err(ApplicationError::Policy(_))
+        ),
+        "committed Dispatching must refuse the delayed cancellation: {refusal:?}"
+    );
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM embedding_job_termination_receipts WHERE workspace_id=$1 AND job_id=$2",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.job_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn preexisting_cancellation_transaction_releases_a_later_admission_at_or_after_issuance(
+    pool: PgPool,
+) {
+    let runtime = runtime_pool(&pool).await;
+    let fixture = accept_embedding_job(&pool, &runtime).await;
+    make_dispatchable(&pool, &runtime, &fixture).await;
+
+    let cancellation_runtime = runtime_pool_single(&pool).await;
+    let mut cancellation = cancellation_runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *cancellation)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.principal_id',$1,true)")
+        .bind(fixture.context.principal_id.to_string())
+        .fetch_one(&mut *cancellation)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&mut *cancellation)
+        .await
+        .unwrap();
+
+    let admission_runtime = runtime_pool(&pool).await;
+    let lease_id = admit_embedding_without_dispatch(&admission_runtime, &fixture).await;
+    admission_runtime.close().await;
+
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT receipt_id FROM public.vestrace_terminate_embedding_job_pre_dispatch( \
+          $1,$2,$3,$4,1,$5,'cancelled','cancellation_authorization',$6, \
+          'embedding-cancellation-test-v1','execution.write','embedding.job.cancel','workspace://','low')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.context.principal_id.as_uuid())
+    .bind(fixture.job_id.as_uuid())
+    .bind("older-transaction-later-admission")
+    .bind(Uuid::now_v7())
+    .fetch_one(&mut *cancellation)
+    .await
+    .expect("the older transaction must see and release the committed admission");
+    cancellation.commit().await.unwrap();
+    cancellation_runtime.close().await;
+
+    let timestamps: (chrono::DateTime<Utc>, chrono::DateTime<Utc>) =
+        sqlx::query_as("SELECT issued_at,released_at FROM provider_concurrency_leases WHERE id=$1")
+            .bind(lease_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        timestamps.1 >= timestamps.0,
+        "termination must use a post-lock timestamp: issued_at={:?}, released_at={:?}",
+        timestamps.0,
+        timestamps.1
     );
 }
 

@@ -129,7 +129,9 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // file the shared dispatch trait can be implemented in (1), and the shared
   // test fixture two suites would otherwise duplicate (1). A literal is the
   // point: scope that grows without an amendment fails here.
-  assert.equal(changeScopePaths.length, 103);
+  // Task 14B adds only the explicitly authorized forward migration 0192.
+  // Task 14C adds the six explicitly authorized output-key preparation paths.
+  assert.equal(changeScopePaths.length, 120);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -157,14 +159,20 @@ test('P04 declares every path its plan names as a task file', () => {
   for (const path of [
     'crates/vestrace-application/src/embedding/barrier.rs',
     'crates/vestrace-application/src/embedding/carry.rs',
+    'crates/vestrace-application/src/embedding/keys.rs',
+    'crates/vestrace-application/src/material/vault.rs',
     'crates/vestrace-application/src/embedding/transition.rs',
     'crates/vestrace-application/src/retrieval/ports.rs',
     'crates/vestrace-domain/src/embedding/space.rs',
     'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
+    'crates/vestrace-infrastructure/src/crypto/material_vault.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs',
+    'crates/vestrace-infrastructure/tests/embedding_output_keys.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs',
     'crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs',
     'migrations/0187_embedding_jobs_and_corpus_generations.sql',
     'migrations/0190_embedding_transition_barriers.sql',
+    'migrations/0193_embedding_output_key_preparation.sql',
     'tests/embedding_fault_scenario_e2e.rs',
   ]) {
     assert.ok(changeScopePaths.includes(path), `expected in change scope: ${path}`);

@@ -34,7 +34,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Server,
-    Worker,
+    Worker {
+        /// Run one bounded poll cycle and report whether it worked, was idle, or failed.
+        #[arg(long)]
+        once: bool,
+    },
     Mcp,
     Migrate,
     Doctor,
@@ -358,7 +362,13 @@ async fn main() -> anyhow::Result<()> {
         Command::Server => {
             commands::server::run(&config, vestrace_domain::id::WorkerId::new()).await
         }
-        Command::Worker => commands::worker::run(&config).await,
+        Command::Worker { once } => {
+            let did_work = commands::worker::run(&config, once).await?;
+            if once && !did_work {
+                std::process::exit(3);
+            }
+            Ok(())
+        }
         Command::Mcp => commands::mcp::run(&config).await,
         Command::Migrate => commands::migrate::run(&config).await,
         Command::Doctor => commands::doctor::run(&config).await,

@@ -51,7 +51,7 @@ pub async fn runtime_pool(source: &PgPool) -> PgPool {
         .and_then(|(credentials, _)| credentials.split_once(':'))
         .map(|(_, password)| password)
         .expect("runtime URL must contain a password");
-    PgPoolOptions::new()
+    let runtime = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(
             source
@@ -62,7 +62,23 @@ pub async fn runtime_pool(source: &PgPool) -> PgPool {
                 .password(password),
         )
         .await
-        .expect("runtime must connect to the SQLx test database")
+        .expect("runtime must connect to the SQLx test database");
+    let identity: (String, bool) = sqlx::query_as(
+        "SELECT current_user::TEXT, \
+          (SELECT rolsuper FROM pg_roles WHERE rolname=current_user)::BOOLEAN",
+    )
+    .fetch_one(&runtime)
+    .await
+    .expect("runtime identity must be observable");
+    assert_eq!(
+        identity.0, "vestrace",
+        "behavioral fixtures must use the runtime role"
+    );
+    assert!(
+        !identity.1,
+        "behavioral fixtures must not run as a superuser"
+    );
+    runtime
 }
 
 /// SQLx provisions its disposable databases as the test migrator, whereas the
@@ -153,6 +169,17 @@ pub struct AcceptedJob {
     pub external_effect_id: Uuid,
     pub evidence_id: Uuid,
     pub intent: ExternalEffectIntent,
+    pub credential: Option<PinnedCredential>,
+}
+
+/// The immutable credential tuple a credential-branch snapshot pinned at
+/// acceptance.  It is exposed only so a dispatch-boundary test can invoke the
+/// same guarded lease issuer that production dispatch uses.
+pub struct PinnedCredential {
+    pub slot_id: Uuid,
+    pub revision_id: Uuid,
+    pub activation_guard_id: Uuid,
+    pub completion_blocker_id: Uuid,
 }
 
 /// Builds one no-auth embedding job the way a deployment would, and stops.
@@ -161,8 +188,48 @@ pub struct AcceptedJob {
 /// insert; nothing is written as `vestrace_guarded_owner` except the
 /// qualification and snapshot rows P03 has no publisher for yet, which is a
 /// known gap recorded in this package's evidence rather than something this
-/// fixture may pretend away.
+/// fixture may pretend away.  The credential variant below keeps only its
+/// qualification head and immutable snapshot in that fixture boundary; it
+/// publishes Candidate and Active credential state through the guarded path.
 pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
+    accept_embedding_job_inner(owner, runtime, false, true).await
+}
+
+/// Builds every immutable prerequisite for a delivery embedding job but leaves
+/// the job itself absent.  Task 14C uses this boundary to prove its receipt is
+/// installed before the job/output/audit mutation rather than backfilling an
+/// already accepted job.
+pub async fn prepare_delivery_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
+    accept_embedding_job_inner(owner, runtime, false, false).await
+}
+
+/// Builds the same pre-acceptance delivery boundary with a real guarded
+/// credential Candidate -> Active chain and a credential-pinned snapshot.
+pub async fn prepare_delivery_embedding_job_with_pinned_credential(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> AcceptedJob {
+    accept_embedding_job_inner(owner, runtime, true, false).await
+}
+
+/// Builds an accepted embedding job whose immutable binding snapshot carries a
+/// current credential.  P03 still has no credential-snapshot publisher, so its
+/// activation and snapshot rows use the same guarded-owner fixture boundary as
+/// the no-auth qualification and snapshot rows above; the dispatch lease is
+/// nevertheless issued through its real runtime guarded function.
+pub async fn accept_embedding_job_with_pinned_credential(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> AcceptedJob {
+    accept_embedding_job_inner(owner, runtime, true, true).await
+}
+
+async fn accept_embedding_job_inner(
+    owner: &PgPool,
+    runtime: &PgPool,
+    credential_backed: bool,
+    accept_job: bool,
+) -> AcceptedJob {
     let workspace_id = WorkspaceId::new();
     let principal_id = PrincipalId::new();
     let context = RequestContext::new(workspace_id, principal_id);
@@ -171,6 +238,18 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     let guard_id = Uuid::now_v7();
     let connection_revision_id = Uuid::now_v7();
     let no_auth_id = Uuid::now_v7();
+    let credential = credential_backed.then(|| PinnedCredential {
+        slot_id: Uuid::now_v7(),
+        revision_id: Uuid::now_v7(),
+        activation_guard_id: Uuid::now_v7(),
+        completion_blocker_id: Uuid::now_v7(),
+    });
+    let credential_occupancy_id = Uuid::now_v7();
+    let credential_intent_id = Uuid::now_v7();
+    let credential_material_key_id = Uuid::now_v7();
+    let credential_nonce = Uuid::now_v7();
+    let credential_attachment_id = Uuid::now_v7();
+    let credential_activation_audit_id = Uuid::now_v7();
     let provider_id = Uuid::now_v7();
     let model_id = Uuid::now_v7();
     let model_revision_id = Uuid::now_v7();
@@ -261,19 +340,92 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
         .execute(&mut *governed)
         .await
         .unwrap();
+    if let Some(credential) = &credential {
+        sqlx::query("SELECT vestrace_reserve_credential_slot($1,$2,$3,'provider','primary')")
+            .bind(credential.slot_id)
+            .bind(workspace_id.as_uuid())
+            .bind(connection_id)
+            .execute(&mut *governed)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_ensure_credential_activation_guard($1,$2,$3,$4)")
+            .bind(credential.activation_guard_id)
+            .bind(workspace_id.as_uuid())
+            .bind(connection_id)
+            .bind(credential.slot_id)
+            .execute(&mut *governed)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_reserve_credential_preparing_occupancy($1,$2,$3,$4)")
+            .bind(credential_occupancy_id)
+            .bind(workspace_id.as_uuid())
+            .bind(connection_id)
+            .bind(credential.slot_id)
+            .execute(&mut *governed)
+            .await
+            .unwrap();
+        sqlx::query(
+            "SELECT vestrace_reserve_credential_key_creation_intent(\
+             $1,$2,$3,$4,$5,$6,$7,$8,'credential_v2')",
+        )
+        .bind(credential_intent_id)
+        .bind(workspace_id.as_uuid())
+        .bind(connection_id)
+        .bind(credential.slot_id)
+        .bind(credential_occupancy_id)
+        .bind(credential.revision_id)
+        .bind(credential_material_key_id)
+        .bind(credential_nonce)
+        .execute(&mut *governed)
+        .await
+        .unwrap();
+    }
+    let (kind, logical_url, runtime_url, transport, auth_mode, credential_slot_id) =
+        if let Some(credential) = &credential {
+            (
+                "open_ai_chat_completions_v1",
+                "https://api.example.test/v1",
+                "https://api.example.test/v1",
+                "remote_https",
+                "bearer",
+                Some(credential.slot_id),
+            )
+        } else {
+            (
+                "lm_studio_local",
+                "http://127.0.0.1:1234/v1",
+                "http://127.0.0.1:1234/v1",
+                "lm-studio-local/v1",
+                "none",
+                None,
+            )
+        };
     sqlx::query_scalar::<_, Uuid>(
         "SELECT vestrace_create_connection_revision_and_advance_head(\
-           $1,$2,$3,$4,'lm_studio_local','http://127.0.0.1:1234/v1',\
-           'http://127.0.0.1:1234/v1','lm-studio-local/v1','loopback_only','none',NULL,0)",
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0)",
     )
     .bind(connection_revision_id)
     .bind(workspace_id.as_uuid())
     .bind(connection_id)
     .bind(guard_id)
+    .bind(kind)
+    .bind(logical_url)
+    .bind(runtime_url)
+    .bind(transport)
+    .bind(if credential_backed {
+        "remote_https"
+    } else {
+        "loopback_only"
+    })
+    .bind(auth_mode)
+    .bind(credential_slot_id)
     .fetch_one(&mut *governed)
     .await
     .unwrap();
-    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_create_no_auth_binding_revision($1,$2,$3,$4)")
+    if credential.is_none() {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT vestrace_create_no_auth_binding_revision($1,$2,$3,$4)",
+        )
         .bind(no_auth_id)
         .bind(workspace_id.as_uuid())
         .bind(connection_id)
@@ -281,6 +433,7 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
         .fetch_one(&mut *governed)
         .await
         .unwrap();
+    }
     sqlx::query_scalar::<_, Uuid>(
         "SELECT vestrace_create_model_revision_and_advance_head(\
            $1,$2,$3,$4,$5,$6,'embedding-model','embedding',NULL,NULL,NULL,NULL,NULL,NULL,0)",
@@ -303,6 +456,58 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .await
     .expect("the production space writer registered the exact legacy space");
     governed.commit().await.unwrap();
+
+    if credential.is_some() {
+        let mut candidate = runtime.begin().await.unwrap();
+        sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+            .bind(workspace_id.to_string())
+            .fetch_one(&mut *candidate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_record_credential_key_provisional_created($1)")
+            .bind(credential_intent_id)
+            .execute(&mut *candidate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_record_credential_key_provisional_receipt($1,$2)")
+            .bind(credential_intent_id)
+            .bind(Uuid::now_v7())
+            .execute(&mut *candidate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_create_credential_prepared_material($1,$2,$3)")
+            .bind(credential_intent_id)
+            .bind(credential_attachment_id)
+            .bind(b"credential-fixture-ciphertext".as_slice())
+            .execute(&mut *candidate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_bind_credential_key_creation_intent($1,$2)")
+            .bind(credential_intent_id)
+            .bind(Uuid::now_v7())
+            .execute(&mut *candidate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_finalize_bound_credential_candidate($1)")
+            .bind(credential_intent_id)
+            .execute(&mut *candidate)
+            .await
+            .unwrap();
+        // The blocker is recorded only once the guarded key path has reached
+        // Candidate; 0174 deliberately refuses credential blockers before
+        // that state.  It remains nonterminal after Active so completion can
+        // bind the exact credential authority without a raw fixture write.
+        sqlx::query(
+            "SELECT vestrace_record_material_erasure_blocker(\
+             $1,'credential',NULL,$2,'effect',NULL)",
+        )
+        .bind(credential.as_ref().unwrap().completion_blocker_id)
+        .bind(credential_intent_id)
+        .execute(&mut *candidate)
+        .await
+        .unwrap();
+        candidate.commit().await.unwrap();
+    }
 
     let intent = workspace_scoped_intent(&context, snapshot_id);
     let external_effect_id = intent.id().as_uuid();
@@ -347,6 +552,19 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .execute(&mut *seeded)
     .await
     .unwrap();
+    if credential.is_some() {
+        sqlx::query(
+            "INSERT INTO connection_qualification_heads(\
+             workspace_id,connection_revision_id,current_qualification_revision_id,version) \
+             VALUES($1,$2,$3,1)",
+        )
+        .bind(workspace_id.as_uuid())
+        .bind(connection_revision_id)
+        .bind(connection_qualification_id)
+        .execute(&mut *seeded)
+        .await
+        .unwrap();
+    }
     sqlx::query(
         "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,\
          connection_revision_id,connection_qualification_revision_id,qualification_job_id,\
@@ -362,22 +580,44 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .execute(&mut *seeded)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO model_binding_snapshots(id,workspace_id,connection_id,connection_revision_id,\
-         connection_qualification_revision_id,model_revision_id,model_qualification_revision_id,\
-         branch,no_auth_binding_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,'no_auth',$8)",
-    )
-    .bind(snapshot_id)
-    .bind(workspace_id.as_uuid())
-    .bind(connection_id)
-    .bind(connection_revision_id)
-    .bind(connection_qualification_id)
-    .bind(model_revision_id)
-    .bind(model_qualification_id)
-    .bind(no_auth_id)
-    .execute(&mut *seeded)
-    .await
-    .unwrap();
+    if let Some(credential) = &credential {
+        sqlx::query(
+            "INSERT INTO model_binding_snapshots(id,workspace_id,connection_id,connection_revision_id,\
+             connection_qualification_revision_id,model_revision_id,model_qualification_revision_id,\
+             branch,credential_revision_id,credential_slot_id,credential_activation_guard_id,expected_slot_version) \
+             VALUES($1,$2,$3,$4,$5,$6,$7,'credential',$8,$9,$10,1)",
+        )
+        .bind(snapshot_id)
+        .bind(workspace_id.as_uuid())
+        .bind(connection_id)
+        .bind(connection_revision_id)
+        .bind(connection_qualification_id)
+        .bind(model_revision_id)
+        .bind(model_qualification_id)
+        .bind(credential.revision_id)
+        .bind(credential.slot_id)
+        .bind(credential.activation_guard_id)
+        .execute(&mut *seeded)
+        .await
+        .unwrap();
+    } else {
+        sqlx::query(
+            "INSERT INTO model_binding_snapshots(id,workspace_id,connection_id,connection_revision_id,\
+             connection_qualification_revision_id,model_revision_id,model_qualification_revision_id,\
+             branch,no_auth_binding_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,'no_auth',$8)",
+        )
+        .bind(snapshot_id)
+        .bind(workspace_id.as_uuid())
+        .bind(connection_id)
+        .bind(connection_revision_id)
+        .bind(connection_qualification_id)
+        .bind(model_revision_id)
+        .bind(model_qualification_id)
+        .bind(no_auth_id)
+        .execute(&mut *seeded)
+        .await
+        .unwrap();
+    }
     // P04 Task 6 makes snapshot scope a positive, deferred invariant.  This
     // fixture is ordinary work, so it must write its immutable ordinary mark in
     // the same transaction as the snapshot it seeds.
@@ -392,28 +632,70 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
     .unwrap();
     seeded.commit().await.unwrap();
 
-    // Acceptance itself is guarded and runs as the runtime role, in the
-    // canonical lock order.
-    let mut accept = runtime.begin().await.unwrap();
-    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
-        .bind(workspace_id.to_string())
-        .fetch_one(&mut *accept)
+    if let Some(credential) = &credential {
+        sqlx::query(
+            "INSERT INTO audit_events(\
+             id,workspace_id,principal_id,action,resource_type,resource_id,payload,created_at) \
+             VALUES($1,$2,$3,'credential.fixture','credential',$4,'{}'::jsonb,NOW())",
+        )
+        .bind(credential_activation_audit_id)
+        .bind(workspace_id.as_uuid())
+        .bind(principal_id.as_uuid())
+        .bind(credential.revision_id)
+        .execute(owner)
         .await
         .unwrap();
-    let accepted = sqlx::query_scalar::<_, Uuid>(
-        "SELECT vestrace_accept_embedding_job($1,$2,$3,'delivery',$4,$5,$6,NULL,NULL::BIGINT)",
-    )
-    .bind(job_id.as_uuid())
-    .bind(workspace_id.as_uuid())
-    .bind(space_registration_id)
-    .bind(snapshot_id)
-    .bind(external_effect_id)
-    .bind(evidence_id)
-    .fetch_one(&mut *accept)
-    .await
-    .expect("the runtime role accepts an embedding job through its guarded function");
-    assert_eq!(accepted, job_id.as_uuid());
-    accept.commit().await.unwrap();
+
+        let mut activate = runtime.begin().await.unwrap();
+        sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+            .bind(workspace_id.to_string())
+            .fetch_one(&mut *activate)
+            .await
+            .unwrap();
+        let slot_version: i64 = sqlx::query_scalar(
+            "SELECT vestrace_activate_first_credential(\
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,0)",
+        )
+        .bind(workspace_id.as_uuid())
+        .bind(connection_id)
+        .bind(guard_id)
+        .bind(credential.activation_guard_id)
+        .bind(credential.slot_id)
+        .bind(credential.revision_id)
+        .bind(credential_intent_id)
+        .bind(connection_qualification_id)
+        .bind(credential_activation_audit_id)
+        .fetch_one(&mut *activate)
+        .await
+        .expect("the candidate fixture must activate through the guarded publisher");
+        assert_eq!(slot_version, 1);
+        activate.commit().await.unwrap();
+    }
+
+    if accept_job {
+        // Acceptance itself is guarded and runs as the runtime role, in the
+        // canonical lock order.
+        let mut accept = runtime.begin().await.unwrap();
+        sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+            .bind(workspace_id.to_string())
+            .fetch_one(&mut *accept)
+            .await
+            .unwrap();
+        let accepted = sqlx::query_scalar::<_, Uuid>(
+            "SELECT vestrace_accept_embedding_job($1,$2,$3,'delivery',$4,$5,$6,NULL,NULL::BIGINT)",
+        )
+        .bind(job_id.as_uuid())
+        .bind(workspace_id.as_uuid())
+        .bind(space_registration_id)
+        .bind(snapshot_id)
+        .bind(external_effect_id)
+        .bind(evidence_id)
+        .fetch_one(&mut *accept)
+        .await
+        .expect("the runtime role accepts an embedding job through its guarded function");
+        assert_eq!(accepted, job_id.as_uuid());
+        accept.commit().await.unwrap();
+    }
 
     AcceptedJob {
         context,
@@ -429,6 +711,7 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
         external_effect_id,
         evidence_id,
         intent,
+        credential,
     }
 }
 

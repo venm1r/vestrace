@@ -9,7 +9,24 @@ pub mod commands;
 #[path = "erasure.rs"]
 pub mod erasure;
 
-use vestrace_domain::{ErasureReceipt, IntentNonce, MaterialKeyId, VaultReceipt, ZeroizingDek};
+use vestrace_domain::{
+    ContentMaterialId, EmbeddingJobId, ErasureReceipt, IntentNonce, MaterialKeyCreationIntentId,
+    MaterialKeyId, VaultReceipt, WorkspaceId, ZeroizingDek,
+};
+
+/// The immutable authority for a non-ordinary embedding output key.  It is
+/// deliberately a value rather than a caller-controlled "bound" flag: 14C
+/// may create the provisional envelope, but cannot promote or unwrap it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmbeddingOutputKeyBinding {
+    pub workspace_id: WorkspaceId,
+    pub job_id: EmbeddingJobId,
+    pub intent_id: MaterialKeyCreationIntentId,
+    pub material_id: ContentMaterialId,
+    pub key_id: MaterialKeyId,
+    pub nonce: IntentNonce,
+    pub output_ordinal: u64,
+}
 
 /// Durable host-vault witness that a material key has crossed the erasure fence.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -50,6 +67,10 @@ pub enum VaultError {
     ErasureNotPrepared,
     #[error("material vault is unavailable")]
     Unavailable,
+    #[error("material key is reserved for an embedding output")]
+    Provisional,
+    #[error("material key provisional binding does not match")]
+    BindingMismatch,
 }
 
 /// The host-owned authority for material DEKs and their witnessed erasure fence.
@@ -60,6 +81,40 @@ pub trait MaterialKeyVault: Send + Sync {
         key_id: MaterialKeyId,
         nonce: IntentNonce,
     ) -> Result<VaultReceipt, VaultError>;
+
+    /// Creates an embedding-output provisional key.  Implementations must opt
+    /// in explicitly: falling back to ordinary creation would make the key
+    /// unwrap-capable before the later result-marker protocol exists.
+    fn create_embedding_output_if_absent(
+        &self,
+        _binding: &EmbeddingOutputKeyBinding,
+    ) -> Result<VaultReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
+    /// Retires the exact provisional key after the job-owned SQL authority has
+    /// committed retirement.  It is separate from ordinary erasure so a generic
+    /// reconciler cannot invent an embedding-output retirement route.
+    fn retire_embedding_output(
+        &self,
+        _binding: &EmbeddingOutputKeyBinding,
+    ) -> Result<ErasureReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
+    /// Lends an output key only to the result-preparation sealing callback.
+    ///
+    /// This is deliberately separate from [`Self::unwrap`]: the output key
+    /// remains provisional until the later all-output bind authority commits.
+    /// Implementations must reject every binding component that differs from
+    /// the immutable provisional claim.
+    fn with_embedding_output_key(
+        &self,
+        _binding: &EmbeddingOutputKeyBinding,
+        _use_dek: &mut dyn FnMut(&ZeroizingDek),
+    ) -> Result<(), VaultError> {
+        Err(VaultError::Unavailable)
+    }
 
     /// Borrows a live DEK only for the supplied operation.
     ///

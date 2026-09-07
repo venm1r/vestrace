@@ -847,6 +847,32 @@ impl ExternalEffectReceipt {
         }
     }
 
+    /// The receipt for an embedding result-prepared marker. This is separate
+    /// from the Run/Step provider-result reference so recovery cannot mistake
+    /// one lifecycle's marker for the other.
+    pub fn embedding_result_prepared_acknowledged(
+        id: ExternalEffectReceiptId,
+        effect_id: ExternalEffectId,
+        adapter: impl Into<String>,
+        preparation_id: uuid::Uuid,
+        recorded_at: Timestamp,
+    ) -> Self {
+        Self {
+            id,
+            effect_id,
+            adapter: adapter.into(),
+            dispatched_at: recorded_at,
+            acknowledgement_at: Some(recorded_at),
+            response_class: "http_200".into(),
+            external_resource_id: None,
+            external_version: None,
+            response_digest: None,
+            outcome_status: EffectLifecycleStatus::Acknowledged,
+            evidence_refs: vec![format!("embedding_job_result_preparation:{preparation_id}")],
+            recorded_at,
+        }
+    }
+
     fn from_dispatch(
         effect_id: ExternalEffectId,
         adapter: String,

@@ -109,7 +109,7 @@ const RUNTIME_DATABASE_URL_ENV: &str = "VESTRACE_RUNTIME_DATABASE_URL";
 const GUARDED_OWNER: &str = "vestrace_guarded_owner";
 // Keep the integration test binary tied to the complete migrations directory.
 
-const P03_GUARDED_TABLES: [&str; 38] = [
+const P03_GUARDED_TABLES: [&str; 40] = [
     "connection_revision_heads",
     "connection_revisions",
     "no_auth_binding_revisions",
@@ -148,9 +148,11 @@ const P03_GUARDED_TABLES: [&str; 38] = [
     "artifact_revision_contents",
     "provider_dispatch_causes",
     "run_step_execution_attempts",
+    "embedding_job_material_intents",
+    "embedding_job_termination_receipts",
 ];
 
-const P03_RUNTIME_ENTRYPOINTS: [&str; 30] = [
+const P03_RUNTIME_ENTRYPOINTS: [&str; 32] = [
     "vestrace_create_connection_revision_and_advance_head(uuid,uuid,uuid,uuid,text,text,text,text,text,text,uuid,bigint)",
     "vestrace_create_no_auth_binding_revision(uuid,uuid,uuid,uuid)",
     "vestrace_create_model_revision_and_advance_head(uuid,uuid,uuid,uuid,uuid,uuid,text,text,integer,uuid,text,integer,uuid,text,bigint)",
@@ -181,9 +183,11 @@ const P03_RUNTIME_ENTRYPOINTS: [&str; 30] = [
     "vestrace_reserve_run_step_execution_attempt(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid)",
     "vestrace_transition_run_step_execution_attempt(uuid,uuid,uuid,text)",
     "vestrace_lock_run_step_attempt_recovery_authority(uuid,uuid,uuid)",
+    "vestrace_reserve_embedding_job_output_intent(uuid,uuid,uuid,bigint,uuid,uuid,uuid)",
+    "vestrace_terminate_embedding_job_pre_dispatch(uuid,uuid,uuid,uuid,bigint,text,text,text,uuid,text,text,text,text,text)",
 ];
 
-const P03_GUARDED_FUNCTIONS: [&str; 37] = [
+const P03_GUARDED_FUNCTIONS: [&str; 42] = [
     "vestrace_create_connection_revision_and_advance_head(uuid,uuid,uuid,uuid,text,text,text,text,text,text,uuid,bigint)",
     "vestrace_create_no_auth_binding_revision(uuid,uuid,uuid,uuid)",
     "vestrace_create_model_revision_and_advance_head(uuid,uuid,uuid,uuid,uuid,uuid,text,text,integer,uuid,text,integer,uuid,text,bigint)",
@@ -221,6 +225,11 @@ const P03_GUARDED_FUNCTIONS: [&str; 37] = [
     "vestrace_reserve_run_step_execution_attempt(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid)",
     "vestrace_transition_run_step_execution_attempt(uuid,uuid,uuid,text)",
     "vestrace_lock_run_step_attempt_recovery_authority(uuid,uuid,uuid)",
+    "vestrace_validate_embedding_job_output_membership()",
+    "vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)",
+    "vestrace_reserve_embedding_job_output_intent(uuid,uuid,uuid,bigint,uuid,uuid,uuid)",
+    "vestrace_terminate_embedding_job_pre_dispatch(uuid,uuid,uuid,uuid,bigint,text,text,text,uuid,text,text,text,text,text)",
+    "vestrace_fence_embedding_job_dispatching()",
 ];
 
 async fn runtime_pool(source: &PgPool) -> PgPool {

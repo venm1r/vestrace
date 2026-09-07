@@ -23,7 +23,7 @@ const P02_MIGRATION_SOURCES: [&str; 9] = [
     include_str!("../../../migrations/0173_credential_key_creation_intents.sql"),
     include_str!("../../../migrations/0174_material_erasure_primitives.sql"),
 ];
-const P03_GUARDED_TABLES: [&str; 38] = [
+const P03_GUARDED_TABLES: [&str; 40] = [
     "connection_revision_heads",
     "connection_revisions",
     "no_auth_binding_revisions",
@@ -62,6 +62,8 @@ const P03_GUARDED_TABLES: [&str; 38] = [
     "artifact_revision_contents",
     "provider_dispatch_causes",
     "run_step_execution_attempts",
+    "embedding_job_material_intents",
+    "embedding_job_termination_receipts",
 ];
 
 fn normalized_sql(sql: &str) -> String {

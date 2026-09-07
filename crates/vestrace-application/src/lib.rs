@@ -126,12 +126,29 @@ pub use effect_repository::{
     LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
     WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
-pub use embedding::{AcceptEmbeddingJob, EmbeddingJobRepository, SharedEmbeddingJobRepository};
+pub use embedding::{
+    AcceptDeliveryOutputs, AcceptEmbeddingJob, DeliveryOutputAcceptanceReceipt,
+    DeliveryOutputIdentity, EmbeddingJobRepository, EmbeddingJobTerminationReceipt,
+    EmbeddingJobTerminationService, PreDispatchTerminalState, PreDispatchTerminationEvidence,
+    SharedEmbeddingJobRepository, TerminateEmbeddingJobPreDispatch,
+};
 pub use embedding::{
     AcknowledgeCarriedTransitionBatchAfterUnknown, BarrierBatchDispatch, CarryRecipeMapping,
     EmbeddingTransitionBarrierRepository, EmbeddingTransitionRepository,
     PlanEmbeddingTransitionVersion, SharedEmbeddingTransitionRepository, TransitionAuthBinding,
     TransitionPlanRecipe,
+};
+pub use embedding::{
+    EMBEDDING_RESULT_CONFLICT, EmbeddingResultDispatchAuthority, EmbeddingResultEligibility,
+    EmbeddingResultEligibilityPlan, EmbeddingResultOutputPlan, EmbeddingResultPreparationId,
+    EmbeddingResultPreparationIdentities, EmbeddingResultPreparationOutcome,
+    EmbeddingResultPreparationService, EmbeddingResultPreparedAttachment,
+    EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
+};
+pub use embedding::{
+    EmbeddingOutputKeyPlan, EmbeddingOutputKeyProgress, EmbeddingOutputKeyRepository,
+    EmbeddingOutputKeyService, RequestEmbeddingOutputRetirement,
+    SharedEmbeddingOutputKeyRepository,
 };
 pub use embedding_data_policy::{
     EmbeddingDataPolicyDecisionRecord, EmbeddingDataPolicyDecisionRepository,
@@ -179,7 +196,7 @@ pub use identity::{
 pub use installation::{InstallationMutationPermit, PermitHandle, PermitMode};
 pub use jobs::*;
 pub use material::{
-    FenceReceipt, MaterialKeyVault, VaultError,
+    EmbeddingOutputKeyBinding, FenceReceipt, MaterialKeyVault, VaultError,
     commands::{
         MaterialIntentCommands, MaterialIntentResumption, MaterialIntentSnapshot, ResumptionOutcome,
     },

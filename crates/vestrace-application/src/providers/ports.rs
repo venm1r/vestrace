@@ -260,6 +260,114 @@ pub struct EmbeddingsResponse {
     pub data: Vec<EmbeddingVector>,
 }
 
+/// A bounded embeddings response accepted for governed result preparation.
+///
+/// It is intentionally separate from the backwards-compatible
+/// [`EmbeddingsResponse`] carrier.  A governed provider attempt owns its
+/// vectors exactly once and keeps them in zeroizing storage until the result
+/// service seals them under the delivery output keys.
+pub struct GovernedEmbeddingVector {
+    index: usize,
+    components: Zeroizing<Vec<f32>>,
+}
+
+impl GovernedEmbeddingVector {
+    pub fn new(index: usize, components: Zeroizing<Vec<f32>>) -> Result<Self, ProviderError> {
+        if components.is_empty() || components.iter().any(|component| !component.is_finite()) {
+            return Err(ProviderError::InvalidResponse(
+                "embedding response contains an invalid vector".into(),
+            ));
+        }
+        Ok(Self { index, components })
+    }
+
+    /// Transfers provider components into the governed, zeroizing owner.
+    pub fn from_provider_components(
+        index: usize,
+        components: Vec<f32>,
+    ) -> Result<Self, ProviderError> {
+        Self::new(index, Zeroizing::new(components))
+    }
+
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn components(&self) -> &[f32] {
+        self.components.as_slice()
+    }
+
+    pub fn into_components(self) -> Zeroizing<Vec<f32>> {
+        self.components
+    }
+}
+
+impl std::fmt::Debug for GovernedEmbeddingVector {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GovernedEmbeddingVector")
+            .field("index", &self.index)
+            .field("dimensions", &self.components.len())
+            .field("components", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Production-only response shape with exact model and ordinal validation.
+pub struct GovernedEmbeddingsResponse {
+    model: String,
+    data: Vec<GovernedEmbeddingVector>,
+}
+
+impl GovernedEmbeddingsResponse {
+    pub fn new(
+        expected_model: &str,
+        model: String,
+        data: Vec<GovernedEmbeddingVector>,
+        expected_outputs: usize,
+    ) -> Result<Self, ProviderError> {
+        if model != expected_model {
+            return Err(ProviderError::InvalidResponse(
+                "embedding response model does not match the governed request".into(),
+            ));
+        }
+        if data.len() != expected_outputs
+            || data
+                .iter()
+                .enumerate()
+                .any(|(ordinal, vector)| vector.index != ordinal)
+        {
+            return Err(ProviderError::InvalidResponse(
+                "embedding response indices do not match the governed request".into(),
+            ));
+        }
+        Ok(Self { model, data })
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn vectors(&self) -> &[GovernedEmbeddingVector] {
+        &self.data
+    }
+
+    pub fn into_vectors(self) -> Vec<GovernedEmbeddingVector> {
+        self.data
+    }
+}
+
+impl std::fmt::Debug for GovernedEmbeddingsResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GovernedEmbeddingsResponse")
+            .field("model", &self.model)
+            .field("vector_count", &self.data.len())
+            .field("vectors", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EffectiveRequestKind {
     ModelsList,
@@ -1195,7 +1303,7 @@ impl std::fmt::Debug for EffectiveModelRequest {
 pub enum EffectiveModelResponse {
     ModelsList(ModelsListResponse),
     ChatCompletions(EffectiveChatResult),
-    Embeddings(EmbeddingsResponse),
+    Embeddings(GovernedEmbeddingsResponse),
 }
 
 fn validate_wire_model_id(model: &str) -> Result<(), ProviderError> {

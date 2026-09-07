@@ -1,16 +1,20 @@
 {
-  "captured_at_utc": "2026-09-05T20:52:34.000Z",
+  "captured_at_utc": "2026-09-05T20:53:41.000Z",
   "change_scope_paths": [
     "crates/vestrace-application/src/conformance_cases.rs",
     "crates/vestrace-application/src/connections.rs",
     "crates/vestrace-application/src/embedding/barrier.rs",
     "crates/vestrace-application/src/embedding/carry.rs",
     "crates/vestrace-application/src/embedding/job.rs",
+    "crates/vestrace-application/src/embedding/keys.rs",
     "crates/vestrace-application/src/embedding/mod.rs",
+    "crates/vestrace-application/src/embedding/result.rs",
     "crates/vestrace-application/src/embedding/transition.rs",
     "crates/vestrace-application/src/lib.rs",
+    "crates/vestrace-application/src/material/vault.rs",
     "crates/vestrace-application/src/memory/services.rs",
     "crates/vestrace-application/src/provider_dispatch.rs",
+    "crates/vestrace-application/src/providers/ports.rs",
     "crates/vestrace-application/src/retrieval/context_builder.rs",
     "crates/vestrace-application/src/retrieval/embedding.rs",
     "crates/vestrace-application/src/retrieval/fusion.rs",
@@ -26,12 +30,15 @@
     "crates/vestrace-cli/src/commands/schema.rs",
     "crates/vestrace-cli/src/commands/server.rs",
     "crates/vestrace-cli/src/commands/worker.rs",
+    "crates/vestrace-cli/src/main.rs",
     "crates/vestrace-cli/tests/provider_openapi_contract.rs",
     "crates/vestrace-cli/tests/provider_runtime_wiring.rs",
+    "crates/vestrace-cli/tests/worker_once_cli.rs",
     "crates/vestrace-domain/src/embedding/generation.rs",
     "crates/vestrace-domain/src/embedding/job.rs",
     "crates/vestrace-domain/src/embedding/mod.rs",
     "crates/vestrace-domain/src/embedding/space.rs",
+    "crates/vestrace-domain/src/external_effects.rs",
     "crates/vestrace-domain/src/id.rs",
     "crates/vestrace-domain/src/lib.rs",
     "crates/vestrace-domain/src/retrieval/mod.rs",
@@ -41,6 +48,7 @@
     "crates/vestrace-fault-scenario/src/main.rs",
     "crates/vestrace-fault-scenario/src/report.rs",
     "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
+    "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs",
     "crates/vestrace-fault-scenario/src/settings.rs",
     "crates/vestrace-http/src/api/connections.rs",
     "crates/vestrace-http/src/api/embedding_jobs.rs",
@@ -53,8 +61,11 @@
     "crates/vestrace-http/tests/route_inventory_is_exhaustive.rs",
     "crates/vestrace-http/tests/router_contract.rs",
     "crates/vestrace-http/tests/run_routes.rs",
+    "crates/vestrace-infrastructure/src/crypto/material_vault.rs",
     "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_result_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/invariant_observer.rs",
@@ -63,10 +74,13 @@
     "crates/vestrace-infrastructure/src/postgres/purge_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
     "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
+    "crates/vestrace-infrastructure/src/providers/openai_compatible.rs",
     "crates/vestrace-infrastructure/tests/common/mod.rs",
     "crates/vestrace-infrastructure/tests/embedding_carry_classification.rs",
     "crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs",
     "crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs",
+    "crates/vestrace-infrastructure/tests/embedding_output_keys.rs",
+    "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
     "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
     "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
     "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
@@ -96,6 +110,9 @@
     "migrations/0189_embedding_transition_carry.sql",
     "migrations/0190_embedding_transition_barriers.sql",
     "migrations/0191_embedding_corpus_generation_members.sql",
+    "migrations/0192_embedding_job_pre_dispatch_termination.sql",
+    "migrations/0193_embedding_output_key_preparation.sql",
+    "migrations/0194_embedding_job_result_preparation.sql",
     "schemas/openapi-v1.json",
     "scripts/p04-scope.mjs",
     "tests/c8_core_memory_qualification.rs",
@@ -105,9 +122,16 @@
     "tests/retrieval_e2e.rs",
     "tests/v01_acceptance.rs"
   ],
-  "dirty_files": [],
+  "dirty_files": [
+    {
+      "bytes": 0,
+      "path": "docs/development-evidence/v1-g0-04r-preflight.json",
+      "sha256": "absent",
+      "status": " D"
+    }
+  ],
   "baseline_amendments": [],
-  "head": "3679cf96259b5c25f723b4d40ee9b1da59659766",
+  "head": "58e7dac3cef7cc106d59f7ba3560bdbd37de76c0",
   "protected_authority_digests": [
     {
       "bytes": 20039,
@@ -251,8 +275,66 @@
     "tests/p03_scope.test.mjs"
   ],
   "schema_version": 1,
-  "status_porcelain_v1_z_base64": "",
-  "status_porcelain_v1_z_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "status_porcelain_v1_z_base64": "IEQgZG9jcy9kZXZlbG9wbWVudC1ldmlkZW5jZS92MS1nMC0wNHItcHJlZmxpZ2h0Lmpzb24A",
+  "status_porcelain_v1_z_sha256": "dc6c19e6943ea2cf9d4e26d98de8d3d1fe82cf9c1c1af3a07b098be90f3892a2",
   "protected_authority_revisions": [],
-  "scope_amendments": []
+  "scope_amendments": [
+    {
+      "amended_at_utc": "2026-09-06T14:00:57.462Z",
+      "added_paths": [
+        "crates/vestrace-application/src/embedding/result.rs",
+        "crates/vestrace-application/src/providers/ports.rs",
+        "crates/vestrace-domain/src/external_effects.rs",
+        "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs",
+        "crates/vestrace-infrastructure/src/postgres/embedding_result_repository.rs",
+        "crates/vestrace-infrastructure/src/providers/openai_compatible.rs",
+        "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
+        "migrations/0194_embedding_job_result_preparation.sql"
+      ],
+      "previous_change_scope_size": 112,
+      "new_change_scope_size": 120,
+      "authorized_by": "User replied 'разрешаю' to the exact eight-path Task 14D scope request (2026-09-06).",
+      "reason": "Task 14D requires a forward-only guarded delivery-result preparation authority, typed application/repository boundaries, governed provider response parsing, embedding-specific result receipt evidence, and a real process-crash scenario. The corrected plan received independent VERDICT: APPROVE before the exact scope request.",
+      "consequence": "Exactly eight paths are newly allowlisted. Existing allowed material-vault, provider-dispatch, application/domain exports, PostgreSQL exports, provisioning, recovery, fault harness and scope-evidence paths may support this bounded block. No dependency manifest, protected authority, historical migration, key binding, Live publication, corpus advancement, rebuild/retrieval result semantics, worker composition or external provider call is added."
+    },
+    {
+      "amended_at_utc": "2026-09-06T07:52:34.768Z",
+      "added_paths": [
+        "crates/vestrace-application/src/embedding/keys.rs",
+        "crates/vestrace-application/src/material/vault.rs",
+        "crates/vestrace-infrastructure/src/crypto/material_vault.rs",
+        "crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs",
+        "crates/vestrace-infrastructure/tests/embedding_output_keys.rs",
+        "migrations/0193_embedding_output_key_preparation.sql"
+      ],
+      "previous_change_scope_size": 106,
+      "new_change_scope_size": 112,
+      "authorized_by": "User replied 'да' to the exact six-path Task 14C scope request (2026-09-06).",
+      "reason": "Task 14C requires a forward-only delivery-output enrollment and provisional-key recovery authority, an embedding-owned application/repository boundary, a host-vault provisional protocol, and focused PostgreSQL/vault evidence. The reviewed plan received VERDICT: APPROVE before the exact scope request.",
+      "consequence": "Exactly six paths are newly allowlisted. Existing allowed application/domain/repository/provisioning/fault and scope-evidence paths may support the bounded block. No dependency manifest, protected authority, historical migration, provider-output finalizer, retrieval-query executor, worker composition or external provider call is added."
+    },
+    {
+      "amended_at_utc": "2026-09-06T04:06:29.000Z",
+      "added_paths": [
+        "migrations/0192_embedding_job_pre_dispatch_termination.sql"
+      ],
+      "previous_change_scope_size": 105,
+      "new_change_scope_size": 106,
+      "authorized_by": "User continuation instruction after the exact Task 14B scope request: continue working in larger blocks (2026-09-06).",
+      "reason": "Task 14B requires forward-only guarded PostgreSQL authority for durable pre-dispatch EmbeddingJob cancellation and definite failure. Historical migrations through 0191 cannot be edited; the preceding user-facing request identified this exact new migration and the 105-to-106 scope delta.",
+      "consequence": "Only this migration is newly allowlisted. Existing allowed application/repository, dispatch, provisioning and test paths may implement and prove the bounded command. No protected authority, dependency manifest, full executor or result-completion scope is added."
+    },
+    {
+      "amended_at_utc": "2026-09-05T23:25:26.000Z",
+      "added_paths": [
+        "crates/vestrace-cli/src/main.rs",
+        "crates/vestrace-cli/tests/worker_once_cli.rs"
+      ],
+      "previous_change_scope_size": 103,
+      "new_change_scope_size": 105,
+      "authorized_by": "lead-engineer decision (2026-09-06), after the task 13 builder stopped rather than edit a path the allowlist did not contain.",
+      "reason": "Task 13 adds `vestrace worker --once`, a bounded cycle observable from outside the process. The argument belongs on the `Command::Worker` Clap variant and its dispatch arm, both in `crates/vestrace-cli/src/main.rs:361`, which the allowlist did not contain — `crates/vestrace-cli/src/commands/worker.rs` did. The task brief asserted main.rs was in scope; that assertion was not checked and was wrong. The builder refused to proceed, which is the behaviour the standing rule requires. The test is a new file because the wiring must be proved by launching the binary through `CARGO_BIN_EXE_vestrace`, not by reading source text: `crates/vestrace-cli/tests/provider_runtime_wiring.rs` asserts on `include_str!` substrings, which can prove a forbidden name is absent and can never prove a handler was registered.",
+      "consequence": "Two paths. The Clap variant gains one optional flag and the dispatch arm passes it through; no other command changes. The new test asserts three exit codes — work done, none found, poll failed — because the existing polls convert a failure into `false` (`worker.rs:391`, `:480`), so a two-outcome interface would report a database failure as no work. Recorded as an amendment rather than a silent widening because the reason is worth keeping visible: the brief stated a scope membership it had not verified, and the guard caught it rather than the reviewer."
+    }
+  ]
 }

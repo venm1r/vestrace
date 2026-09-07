@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 78] = [
+const EXPECTED_GUARDED_TABLES: [&str; 92] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -84,6 +84,20 @@ const EXPECTED_GUARDED_TABLES: [&str; 78] = [
     "embedding_corpus_generations",
     "embedding_corpus_generation_members",
     "embedding_jobs",
+    "embedding_job_material_intents",
+    "embedding_job_termination_receipts",
+    "embedding_delivery_acceptance_receipts",
+    "embedding_delivery_source_memberships",
+    "embedding_job_pre_dispatch_retirement_authorities",
+    "embedding_output_key_retirement_requests",
+    "embedding_output_key_receipts",
+    "embedding_output_key_retirement_receipts",
+    "embedding_space_corpus_states",
+    "embedding_index_generation_guards",
+    "embedding_job_result_preparations",
+    "embedding_projection_entries",
+    "embedding_job_result_prepared_attachments",
+    "embedding_projection_source_dependencies",
     "embedding_transition_plan_recipes",
     "embedding_transition_plans",
     "embedding_transitions",
@@ -203,7 +217,7 @@ async fn install_extensions_from_real_provisioner(pool: &PgPool) {
         .expect("extensions must be installed from the real provisioner statements");
 }
 
-async fn assert_final_p03_schema(pool: &PgPool) {
+async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
     let versions: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM _sqlx_migrations WHERE version BETWEEN 176 AND 184 AND success",
     )
@@ -211,6 +225,19 @@ async fn assert_final_p03_schema(pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(versions, 9);
+
+    let output_key_migration_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=193 AND success)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let result_preparation_migration_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=194 AND success)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
 
     let guarded: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname FROM pg_class AS c \
@@ -222,9 +249,34 @@ async fn assert_final_p03_schema(pool: &PgPool) {
     .fetch_all(pool)
     .await
     .unwrap();
+    let mut expected_guarded: BTreeSet<String> = EXPECTED_GUARDED_TABLES.map(str::to_owned).into();
+    if !output_key_migration_applied {
+        for table in [
+            "embedding_delivery_acceptance_receipts",
+            "embedding_delivery_source_memberships",
+            "embedding_job_pre_dispatch_retirement_authorities",
+            "embedding_output_key_retirement_requests",
+            "embedding_output_key_receipts",
+            "embedding_output_key_retirement_receipts",
+        ] {
+            expected_guarded.remove(table);
+        }
+    }
+    if !result_preparation_migration_applied {
+        for table in [
+            "embedding_space_corpus_states",
+            "embedding_index_generation_guards",
+            "embedding_job_result_preparations",
+            "embedding_projection_entries",
+            "embedding_job_result_prepared_attachments",
+            "embedding_projection_source_dependencies",
+        ] {
+            expected_guarded.remove(table);
+        }
+    }
     assert_eq!(
         guarded.into_iter().collect::<BTreeSet<_>>(),
-        EXPECTED_GUARDED_TABLES.map(str::to_owned).into(),
+        expected_guarded,
         "only the exact P02 and P03 guarded tables may be re-owned"
     );
 
@@ -334,9 +386,236 @@ async fn assert_final_p03_schema(pool: &PgPool) {
     .unwrap();
     assert_eq!(
         trigger_installer_acl,
-        (true, false, false),
-        "0184 must leave a closed installer until the real bootstrap removes it"
+        (task10_installer_exists, false, false),
+        "the closed 0184 installer must reflect whether the real bootstrap has refreshed the volume"
     );
+
+    let termination_function_acl: Vec<(String, String, bool, bool)> = sqlx::query_as(
+        "SELECT procedure.proname, pg_get_userbyid(procedure.proowner), \
+                has_function_privilege('vestrace',procedure.oid,'EXECUTE'), \
+                has_function_privilege('public',procedure.oid,'EXECUTE') \
+           FROM pg_proc AS procedure \
+          WHERE procedure.oid IN ( \
+              'public.vestrace_validate_embedding_job_output_membership()'::regprocedure, \
+              'public.vestrace_reserve_embedding_job_output_intent(uuid,uuid,uuid,bigint,uuid,uuid,uuid)'::regprocedure, \
+              'public.vestrace_terminate_embedding_job_pre_dispatch(uuid,uuid,uuid,uuid,bigint,text,text,text,uuid,text,text,text,text,text)'::regprocedure, \
+              'public.vestrace_fence_embedding_job_dispatching()'::regprocedure, \
+              'public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)'::regprocedure \
+          ) ORDER BY procedure.proname",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        termination_function_acl,
+        vec![
+            (
+                "vestrace_fence_embedding_job_dispatching".into(),
+                "vestrace_guarded_owner".into(),
+                false,
+                false,
+            ),
+            (
+                "vestrace_lock_embedding_job_pre_dispatch_gate".into(),
+                "vestrace_guarded_owner".into(),
+                false,
+                false,
+            ),
+            (
+                "vestrace_reserve_embedding_job_output_intent".into(),
+                "vestrace_guarded_owner".into(),
+                true,
+                false,
+            ),
+            (
+                "vestrace_terminate_embedding_job_pre_dispatch".into(),
+                "vestrace_guarded_owner".into(),
+                true,
+                false,
+            ),
+            (
+                "vestrace_validate_embedding_job_output_membership".into(),
+                "vestrace_guarded_owner".into(),
+                false,
+                false,
+            ),
+        ],
+        "0192 exposes only its reservation and termination commands to runtime"
+    );
+
+    let lifecycle_owner: String = sqlx::query_scalar(
+        "SELECT pg_get_userbyid(relowner) \
+           FROM pg_class WHERE oid='public.external_effect_lifecycle_transitions'::regclass",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        lifecycle_owner, "vestrace",
+        "0192 must not re-own the lifecycle table"
+    );
+
+    let material_intent_trigger_acl: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege('vestrace', \
+            'public.material_key_creation_intents','TRIGGER')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        !material_intent_trigger_acl,
+        "0192 must revoke its narrow material-intent trigger installation grant"
+    );
+
+    let termination_upgrade_acl: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT to_regprocedure('public.vestrace_prepare_p04_termination_upgrade()') IS NOT NULL, \
+                COALESCE(has_function_privilege('vestrace', \
+                    to_regprocedure('public.vestrace_prepare_p04_termination_upgrade()'),'EXECUTE'),FALSE), \
+                COALESCE(has_function_privilege('public', \
+                    to_regprocedure('public.vestrace_prepare_p04_termination_upgrade()'),'EXECUTE'),FALSE), \
+                to_regprocedure('public.vestrace_finish_p04_termination_upgrade()') IS NOT NULL, \
+                COALESCE(has_function_privilege('vestrace', \
+                    to_regprocedure('public.vestrace_finish_p04_termination_upgrade()'),'EXECUTE'),FALSE), \
+                COALESCE(has_function_privilege('public', \
+                    to_regprocedure('public.vestrace_finish_p04_termination_upgrade()'),'EXECUTE'),FALSE)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        termination_upgrade_acl,
+        (true, false, false, true, false, false),
+        "0192 must close both one-shot ownership hand-backs"
+    );
+
+    if output_key_migration_applied {
+        let output_key_function_acl: Vec<(String, String, bool, bool)> = sqlx::query_as(
+        "SELECT procedure.proname,pg_get_userbyid(procedure.proowner), \
+                has_function_privilege('vestrace',procedure.oid,'EXECUTE'), \
+                has_function_privilege('public',procedure.oid,'EXECUTE') \
+           FROM pg_proc procedure WHERE procedure.oid IN ( \
+             'public.vestrace_validate_delivery_source_membership()'::regprocedure, \
+             'public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)'::regprocedure, \
+             'public.vestrace_finalize_delivery_embedding_outputs(uuid,uuid,uuid)'::regprocedure, \
+             'public.vestrace_request_embedding_output_retirement(uuid,uuid,uuid,uuid,bigint,text,text,text,uuid,text,text,text,text,text)'::regprocedure, \
+             'public.vestrace_claim_embedding_output_key(uuid)'::regprocedure, \
+             'public.vestrace_record_embedding_output_key_receipt(uuid,uuid,uuid)'::regprocedure, \
+             'public.vestrace_embedding_output_key_progress(uuid,uuid)'::regprocedure, \
+             'public.vestrace_record_embedding_output_key_retirement(uuid,uuid,uuid)'::regprocedure, \
+             'public.vestrace_validate_embedding_output_termination_authority()'::regprocedure \
+           ) ORDER BY procedure.proname",
+    )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(output_key_function_acl.len(), 9);
+        for (name, owner, runtime_execute, public_execute) in output_key_function_acl {
+            assert_eq!(owner, "vestrace_guarded_owner", "{name}");
+            assert!(!public_execute, "{name}");
+            assert_eq!(
+                runtime_execute,
+                !matches!(
+                    name.as_str(),
+                    "vestrace_validate_delivery_source_membership"
+                        | "vestrace_validate_embedding_output_termination_authority"
+                ),
+                "{name}"
+            );
+        }
+        for table in [
+            "embedding_delivery_acceptance_receipts",
+            "embedding_delivery_source_memberships",
+            "embedding_job_pre_dispatch_retirement_authorities",
+            "embedding_output_key_retirement_requests",
+            "embedding_output_key_receipts",
+            "embedding_output_key_retirement_receipts",
+        ] {
+            let authority: (String, bool, bool) = sqlx::query_as(
+                "SELECT pg_get_userbyid(relowner),relrowsecurity,relforcerowsecurity \
+               FROM pg_class WHERE oid=$1::regclass",
+            )
+            .bind(format!("public.{table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                authority,
+                ("vestrace_guarded_owner".into(), true, true),
+                "{table}"
+            );
+        }
+        let blocker_authority: (String, bool) = sqlx::query_as(
+            "SELECT pg_get_userbyid(relowner),EXISTS(SELECT 1 FROM pg_constraint \
+           WHERE conrelid='public.material_erasure_blockers'::regclass \
+             AND conname='material_erasure_blockers_id_workspace_key') \
+           FROM pg_class WHERE oid='public.material_erasure_blockers'::regclass",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(blocker_authority, ("vestrace_guarded_owner".into(), true));
+
+        let output_upgrade_acl: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT to_regprocedure('public.vestrace_prepare_p04_output_key_upgrade()') IS NOT NULL, \
+          COALESCE(has_function_privilege('vestrace',to_regprocedure('public.vestrace_prepare_p04_output_key_upgrade()'),'EXECUTE'),FALSE), \
+          COALESCE(has_function_privilege('public',to_regprocedure('public.vestrace_prepare_p04_output_key_upgrade()'),'EXECUTE'),FALSE), \
+          to_regprocedure('public.vestrace_finish_p04_output_key_upgrade()') IS NOT NULL, \
+          COALESCE(has_function_privilege('vestrace',to_regprocedure('public.vestrace_finish_p04_output_key_upgrade()'),'EXECUTE'),FALSE), \
+          COALESCE(has_function_privilege('public',to_regprocedure('public.vestrace_finish_p04_output_key_upgrade()'),'EXECUTE'),FALSE)",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            output_upgrade_acl,
+            (
+                task10_installer_exists,
+                false,
+                false,
+                task10_installer_exists,
+                false,
+                false
+            ),
+            "0193 must close both one-shot output-key ownership hand-backs"
+        );
+    }
+
+    if result_preparation_migration_applied {
+        let result_preparation_functions: Vec<(String, String, bool, bool)> = sqlx::query_as(
+            "SELECT procedure.proname,pg_get_userbyid(procedure.proowner), \
+                    has_function_privilege('vestrace',procedure.oid,'EXECUTE'), \
+                    has_function_privilege('public',procedure.oid,'EXECUTE') \
+               FROM pg_proc AS procedure WHERE procedure.oid IN ( \
+                 'public.vestrace_validate_embedding_result_preparation()'::regprocedure, \
+                 'public.vestrace_validate_embedding_projection_dependency()'::regprocedure, \
+                 'public.vestrace_create_embedding_result_space_guards()'::regprocedure, \
+                 'public.vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid)'::regprocedure, \
+                 'public.vestrace_load_embedding_result_eligibility(uuid,uuid,uuid)'::regprocedure, \
+                 'public.vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[])'::regprocedure, \
+                 'public.vestrace_reject_result_prepared_pre_dispatch_terminalization()'::regprocedure, \
+                 'public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)'::regprocedure \
+               ) ORDER BY procedure.proname",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(result_preparation_functions.len(), 8);
+        for (name, owner, runtime_execute, public_execute) in result_preparation_functions {
+            assert_eq!(owner, "vestrace_guarded_owner", "{name}");
+            assert!(!public_execute, "{name}");
+            assert_eq!(
+                runtime_execute,
+                matches!(
+                    name.as_str(),
+                    "vestrace_commit_embedding_result_preparation"
+                        | "vestrace_load_embedding_result_eligibility"
+                        | "vestrace_lock_embedding_job_recovery_authority"
+                        | "vestrace_lock_embedding_result_completion_authority"
+                ),
+                "{name}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -381,8 +660,170 @@ async fn fresh_database_runs_real_provisioner_before_runtime_migrator(pool: PgPo
 
     let runtime = runtime_pool(&pool).await;
     MIGRATOR.run(&runtime).await.unwrap();
-    assert_final_p03_schema(&runtime).await;
+    assert_final_p03_schema(&runtime, true).await;
     runtime.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn existing_0191_volume_hands_termination_objects_to_runtime_once(pool: PgPool) {
+    install_extensions_from_real_provisioner(&pool).await;
+    hand_database_to_runtime(&pool).await;
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .expect("the real provisioner must install the 0192 ownership bridge");
+
+    let runtime = runtime_pool(&pool).await;
+    let through_0191 = Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 191)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    };
+    through_0191.run(&runtime).await.unwrap();
+    runtime.close().await;
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .expect("the refreshed real provisioner must preserve the sealed 0191 volume");
+    let runtime = runtime_pool(&pool).await;
+
+    type TerminationUpgradePreflight = (
+        String,
+        bool,
+        bool,
+        bool,
+        Vec<(String, String)>,
+        String,
+        bool,
+        bool,
+    );
+
+    let before: TerminationUpgradePreflight = (
+        sqlx::query_scalar(
+            "SELECT pg_get_userbyid(relowner) \
+               FROM pg_class WHERE oid='public.provider_concurrency_leases'::regclass",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT has_function_privilege('vestrace', \
+                'public.vestrace_finish_p04_termination_upgrade()','EXECUTE')",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT has_function_privilege('public', \
+                'public.vestrace_finish_p04_termination_upgrade()','EXECUTE')",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT has_table_privilege('vestrace', \
+                'public.material_key_creation_intents','TRIGGER')",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_as(
+            "SELECT procedure.proname, pg_get_userbyid(procedure.proowner) \
+               FROM pg_proc AS procedure \
+              WHERE procedure.oid IN ( \
+                  'public.vestrace_try_admit_provider_dispatch(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,uuid,uuid,uuid,uuid,uuid,text,integer)'::regprocedure, \
+                  'public.vestrace_lock_provider_dispatch_routing(uuid,uuid,uuid,uuid,uuid,text,uuid,uuid,uuid,uuid,uuid)'::regprocedure, \
+                  'public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)'::regprocedure \
+              ) ORDER BY procedure.proname",
+        )
+        .fetch_all(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT pg_get_userbyid(relowner) \
+               FROM pg_class WHERE oid='public.external_effect_lifecycle_transitions'::regclass",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT has_function_privilege('vestrace', \
+                'public.vestrace_prepare_p04_termination_upgrade()','EXECUTE')",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+        sqlx::query_scalar(
+            "SELECT has_function_privilege('public', \
+                'public.vestrace_prepare_p04_termination_upgrade()','EXECUTE')",
+        )
+        .fetch_one(&runtime)
+        .await
+        .unwrap(),
+    );
+    assert_eq!(before.0, "vestrace_guarded_owner");
+    assert_eq!(
+        before.4,
+        vec![
+            (
+                "vestrace_lock_embedding_job_recovery_authority".into(),
+                "vestrace_guarded_owner".into(),
+            ),
+            (
+                "vestrace_lock_provider_dispatch_routing".into(),
+                "vestrace_guarded_owner".into(),
+            ),
+            (
+                "vestrace_try_admit_provider_dispatch".into(),
+                "vestrace_guarded_owner".into(),
+            ),
+        ]
+    );
+    assert_eq!(before.5, "vestrace");
+    assert_eq!((before.6, before.7), (true, false));
+    assert!(
+        !before.3,
+        "the 0192 trigger grant must remain sealed until the migration calls its prepare helper"
+    );
+    assert_eq!((before.1, before.2), (true, false));
+
+    let only_0192 = Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version == 192)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: true,
+        ..Migrator::DEFAULT
+    };
+    only_0192.run(&runtime).await.unwrap();
+    assert_final_p03_schema(&runtime, false).await;
+    runtime.close().await;
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .expect("the post-0192 provisioner must remove closed one-shot bridges");
+    let helpers_after_refresh: (bool, bool) = sqlx::query_as(
+        "SELECT to_regprocedure('public.vestrace_prepare_p04_termination_upgrade()') IS NOT NULL, \
+                to_regprocedure('public.vestrace_finish_p04_termination_upgrade()') IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(helpers_after_refresh, (false, false));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -749,7 +1190,7 @@ async fn accepted_p02_database_acquires_p03_helpers_before_runtime_upgrade(pool:
         ..Migrator::DEFAULT
     };
     p03.run(&runtime).await.unwrap();
-    assert_final_p03_schema(&runtime).await;
+    assert_final_p03_schema(&runtime, true).await;
     runtime.close().await;
 }
 

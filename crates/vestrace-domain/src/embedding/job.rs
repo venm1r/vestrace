@@ -135,17 +135,19 @@ impl EmbeddingJobState {
         )
     }
 
-    /// Exactly the arrows line 219 draws, and no others.
+    /// Exactly the permitted state edges, and no others.
     ///
-    /// The line reads `Requested -> Running -> Succeeded | FailedDefinite |
-    /// InconclusiveUnknown | Cancelled`, so a job terminalizes from `Running`
-    /// and from nowhere else. Cancelling a `Requested` job looks reasonable and
-    /// is not written there; adding the edge here would be this type inventing
-    /// lifecycle rather than recording it. If that edge is needed, it needs a
-    /// spec line first.
+    /// Frozen spec section 11.6, line 225 permits a requested job to start, be
+    /// cancelled before dispatch, or fail definitely before dispatch. A running
+    /// job has the four terminal outcomes from line 219.
+    ///
+    /// This predicate describes state edges only. It neither authorizes a
+    /// transition nor proves an effect guard. For pre-dispatch termination,
+    /// the guarded command must still enforce expected version, absence of
+    /// `Dispatching`, lease release, and reservation abandonment.
     pub const fn may_advance_to(self, next: Self) -> bool {
         match (self, next) {
-            (Self::Requested, Self::Running) => true,
+            (Self::Requested, Self::Running | Self::FailedDefinite | Self::Cancelled) => true,
             (Self::Running, next) => next.is_terminal(),
             _ => false,
         }

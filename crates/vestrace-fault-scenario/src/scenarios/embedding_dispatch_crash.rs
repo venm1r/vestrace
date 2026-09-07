@@ -29,15 +29,17 @@ use crate::ScenarioSettings;
 const MARKER: &str = "vestrace-fault-scenario: embedding-dispatch";
 const UNPROVABLE: &str = "unproved: no worker composes an embedding-job executor (crates/vestrace-cli/src/commands/worker.rs:119-134 and 423-455)";
 
-struct Fixture {
-    workspace_id: Uuid,
-    principal_id: Uuid,
-    job_id: Uuid,
-    effect_id: Uuid,
-    snapshot_id: Uuid,
-    connection_id: Uuid,
-    connection_revision_id: Uuid,
-    evidence_id: Uuid,
+pub(super) struct Fixture {
+    pub(super) workspace_id: Uuid,
+    pub(super) principal_id: Uuid,
+    pub(super) job_id: Uuid,
+    pub(super) effect_id: Uuid,
+    pub(super) snapshot_id: Uuid,
+    pub(super) connection_id: Uuid,
+    pub(super) connection_revision_id: Uuid,
+    pub(super) evidence_id: Uuid,
+    pub(super) space_registration_id: Uuid,
+    pub(super) intent: Option<ExternalEffectIntent>,
 }
 
 /// The child owns all setup so every reported identity is recovered from its
@@ -114,7 +116,7 @@ pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
     Ok(rendered.to_string())
 }
 
-async fn connect_owner(settings: &ScenarioSettings) -> Result<PgPool, String> {
+pub(super) async fn connect_owner(settings: &ScenarioSettings) -> Result<PgPool, String> {
     PgPoolOptions::new()
         .max_connections(4)
         .connect(settings.database_url())
@@ -122,7 +124,7 @@ async fn connect_owner(settings: &ScenarioSettings) -> Result<PgPool, String> {
         .map_err(|error| format!("owner database connection failed: {error}"))
 }
 
-async fn connect_runtime(owner: &PgPool) -> Result<PgPool, String> {
+pub(super) async fn connect_runtime(owner: &PgPool) -> Result<PgPool, String> {
     let configured = std::env::var("VESTRACE_RUNTIME_DATABASE_URL").map_err(|_| {
         "VESTRACE_RUNTIME_DATABASE_URL is required for the runtime fixture".to_owned()
     })?;
@@ -158,7 +160,25 @@ fn replace_database(url: &str, database: &str) -> Result<String, String> {
 /// setup operations: tenancy, connection/model rows, space registration,
 /// guarded revisions, pre-existing effect intent, qualification/snapshot rows,
 /// acceptance, admission policy, and complete request evidence.
-async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, String> {
+pub(super) async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, String> {
+    build_fixture_with_job(owner, runtime, true).await
+}
+
+/// Result preparation receives its delivery job from the guarded output
+/// acceptance command.  Pre-creating that job would turn the acceptance into
+/// a guessed-output backfill, which 0193 correctly refuses.
+pub(super) async fn build_result_preparation_fixture(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> Result<Fixture, String> {
+    build_fixture_with_job(owner, runtime, false).await
+}
+
+async fn build_fixture_with_job(
+    owner: &PgPool,
+    runtime: &PgPool,
+    accept_job: bool,
+) -> Result<Fixture, String> {
     let workspace_id = WorkspaceId::new();
     let principal_id = PrincipalId::new();
     let context = RequestContext::new(workspace_id, principal_id);
@@ -316,21 +336,23 @@ async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, Stri
         .bind(workspace_id.as_uuid()).bind(snapshot_id).execute(&mut *seeded).await.map_err(sql)?;
     seeded.commit().await.map_err(sql)?;
 
-    let mut accept = runtime.begin().await.map_err(sql)?;
-    set_workspace(&mut accept, workspace_id.as_uuid()).await?;
-    sqlx::query(
-        "SELECT vestrace_accept_embedding_job($1,$2,$3,'delivery',$4,$5,$6,NULL,NULL::BIGINT)",
-    )
-    .bind(job_id.as_uuid())
-    .bind(workspace_id.as_uuid())
-    .bind(space_registration_id)
-    .bind(snapshot_id)
-    .bind(effect_id)
-    .bind(evidence_id)
-    .execute(&mut *accept)
-    .await
-    .map_err(sql)?;
-    accept.commit().await.map_err(sql)?;
+    if accept_job {
+        let mut accept = runtime.begin().await.map_err(sql)?;
+        set_workspace(&mut accept, workspace_id.as_uuid()).await?;
+        sqlx::query(
+            "SELECT vestrace_accept_embedding_job($1,$2,$3,'delivery',$4,$5,$6,NULL,NULL::BIGINT)",
+        )
+        .bind(job_id.as_uuid())
+        .bind(workspace_id.as_uuid())
+        .bind(space_registration_id)
+        .bind(snapshot_id)
+        .bind(effect_id)
+        .bind(evidence_id)
+        .execute(&mut *accept)
+        .await
+        .map_err(sql)?;
+        accept.commit().await.map_err(sql)?;
+    }
 
     let mut published = runtime.begin().await.map_err(sql)?;
     set_workspace(&mut published, workspace_id.as_uuid()).await?;
@@ -390,8 +412,14 @@ async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, Stri
         connection_id,
         connection_revision_id,
         evidence_id,
+        space_registration_id,
+        intent: Some(intent),
     };
-    assert_baseline(owner, &fixture).await?;
+    if accept_job {
+        assert_baseline(owner, &fixture).await?;
+    } else {
+        assert_result_preparation_baseline(owner, &fixture).await?;
+    }
     Ok(fixture)
 }
 
@@ -399,7 +427,7 @@ async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, Stri
 /// intent re-insert is deliberately ON CONFLICT DO NOTHING: acceptance already
 /// persisted it. Authorization and lifecycle writes match the repository's
 /// SQL, while the transaction remains open until a requested process abort.
-async fn drive(
+pub(super) async fn drive(
     runtime: &PgPool,
     fixture: &Fixture,
     crash: Option<vestrace_domain::external_effects::EffectFaultPoint>,
@@ -409,7 +437,7 @@ async fn drive(
     sqlx::query("SELECT * FROM vestrace_try_admit_provider_dispatch($1,$2,$3,$4,$5,$6,$7,$8,'embedding_job',NULL,NULL,$9,NULL,NULL,NULL,60)")
         .bind(Uuid::now_v7()).bind(Uuid::now_v7()).bind(Uuid::now_v7()).bind(fixture.workspace_id)
         .bind(fixture.connection_id).bind(fixture.connection_revision_id).bind(fixture.effect_id).bind(fixture.evidence_id).bind(fixture.snapshot_id)
-        .execute(&mut *tx).await.map_err(sql)?;
+        .execute(&mut *tx).await.map_err(|error| format!("provider dispatch admission failed: {}", sql(error)))?;
     sqlx::query("INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) SELECT id,workspace_id,adapter,payload FROM external_effect_intents WHERE id=$1 AND workspace_id=$2 ON CONFLICT(id) DO NOTHING")
         .bind(fixture.effect_id).bind(fixture.workspace_id).execute(&mut *tx).await.map_err(sql)?;
     checkpoint(
@@ -430,7 +458,7 @@ async fn drive(
     );
 
     sqlx::query("INSERT INTO external_effect_lifecycle_transitions(effect_id,workspace_id,status,cause,cause_ref,recorded_at,dispatch_owner,dispatch_expires_at) VALUES($1,$2,'dispatching','dispatch_started',$3,NOW(),'embedding-fault-child',NOW()+INTERVAL '60 seconds')")
-        .bind(fixture.effect_id).bind(fixture.workspace_id).bind(fixture.effect_id.to_string()).execute(&mut *tx).await.map_err(sql)?;
+        .bind(fixture.effect_id).bind(fixture.workspace_id).bind(fixture.effect_id.to_string()).execute(&mut *tx).await.map_err(|error| format!("provider dispatch lifecycle write failed: {}", sql(error)))?;
     checkpoint(
         crash,
         vestrace_domain::external_effects::EffectFaultPoint::AfterDispatchBeforeReceipt,
@@ -498,7 +526,7 @@ fn announce(stage: &str, fixture: &Fixture) {
     stderr.flush().expect("marker flush");
 }
 
-async fn set_workspace(
+pub(super) async fn set_workspace(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace_id: Uuid,
 ) -> Result<(), String> {
@@ -526,6 +554,30 @@ async fn assert_baseline(pool: &PgPool, fixture: &Fixture) -> Result<(), String>
     if actual != expected {
         return Err(format!(
             "accepted embedding baseline is not durable-intent/no-dispatch: {observed}"
+        ));
+    }
+    Ok(())
+}
+
+async fn assert_result_preparation_baseline(
+    pool: &PgPool,
+    fixture: &Fixture,
+) -> Result<(), String> {
+    let observed = read_counts(pool, fixture).await?;
+    let expected = (0_i64, 1_i64, 0_i64, 0_i64, 0_i64, 0_i64, 0_i64, 0_i64);
+    let actual = (
+        number(&observed, "job_count")?,
+        number(&observed, "intent_count")?,
+        number(&observed, "authorization_count")?,
+        number(&observed, "admission_count")?,
+        number(&observed, "dispatching_count")?,
+        number(&observed, "deadline_count")?,
+        number(&observed, "receipt_count")?,
+        number(&observed, "reconciliation_count")?,
+    );
+    if actual != expected {
+        return Err(format!(
+            "result-preparation fixture must defer job acceptance to the output authority: {observed}"
         ));
     }
     Ok(())
@@ -672,6 +724,8 @@ fn marker(stderr: &str, stage: &str) -> Result<Fixture, String> {
         connection_id: Uuid::nil(),
         connection_revision_id: Uuid::nil(),
         evidence_id: Uuid::nil(),
+        space_registration_id: Uuid::nil(),
+        intent: None,
     })
 }
 
@@ -690,7 +744,7 @@ fn point_name(point: vestrace_domain::external_effects::EffectFaultPoint) -> &'s
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
-fn sql(error: sqlx::Error) -> String {
+pub(super) fn sql(error: sqlx::Error) -> String {
     error.to_string()
 }
 fn die(error: String) -> ! {

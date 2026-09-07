@@ -339,6 +339,20 @@ BEGIN
         'embedding_corpus_generations',
         'embedding_corpus_generation_members',
         'embedding_jobs',
+        'embedding_job_material_intents',
+        'embedding_job_termination_receipts',
+        'embedding_delivery_acceptance_receipts',
+        'embedding_delivery_source_memberships',
+        'embedding_job_pre_dispatch_retirement_authorities',
+        'embedding_output_key_retirement_requests',
+        'embedding_output_key_receipts',
+        'embedding_output_key_retirement_receipts',
+        'embedding_space_corpus_states',
+        'embedding_index_generation_guards',
+        'embedding_job_result_preparations',
+        'embedding_projection_entries',
+        'embedding_job_result_prepared_attachments',
+        'embedding_projection_source_dependencies',
         'embedding_transitions',
         'embedding_transition_plans',
         'embedding_transition_plan_recipes',
@@ -393,6 +407,11 @@ DECLARE
     target_schema TEXT;
     target_name TEXT;
     target_arguments TEXT;
+    target_types TEXT;
+    output_key_target BOOLEAN := FALSE;
+    runtime_output_key_target BOOLEAN := FALSE;
+    result_preparation_target BOOLEAN := FALSE;
+    runtime_result_preparation_target BOOLEAN := FALSE;
     allowed_targets REGPROCEDURE[] := ARRAY[
         to_regprocedure('public.vestrace_create_connection_revision_and_advance_head(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, UUID, BIGINT)'),
         to_regprocedure('public.vestrace_create_no_auth_binding_revision(UUID, UUID, UUID, UUID)'),
@@ -458,6 +477,27 @@ DECLARE
         ,to_regprocedure('public.vestrace_validate_embedding_transition_barrier_header()')
         ,to_regprocedure('public.vestrace_observe_embedding_transition_barriers(UUID, UUID, UUID)')
         ,to_regprocedure('public.vestrace_abandon_embedding_transition_barrier_candidate(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_validate_embedding_job_output_membership()')
+        ,to_regprocedure('public.vestrace_reserve_embedding_job_output_intent(UUID, UUID, UUID, BIGINT, UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_terminate_embedding_job_pre_dispatch(UUID, UUID, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT)')
+        ,to_regprocedure('public.vestrace_fence_embedding_job_dispatching()')
+        ,to_regprocedure('public.vestrace_lock_embedding_job_pre_dispatch_gate(UUID, UUID, BOOLEAN)')
+        ,to_regprocedure('public.vestrace_validate_delivery_source_membership()')
+        ,to_regprocedure('public.vestrace_begin_delivery_embedding_outputs(UUID, UUID, UUID, TEXT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT, JSONB, JSONB)')
+        ,to_regprocedure('public.vestrace_finalize_delivery_embedding_outputs(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_request_embedding_output_retirement(UUID, UUID, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT)')
+        ,to_regprocedure('public.vestrace_claim_embedding_output_key(UUID)')
+        ,to_regprocedure('public.vestrace_record_embedding_output_key_receipt(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_embedding_output_key_progress(UUID, UUID)')
+        ,to_regprocedure('public.vestrace_record_embedding_output_key_retirement(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_validate_embedding_output_termination_authority()')
+        ,to_regprocedure('public.vestrace_validate_embedding_result_preparation()')
+        ,to_regprocedure('public.vestrace_validate_embedding_projection_dependency()')
+        ,to_regprocedure('public.vestrace_create_embedding_result_space_guards()')
+        ,to_regprocedure('public.vestrace_lock_embedding_result_completion_authority(UUID, UUID, UUID, UUID, UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_load_embedding_result_eligibility(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_commit_embedding_result_preparation(UUID, UUID, UUID, UUID, UUID, BIGINT, TEXT, UUID[], BYTEA[], INTEGER[])')
+        ,to_regprocedure('public.vestrace_reject_result_prepared_pre_dispatch_terminalization()')
     ];
     runtime_executable_targets REGPROCEDURE[] := ARRAY[
         to_regprocedure('public.vestrace_create_connection_revision_and_advance_head(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, UUID, BIGINT)'),
@@ -515,20 +555,67 @@ DECLARE
         to_regprocedure('public.vestrace_classify_embedding_transition_ambiguity_carries(UUID, UUID, UUID)'),
         to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)'),
         to_regprocedure('public.vestrace_observe_embedding_transition_barriers(UUID, UUID, UUID)'),
-        to_regprocedure('public.vestrace_abandon_embedding_transition_barrier_candidate(UUID, UUID, UUID)')
+        to_regprocedure('public.vestrace_abandon_embedding_transition_barrier_candidate(UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_reserve_embedding_job_output_intent(UUID, UUID, UUID, BIGINT, UUID, UUID, UUID)'),
+        to_regprocedure('public.vestrace_terminate_embedding_job_pre_dispatch(UUID, UUID, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT)')
+        ,to_regprocedure('public.vestrace_begin_delivery_embedding_outputs(UUID, UUID, UUID, TEXT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT, JSONB, JSONB)')
+        ,to_regprocedure('public.vestrace_finalize_delivery_embedding_outputs(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_request_embedding_output_retirement(UUID, UUID, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT)')
+        ,to_regprocedure('public.vestrace_claim_embedding_output_key(UUID)')
+        ,to_regprocedure('public.vestrace_record_embedding_output_key_receipt(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_embedding_output_key_progress(UUID, UUID)')
+        ,to_regprocedure('public.vestrace_record_embedding_output_key_retirement(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_lock_embedding_result_completion_authority(UUID, UUID, UUID, UUID, UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_load_embedding_result_eligibility(UUID, UUID, UUID)')
+        ,to_regprocedure('public.vestrace_commit_embedding_result_preparation(UUID, UUID, UUID, UUID, UUID, BIGINT, TEXT, UUID[], BYTEA[], INTEGER[])')
     ];
     migration_trigger_targets REGPROCEDURE[] := ARRAY[
         to_regprocedure('public.vestrace_reject_p03_immutable_mutation()'),
         to_regprocedure('public.vestrace_reject_raw_p03_mutation()')
     ];
 BEGIN
-    SELECT namespace.nspname, procedure.proname, pg_get_function_identity_arguments(procedure.oid)
-      INTO target_schema, target_name, target_arguments
+    SELECT namespace.nspname, procedure.proname, pg_get_function_identity_arguments(procedure.oid),
+           pg_catalog.oidvectortypes(procedure.proargtypes)
+      INTO target_schema, target_name, target_arguments, target_types
       FROM pg_proc AS procedure
       JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
      WHERE procedure.oid = target;
 
-    IF target_schema <> 'public' OR NOT COALESCE(target = ANY (allowed_targets), FALSE) THEN
+    output_key_target := target_schema='public' AND (
+        (target_name='vestrace_validate_delivery_source_membership' AND target_types='')
+        OR (target_name='vestrace_begin_delivery_embedding_outputs' AND target_types='uuid, uuid, uuid, text, uuid, uuid, text, uuid, uuid, uuid, uuid, bigint, jsonb, jsonb')
+        OR (target_name='vestrace_finalize_delivery_embedding_outputs' AND target_types='uuid, uuid, uuid')
+        OR (target_name='vestrace_request_embedding_output_retirement' AND target_types='uuid, uuid, uuid, uuid, bigint, text, text, text, uuid, text, text, text, text, text')
+        OR (target_name='vestrace_claim_embedding_output_key' AND target_types='uuid')
+        OR (target_name='vestrace_record_embedding_output_key_receipt' AND target_types='uuid, uuid, uuid')
+        OR (target_name='vestrace_embedding_output_key_progress' AND target_types='uuid, uuid')
+        OR (target_name='vestrace_record_embedding_output_key_retirement' AND target_types='uuid, uuid, uuid')
+        OR (target_name='vestrace_validate_embedding_output_termination_authority' AND target_types='')
+    );
+    runtime_output_key_target := output_key_target
+        AND target_name NOT IN (
+            'vestrace_validate_delivery_source_membership',
+            'vestrace_validate_embedding_output_termination_authority'
+        );
+    result_preparation_target := target_schema='public' AND (
+        (target_name='vestrace_validate_embedding_result_preparation' AND target_types='')
+        OR (target_name='vestrace_validate_embedding_projection_dependency' AND target_types='')
+        OR (target_name='vestrace_create_embedding_result_space_guards' AND target_types='')
+        OR (target_name='vestrace_lock_embedding_result_completion_authority' AND target_types='uuid, uuid, uuid, uuid, uuid, uuid, uuid')
+        OR (target_name='vestrace_load_embedding_result_eligibility' AND target_types='uuid, uuid, uuid')
+        OR (target_name='vestrace_commit_embedding_result_preparation' AND target_types='uuid, uuid, uuid, uuid, uuid, bigint, text, uuid[], bytea[], integer[]')
+        OR (target_name='vestrace_reject_result_prepared_pre_dispatch_terminalization' AND target_types='')
+    );
+    runtime_result_preparation_target := result_preparation_target
+        AND target_name IN (
+            'vestrace_lock_embedding_result_completion_authority',
+            'vestrace_load_embedding_result_eligibility',
+            'vestrace_commit_embedding_result_preparation'
+        );
+
+    IF target_schema <> 'public'
+       OR (NOT COALESCE(target = ANY (allowed_targets), FALSE)
+           AND NOT output_key_target AND NOT result_preparation_target) THEN
         RAISE EXCEPTION 'only exact declared P03 function signatures may be handed to the guarded owner'
             USING ERRCODE = '42501';
     END IF;
@@ -568,6 +655,8 @@ BEGIN
         target_arguments
     );
     IF COALESCE(target = ANY (runtime_executable_targets), FALSE)
+       OR runtime_output_key_target
+       OR runtime_result_preparation_target
        OR target = to_regprocedure('public.vestrace_accept_embedding_job(UUID, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT)')
        OR target = to_regprocedure('public.vestrace_plan_embedding_transition_version(UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, BIGINT, UUID, UUID, UUID, UUID, UUID[], JSONB)')
        OR target = to_regprocedure('public.vestrace_acknowledge_carried_transition_batch_after_unknown(UUID, UUID, UUID, UUID, BIGINT, UUID, UUID, TEXT, UUID, UUID, UUID)') THEN
@@ -1461,6 +1550,369 @@ BEGIN
         $function$;
         REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade() FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_generation_fence_upgrade() TO vestrace;
+    END IF;
+END
+$bootstrap$;
+
+-- Task 14B alters the guarded provider lease and forward-replaces the shared
+-- embedding dispatch/recovery fences.  Keep this hand-back limited to the
+-- exact objects 0192 replaces; the effect lifecycle table remains runtime
+-- owned so its narrow trigger installation needs no ownership transfer.
+DO $bootstrap$
+DECLARE migration_0192_applied BOOLEAN := FALSE;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 192 AND success)
+          INTO migration_0192_applied;
+    END IF;
+    IF migration_0192_applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_termination_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_p04_termination_upgrade();
+    ELSE
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_termination_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
+            DECLARE target REGPROCEDURE; owner_name TEXT; table_owner TEXT;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 192 AND success) THEN
+                    RAISE EXCEPTION 'P04 termination ownership hand-back is closed' USING ERRCODE = '42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO table_owner
+                  FROM pg_class WHERE oid = 'public.provider_concurrency_leases'::REGCLASS;
+                IF table_owner = 'vestrace_guarded_owner' THEN
+                    ALTER TABLE public.provider_concurrency_leases OWNER TO vestrace;
+                ELSIF table_owner <> 'vestrace' THEN
+                    RAISE EXCEPTION 'P04 termination lease table has an unexpected owner' USING ERRCODE = '42501';
+                END IF;
+                GRANT TRIGGER ON TABLE public.material_key_creation_intents TO vestrace;
+                FOREACH target IN ARRAY ARRAY[
+                    to_regprocedure('public.vestrace_try_admit_provider_dispatch(UUID, UUID, UUID, UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID, TEXT, INTEGER)'),
+                    to_regprocedure('public.vestrace_lock_provider_dispatch_routing(UUID, UUID, UUID, UUID, UUID, TEXT, UUID, UUID, UUID, UUID, UUID)'),
+                    to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(UUID, UUID)')
+                ]::REGPROCEDURE[] LOOP
+                    IF target IS NULL THEN
+                        RAISE EXCEPTION 'P04 termination shared fence is absent' USING ERRCODE = '42501';
+                    END IF;
+                    SELECT pg_get_userbyid(proowner) INTO owner_name FROM pg_proc WHERE oid = target;
+                    IF owner_name <> ALL (ARRAY['vestrace', 'vestrace_guarded_owner']::TEXT[]) THEN
+                        RAISE EXCEPTION 'P04 termination shared fence has an unexpected owner' USING ERRCODE = '42501';
+                    END IF;
+                    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace', target);
+                END LOOP;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_termination_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_termination_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_termination_upgrade() TO vestrace;
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_finish_p04_termination_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 192 AND success) THEN
+                    RAISE EXCEPTION 'P04 termination finish is closed' USING ERRCODE = '42501';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1
+                      FROM pg_trigger AS trigger
+                     WHERE trigger.tgrelid='public.material_key_creation_intents'::REGCLASS
+                       AND trigger.tgname='material_intents_embedding_owner_deferred_membership'
+                       AND trigger.tgfoid=to_regprocedure('public.vestrace_validate_embedding_job_output_membership()')
+                ) THEN
+                    RAISE EXCEPTION 'P04 termination finish requires its exact installed trigger'
+                        USING ERRCODE = '42501';
+                END IF;
+                REVOKE TRIGGER ON TABLE public.material_key_creation_intents FROM vestrace;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_finish_p04_termination_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_p04_termination_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_p04_termination_upgrade() TO vestrace;
+    END IF;
+END
+$bootstrap$;
+
+-- Task 14C forward-replaces the generic unprepared-intent guard and adds a
+-- workspace-composite blocker reference.  The two one-shot helpers expose only
+-- those exact objects and disappear on the first provisioner refresh after
+-- 0193 succeeds.
+DO $bootstrap$
+DECLARE migration_0193_applied BOOLEAN := FALSE;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 193 AND success)
+          INTO migration_0193_applied;
+    END IF;
+    IF migration_0193_applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_output_key_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_p04_output_key_upgrade();
+    ELSE
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_output_key_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+            DECLARE function_owner TEXT; table_owner TEXT;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=193 AND success) THEN
+                    RAISE EXCEPTION 'P04 output-key ownership hand-back is closed' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(proowner) INTO function_owner FROM pg_proc
+                 WHERE oid=to_regprocedure('public.vestrace_prepare_pre_prepared_material_abandon(uuid)');
+                IF function_owner='vestrace_guarded_owner' THEN
+                    ALTER FUNCTION public.vestrace_prepare_pre_prepared_material_abandon(uuid) OWNER TO vestrace;
+                ELSIF function_owner IS DISTINCT FROM 'vestrace' THEN
+                    RAISE EXCEPTION 'P04 output-key abandonment guard has an unexpected owner' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO table_owner FROM pg_class
+                 WHERE oid=to_regclass('public.material_erasure_blockers');
+                IF table_owner='vestrace_guarded_owner' THEN
+                    ALTER TABLE public.material_erasure_blockers OWNER TO vestrace;
+                ELSIF table_owner IS DISTINCT FROM 'vestrace' THEN
+                    RAISE EXCEPTION 'P04 output-key blocker table has an unexpected owner' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO table_owner FROM pg_class
+                 WHERE oid=to_regclass('public.embedding_job_termination_receipts');
+                IF table_owner='vestrace_guarded_owner' THEN
+                    ALTER TABLE public.embedding_job_termination_receipts OWNER TO vestrace;
+                ELSIF table_owner IS DISTINCT FROM 'vestrace' THEN
+                    RAISE EXCEPTION 'P04 output-key termination table has an unexpected owner' USING ERRCODE='42501';
+                END IF;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_output_key_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_finish_p04_output_key_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+            DECLARE object_owner TEXT; guarded_table TEXT; target_function REGPROCEDURE;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=193 AND success) THEN
+                    RAISE EXCEPTION 'P04 output-key finish is closed' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO object_owner FROM pg_class
+                 WHERE oid=to_regclass('public.material_erasure_blockers');
+                IF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                    RAISE EXCEPTION 'P04 output-key blocker ownership was not restored' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(relowner) INTO object_owner FROM pg_class
+                 WHERE oid=to_regclass('public.embedding_job_termination_receipts');
+                IF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                    RAISE EXCEPTION 'P04 output-key termination ownership was not restored' USING ERRCODE='42501';
+                END IF;
+                FOREACH guarded_table IN ARRAY ARRAY[
+                    'embedding_delivery_acceptance_receipts',
+                    'embedding_delivery_source_memberships',
+                    'embedding_job_pre_dispatch_retirement_authorities',
+                    'embedding_output_key_retirement_requests',
+                    'embedding_output_key_receipts',
+                    'embedding_output_key_retirement_receipts'
+                ] LOOP
+                    SELECT pg_get_userbyid(relowner) INTO object_owner FROM pg_class
+                     WHERE oid=to_regclass('public.' || guarded_table);
+                    IF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                        RAISE EXCEPTION 'P04 output-key guarded table ownership was not restored: %',guarded_table USING ERRCODE='42501';
+                    END IF;
+                END LOOP;
+                IF NOT EXISTS(
+                    SELECT 1 FROM pg_constraint
+                     WHERE conrelid='public.material_erasure_blockers'::regclass
+                       AND conname='material_erasure_blockers_id_workspace_key'
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_delivery_source_memberships'::regclass
+                       AND tgname='embedding_delivery_source_memberships_exact'
+                       AND tgfoid=to_regprocedure('public.vestrace_validate_delivery_source_membership()')
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_job_termination_receipts'::regclass
+                       AND tgname='embedding_job_termination_output_authority_exact'
+                       AND tgfoid=to_regprocedure('public.vestrace_validate_embedding_output_termination_authority()')
+                ) THEN
+                    RAISE EXCEPTION 'P04 output-key finish requires its exact constraint and trigger' USING ERRCODE='42501';
+                END IF;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_finish_p04_output_key_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_output_key_upgrade() FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_p04_output_key_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_output_key_upgrade() TO vestrace;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_p04_output_key_upgrade() TO vestrace;
+    END IF;
+END
+$bootstrap$;
+
+-- Task 14D requires only trigger installation on two previously guarded
+-- terminalization tables. The one-shot hand-back makes that capability usable
+-- by the real runtime migrator and withdraws it once 0194 has installed the
+-- exact guarded result-preparation authority.
+DO $bootstrap$
+DECLARE migration_0194_applied BOOLEAN := FALSE;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = 194 AND success)
+          INTO migration_0194_applied;
+    END IF;
+    IF migration_0194_applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_result_preparation_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_p04_result_preparation_upgrade();
+    ELSE
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_result_preparation_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+            DECLARE function_owner TEXT; guarded_table TEXT; target_function REGPROCEDURE;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=194 AND success) THEN
+                    RAISE EXCEPTION 'P04 result-preparation ownership hand-back is closed' USING ERRCODE='42501';
+                END IF;
+                GRANT TRIGGER ON TABLE public.embedding_job_pre_dispatch_retirement_authorities TO vestrace;
+                GRANT TRIGGER ON TABLE public.embedding_output_key_retirement_requests TO vestrace;
+                GRANT REFERENCES ON TABLE public.material_erasure_blockers TO vestrace;
+                GRANT REFERENCES ON TABLE public.prepared_material_attachments TO vestrace;
+                FOREACH guarded_table IN ARRAY ARRAY[
+                    'embedding_space_registrations',
+                    'embedding_delivery_source_memberships'
+                ] LOOP
+                    SELECT pg_get_userbyid(relowner) INTO function_owner FROM pg_class
+                     WHERE oid=to_regclass('public.' || guarded_table);
+                    IF function_owner='vestrace_guarded_owner' THEN
+                        EXECUTE format('ALTER TABLE public.%I OWNER TO vestrace',guarded_table);
+                    ELSIF function_owner IS DISTINCT FROM 'vestrace' THEN
+                        RAISE EXCEPTION 'P04 result-preparation % ownership hand-back is unavailable',guarded_table USING ERRCODE='42501';
+                    END IF;
+                END LOOP;
+                FOREACH target_function IN ARRAY ARRAY[
+                    'public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)'::REGPROCEDURE,
+                    'public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)'::REGPROCEDURE,
+                    'public.vestrace_fence_embedding_job_dispatching()'::REGPROCEDURE
+                ] LOOP
+                    SELECT pg_get_userbyid(proowner) INTO function_owner FROM pg_proc
+                     WHERE oid=target_function;
+                    IF function_owner='vestrace_guarded_owner' THEN
+                        EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace',target_function);
+                    ELSIF function_owner IS DISTINCT FROM 'vestrace' THEN
+                        RAISE EXCEPTION 'P04 result-preparation guarded function hand-back is unavailable: %',target_function USING ERRCODE='42501';
+                    END IF;
+                END LOOP;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_result_preparation_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        EXECUTE $function$
+            CREATE OR REPLACE FUNCTION public.vestrace_finish_p04_result_preparation_upgrade()
+            RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+            DECLARE object_owner TEXT; guarded_table TEXT; target_function REGPROCEDURE;
+            BEGIN
+                IF to_regclass('public._sqlx_migrations') IS NOT NULL
+                   AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=194 AND success) THEN
+                    RAISE EXCEPTION 'P04 result-preparation finish is closed' USING ERRCODE='42501';
+                END IF;
+                FOREACH guarded_table IN ARRAY ARRAY[
+                    'embedding_space_corpus_states',
+                    'embedding_index_generation_guards',
+                    'embedding_job_result_preparations',
+                    'embedding_projection_entries',
+                    'embedding_job_result_prepared_attachments',
+                    'embedding_projection_source_dependencies',
+                    'embedding_space_registrations',
+                    'embedding_delivery_source_memberships'
+                ] LOOP
+                    SELECT pg_get_userbyid(relowner) INTO object_owner FROM pg_class
+                     WHERE oid=to_regclass('public.' || guarded_table);
+                    IF object_owner='vestrace'
+                       OR (object_owner=current_user AND session_user=current_user) THEN
+                        EXECUTE format('ALTER TABLE public.%I OWNER TO vestrace_guarded_owner',guarded_table);
+                    ELSIF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                        RAISE EXCEPTION 'P04 result-preparation guarded table ownership was not restored: %',guarded_table USING ERRCODE='42501';
+                    END IF;
+                END LOOP;
+                FOREACH target_function IN ARRAY ARRAY[
+                    'public.vestrace_validate_embedding_result_preparation()'::REGPROCEDURE,
+                    'public.vestrace_validate_embedding_projection_dependency()'::REGPROCEDURE,
+                    'public.vestrace_create_embedding_result_space_guards()'::REGPROCEDURE,
+                    'public.vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid)'::REGPROCEDURE,
+                    'public.vestrace_load_embedding_result_eligibility(uuid,uuid,uuid)'::REGPROCEDURE,
+                    'public.vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[])'::REGPROCEDURE,
+                    'public.vestrace_reject_result_prepared_pre_dispatch_terminalization()'::REGPROCEDURE,
+                    'public.vestrace_assign_embedding_delivery_source_intent()'::REGPROCEDURE,
+                    'public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)'::REGPROCEDURE,
+                    'public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)'::REGPROCEDURE,
+                    'public.vestrace_fence_embedding_job_dispatching()'::REGPROCEDURE
+                ] LOOP
+                    SELECT pg_get_userbyid(proowner) INTO object_owner FROM pg_proc
+                     WHERE oid=target_function;
+                    IF object_owner='vestrace'
+                       OR (object_owner=current_user AND session_user=current_user) THEN
+                        EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
+                    ELSIF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                        RAISE EXCEPTION 'P04 result-preparation guarded function ownership was not restored: %',target_function USING ERRCODE='42501';
+                    END IF;
+                    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC',target_function);
+                END LOOP;
+                GRANT SELECT ON TABLE public.embedding_space_corpus_states,
+                                      public.embedding_index_generation_guards,
+                                      public.embedding_job_result_preparations,
+                                      public.embedding_projection_entries,
+                                      public.embedding_job_result_prepared_attachments,
+                                      public.embedding_projection_source_dependencies,
+                                      public.embedding_space_registrations,
+                                      public.embedding_delivery_source_memberships
+                    TO vestrace;
+                GRANT EXECUTE ON FUNCTION public.vestrace_lock_embedding_result_completion_authority(
+                    uuid,uuid,uuid,uuid,uuid,uuid,uuid
+                ) TO vestrace;
+                GRANT EXECUTE ON FUNCTION public.vestrace_load_embedding_result_eligibility(
+                    uuid,uuid,uuid
+                ) TO vestrace;
+                GRANT EXECUTE ON FUNCTION public.vestrace_commit_embedding_result_preparation(
+                    uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[]
+                ) TO vestrace;
+                GRANT EXECUTE ON FUNCTION public.vestrace_lock_embedding_job_recovery_authority(
+                    uuid,uuid
+                ) TO vestrace;
+                IF NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_job_pre_dispatch_retirement_authorities'::regclass
+                       AND tgname='embedding_result_prepared_pre_dispatch_terminal_fence'
+                       AND tgfoid=to_regprocedure('public.vestrace_reject_result_prepared_pre_dispatch_terminalization()')
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_output_key_retirement_requests'::regclass
+                       AND tgname='embedding_result_prepared_output_retirement_fence'
+                       AND tgfoid=to_regprocedure('public.vestrace_reject_result_prepared_pre_dispatch_terminalization()')
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_delivery_source_memberships'::regclass
+                       AND tgname='embedding_delivery_source_memberships_source_intent_assign'
+                       AND tgfoid=to_regprocedure('public.vestrace_assign_embedding_delivery_source_intent()')
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_trigger
+                     WHERE tgrelid='public.embedding_space_registrations'::regclass
+                       AND tgname='embedding_result_space_guard_on_registration'
+                       AND tgfoid=to_regprocedure('public.vestrace_create_embedding_result_space_guards()')
+                ) OR NOT EXISTS(
+                    SELECT 1 FROM pg_constraint
+                     WHERE conrelid='public.embedding_delivery_source_memberships'::regclass
+                       AND conname='embedding_delivery_source_memberships_result_exact_key'
+                ) THEN
+                    RAISE EXCEPTION 'P04 result-preparation finish requires its exact terminal, fresh-space, and source fences' USING ERRCODE='42501';
+                END IF;
+                SELECT pg_get_userbyid(proowner) INTO object_owner FROM pg_proc
+                 WHERE oid=to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)');
+                IF object_owner IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                    RAISE EXCEPTION 'P04 result-preparation recovery authority was not restored' USING ERRCODE='42501';
+                END IF;
+                REVOKE TRIGGER ON TABLE public.embedding_job_pre_dispatch_retirement_authorities FROM vestrace;
+                REVOKE TRIGGER ON TABLE public.embedding_output_key_retirement_requests FROM vestrace;
+                REVOKE REFERENCES ON TABLE public.material_erasure_blockers FROM vestrace;
+                REVOKE REFERENCES ON TABLE public.prepared_material_attachments FROM vestrace;
+                REVOKE EXECUTE ON FUNCTION public.vestrace_finish_p04_result_preparation_upgrade() FROM vestrace;
+            END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_result_preparation_upgrade() FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_p04_result_preparation_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_result_preparation_upgrade() TO vestrace;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_p04_result_preparation_upgrade() TO vestrace;
     END IF;
 END
 $bootstrap$;

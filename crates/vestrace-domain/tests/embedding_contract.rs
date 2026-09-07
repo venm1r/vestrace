@@ -246,8 +246,9 @@ fn the_job_kinds_are_the_three_the_spec_closes_over() {
     );
 }
 
-/// Spec line 219: the job "records append-only `Requested -> Running ->
-/// Succeeded | FailedDefinite | InconclusiveUnknown | Cancelled` transitions".
+/// Frozen spec section 11.6, line 225: a requested job may start, be cancelled
+/// before dispatch, or fail definitely before dispatch. Once running, it has
+/// the same four terminal outcomes.
 ///
 /// Six states. An earlier draft carried ten, having taken `Waiting`,
 /// `Authorized`, `Dispatching` and `ResultPrepared` from line 256's list of the
@@ -256,25 +257,34 @@ fn the_job_kinds_are_the_three_the_spec_closes_over() {
 /// `EmbeddingJobResultPrepared` marker. A job that also carried `Dispatching`
 /// would be a second answer to whether the provider was reached.
 #[test]
-fn the_job_lifecycle_is_exactly_the_spec_line() {
+fn the_job_lifecycle_has_only_the_explicitly_allowed_edges() {
     use EmbeddingJobState::*;
+
     assert_eq!(EmbeddingJobState::ALL.len(), 6);
-    assert!(Requested.may_advance_to(Running));
+
+    let allowed = [
+        (Requested, Running),
+        (Requested, FailedDefinite),
+        (Requested, Cancelled),
+        (Running, Succeeded),
+        (Running, FailedDefinite),
+        (Running, InconclusiveUnknown),
+        (Running, Cancelled),
+    ];
+    for from in EmbeddingJobState::ALL {
+        for to in EmbeddingJobState::ALL {
+            assert_eq!(
+                from.may_advance_to(to),
+                allowed.contains(&(from, to)),
+                "{from:?} -> {to:?} must match the explicit allowed-edge list"
+            );
+        }
+    }
+
     for terminal in [Succeeded, FailedDefinite, InconclusiveUnknown, Cancelled] {
-        assert!(Running.may_advance_to(terminal), "{terminal:?}");
         assert!(terminal.is_terminal(), "{terminal:?}");
-        // Append-only: nothing leaves a terminal state, including back to
-        // Running for "one more attempt".
-        assert!(!terminal.may_advance_to(Running));
-        assert!(!terminal.may_advance_to(Requested));
     }
     assert!(!Requested.is_terminal() && !Running.is_terminal());
-    // The line draws no arrow from Requested to a terminal state. Cancelling a
-    // job that has not started looks reasonable and is not written there, so it
-    // is refused rather than invented here.
-    assert!(!Requested.may_advance_to(Cancelled));
-    assert!(!Requested.may_advance_to(Succeeded));
-    assert!(!Running.may_advance_to(Requested));
 
     // Line 257: the ambiguity head is the only state an authorized
     // acknowledgement may give a successor, and no scheduler may advance it.
@@ -282,6 +292,23 @@ fn the_job_lifecycle_is_exactly_the_spec_line() {
     for state in [Requested, Running, Succeeded, FailedDefinite, Cancelled] {
         assert!(!state.may_have_a_successor(), "{state:?}");
     }
+}
+
+/// Frozen spec section 11.6, line 225 allows a durable cancellation command
+/// to terminalize a requested job before dispatch. This state predicate grants
+/// no authority and proves no effect guard: authorization, expected version,
+/// the absence of Dispatching, lease release, and reservation abandonment
+/// remain duties of that guarded command.
+#[test]
+fn a_requested_job_may_be_cancelled_before_dispatch() {
+    assert!(EmbeddingJobState::Requested.may_advance_to(EmbeddingJobState::Cancelled));
+}
+
+/// Frozen spec section 11.6, line 225 also permits a proved pre-dispatch
+/// failure to be recorded as definite.
+#[test]
+fn a_requested_job_may_fail_definitely_before_dispatch() {
+    assert!(EmbeddingJobState::Requested.may_advance_to(EmbeddingJobState::FailedDefinite));
 }
 
 /// Spec line 207: a Ready generation is CAS-published, and line 219: the
