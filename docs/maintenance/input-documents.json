@@ -1,0 +1,47 @@
+{
+  "format": "vestrace-doc-inputs/1",
+  "inputs": [
+    {
+      "name": "Vestrace_Documentation_Integrated_6f610253_RU.zip",
+      "bytes": 185348,
+      "sha256": "70b5d567b609067ea4c06e5317b269d1151a34d10bbee7eb06d9255ca7a6c9ce",
+      "treatment": "MW design preserved at repository paths"
+    },
+    {
+      "name": "Vestrace_Documentation_Integration_6f610253.patch",
+      "bytes": 644345,
+      "sha256": "6f75c126d8e9f4c5d955bcac6857790efe795dd3df1d6e16ceaffebf32235efd",
+      "treatment": "historical input; not authoritative for current runtime"
+    },
+    {
+      "name": "Vestrace_Memory_Workspace_Implementation_6f610253_RU.zip",
+      "bytes": 166141,
+      "sha256": "d45a0bc82ab003dc0f22217cfc1a37abf7494c5d9c79249a136030184e5edaa7",
+      "treatment": "historical input; not authoritative for current runtime"
+    },
+    {
+      "name": "Vestrace_Memory_Workspace_Implementation_RU.md",
+      "bytes": 326943,
+      "sha256": "4e1e1141d3359d32aa14b54f97b48b3b888b72148d61d92f94d15f0be1a1000a",
+      "treatment": "historical input; not authoritative for current runtime"
+    },
+    {
+      "name": "Vestrace_documentation_RU.md",
+      "bytes": 143960,
+      "sha256": "19a337a15038b66d07c44e854c0f9c424eb4c39451bc2d01b0eba4cfd9c967b5",
+      "treatment": "historical input; not authoritative for current runtime"
+    },
+    {
+      "name": "Vestrace_documentation_RU_2026-09-07.zip",
+      "bytes": 66711,
+      "sha256": "c7e08a418fcc543eb1ec92b6682793a276e0f4b98da9064b4a3eda2584a2e081",
+      "treatment": "historical input; not authoritative for current runtime"
+    },
+    {
+      "name": "Vestrace_promotion_plan_RU.md",
+      "bytes": 38135,
+      "sha256": "56dc0ca1b7306e52c30ed4dce86242641199a5de941a0bdcbc802ad1315c80ed",
+      "treatment": "historical input; not authoritative for current runtime"
+    }
+  ]
+}

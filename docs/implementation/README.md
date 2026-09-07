@@ -1,15 +1,22 @@
-# Implementation Extensions
+# Реализация: один пакет требований на одну функцию
 
-Feature designs are registered here without changing the [normative hierarchy](../specs/README.md) or the [release planning programs](../plans/README.md).
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-| Package | Baseline | Scope | Documentation / implementation status |
-| --- | --- | --- | --- |
-| [Memory Workspace](memory-workspace/README.md) | `6f6102536e9a535b7086db14573bf45fe750ad71` | Memory/Context API, Console editing, bounded import/sync/export | Integrated proposed design; no runtime implementation or release qualification claimed |
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-A package owns its specifications, proposed schemas/examples, traceability and implementation plans. It references shared contracts instead of copying them. Its validator checks documentation only.
+## Активные документы
 
-Before implementation, read its preflight and establish a fresh source baseline, exact writable paths, protected authorities, dependency acceptance and a release-program decision where needed. The presence of the directory is not scope authorization.
+[Memory Workspace](memory-workspace/README.md) интегрирован в исходный commit `07e2977`. Его исходный code baseline — `6f610253`, и этот pin сохранён как история анализа. Новая документация не переписывает старый манифест, не меняет MW-D решения с Proposed на Accepted и не объявляет реализацию MW готовой.
 
-For Memory Workspace, start with [integration and precedence](memory-workspace/12-integration.md) and [MW-00](memory-workspace/plans/00-preflight.md). The package does not widen P04, reserve migration numbers or weaken named qualification profiles.
+Полные specs, proposed OpenAPI/schema, examples, file plan и 54 acceptance cases находятся только в этом каталоге. Дорожная карта ссылается на них. Перед выполнением читать [MW-00](memory-workspace/plans/00-preflight.md), [integration](memory-workspace/12-integration.md) и текущее разрешение владельца.
 
-[All documentation](../README.md).
+## Как новая дорожная карта связана с реализацией
+
+[Приоритеты](../roadmap/README.md) определяют, зачем и в какой зависимости стоит рассматривать работу. Они не являются global file allowlist. [Feature register](../roadmap/feature-register.json) связывает инициативы с существующими пакетами; дальние P2/P4 функции имеют предметные критерии, но требуют собственного spec/scope review до кода.
+
+При появлении нового пакета он получает единственную canonical specification location. Нельзя создавать независимые конкурирующие копии MW requirements в `docs/specs/` и `docs/superpowers/specs/`. Accepted ADR/spec сохраняют более высокий authority; конфликт исправляется в предлагаемом пакете либо принимается явно названное архитектурное изменение.
+
+---
+**Основание:** [R18: docs/implementation/memory-workspace/README.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/implementation/memory-workspace/README.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
+
+[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)

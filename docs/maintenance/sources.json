@@ -1,0 +1,356 @@
+{
+  "format": "vestrace-roadmap-sources/1",
+  "baseline": "07e2977a20b05c5b16953a206a6d68bdbff3a052",
+  "runtime_ancestor": "6f6102536e9a535b7086db14573bf45fe750ad71",
+  "method": "selected connector reads plus preserved pinned source observations; no runtime run",
+  "sources": [
+    {
+      "id": "S01",
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "git_blob_sha1": "bb3d98e94996db212b20efdf3041498670c0e0ae",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          2260,
+          2560
+        ],
+        [
+          2800,
+          3100
+        ],
+        [
+          3300,
+          3650
+        ]
+      ],
+      "observation": "14B–14D и worker --once; 14D принят до ResultPrepared, 14E — предложение.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md"
+    },
+    {
+      "id": "S02",
+      "path": "docs/specs/README.md",
+      "git_blob_sha1": "42763e39781db072c8455a68e4e6fd4f2bc326f0",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "Иерархия нормативных документов; отсутствие автоматического расширения roadmap.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/specs/README.md"
+    },
+    {
+      "id": "S03",
+      "path": "crates/vestrace-application/src/memory/mod.rs",
+      "git_blob_sha1": "49445e4b5565495ddfbae6a6646f1bbc08dcf1d0",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "Действующий MemoryUseCases, без list/history read-модели.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs"
+    },
+    {
+      "id": "S04",
+      "path": "crates/vestrace-application/src/memory/ports.rs",
+      "git_blob_sha1": "9e0a7ed8f3fd68833541b397002bbc007ff8f414",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "MemoryRepository и атомарная запись memory/revision/source/search.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/ports.rs"
+    },
+    {
+      "id": "S05",
+      "path": "crates/vestrace-application/src/memory/services.rs",
+      "git_blob_sha1": "848c3b7e111f5adef16673f881716ea7a48ae994",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          525
+        ]
+      ],
+      "observation": "Outbox и idempotency сохраняются отдельно; fingerprint исключает случайные ID; label transition запрещён.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs"
+    },
+    {
+      "id": "S06",
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
+      "git_blob_sha1": "06e0ec25a7ad0fbbe00ebc854208c9acd01192c8",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          255
+        ]
+      ],
+      "observation": "begin_scoped, CAS памяти, запись ревизии и источника; схема memory_sources без revision_id в INSERT.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs"
+    },
+    {
+      "id": "S07",
+      "path": "crates/vestrace-application/src/governed_mutation.rs",
+      "git_blob_sha1": "dbd786347b67ab8c69ecfa5f11d7f9735c6b0520",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "GovernedMutationRepository::commit_in и GovernedMutationApply.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs"
+    },
+    {
+      "id": "S08",
+      "path": "crates/vestrace-application/src/outbox.rs",
+      "git_blob_sha1": "adf48a8e3bc972ec1b9ba1f29e22f253974adb22",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          225
+        ]
+      ],
+      "observation": "At-least-once; обработчик обязан быть идемпотентным; 5 попыток, backoff, dead-letter.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/outbox.rs"
+    },
+    {
+      "id": "S09",
+      "path": "crates/vestrace-application/src/idempotency.rs",
+      "git_blob_sha1": "1409c9ce0c14e92cb3ada3bf60c857ae4b0aa679",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "IdempotencyRepository::save_in; запись содержит workspace и срок хранения.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/idempotency.rs"
+    },
+    {
+      "id": "S10",
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "git_blob_sha1": "29ffea2255f425cd72c4ebc650847cfc5f46157f",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          110
+        ]
+      ],
+      "observation": "MemoryResponse — метаданные, без content и номера активной ревизии.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs"
+    },
+    {
+      "id": "S11",
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "git_blob_sha1": "16ef10c2e0b3ec73480ea68b299f23db3e7e2eea",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          174
+        ]
+      ],
+      "observation": "ContextPackDto — сводка без секций; temporal и intent параметры уже есть.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs"
+    },
+    {
+      "id": "S12",
+      "path": "crates/vestrace-application/src/retrieval/context_builder.rs",
+      "git_blob_sha1": "9e2c8ab1b6de1ea2cc4838f13057b2ed41e5395d",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          205
+        ]
+      ],
+      "observation": "ContextItem.rendered_text и provenance_refs; utf8-bytes/4 как оценка токенов; fallback на explanation.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/retrieval/context_builder.rs"
+    },
+    {
+      "id": "S13",
+      "path": "apps/console/src/memory/MemoryConsole.tsx",
+      "git_blob_sha1": "ffe3c19e344f25ad222e418829c47804700916e4",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "Компонент памяти существует; данные передаются props, без собственного редактирования.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/memory/MemoryConsole.tsx"
+    },
+    {
+      "id": "S14",
+      "path": "apps/console/src/main.tsx",
+      "git_blob_sha1": "b5f55a8132f59f739d676844a9aa8c78ee503c4f",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "Memory routes отсутствуют в таблице Routes.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/main.tsx"
+    },
+    {
+      "id": "S15",
+      "path": "apps/console/src/sdk/client.ts",
+      "git_blob_sha1": "7e7d672bb192810bf4b6ab9e04d179d23135ae32",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          155
+        ]
+      ],
+      "observation": "Общий ApiRequestError и текущие client DTO; расширять, не создавать параллельный auth-клиент.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/sdk/client.ts"
+    },
+    {
+      "id": "S16",
+      "path": "apps/console/package.json",
+      "git_blob_sha1": "9fdacac2cf0ba97f67b3e4a1f1d35ded99968a0f",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": null,
+      "observation": "React, TypeScript, Vite; есть test:protocol, нет общего npm test.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/package.json"
+    },
+    {
+      "id": "S17",
+      "path": "crates/vestrace-application/src/material/commands.rs",
+      "git_blob_sha1": "c05df77bcc0e7129edcbc388893b79b170ce2d84",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "inspected_lines": [
+        [
+          1,
+          230
+        ]
+      ],
+      "observation": "MaterialIntentCommands: reserve/prepare_content/bind/finalize_bound; восстановление не выдумывает утраченный plaintext.",
+      "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/material/commands.rs"
+    },
+    {
+      "id": "S18",
+      "path": "apps/console/src/routes",
+      "git_tree_sha1": "5f0bf1b0a59ef0e7dbccdf92d2774bacccf984c6",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "observation": "Полный список routes в поддереве, truncated=false; MemoryPage отсутствует.",
+      "url": "https://github.com/venm1r/vestrace/tree/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/routes"
+    },
+    {
+      "id": "S19",
+      "path": "apps/console/src/sdk",
+      "git_tree_sha1": "8ce46c47552f61503174288fab9202541110ab37",
+      "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+      "observation": "client.ts, agUiClient.ts, useApiResource.ts.",
+      "url": "https://github.com/venm1r/vestrace/tree/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/sdk"
+    },
+    {
+      "id": "R01",
+      "path": "crates/vestrace-http/src/auth.rs",
+      "git_blob_sha1": "1bd4a1a1bbdbdeb1aa891638d3edf6851b618fb3",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs",
+      "observation": "Bearer identity; read lines 85–160"
+    },
+    {
+      "id": "R02",
+      "path": "crates/vestrace-http/src/route_inventory.rs",
+      "git_blob_sha1": "b5202747b1d17d312147e7679c64591ba42f1d31",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/route_inventory.rs",
+      "observation": "Route inventory; read lines 1–250; not proof of every handler"
+    },
+    {
+      "id": "R03",
+      "path": "crates/vestrace-cli/src/main.rs",
+      "git_blob_sha1": "bb191dfbaac5d5ec73b7ec828b3114480b74cf1f",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-cli/src/main.rs",
+      "observation": "Clap command surface; read lines 1–320"
+    },
+    {
+      "id": "R04",
+      "path": "docker-compose.yml",
+      "git_blob_sha1": "3de054dc5182ab4521c5e3d861b803b961ecf27f",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml",
+      "observation": "Read lines 1–110 and 340–495; bootstrap volumes and browser proxy"
+    },
+    {
+      "id": "R05",
+      "path": "docs/getting-started.md",
+      "git_blob_sha1": "b8b3f41a5439a51039327ffe21d74a1f654f2ea3",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/getting-started.md",
+      "observation": "Original guide, complete read; contains stale claims"
+    },
+    {
+      "id": "R06",
+      "path": "docs/domain-model.md",
+      "git_blob_sha1": "50e9aa25d0fdabb906937d7c41116ef3c2687dcf",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/domain-model.md",
+      "observation": "Original domain entry, complete read"
+    },
+    {
+      "id": "R07",
+      "path": "docs/database-schema.md",
+      "git_blob_sha1": "f52bf59c90f18fcebf854f59d43b2f9a5b74a8ea",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/database-schema.md",
+      "observation": "Original schema entry, historical snapshot"
+    },
+    {
+      "id": "R08",
+      "path": "docs/security-and-rls.md",
+      "git_blob_sha1": "c781ceec59295ae1f6a197815ca1f2409b3109c4",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/security-and-rls.md",
+      "observation": "Original security entry, historical snapshot"
+    },
+    {
+      "id": "R09",
+      "path": "docs/specs/vestrace-architecture-contract-v0.2.md",
+      "git_blob_sha1": "fdc765367a3ca030e453d8eff3bf7bc6b737f016",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md",
+      "observation": "Normative contract from preceding pinned review; target, not implementation"
+    },
+    {
+      "id": "R10",
+      "path": "docs/adr/0001-memory-first-persistent-cognition.md",
+      "git_blob_sha1": "c9ef57b7aef48c497f27786949c647059db82d33",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md",
+      "observation": "Accepted product boundary from preceding pinned review"
+    },
+    {
+      "id": "R11",
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "git_blob_sha1": "9a95a395d9f9b14db92c9cfe6caf2cd932c840c7",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "observation": "Fixed P01–P12 program from preceding pinned review"
+    },
+    {
+      "id": "R12",
+      "path": ".github/workflows/ci.yml",
+      "git_blob_sha1": "5fc0cd7dcb5184f30396b2363cfd87806187258a",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/.github/workflows/ci.yml",
+      "observation": "CI definition from preceding pinned review, no new CI execution"
+    },
+    {
+      "id": "R13",
+      "path": "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
+      "git_blob_sha1": "9fbb1fd053848d14d3c7d859f367bfc4a6fbd6c8",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
+      "observation": "Exact revision hydration from preceding pinned review"
+    },
+    {
+      "id": "R14",
+      "path": "scripts/p04-scope.mjs",
+      "git_blob_sha1": "8dfa02b30c894eb48bc61d1ec4ec59b86d5a04b2",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/scripts/p04-scope.mjs",
+      "observation": "Protected authorities from preceding pinned review"
+    },
+    {
+      "id": "R15",
+      "path": "apps/console/vite.config.ts",
+      "git_blob_sha1": "96f33e2b8242afd57fb82a79a9c5ca2e9b401870",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/apps/console/vite.config.ts",
+      "observation": "Read at 07e2977; Vite identity injection is not Bearer authentication."
+    },
+    {
+      "id": "R16",
+      "path": "apps/console/nginx.conf.template",
+      "git_blob_sha1": "d59745be51127dfd2a5a677b4f54520d7e236951",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/apps/console/nginx.conf.template",
+      "observation": "Read at 07e2977; nginx attaches deployment token, loopback trust boundary."
+    },
+    {
+      "id": "R17",
+      "path": "crates/vestrace-mcp/src/server.rs",
+      "git_blob_sha1": "b7435b95bdbe8f2bd652af946ebdd4e51811b67d",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-mcp/src/server.rs",
+      "observation": "Read get_memory/search on unchanged code ancestor; metadata-only result."
+    },
+    {
+      "id": "R18",
+      "path": "docs/implementation/memory-workspace/README.md",
+      "git_blob_sha1": "8779a1270c463b020aab753a9a29c13d66f3a59b",
+      "url": "https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/implementation/memory-workspace/README.md",
+      "observation": "Integrated MW tree verified against Git tree 1f69acad; existing proposal preserved."
+    }
+  ]
+}

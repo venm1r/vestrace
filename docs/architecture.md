@@ -1,164 +1,48 @@
-# Vestrace Architecture
+# Архитектура Vestrace
 
-## Documentation status
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-This file is the architecture entry point for the frozen v0.2 documentation baseline integrated into `main`, plus explicitly accepted post-v0.2 architecture extensions.
+**Статус:** Пояснение архитектуры; нормативные требования сохраняются в specs/ADR.
 
-Vestrace has deliberately separate documentation layers:
+## Основная модель
 
-1. **Target architecture (normative)** — what Vestrace is designed to become and the invariants future implementation must satisfy.
-2. **Current implementation snapshot** — what was actually wired in the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
-3. **Transition planning** — the evidence/migration/PR contracts for moving from that inspected baseline toward the target.
-4. **Post-v0.2 architecture extensions** — accepted system-level decisions that preserve the frozen v0.2 laws but are not silently inserted into the existing implementation roadmap.
-5. **Proposed implementation extensions** — source-pinned feature designs and executable acceptance plans, registered separately from Accepted ADRs and frozen release programs. See [Memory Workspace](implementation/memory-workspace/README.md).
+Vestrace сохраняет долговременное знание и управляет его использованием. Memory, исходные события, ревизии, связи и полномочия не принадлежат transient-сессии модели. HTTP, MCP и Console дают доступ к одной модели, а не поддерживают независимые копии истины.
 
-Do not infer current runtime availability from target architecture or planning documents.
+| Слой | Ответственность | Что не должно переходить в него |
+| --- | --- | --- |
+| Domain | Сущности, допустимые переходы, типы identity/evidence | SQL, transport, секретные bytes в обычных DTO |
+| Application | Use cases, порты, policy/effect orchestration | Прямое знание HTTP/React или локальных таблиц клиента |
+| Infrastructure | PostgreSQL, vault, provider transport, адаптеры | Незаявленные права и вторая бизнес-семантика |
+| HTTP/MCP/CLI | Аутентифицированные входы, типизация запросов, процессная композиция | Обход общего mutation/policy контракта |
+| Console | Проекции и команды пользователя | Прямая запись БД, локальное присвоение trust/status |
 
-## Canonical product definition
+Это карта ответственности, не утверждение полной реализации каждого целевого механизма.
 
-> **Vestrace is a memory-first platform for persistent cognition shared across agents and executions.**
+## Каноническое и производное
 
-> **Memory Engine is the substrate. Persistent Cognition is the capability.**
+Исходное событие фиксирует происхождение. Memory сохраняет identity, а MemoryRevision — конкретное содержимое. Claims и conflicts представляют смысловые утверждения и их расхождения там, где требуется такой контракт. Embeddings, поисковые документы, summaries и ContextPack — производные представления.
 
-## Normative architecture
+Производное представление можно перестроить из своих оснований, пока они законно сохранены. Оно не может самовольно исправить более авторитетные данные. Ссылка на источник объясняет происхождение, но не является самостоятельным доказательством истинности утверждения.
 
-Start with:
+## Одна граница исполнения
 
-- [`specs/vestrace-architecture-contract-v0.2.md`](specs/vestrace-architecture-contract-v0.2.md) — frozen top-level Architecture Contract;
-- [`specs/README.md`](specs/README.md) — normative documentation hierarchy and accepted extensions;
-- [`adr/README.md`](adr/README.md) — accepted architecture decisions.
+Run остаётся канонической execution authority. Внешние адаптеры преобразуют команды и наблюдения на границе. Ни retry-обработчик, ни новый importer, ни Console не создают параллельный generic Task/Attempt runtime. Специализированное состояние операции допустимо, когда оно описывает предметный результат, а не становится вторым источником истины о выполнении.
 
-The frozen v0.2 baseline covers twelve completed architecture blocks:
+## Как читать подробности
 
-```text
-[✓] 1. Persistent Cognition Core
-[✓] 2. Temporal & Concurrency
-[✓] 3. Mutation & Reconciliation
-[✓] 4. Retrieval / ContextPack 2.0
-[✓] 5. Execution Feedback & Learning
-[✓] 6. Capability Governance
-[✓] 7. Identity / Workspace / Federation
-[✓] 8. Health / Integrity / Repair
-[✓] 9. External Effects
-[✓] 10. Incident / Recovery / Revalidation
-[✓] 11. Crypto / Data Governance
-[✓] 12. Qualification / Conformance
-```
+[Домен](domain-model.md) объясняет сущности; [память и время](design/memory-time.md) — ревизии; [retrieval](design/retrieval-context.md) — сборку контекста; [транзакции](design/transactions.md) — атомарность; [execution](design/execution.md) — результаты внешних операций; [материалы](design/materials.md) — отделение content и key authority.
 
-## Post-v0.2 system architecture: Brain–Face–Organ
+## Brain–Face–Organ
 
-ADR-0011 accepts a system-level decomposition for the future persistent autonomous-agent product.
+Принятый системный слой разграничивает постоянную cognition, активное рассуждение, пользовательский/host интерфейс и заменяемые execution endpoints. Его существование в ADR не означает, что отдельный Brain runtime, Host Broker или Organ уже реализован. Угроза этой декомпозиции — дать одному из адаптеров независимые полномочия или историю; это запрещается архитектурной границей.
 
-```text
-                         USER
-                          │
-                          ▼
-                       FACE
-              Desktop / CLI / Host Broker
-                          │
-                  System Interconnect
-                          │
-                          ▼
-                       BRAIN
-             Vestrace + Prime-like Runtime
-                          │
-                  System Interconnect
-                          │
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-       Coding          Browser         Compute
-       Organ            Organ           Organ
-```
+Подробный нормативный текст доступен через [индекс спецификаций](specs/README.md). Эта глава поясняет его, но не заменяет.
 
-The formal meanings are:
+## Memory Workspace
 
-- **Brain** — persistent agent identity and cognition. Vestrace owns durable cognition, authority, `AgentRun`, effects, trust, recovery and qualification state; the Prime-like runtime owns active reasoning, planning, working context, model routing, goals and subagent coordination without becoming a second durable state engine.
-- **Face** — replaceable user and host boundary. A thin Desktop/CLI/mobile/web client may be paired with a local Host Broker for explicitly permitted host files, processes, applications, shell, browser integrations, devices and settings.
-- **Organ** — replaceable execution capability such as a Docker container, VM, sandbox, browser worker, GPU worker or remote execution endpoint. An Organ is logical and need not map one-to-one to a container.
-- **System Interconnect** — authenticated transport for commands, events, observations, capabilities, approvals, leases, artifacts, receipts, heartbeats and telemetry. It owns no canonical cognition or authority.
-- **Models** — replaceable cognitive compute resources, not the persistent identity of the agent.
+Выбранное расширение добавляет удобный внешний цикл вокруг существующей памяти. Source snapshot не подменяется ручной правкой; importer и редактор сходятся на общей mutation boundary; export проверяет актуальные права. Новые определения и их ограничения находятся в одном [пакете](implementation/memory-workspace/README.md), не дублируются здесь.
 
-Key additional laws:
+---
+**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R10: docs/adr/0001-memory-first-persistent-cognition.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md), [S04: crates/vestrace-application/src/memory/ports.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/ports.rs), [S07: crates/vestrace-application/src/governed_mutation.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs).
 
-1. Face and Organ endpoints may further restrict Brain authority but never amplify it.
-2. Effective host authority is the intersection of Brain capability/policy, Face-local policy and host OS rights.
-3. Effective Organ authority is the intersection of Brain capability/policy, Organ-local policy and sandbox/OS rights.
-4. Organ or Host output is observation/evidence before it may become durable cognition.
-5. Face, Organ, model and worker replacement must not replace agent identity.
-6. Reconnect/restart/recreate must not silently imply effect success or restored trust.
-
-See:
-
-- [`specs/vestrace-brain-face-organ-system-model.md`](specs/vestrace-brain-face-organ-system-model.md)
-- [`adr/0011-brain-face-organ-system-decomposition.md`](adr/0011-brain-face-organ-system-decomposition.md)
-
-This extension does **not** claim that the Brain runtime, Face/Host Broker, or Organ layer is implemented, and it does not silently expand the frozen 36-PR v0.2→v1.0 roadmap.
-
-## Specialized frozen v0.2 normative documents
-
-- [`specs/vestrace-domain-model-v0.2.md`](specs/vestrace-domain-model-v0.2.md)
-- [`specs/vestrace-normative-invariants-v0.2.md`](specs/vestrace-normative-invariants-v0.2.md)
-- [`specs/vestrace-trust-authority-model-v0.2.md`](specs/vestrace-trust-authority-model-v0.2.md)
-- [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md)
-- [`specs/vestrace-execution-external-effects-contract-v0.2.md`](specs/vestrace-execution-external-effects-contract-v0.2.md)
-- [`specs/vestrace-health-repair-incident-contract-v0.2.md`](specs/vestrace-health-repair-incident-contract-v0.2.md)
-- [`specs/vestrace-crypto-data-governance-contract-v0.2.md`](specs/vestrace-crypto-data-governance-contract-v0.2.md)
-- [`specs/vestrace-qualification-conformance-spec-v0.2.md`](specs/vestrace-qualification-conformance-spec-v0.2.md)
-- [`specs/vestrace-version-roadmap-v0.2-to-v1.0.md`](specs/vestrace-version-roadmap-v0.2-to-v1.0.md)
-
-ADR-0010 clarifies the boundary between roadmap milestone labels and formal qualification-profile claims.
-
-## Current implementation
-
-See [`current-implementation.md`](current-implementation.md) for the inspected wired snapshot.
-
-The inspected source foundation is a Rust Edition 2024 modular workspace with domain/application/infrastructure/HTTP/CLI/MCP layers and a PostgreSQL-backed run/memory/retrieval foundation. The presence of future-facing domain types or placeholder endpoints does not imply target feature completion.
-
-## Transition planning
-
-See [`plans/README.md`](plans/README.md) and [`plans/v0.2-to-v1.0-pr-specification-index.md`](plans/v0.2-to-v1.0-pr-specification-index.md).
-
-The frozen transition package includes all 36 planned future implementation PRs, dependency ordering, migration/backfill contracts, conformance cases, release evidence gates and review rules.
-
-The Brain–Face–Organ extension requires a separate future transition plan before implementation. It is not silently inserted into those 36 PRs.
-
-## Memory Workspace implementation extension
-
-The [Memory Workspace package](implementation/memory-workspace/README.md) develops the selected Memory/Context API, Console editing, and source import/synchronization/export cycle against code baseline `6f6102536e9a535b7086db14573bf45fe750ad71`.
-
-Its [integration contract](implementation/memory-workspace/12-integration.md) maps those changes to the existing authority, revision, provenance, ContextPack, material and qualification boundaries. Canonical documents remain in this repository; the package references them rather than maintaining another copy. Console and the local scanner are clients, not independent memory authorities. Source versions remain distinct from editorial revisions.
-
-**Status:** integrated proposed implementation design. It is not an Accepted architectural amendment, an implementation completion claim, a new named qualification profile, or an amendment to the 36-PR/P01–P12 programs. Start with [MW-00](implementation/memory-workspace/plans/00-preflight.md); do not execute later tasks before their prerequisite and scope gates have been accepted.
-
-## Architectural laws
-
-The highest-level invariants are:
-
-1. authoritative/canonical state is distinct from derived projections;
-2. derived state cannot automatically rewrite higher-authority state;
-3. Vestrace has one execution/state boundary, not competing runtimes;
-4. history is corrected by new facts/revisions/compensation, not silently rewritten;
-5. capabilities plus policy determine runtime authority; roles are templates;
-6. ambiguity is first-class (`UNKNOWN` is not silently failure/success/trust);
-7. repair only auto-modifies state deterministically reconstructible from a more authoritative layer;
-8. recovery does not restore trust without revalidation evidence;
-9. secrets are not ordinary memory;
-10. v1.0 is defined by the `TRUSTED` qualification contract, not feature count;
-11. milestone labels do not imply named profile qualification without evidence closure;
-12. persistent agent identity and cognition live in the Brain, not in a Face, Organ, model, or transient worker;
-13. connected endpoints may only preserve or reduce delegated authority, never amplify it;
-14. observations from execution are not automatically durable beliefs.
-
-## Baseline state
-
-The v0.2 documentation consistency pass, source-based gap analysis and 36-PR transition planning package are complete and integrated into `main`.
-
-The Brain–Face–Organ model is an accepted post-v0.2 target architecture extension pending its own implementation transition plan.
-
-Going forward:
-
-- target documentation does not itself change runtime behavior;
-- implementation work belongs on dedicated implementation branches;
-- architecture changes after a frozen baseline require deliberate spec/ADR amendment;
-- post-baseline extensions must not silently alter frozen qualification or roadmap claims;
-- material changes to implementation code require a gap delta before the transition plans are treated as current without review.
+[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)

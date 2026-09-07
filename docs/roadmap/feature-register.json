@@ -1,0 +1,1166 @@
+{
+  "format": "vestrace-development-roadmap/1",
+  "document_revision": "2026-09-07.r1",
+  "repository": "venm1r/vestrace",
+  "baseline_commit": "07e2977a20b05c5b16953a206a6d68bdbff3a052",
+  "runtime_ancestor": "6f6102536e9a535b7086db14573bf45fe750ad71",
+  "status": "PROPOSED_ROADMAP_NOT_RELEASE_AUTHORIZATION",
+  "priority_is_not_package_number": true,
+  "product_runtime_tests_run_here": false,
+  "features": [
+    {
+      "id": "F001",
+      "priority": "P0",
+      "title": "Завершённый embedding/retrieval lifecycle",
+      "implementation_observation": "RECORDED_PARTIAL_ACCEPTANCE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Сохранённые данные становятся пригодными для поиска без ручного создания completion records.",
+      "reuse": "P04/14B–14D, общие provider/effect/material authorities, существующий worker. Не реализовывать заново уже принятые блоки.",
+      "deliverables": [
+        "Довести delivery binding/publication и остальные предусмотренные P04 rebuild/query paths отдельными принятыми контрактами.",
+        "Подключить штатную композицию worker; различать ResultPrepared, Live, готовую generation и успешный job.",
+        "Не открывать context/import readiness через legacy embedding bypass."
+      ],
+      "acceptance": [
+        "Реальный API/worker проходит полный допустимый цикл на runtime-role PostgreSQL.",
+        "После остановки процесса до/после публикации наблюдается один канонический результат и нет повторного внешнего dispatch.",
+        "Все источники и запрос используют точные space/generation; частичные публикации и stale attempts отклоняются."
+      ],
+      "depends_on": [
+        "F002",
+        "F004",
+        "F006"
+      ],
+      "existing_packages": [
+        "P04"
+      ],
+      "source_ids": [
+        "S01",
+        "R11"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Новая модель embeddings, новая очередь или присвоение Succeeded администратором.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F002",
+      "priority": "P0",
+      "title": "Единый доступ к содержимому и полномочия",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Новая библиотека, history, context и export не становятся обходом действующих ограничений.",
+      "reuse": "Bearer identity, route inventory, capability boundary, workspace RLS и текущие classification/share checks.",
+      "deliverables": [
+        "Составить матрицу операций чтения/раскрытия и записи для HTTP/MCP/UI/worker.",
+        "Для новых read paths проверять текущие полномочия и конкретную ревизию до раскрытия содержимого.",
+        "Не принимать actor/workspace/grants из тела импорта; секреты и denied content не включать в ошибки, search snippets и logs."
+      ],
+      "acceptance": [
+        "Посторонний workspace и principal не получают bytes, названия источников или существование закрытых объектов через side channels ответа.",
+        "Отозванный доступ блокирует следующее чтение/скачивание даже при прежнем cache/idempotency receipt.",
+        "Unknown route и missing policy дают явный отказ; прямые DB writes проверяются ограниченной runtime role."
+      ],
+      "depends_on": [],
+      "existing_packages": [
+        "P02",
+        "P05",
+        "MW-01",
+        "MW-06"
+      ],
+      "source_ids": [
+        "R01",
+        "R02",
+        "R09"
+      ],
+      "release_relationship": "required-frozen-v1-and-extension",
+      "non_goals": "SSO/federation и новая policy engine.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F003",
+      "priority": "P0",
+      "title": "Атомарная запись памяти и устойчивый повтор",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Потеря HTTP-ответа или сбой outbox не создают вторую память и не оставляют изменение без audit.",
+      "reuse": "Текущий CAS, save_memory_with_revision, GovernedMutationRepository::commit_in, save_in существующих портов.",
+      "deliverables": [
+        "Один UoW фиксирует revision/source/search projection, audit, outbox и receipt принятого запроса.",
+        "Семантическая идентичность запроса исключает повторно выделенные UUID; результат связан с actor/operation/scope.",
+        "Все писатели выбранного memory-scope переходят на общую границу; legacy endpoint не оставляется обходом."
+      ],
+      "acceptance": [
+        "Ошибка записи audit/outbox/receipt откатывает каноническое изменение.",
+        "Два одинаковых параллельных запроса сходятся к тем же ID; тот же ключ с иной семантикой конфликтует.",
+        "Stale version не теряет новое изменение; replay не раскрывает запрещённый позднее content."
+      ],
+      "depends_on": [
+        "F002",
+        "F006"
+      ],
+      "existing_packages": [
+        "P02",
+        "MW-02"
+      ],
+      "source_ids": [
+        "S05",
+        "S06",
+        "S07",
+        "S08",
+        "S09"
+      ],
+      "release_relationship": "required-extension-safety",
+      "non_goals": "Переписать общий runtime или удалить уже работающий CAS.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F004",
+      "priority": "P0",
+      "title": "Воспроизводимая установка и безопасная Console",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Инженер получает диагностируемую установку без догадок о bootstrap key и авторизации.",
+      "reuse": "Compose provisioning/migrate/init services, mounted secret store, nginx token proxy и startup checks.",
+      "deliverables": [
+        "Описать и испытать один поддерживаемый путь bootstrap/role provisioning, без встраивания ключей в образ.",
+        "Согласовать development Vite и контейнерный путь авторизации; не помещать credential в VITE_* bundle.",
+        "Различать liveness, DB/schema readiness и готовность конкретной функции; сохранять все необходимые vault volumes."
+      ],
+      "acceptance": [
+        "Чистая изолированная среда с заранее разрешёнными секретами запускается по опубликованной процедуре.",
+        "Пустой secret store, overlap roots и неверные policy settings дают понятный отказ.",
+        "Прокси Console не публикуется наружу как общий admin endpoint; неверные credentials не дают доступ."
+      ],
+      "depends_on": [],
+      "existing_packages": [
+        "P05",
+        "P06"
+      ],
+      "source_ids": [
+        "R01",
+        "R04",
+        "R05",
+        "R15",
+        "R16"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Облачный installer, автогенерация production secrets или login UX как подмена настоящей security boundary.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F005",
+      "priority": "P0",
+      "title": "Backup, restore и обновление существующей установки",
+      "implementation_observation": "TARGET_WITH_COMPONENTS",
+      "verification": "NOT_RUN_HERE",
+      "value": "Пользователь не теряет долговременную память при обновлении, рестарте или восстановлении.",
+      "reuse": "P05, существующие migration checks, installation permit/fingerprint и material authorities.",
+      "deliverables": [
+        "Квалифицировать согласованную процедуру резервирования БД/WAL и обязательных vault dependencies.",
+        "Проверить upgrade с существующими revisions/receipts и допустимый режим freeze/drain.",
+        "Разделить backup БД, knowledge export и полное восстановление установки; не обещать downgrade без сценария."
+      ],
+      "acceptance": [
+        "Восстановление выполняется в отдельной среде и сверяет выбранные канонические ID, историю, права и доступность материалов.",
+        "Отсутствующий ключ/несовместимый migration checksum не заменяется пустой новой установкой.",
+        "Проверка рассматривает сбой на границах freeze, copy, activate и restart, а не только exit backup-команды."
+      ],
+      "depends_on": [
+        "F001",
+        "F002",
+        "F004"
+      ],
+      "existing_packages": [
+        "P05",
+        "P12",
+        "MW-07"
+      ],
+      "source_ids": [
+        "R04",
+        "R11"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Независимый restore runtime, подмена восстановленного журнала фиктивной успешной квалификацией.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F006",
+      "priority": "P0",
+      "title": "Исполнимые проверки и управляемая стоимость CI",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Обратная связь о регрессиях достаточно быстрая и не пропускает отдельные виды тестов.",
+      "reuse": "Текущий Rust/Node/Compose CI и существующие scope/protocol checks.",
+      "deliverables": [
+        "Разделить быстрые, PostgreSQL, composition/fault и release suites; выделить явный doctest шаг.",
+        "Измерить disk/RAM/build duration до изменения profiles или test target layout.",
+        "Проверять продукт через штатные entrypoints; setup failure не объявлять поведенческим RED."
+      ],
+      "acceptance": [
+        "Контрольный doctest/compile_fail действительно запускается выбранной командой.",
+        "Runtime-role regression обнаруживает нарушение без admin privileges.",
+        "После изменения CI сохраняется покрытие классов риска; зелёный job не получен отключением тяжёлой проверки."
+      ],
+      "depends_on": [],
+      "existing_packages": [
+        "P01",
+        "P12",
+        "MW-07"
+      ],
+      "source_ids": [
+        "R12",
+        "S16"
+      ],
+      "release_relationship": "required-frozen-v1-and-extension",
+      "non_goals": "Порог строк кода как основание дробления crates и урезание тестов ради зелёного бейджа.",
+      "milestone": "M0",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F007",
+      "priority": "P0",
+      "title": "Правдивые статусы и диагностика работы",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Оператор отличает очереди, блокеры и неизвестный исход от успешного исполнения.",
+      "reuse": "worker --once, outbox attempts/dead-letter, canonical Run projections, health и audit.",
+      "deliverables": [
+        "Показать ожидаемый dependency, безопасную причину остановки и разрешённый следующий шаг.",
+        "Разделить accepted/applied/indexed и process exit/Run result.",
+        "Метрики не содержат content, токенов или необоснованных счётчиков закрытых объектов."
+      ],
+      "acceptance": [
+        "0/3/1 bounded worker outcomes трактуются как cycle result, не общая квалификация.",
+        "Unhandled topic остаётся pending и виден оператору; restart не удаляет причину отказа.",
+        "UI после reconnect получает сохранённое состояние, а не оптимистический локальный success."
+      ],
+      "depends_on": [
+        "F002"
+      ],
+      "existing_packages": [
+        "P05",
+        "P11",
+        "MW-04"
+      ],
+      "source_ids": [
+        "S01",
+        "S08",
+        "R03"
+      ],
+      "release_relationship": "required-frozen-v1-and-extension",
+      "non_goals": "Автоматический retry любого UNKNOWN.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F008",
+      "priority": "P0",
+      "title": "Содержимое, retention и удаление без обходов",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Импорт и экспорт не создают неуправляемые копии чувствительного содержимого.",
+      "reuse": "MaterialIntentCommands, vault, erasure/blockers, существующие export/purge policy contracts.",
+      "deliverables": [
+        "Разрешить source staging/download только через законного owner/read пути материалов.",
+        "Определить сроки хранения preview, export, context evidence и отношение к удержанию источников.",
+        "Удаление по политике не подменять перемещением записи в корзину или сохранением plaintext в audit."
+      ],
+      "acceptance": [
+        "Prepared материал не читается как Live; утраченное право прекращает новые downloads.",
+        "Отмена/ошибка импорта не оставляет доступный бесхозный staging.",
+        "Область erasure-проверки включает действующие managed copies и явно не обещает отзыв внешнего экспорта."
+      ],
+      "depends_on": [
+        "F002",
+        "F005"
+      ],
+      "existing_packages": [
+        "P02",
+        "P05",
+        "P07",
+        "MW-04",
+        "MW-06"
+      ],
+      "source_ids": [
+        "S17",
+        "R04",
+        "R09"
+      ],
+      "release_relationship": "required-frozen-v1-and-extension",
+      "non_goals": "Новый vault, plaintext временные файлы как fallback и стирание исходных audit facts.",
+      "milestone": "M1",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F101",
+      "priority": "P1",
+      "title": "Полезный Memory read API, библиотека и история",
+      "implementation_observation": "PARTIAL_SURFACE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Можно увидеть содержимое и точную ревизию до редактирования или использования.",
+      "reuse": "MemoryUseCases/find_revision, PgRevisionHydrator, текущие MemoryResponse и MCP get_memory.",
+      "deliverables": [
+        "Реализовать единый authorized query port для detail/history/browse.",
+        "Сохранить совместимость legacy DTO либо явно версионировать изменение; не выдавать новые маршруты за существующие.",
+        "Страницы и cursors связывать с filters/scope/snapshot; историческая ревизия не заменяется текущей."
+      ],
+      "acceptance": [
+        "Один вызов возвращает разрешённое содержимое, номер ревизии и безопасные provenance refs.",
+        "History открывает точные revisions и не обходится через ID чужого memory.",
+        "Browse не делает N+1 из браузера и не раскрывает скрытые записи через total/cursor."
+      ],
+      "depends_on": [
+        "F002",
+        "F006"
+      ],
+      "existing_packages": [
+        "MW-01"
+      ],
+      "source_ids": [
+        "S03",
+        "S10",
+        "R13",
+        "R17"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Смена lifecycle, расширение доступа или новый memory store.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F102",
+      "priority": "P1",
+      "title": "Context API с текстом и честным бюджетом",
+      "implementation_observation": "PARTIAL_SURFACE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Клиент получает пригодный для модели контекст, а не счётчики секций.",
+      "reuse": "RetrievalService, ContextPackBuilder, существующие temporal/intent поля и generation guards.",
+      "deliverables": [
+        "Выдать реально построенные sections/rendered content, точные revisions, warnings и disclosure destination.",
+        "Различать byte-only ограничение и hard-token bound с квалифицированным tokenizer.",
+        "Не подменять пустое содержимое explanation-строкой; ограничить общий rendered payload."
+      ],
+      "acceptance": [
+        "Возвращённый текст совпадает с разрешёнными revisions; источник не повышается до instruction.",
+        "Измерение UTF-8 и tokenizer соответствует реально сформированному контексту, включая separators.",
+        "Stale generation или missing policy не скрываются пустым успешным ответом."
+      ],
+      "depends_on": [
+        "F101",
+        "F001"
+      ],
+      "existing_packages": [
+        "MW-01"
+      ],
+      "source_ids": [
+        "S11",
+        "S12"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Новый retrieval engine и неподтверждённый универсальный token estimator.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F103",
+      "priority": "P1",
+      "title": "Исправление и восстановление старого текста",
+      "implementation_observation": "SOURCE_PRESENT_PARTIAL_CLOSURE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Пользователь исправляет память, не уничтожая историю и чужие изменения.",
+      "reuse": "revise_memory, immutable revisions, existing CAS, MW atomic writer.",
+      "deliverables": [
+        "Ввести явный correction reason и precondition актуального состояния.",
+        "Restore прежнего текста создаёт новую revision с источником операции.",
+        "Label transition не маскируется под обычную правку; текущий запрет смены classification сохраняется."
+      ],
+      "acceptance": [
+        "Параллельная правка даёт conflict без silent overwrite.",
+        "Повтор correction/restore возвращает ту же receipt.",
+        "Старая ревизия неизменна; новый source fact описывает действие автора, а не поддельное подтверждение."
+      ],
+      "depends_on": [
+        "F101",
+        "F003"
+      ],
+      "existing_packages": [
+        "MW-02"
+      ],
+      "source_ids": [
+        "S05",
+        "S06",
+        "S10"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Необратимый purge под видом простого delete, semantic auto-merge и автоматическое повышение confidence.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F104",
+      "priority": "P1",
+      "title": "Memory Console: поиск, карточка, редактор",
+      "implementation_observation": "PRESENTATIONAL_COMPONENT_ONLY",
+      "verification": "NOT_RUN_HERE",
+      "value": "Управление памятью доступно без SQL, ручных JSON-запросов и знания внутреннего графа.",
+      "reuse": "MemoryConsole.tsx, существующая дизайн-система, typed HTTP client и ErrorBoundary.",
+      "deliverables": [
+        "Подключить реальный маршрут библиотеки/detail/history и действия correction/restore.",
+        "Показывать source, timestamps, revision conflict и сохранённое состояние после перезапуска.",
+        "Empty/loading/denied/unavailable/degraded разделить; новые кнопки не имитируют непоявившуюся функцию."
+      ],
+      "acceptance": [
+        "Browser → HTTP → PostgreSQL edit виден после reload и из второго клиента.",
+        "Два редактора показывают корректный conflict и сохраняют draft до решения.",
+        "Keyboard navigation, focus/error announcements и различимые состояния проходят браузерный checklist."
+      ],
+      "depends_on": [
+        "F101",
+        "F103"
+      ],
+      "existing_packages": [
+        "MW-03"
+      ],
+      "source_ids": [
+        "S13",
+        "S14",
+        "S15",
+        "S16"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Полный редизайн сайта, 3D graph explorer и отдельная Console.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F105",
+      "priority": "P1",
+      "title": "Ограниченный импорт источников с предпросмотром",
+      "implementation_observation": "DESIGN_ONLY_IN_REVIEWED_SURFACES",
+      "verification": "NOT_RUN_HERE",
+      "value": "Память можно наполнить существующей папкой документации без обязательного LLM.",
+      "reuse": "MW source/collection design, существующие memory/event/material/worker boundaries.",
+      "deliverables": [
+        "Markdown/TXT/описанный JSON; local scanner читает только выбранный каталог, сервер не читает произвольный path.",
+        "Preview фиксирует точные bytes, policy и parser version; apply действует на этот snapshot.",
+        "Новая source identity отделена от хеша и file path; отказ отдельного элемента прозрачен."
+      ],
+      "acceptance": [
+        "Изменившийся после preview файл не применяется под старым согласием.",
+        "Повтор same input не создаёт новых canonical revisions; другой источник с теми же bytes остаётся другим.",
+        "Path traversal, symlink escape, BOM/invalid UTF-8/oversize/duplicate IDs отклоняются до изменения."
+      ],
+      "depends_on": [
+        "F104",
+        "F008",
+        "F001"
+      ],
+      "existing_packages": [
+        "MW-04"
+      ],
+      "source_ids": [
+        "S03",
+        "S07",
+        "S08",
+        "S17"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "LLM extraction по умолчанию, PDF/OCR, remote crawler и общая файловая система сервера.",
+      "milestone": "M3",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F106",
+      "priority": "P1",
+      "title": "Синхронизация без потери редакторских изменений",
+      "implementation_observation": "DESIGN_ONLY_IN_REVIEWED_SURFACES",
+      "verification": "NOT_RUN_HERE",
+      "value": "Обновление документов не уничтожает принятую пользователем коррекцию.",
+      "reuse": "MW B/I/M decision contract, источники/ревизии и общий atomic writer.",
+      "deliverables": [
+        "Фиксировать предыдущий импорт B, новую входную версию I и текущую память M.",
+        "При расходящихся изменениях создавать предметный sync conflict; manual resolution имеет preconditions.",
+        "Missing не означает delete; rename определяется устойчивой identity или явным mapping."
+      ],
+      "acceptance": [
+        "Keep-local, accept-source и manual-merge дают новую документированную revision/receipt.",
+        "Cancel racing apply не обещает откат уже committed items; результат показывает applied/pending.",
+        "Сбой после item commit до ack не удваивает source version или revision."
+      ],
+      "depends_on": [
+        "F105"
+      ],
+      "existing_packages": [
+        "MW-05"
+      ],
+      "source_ids": [
+        "S07",
+        "S08"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Свободное LLM-решение конфликтов и last modified wins.",
+      "milestone": "M3",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F107",
+      "priority": "P1",
+      "title": "Экспорт и импорт переносимого знания",
+      "implementation_observation": "DESIGN_ONLY_IN_REVIEWED_SURFACES",
+      "verification": "NOT_RUN_HERE",
+      "value": "Пользователь может забрать разрешённые данные и повторить эксперимент в другой установке.",
+      "reuse": "MW portable schema, material/download policy, source and memory identities.",
+      "deliverables": [
+        "JSON-пакет с версией формата, разрешённой историей и refs; Markdown как reading view.",
+        "Новая установка назначает local IDs и трактует remote history как внешний источник.",
+        "Разделить экспорт знания и backup runtime; declared omissions не раскрывают denied данные."
+      ],
+      "acceptance": [
+        "Проверяется round-trip содержимого/разрешённого provenance без переносимых grants, secrets и qualification.",
+        "Dangling refs, future format, imported authority и неверный active revision отклоняются.",
+        "Отзыв права до нового download блокирует выдачу; уже выданная копия не считается отозванной автоматически."
+      ],
+      "depends_on": [
+        "F106",
+        "F008",
+        "F005"
+      ],
+      "existing_packages": [
+        "MW-06",
+        "MW-07"
+      ],
+      "source_ids": [
+        "R09",
+        "S17"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Полное восстановление установки из knowledge JSON и гарантированный отзыв внешних копий.",
+      "milestone": "M3",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F108",
+      "priority": "P1",
+      "title": "Один typed клиент и стабильный внешний контракт",
+      "implementation_observation": "INTERNAL_CLIENT_EXISTS",
+      "verification": "NOT_RUN_HERE",
+      "value": "Интегратор работает через небольшой API и не повторяет служебную механику Vestrace.",
+      "reuse": "apps/console/src/sdk/client.ts; один shared read/write application path для HTTP/MCP.",
+      "deliverables": [
+        "Console становится первым полноценным клиентом; библиотеки используют новые DTO только после появления endpoints.",
+        "Передавать idempotency/preconditions явно; read errors, retryability и UNKNOWN не сглаживаются в success.",
+        "Отдельный внешний SDK выбрать по первому реальному интегратору, не выпускать три сразу."
+      ],
+      "acceptance": [
+        "Contract fixtures реально проходят HTTP; parsing отвергает несовместимый ответ.",
+        "Клиент не выставляет доверенный actor/workspace и не делает blind retry необратимых mutations.",
+        "Проверка fresh session с тем же backend демонстрирует продолжение работы."
+      ],
+      "depends_on": [
+        "F101",
+        "F102"
+      ],
+      "existing_packages": [
+        "MW-01",
+        "MW-03"
+      ],
+      "source_ids": [
+        "S15",
+        "S16",
+        "R01"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Опубликованные package names и методы SDK до их создания.",
+      "milestone": "M2",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F109",
+      "priority": "P1",
+      "title": "Эталонный сценарий и документация первого результата",
+      "implementation_observation": "GUIDES_EXIST_WITH_DRIFT",
+      "verification": "NOT_RUN_HERE",
+      "value": "Незнакомый с внутренностями инженер выполняет задачу и понимает ограничения.",
+      "reuse": "Новая docs structure, MW fixture corpus и существующий local runtime.",
+      "deliverables": [
+        "Одна задача: загрузить документы → найти решение → исправить → синхронизировать → экспортировать.",
+        "Показать нормальное выполнение рядом с fault case.",
+        "Каждая команда маркирована текущей/предлагаемой и указывает требуемую среду."
+      ],
+      "acceptance": [
+        "Два независимых тестировщика выполняют опубликованный сценарий; необходимая помощь записывается.",
+        "Ожидаемые результаты сверены с реальной версией, sensitive output не включён в публичный кейс.",
+        "Неисполненные шаги не заменены демонстрационным UI или ручным SQL."
+      ],
+      "depends_on": [
+        "F104",
+        "F105",
+        "F108"
+      ],
+      "existing_packages": [
+        "MW-07"
+      ],
+      "source_ids": [
+        "R05",
+        "S01"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Маркетинговое обещание пяти минут без измерения.",
+      "milestone": "M3",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F201",
+      "priority": "P2",
+      "title": "Временное знание: current, as_of и история осведомлённости",
+      "implementation_observation": "PARTIAL_TEMPORAL_SUPPORT",
+      "verification": "NOT_RUN_HERE",
+      "value": "Система различает старое решение, позднее исправление и сведения, доступные в прошлом.",
+      "reuse": "TimePerspective, revision hydrator, occurred/recorded/validity контракты; не вводить вторую timeline.",
+      "deliverables": [
+        "Зафиксировать отдельные semantics validity time и recorded-as-known; не объявлять их одним as_of.",
+        "Сохранять exact revision refs в ответе и не подменять их latest.",
+        "Закрыть недостатки хранения/индексации отдельным контрактом до обещания полного bitemporal replay."
+      ],
+      "acceptance": [
+        "Один корпус с поздним исправлением даёт разные ожидаемые ответы для текущего и исторических вопросов.",
+        "Superseded не выдаётся как current, а ретроспективный read всё ещё требует текущего доступа.",
+        "Вопрос без достаточной истории даёт явную границу знания, не реконструированный вымысел."
+      ],
+      "depends_on": [
+        "F101",
+        "F102"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "S11",
+        "R09",
+        "R13"
+      ],
+      "release_relationship": "existing-normative-depth-needs-explicit-placement",
+      "non_goals": "Дата документа как доверенное время события и фиктивное знание прошлого.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F202",
+      "priority": "P2",
+      "title": "Provenance и управляемые смысловые конфликты",
+      "implementation_observation": "DOMAIN_CONTRACT_AND_PARTIAL_PORTS",
+      "verification": "NOT_RUN_HERE",
+      "value": "Ответ можно проверить по источникам, а противоречие разрешить без скрытого last-write-wins.",
+      "reuse": "Claim/Conflict/Reconciliation domain, cognitive mutation repository, MW correction UI.",
+      "deliverables": [
+        "Различать sync conflict bytes и смысловой конфликт утверждений.",
+        "Показывать permitted support/contradiction refs и принятое решение; revision-lineage не достраивать догадкой.",
+        "Ввести impact view для изменений, не переписывая прошлый Run context."
+      ],
+      "acceptance": [
+        "Два допустимых противоречащих источника остаются явными до lawful resolution.",
+        "Источники с разными правами не дают закрытый факт через публичную сводку.",
+        "Отклонённое или новое разрешение не стирает прошлые основания и actor identity."
+      ],
+      "depends_on": [
+        "F103",
+        "F104",
+        "F201"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R09",
+        "S06"
+      ],
+      "release_relationship": "existing-normative-depth-needs-explicit-placement",
+      "non_goals": "Процент confidence как вероятность истинности и автоматическое доверие из частоты использования.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F203",
+      "priority": "P2",
+      "title": "Одна квалифицированная внешняя memory-интеграция",
+      "implementation_observation": "MCP_BOUNDARY_PARTIAL",
+      "verification": "NOT_RUN_HERE",
+      "value": "DSH или другой выбранный runtime использует знания Vestrace между сессиями.",
+      "reuse": "MCP tools, content read gate, один typed client, existing auth binding.",
+      "deliverables": [
+        "Первый вариант read-only; затем explicit remember, затем отдельно opt-in capture.",
+        "Задать optional-memory и required-context policy приложением; capture создаёт наблюдения с источниками.",
+        "Зафиксировать версии клиентов и один межсессионный сценарий; runtime не получает контроль над остальными effects через факт подключения памяти."
+      ],
+      "acceptance": [
+        "Новая сессия получает принятую коррекцию; чужая сессия/identity не получает запись.",
+        "Недоступность памяти даёт документированный fail mode, а не скрытую смену prompt.",
+        "Capture повтор не дублирует знание; model output не становится автоматически подтверждённым фактом."
+      ],
+      "depends_on": [
+        "F108",
+        "F102",
+        "F002"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R17",
+        "R01"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Маркетинговый статус партнёрства, all-tool governance чужого runtime и все интеграции сразу.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F204",
+      "priority": "P2",
+      "title": "Измеряемое качество памяти и регрессии",
+      "implementation_observation": "TEST_FOUNDATION_EXISTS_NEW_CORPUS_PROPOSED",
+      "verification": "NOT_RUN_HERE",
+      "value": "Каждое усложнение памяти оправдано результатом на задачах, а не числом новых тестов.",
+      "reuse": "Existing eval facts отделены от learned projections; MW acceptance и синтетические источники.",
+      "deliverables": [
+        "Собрать versioned corpus: актуальность, противоречия, отсутствие сведений, права, удаление, несколько сессий.",
+        "Сравнить с простым FTS baseline на одинаковых данных/model/token budget.",
+        "Отдельно измерять retrieval evidence и качество ответа модели; ACL gates не отдавать model judge."
+      ],
+      "acceptance": [
+        "Для каждого case есть ожидаемые разрешённые source IDs и запрещённые выводы.",
+        "Изменение tokenizer/model/retrieval settings создаёт новый experiment, а не переписывает старый результат.",
+        "Регрессия на hard safety case блокирует публикацию даже при улучшении средней оценки."
+      ],
+      "depends_on": [
+        "F101",
+        "F102"
+      ],
+      "existing_packages": [
+        "MW-07"
+      ],
+      "source_ids": [
+        "R09",
+        "S11"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Универсальный процент качества, доказательство рынка по stars или model judge как security oracle.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F205",
+      "priority": "P2",
+      "title": "Инспектор контекста и объяснение решений",
+      "implementation_observation": "PARTIAL_JOURNAL_AND_CONTEXT_COMPONENTS",
+      "verification": "NOT_RUN_HERE",
+      "value": "Инженер понимает, почему ответ опирался на конкретные сведения и почему новая версия изменила результат.",
+      "reuse": "Retrieval journals, exact revision refs, ModelRequestEvidence, audit/read gates.",
+      "deliverables": [
+        "Показать разрешённую цепочку query/filter/candidates/sections/rendered payload.",
+        "Разделить issued context, client acknowledgement и independently observed model request.",
+        "Ограничить trace retention и доступ; контекст не становится вечной скрытой копией удалённого знания."
+      ],
+      "acceptance": [
+        "Сравнение двух конфигураций показывает изменившиеся source revisions и причины.",
+        "Пользователь без доступа не получает candidates через debug endpoint.",
+        "Отсутствующее request observation честно помечено; сохранённый payload не считается доказательством использования моделью."
+      ],
+      "depends_on": [
+        "F102",
+        "F002",
+        "F008"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "S11",
+        "S12",
+        "R09"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Обещание полного deterministic LLM output replay.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F206",
+      "priority": "P2",
+      "title": "Фоновая консолидация и обновляемые справки",
+      "implementation_observation": "PROPOSED_PRODUCT_CAPABILITY",
+      "verification": "NOT_RUN_HERE",
+      "value": "Перед новой задачей можно получить короткую актуальную справку с проверяемыми основаниями.",
+      "reuse": "Memory revisions, derivation, existing execution/outbox, learned projections; no independent reflect runtime.",
+      "deliverables": [
+        "Один тип справки: решения, ограничения, незавершённые вопросы проекта.",
+        "Записывать source revision set, метод/model revision, validity watermark и stale состояние.",
+        "Обновление источника инвалидирует справку; сохранение нового канонического вывода требует отдельной mutation."
+      ],
+      "acceptance": [
+        "Справка указывает на exact inputs и не наследует более широкие права, чем источники.",
+        "Исправление/отзыв источника помечает stale до нового использования.",
+        "Ошибка фоновой задачи не уничтожает предыдущие canonical facts; повтор сходится по job/input identity."
+      ],
+      "depends_on": [
+        "F201",
+        "F202",
+        "F204",
+        "F008"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R09",
+        "S08"
+      ],
+      "release_relationship": "proposed-extension",
+      "non_goals": "Самоизменение policies, автоистина и массовые бессрочные background agents.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F207",
+      "priority": "P2",
+      "title": "Стоимость retrieval и инкрементальных представлений",
+      "implementation_observation": "PARTIAL_PROJECTIONS_AND_GENERATIONS",
+      "verification": "NOT_RUN_HERE",
+      "value": "Изменение одного источника не требует бесполезного пересоздания всего корпуса.",
+      "reuse": "P04 spaces/generations, source revisions, explicit processing recipes.",
+      "deliverables": [
+        "Разделить новые bytes, новую parser recipe и новый embedding model как разные причины переработки.",
+        "Зафиксировать warm/cold latency, memory/disk и объём пересчитанных элементов.",
+        "Оптимизировать только после correctness baseline; не ослаблять guards ради benchmark."
+      ],
+      "acceptance": [
+        "Неизменившиеся данные не создают новых canonical revisions или случайного нового provenance.",
+        "Ready generation не содержит смесь несогласованных spaces.",
+        "Измерение сравнивает одинаковое оборудование/данные и сообщает trade-offs, а не только лучший run."
+      ],
+      "depends_on": [
+        "F001",
+        "F105"
+      ],
+      "existing_packages": [
+        "P04"
+      ],
+      "source_ids": [
+        "S01",
+        "S11"
+      ],
+      "release_relationship": "proposed-optimization",
+      "non_goals": "Собственная vector DB и преждевременный distributed deployment.",
+      "milestone": "M4",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F301",
+      "priority": "P3",
+      "title": "Полноценные providers, models и agent Runs",
+      "implementation_observation": "PARTIAL_GOVERNED_EXECUTION_FOUNDATION",
+      "verification": "NOT_RUN_HERE",
+      "value": "Агентный сценарий запускается по реальной конфигурации и сохраняет выбранную идентичность провайдера.",
+      "reuse": "P03 model/connection revisions, q1 qualification, ModelBindingSnapshot, shared provider graph.",
+      "deliverables": [
+        "Довести P06 по существующему frozen scope, включая no_auth/Bearer ветки и реальные модели.",
+        "Не делать выбор provider через текущую environment вместо принятого binding."
+      ],
+      "acceptance": [
+        "Браузер/HTTP создают допустимую конфигурацию; после рестарта Run использует pinned revisions.",
+        "Отказ qualification/credentials предотвращает dispatch и имеет safe diagnostics."
+      ],
+      "depends_on": [
+        "F005",
+        "F004",
+        "F002"
+      ],
+      "existing_packages": [
+        "P06"
+      ],
+      "source_ids": [
+        "R11",
+        "R05"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Десятки провайдеров до закрытия одного полного пути.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F302",
+      "priority": "P3",
+      "title": "Interaction kernel, artifacts и retention",
+      "implementation_observation": "TARGET_WITH_PARTIAL_SURFACES",
+      "verification": "NOT_RUN_HERE",
+      "value": "Сообщения, действия и материалы образуют непротиворечивую историю взаимодействия.",
+      "reuse": "P07 canonical Run + interaction/artifact contracts, content materials, retention authority.",
+      "deliverables": [
+        "Довести thread/message/state/context kernel и artifact lifecycle через один Run.",
+        "Согласовать replay low-water и retention без альтернативной session truth."
+      ],
+      "acceptance": [
+        "Restart/reconnect не теряет каноническое действие и не создаёт дубль.",
+        "Удаление или expiry материала отражается в последующих reads/replay согласно контракту."
+      ],
+      "depends_on": [
+        "F301",
+        "F008"
+      ],
+      "existing_packages": [
+        "P07"
+      ],
+      "source_ids": [
+        "R11",
+        "R09"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Новый чат runtime для обхода Run.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F303",
+      "priority": "P3",
+      "title": "Полный согласованный AG-UI",
+      "implementation_observation": "LEGACY_SURFACES_NOT_FULL_PINNED_PROTOCOL",
+      "verification": "NOT_RUN_HERE",
+      "value": "Официальный клиент получает согласованный поток событий и восстановление.",
+      "reuse": "P08, pinned protocol lock, interaction kernel и существующая Console.",
+      "deliverables": [
+        "Один предусмотренный endpoint и согласованный client; не развивать legacy split routes как второй протокол.",
+        "Проверить streaming, replay, interrupt, tools и требуемые мультимодальные ветки frozen scope."
+      ],
+      "acceptance": [
+        "Официальный pinned client проходит interop и reconnect cases.",
+        "Серверные события являются проекцией canonical state; нет UI-only success."
+      ],
+      "depends_on": [
+        "F302"
+      ],
+      "existing_packages": [
+        "P08"
+      ],
+      "source_ids": [
+        "R11",
+        "R02"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Дополнительные версии протокола без отдельного compatibility gate.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F304",
+      "priority": "P3",
+      "title": "A2A server/client и workflow step",
+      "implementation_observation": "FROZEN_TARGET_NOT_QUALIFIED_HERE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Межагентный обмен работает без параллельной истины об исполнении.",
+      "reuse": "P09/P10, canonical Run/effects, connection qualification, pinned SDK/spec.",
+      "deliverables": [
+        "Сначала server/card/six core operations по P09, затем outbound workflow step по P10.",
+        "Проверять SSRF/auth, deadlines, cancellation, retained replay и неизвестный внешний исход."
+      ],
+      "acceptance": [
+        "Официальный contract/TCK и независимый sample server дают записанные interop results.",
+        "Сбой outbound запроса не превращается в permission to retry; удалённое утверждение не повышает local trust."
+      ],
+      "depends_on": [
+        "F302"
+      ],
+      "existing_packages": [
+        "P09",
+        "P10"
+      ],
+      "source_ids": [
+        "R11",
+        "R09"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "Полная federation или доверие к self-signed card без политики.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F305",
+      "priority": "P3",
+      "title": "Остальные пользовательские workflows Console",
+      "implementation_observation": "PARTIAL_PAGES_AND_ENDPOINTS",
+      "verification": "NOT_RUN_HERE",
+      "value": "В утверждённом меню нет доступных заглушек и настроек без эффекта.",
+      "reuse": "P11 pages/settings/workflows/triggers/evaluations/audit и текущий SDK.",
+      "deliverables": [
+        "Закрыть eleven-menu workflows по frozen program; различать read views и применяемые настройки.",
+        "Повторно использовать новые memory read/write API, не дублировать их в отдельной странице."
+      ],
+      "acceptance": [
+        "Браузерная сценарная проверка и restart охватывают каждую включённую функцию.",
+        "501/disabled остаются честными до реализации; после включения настройка меняет наблюдаемое runtime поведение."
+      ],
+      "depends_on": [
+        "F303",
+        "F304"
+      ],
+      "existing_packages": [
+        "P11"
+      ],
+      "source_ids": [
+        "R11",
+        "S14",
+        "S15"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "No-code editor как новый продукт.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F306",
+      "priority": "P3",
+      "title": "Квалификация полного v1.0 и совместимость",
+      "implementation_observation": "FROZEN_GATE_NOT_RUN_HERE",
+      "verification": "NOT_RUN_HERE",
+      "value": "Релиз означает конкретное проверенное обещание, а не готовность списка файлов.",
+      "reuse": "P12, accepted specs, qualification evidence and source/image/config/model/protocol identities.",
+      "deliverables": [
+        "Утвердить точный shipping manifest, supported environment и contract freeze.",
+        "Включённые MW функции квалифицировать отдельно и добавить к release matrix явным решением.",
+        "Нельзя заменить full frozen v1.0 более узким alpha под тем же именем."
+      ],
+      "acceptance": [
+        "Все требуемые P12 источники evidence свежие и относятся к тем же target identities.",
+        "Пропущенные/blocked проверки не становятся PASS; release notes перечисляют ограничения и migration policy."
+      ],
+      "depends_on": [
+        "F305",
+        "F005",
+        "F006"
+      ],
+      "existing_packages": [
+        "P12"
+      ],
+      "source_ids": [
+        "R11",
+        "R09"
+      ],
+      "release_relationship": "required-frozen-v1",
+      "non_goals": "v1.0 как срок календаря или количество LOC.",
+      "milestone": "M5",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F401",
+      "priority": "P4",
+      "title": "Командная память и развитая federation",
+      "implementation_observation": "TARGET_AND_KERNELS_NOT_FULLY_AUDITED",
+      "verification": "NOT_RUN_HERE",
+      "value": "Несколько команд безопасно работают с общими знаниями на понятных условиях.",
+      "reuse": "Существующие capabilities/share grants/mounts и Brain–Face–Organ границы.",
+      "deliverables": [
+        "Сначала подтвердить спрос и модель tenancy; затем общий scope, identity lifecycle, SSO/admission и review sharing.",
+        "Не интерпретировать текущий local single-workspace v1 как обещание готовой enterprise federation."
+      ],
+      "acceptance": [
+        "Реальные независимые principals/tenants и отзыв доступа проходят adversarial matrix.",
+        "Стоимость администрирования проверена пилотом; ни глобальный namespace, ни mount не дают implicit trust."
+      ],
+      "depends_on": [
+        "F306",
+        "F202"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R09",
+        "R11"
+      ],
+      "release_relationship": "post-v1-proposed",
+      "non_goals": "Незаметное расширение supported topology.",
+      "milestone": "M6",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F402",
+      "priority": "P4",
+      "title": "Managed deployment и эксплуатация нескольких установок",
+      "implementation_observation": "PROPOSED_PRODUCT_DIRECTION",
+      "verification": "NOT_RUN_HERE",
+      "value": "Развёртывание и сопровождение могут стать услугой после проверки спроса.",
+      "reuse": "Installer, restore, telemetry, identity и release qualification; не новая semantic model.",
+      "deliverables": [
+        "Выбирать после измеренных self-hosted пилотов; описать SLA/SLO, upgrade/cost model и response ownership.",
+        "Разделить management plane и data-plane полномочия; billing не даёт доступ к памяти."
+      ],
+      "acceptance": [
+        "Пилот измеряет восстановление/обновление без ручной магии автора.",
+        "Сбой control plane не переписывает canonical state; tenant isolation подтверждена на выбранной топологии."
+      ],
+      "depends_on": [
+        "F306",
+        "F401"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R09",
+        "R11"
+      ],
+      "release_relationship": "post-v1-proposed",
+      "non_goals": "Запуск SaaS до проверенной сохранности данных.",
+      "milestone": "M6",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F403",
+      "priority": "P4",
+      "title": "Дополнительные SDK, коннекторы и форматы",
+      "implementation_observation": "PROPOSED_EXPANSION",
+      "verification": "NOT_RUN_HERE",
+      "value": "Расширять доступность только под подтверждённые пользовательские задачи.",
+      "reuse": "Первый SDK, bounded importer, current data disclosure and source identity.",
+      "deliverables": [
+        "Выбирать следующую пару язык/коннектор по воспроизводимому запросу пользователя.",
+        "Для PDF, медиа или cloud source отдельно согласовать extraction/retention/network threat model."
+      ],
+      "acceptance": [
+        "Новый адаптер проходит ту же contract suite и не меняет authority semantics.",
+        "Есть владелец поддержки и версия fixtures; скрытые external calls отсутствуют."
+      ],
+      "depends_on": [
+        "F107",
+        "F203"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R09"
+      ],
+      "release_relationship": "post-v1-proposed",
+      "non_goals": "Каталог десятков неподдерживаемых integrations.",
+      "milestone": "M6",
+      "decision_status": "PROPOSED"
+    },
+    {
+      "id": "F404",
+      "priority": "P4",
+      "title": "Переносимый development harness",
+      "implementation_observation": "PROCESS_EXISTS_NOT_STANDALONE_PRODUCT",
+      "verification": "NOT_RUN_HERE",
+      "value": "Переиспользовать методику разработки после накопления доказательств её полезности.",
+      "reuse": "Frozen scope, persistent builder, independent review, evidence и mutation checks.",
+      "deliverables": [
+        "Собирать escaped defects, стоимость review, воспроизводимость и portability; сначала улучшать harness для Vestrace.",
+        "Выделять отдельный tool только при независимом спросе и отдельном владельце."
+      ],
+      "acceptance": [
+        "Чужой небольшой repo воспроизводит ограниченный workflow без E:/ или локальных undocumented assumptions.",
+        "Данные показывают пойманные и пропущенные дефекты, а не только количество review."
+      ],
+      "depends_on": [
+        "F306"
+      ],
+      "existing_packages": [],
+      "source_ids": [
+        "R11",
+        "R14"
+      ],
+      "release_relationship": "post-v1-proposed",
+      "non_goals": "Второй большой продукт до внешнего использования Vestrace.",
+      "milestone": "M6",
+      "decision_status": "PROPOSED"
+    }
+  ]
+}

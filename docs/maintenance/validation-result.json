@@ -1,0 +1,54 @@
+{
+  "status": "PASS",
+  "scope": "documentation only; no product execution or qualification",
+  "baseline": "07e2977a20b05c5b16953a206a6d68bdbff3a052",
+  "metrics": {
+    "markdown_files": 88,
+    "json_files": 43,
+    "local_links_and_anchors": 517,
+    "json_fences": 3,
+    "bash_fences_parse_only": 35,
+    "roadmap_features": 34,
+    "priority_groups": {
+      "P0": 8,
+      "P1": 9,
+      "P2": 7,
+      "P3": 6,
+      "P4": 4
+    },
+    "feature_acceptance_criteria": 92,
+    "synthetic_sources": 8,
+    "synthetic_cases": 12,
+    "payload_hashes_checked": 131,
+    "unchanged_mw_tree": "1f69acad8676991b2f435501ef3fd8aec742c3b4",
+    "mw_metrics": {
+      "json_files_parsed": 33,
+      "schema_definitions": 41,
+      "proposed_http_operations": 20,
+      "openapi_refs_resolved": 81,
+      "valid_examples": 13,
+      "invalid_examples": 10,
+      "structural_negative_examples": 6,
+      "semantic_negative_examples": 4,
+      "markdown_files": 27,
+      "internal_links_checked": 114,
+      "requirements": 45,
+      "implementation_tasks": 23,
+      "acceptance_cases": 54,
+      "implementation_packages": 8,
+      "file_plan_entries": 96,
+      "manifest_entries_checked": 58
+    }
+  },
+  "errors": [],
+  "not_run": [
+    "Rust tests/build/doctests",
+    "PostgreSQL migrations/roles/races",
+    "HTTP/MCP/worker runtime",
+    "Browser or official-client interoperability",
+    "Real backup/restore or source import/export",
+    "All external URL availability",
+    "Full OpenAPI standards validator",
+    "Independent human architecture review"
+  ]
+}

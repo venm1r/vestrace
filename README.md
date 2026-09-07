@@ -1,174 +1,50 @@
 # Vestrace
 
-Vestrace is an evidence-first knowledge and execution platform. The current foundation provides a Rust service, PostgreSQL persistence with transaction-scoped workspace isolation, health checks, event-sourced run records with deterministic replay and checkpoint recovery, run worker lifecycle (AdvanceRun/ResumeRun/ExecuteStep handlers), HTTP run lifecycle endpoints (create/list/detail/pause/resume/cancel), memory lifecycle services, retrieval, security domain types, and an MCP server.
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-> **Documentation map:** start with the [documentation index](docs/README.md) for the distinction between the frozen architecture, source-pinned implementation snapshots, and proposed changes. The foundation descriptions below include historical setup and availability assumptions; they are not a new qualification of the current code. The normative product boundary is memory-first persistent cognition, as explained in the [Architecture Guide](docs/architecture.md).
->
-> **Memory Workspace implementation design:** [API, Console, import/sync and portability](docs/implementation/memory-workspace/README.md), based on `6f6102536e9a535b7086db14573bf45fe750ad71`. Documentation integration does not make its proposed endpoints available or add MW-00–MW-07 to the frozen P01–P12 release program.
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-## Current maturity
+**Управляемая долговременная память и контекст, общие для агентов и исполнений.**
 
-Implemented:
+Vestrace строится вокруг знания, которое можно сохранить, связать с источником, исправить и использовать в следующей задаче. Идентичность памяти отделена от её ревизий; поиск и контекст являются представлениями, а не новым источником истины. Исполнение, полномочия и восстановление поддерживают этот цикл.
 
-- Rust workspace and PostgreSQL forward-only migrations.
-- Transaction-scoped workspace and principal RLS context.
-- HTTP liveness and readiness endpoints.
-- PostgreSQL-backed event-sourced run records with deterministic replay, checkpoint recovery, and projection rebuild.
-- Run worker lifecycle — `AdvanceRun` (Created→Preparing→Running, step dispatch, finalization), `ResumeRun` (Paused→Running), `ExecuteStep` (Pending→Succeeded) with work-queue leasing, lease heartbeats, and dead-letter routing.
-- HTTP run lifecycle endpoints — `POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}/pause`, `/resume`, `/cancel` with `If-Match` optimistic concurrency.
-- Memory lifecycle services with HTTP endpoints (event recording, memory creation, revision, knowledge-relation linking, all with idempotency and outbox).
-- Retrieval service with HTTP endpoint (text channel FTS, RRF fusion, deterministic reranking, context pack building).
-- Security domain types (capabilities, approvals, sensitivity, audit), policy engine, redaction service, audit repository, HTTP auth middleware.
-- MCP server with `search_memories` and `get_memory` tools.
-- Job enqueue, leasing via `FOR UPDATE SKIP LOCKED`, and completion.
-- Worker process with graceful shutdown.
-- Rust format, Clippy, test, and CI gates.
+## Где находится проект
 
-Not implemented:
+Доступный срез содержит Rust-сервисы, PostgreSQL-хранилище, HTTP/MCP-границы, memory/retrieval-механизмы и Console. Это не утверждение о готовности всех возможностей к эксплуатации. Продолжение P04 принято по опубликованному evidence только до delivery `ResultPrepared`; дальнейшая публикация результата и полная сквозная готовность не следуют из этого решения.
 
-- Approval execution with production authorization (deterministic test adapter only).
-- Capability-policy enforcement in HTTP middleware (PolicyEngine port exists, not wired to routes).
-- Artifact content-addressed storage.
-- Real AG-UI execution or event streaming.
-- Vector/structured/exact retrieval channels (ports defined, not wired).
-- Memory extractor backed by an LLM (only a deterministic test double exists).
+Memory Workspace — отдельный **предлагаемый** пакет: полноценная выдача памяти и контекста, редактор, импорт/синхронизация и переносимость. Его наличие в документации не делает эти функции доступными в бинарном файле.
 
-## HTTP contract
+## Дорожная карта и приоритеты
 
-Health routes do not require identity headers:
+[Дорожная карта развития](docs/roadmap/README.md) разделяет 34 инициативы на P0–P4 и связывает их с существующими P01–P12/MW-00–MW-07. [Milestones](docs/roadmap/milestones.md) и [ближайшие задачи](docs/roadmap/next-actions.md) задают проверяемые результаты вместо обещанных дат. [Корпус качества](docs/evaluation/README.md) и [сверка входных документов](docs/maintenance/input-reconciliation.md) дополняют план.
 
-```text
-GET /health/live
-GET /health/ready
-```
+## С чего начать
 
-Run routes:
+| Задача | Документ |
+| --- | --- |
+| Понять назначение и границы | [Обзор продукта](docs/product/overview.md) |
+| Узнать, что подтверждено в коде | [Состояние возможностей](docs/status.md) |
+| Подготовить локальную среду | [Начало работы](docs/getting-started.md) |
+| Проверить текущий Memory API | [Упражнение с памятью](docs/guides/memory-api-exercise.md) |
+| Разобраться в архитектуре | [Архитектура](docs/architecture.md) |
+| Работать с предложенными изменениями | [Memory Workspace](docs/implementation/memory-workspace/README.md) |
+| Найти нужный раздел | [Полное оглавление](docs/README.md) |
 
-```text
-POST /v1/runs
-GET  /v1/runs
-GET  /v1/runs/{id}
-POST /v1/runs/{id}/pause
-POST /v1/runs/{id}/resume
-POST /v1/runs/{id}/cancel
-```
+## Перед первым запуском
 
-Every run request requires explicit UUID headers:
+Compose не создаёт bootstrap-ключ. Нужны подготовленный read-only secret store, сохраняемые vault-тома и корректная конфигурация полномочий. Пустой внешний том не является настроенным хранилищем секретов. Поэтому здесь нет обещания запуска на чистой машине одной командой.
 
-```text
-x-workspace-id: UUID
-x-principal-id: UUID
-```
+HTTP-клиент предъявляет Bearer-токен. Workspace и principal определяет сервер по токену; клиентские identity-заголовки не являются способом выбрать чужую идентичность. Конкретный способ локальной авторизации Console описан в [руководстве по интерфейсу](docs/guides/console.md).
 
-Pause, resume, and cancel require `If-Match: <version>` for optimistic concurrency.
+## Разработка
 
-Create payload:
+Код остаётся модульным Rust workspace; Console использует React/TypeScript. Точные ограничения toolchain и зависимости берутся из файлов выбранного checkout. [Руководство разработчика](docs/development/README.md) отделяет быстрые проверки от PostgreSQL, браузерной и релизной приёмки.
 
-```json
-{
-  "title": "Verify retention policy"
-}
-```
+## Статус этой редакции документации
 
-Creating a run persists a run record in `created` status. The worker activates it through `Created→Preparing→Running` and dispatches step execution via the work queue.
+Основные руководства переписаны. Утверждённые нормативные документы, ADR, замороженные программы и evidence не переписаны и не перемещены. Их следует читать через [нормативный индекс](docs/specs/README.md) и [исторический раздел](docs/history/README.md). Переработка документов не меняет исходники, миграции, API и условия выпуска.
 
-## Local container environment
+---
+**Основание:** [R10: docs/adr/0001-memory-first-persistent-cognition.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md), [R01: crates/vestrace-http/src/auth.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs), [R04: docker-compose.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml), [S01: docs/development-evidence/v1-g0-04-embedding-transition-foundation.md](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md).
 
-Prerequisites: Docker Engine with Docker Compose v2, plus `curl`, Python 3, and Bash for the smoke checks. The Compose file uses distinct fixed credentials named `bootstrap-local-development-only` and `runtime-local-development-only`; they are exclusively for an isolated developer machine and must never be reused for production or an externally reachable database.
-
-Build and start both services:
-
-```bash
-docker compose -p vestrace-foundation up --build -d
-./scripts/foundation-smoke.sh
-bash ./scripts/foundation-run-smoke.sh
-```
-
-The run smoke script explicitly seeds two local-only workspace/principal pairs, verifies create/list/get through HTTP, and confirms that the created run is hidden from the second workspace. It prints the identity values that can be supplied to the console. Identity creation remains outside the HTTP adapter; production systems must provision identities through an authenticated control plane.
-
-The server listens inside the container on `0.0.0.0:8080`, while Compose publishes it only as `127.0.0.1:8080` by default. To use another loopback port:
-
-```bash
-VESTRACE_HTTP_PORT=18080 docker compose -p vestrace-foundation up --build -d
-./scripts/foundation-smoke.sh http://127.0.0.1:18080
-bash ./scripts/foundation-run-smoke.sh http://127.0.0.1:18080
-```
-
-Compose waits for PostgreSQL to report healthy before starting the server. The server connects, applies embedded migrations, and then begins serving. `/health/live` reports process liveness. `/health/ready` checks database access and exact migration compatibility.
-
-The PostgreSQL image bootstraps with the local-only `vestrace_bootstrap` administrator and provisions a separate restricted `vestrace` runtime login. Verify HTTP health and runtime RLS behavior with:
-
-```bash
-./scripts/foundation-smoke.sh
-bash ./scripts/foundation-run-smoke.sh
-./scripts/foundation-runtime-rls.sh
-```
-
-Production deployments must use managed secrets and independently provisioned least-privilege migration and runtime identities. The fixed Compose credentials are not a production template.
-
-Stop services while retaining data:
-
-```bash
-docker compose -p vestrace-foundation down --remove-orphans
-```
-
-Remove the development database volume as well:
-
-```bash
-docker compose -p vestrace-foundation down -v --remove-orphans
-```
-
-## Console
-
-The console is located in `apps/console`. Configure the request identity explicitly. The local run smoke prints a usable development pair:
-
-```text
-VITE_VESTRACE_WORKSPACE_ID=<workspace UUID>
-VITE_VESTRACE_PRINCIPAL_ID=<principal UUID>
-```
-
-An absent identity is not replaced with a default. The backend returns `400 Bad Request`, and the console displays that failure.
-
-Run locally:
-
-```bash
-npm --prefix apps/console ci
-npm --prefix apps/console run typecheck
-npm --prefix apps/console run build
-npm --prefix apps/console run dev
-```
-
-## Configuration
-
-Configuration precedence is: built-in defaults, an optional non-secret TOML file selected with `--config`, `VESTRACE_` environment variables using `__` for nesting, then typed CLI overrides such as `--http-bind`. TOML rejects unknown fields. The secret-bearing database URL must come from `VESTRACE_DATABASE__URL` or another secret-management environment, never TOML or a CLI argument.
-
-Logging defaults to text at `info`. Set `VESTRACE_OBSERVABILITY__FORMAT=json` for structured JSON or change `VESTRACE_OBSERVABILITY__LOG_FILTER` for application verbosity. Dependency SQL and connection details remain filtered even at verbose levels.
-
-## Verification
-
-The project pins Rust 1.85.0. With a pgvector-enabled PostgreSQL 17 database available through `DATABASE_URL`, run:
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-targets --all-features
-npm --prefix apps/console ci
-npm --prefix apps/console run typecheck
-npm --prefix apps/console run build
-docker compose config --quiet
-```
-
-## Documentation
-
-Project references are under `docs/`:
-
-- [Documentation Index and Status](docs/README.md)
-- [Implementation Extensions](docs/implementation/README.md)
-- [Memory Workspace Implementation Package](docs/implementation/memory-workspace/README.md)
-- [Memory Workspace Preflight](docs/implementation/memory-workspace/plans/00-preflight.md)
-
-- [Architecture Guide](docs/architecture.md)
-- [Domain Model Reference](docs/domain-model.md)
-- [Database Schema & Migrations](docs/database-schema.md)
-- [Security & RLS Architecture](docs/security-and-rls.md)
-- [Getting Started Guide](docs/getting-started.md)
+[Карта документации](docs/README.md) · [Состояние и ограничения](docs/status.md) · [Реестр источников](docs/maintenance/sources.md)

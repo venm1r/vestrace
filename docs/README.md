@@ -1,36 +1,47 @@
-# Vestrace Documentation
+# Документация Vestrace
 
-This index separates product requirements, implementation observations and work that is only proposed. File names containing `current`, a checked box, or an old successful test record do not establish the status of a later commit.
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-## Choose a starting point
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-| Question | Start here | What the document establishes |
-| --- | --- | --- |
-| What is Vestrace designed to be? | [Architecture](architecture.md) and [normative index](specs/README.md) | Memory-first product boundary and required invariants |
-| What did the earlier inspected implementation contain? | [Implementation snapshot](current-implementation.md) | Its explicitly pinned source snapshot, not a fresh audit of HEAD |
-| How is v1.0 delivery organized? | [Planning index](plans/README.md) | Distinct 36-PR and P01–P12 programs; their own approval rules |
-| How will memory become editable and importable? | [Memory Workspace](implementation/memory-workspace/README.md) | Proposed API/Console/import/sync/export extension on `6f610253` |
-| Where does implementation start? | [MW-00 preflight](implementation/memory-workspace/plans/00-preflight.md) | Fresh source/scope/dependency checks before code changes |
-| How are the new documents checked? | [Documentation verification](implementation/memory-workspace/verification/report.md) | Schema/examples/links, not product qualification |
+## Дорожная карта и приоритеты
 
-## Memory Workspace integration — 2026-09-07
+[Дорожная карта развития](roadmap/README.md) разделяет 34 инициативы на P0–P4 и связывает их с существующими P01–P12/MW-00–MW-07. [Milestones](roadmap/milestones.md) и [ближайшие задачи](roadmap/next-actions.md) задают проверяемые результаты вместо обещанных дат. [Корпус качества](evaluation/README.md) и [сверка входных документов](maintenance/input-reconciliation.md) дополняют план.
 
-The implementation package has one canonical documentation location: `docs/implementation/memory-workspace/`. The single-file reading edition and any ZIP are generated distributions, not additional authorities.
+## Выберите маршрут чтения
 
-The package covers a single cycle: import a bounded source → read and find memories → inspect provenance → make an editorial correction → obtain context → synchronize without losing the correction → export permitted knowledge.
+**Пользователь или интегратор:** [обзор](product/overview.md) → [состояние](status.md) → [подготовка среды](getting-started.md) → [текущий Memory API](guides/memory-api-exercise.md) → [HTTP](reference/http.md) или [MCP](reference/mcp.md).
 
-**Status boundaries:**
+**Разработчик:** [архитектура](architecture.md) → [домен](domain-model.md) → [границы записи](design/transactions.md) → [разработка](development/README.md) → [тестирование](development/testing.md) → [планирование](plans/README.md).
 
-- Documentation placement and cross-references are integrated separately from product implementation.
-- MW-D01–MW-D12 remain proposed design decisions; no Accepted ADR or frozen spec is modified by their registration.
-- MW-00–MW-07 are a feature program, not additions to P01–P12 or evidence that v1.0 is qualified.
-- The source-pinned [baseline](implementation/memory-workspace/00-baseline.md) distinguishes implemented P04 work through 14D from the next proposed boundaries. Recheck it before execution.
-- Proposed API routes, DTOs, migrations and test targets do not become available when these documentation files are merged.
+**Оператор:** [развёртывание](operations/deployment.md) → [безопасность](security-and-rls.md) → [повседневные операции](operations/runbook.md) → [обновление и восстановление](operations/backup-restore.md) → [диагностика](operations/troubleshooting.md).
 
-Read the [integration contract](implementation/memory-workspace/12-integration.md) for exact precedence, overlap and feature-specific gates.
+**Исполнитель Memory Workspace:** [одна страница о направлении](product/memory-workspace.md) → [пакет реализации](implementation/memory-workspace/README.md) → [MW-00 preflight](implementation/memory-workspace/plans/00-preflight.md). Не начинать с отдельной схемы или случайной задачи без требований пакета.
 
-## Preserved references
+## Детализация следующих функций
 
-[Architecture guide](architecture.md), [domain reference](domain-model.md), [database schema](database-schema.md), [security/RLS](security-and-rls.md), and [getting started](getting-started.md) retain their documented scope and baseline. The root README contains historical foundation setup assumptions; this documentation-only integration does not qualify those commands on a fresh installation.
+[Temporal/conflicts](design/temporal-conflicts.md) · [консолидация](design/consolidation.md) · [инспектор контекста](design/context-observability.md) · [внешний агент](design/integration-boundaries.md). Эти документы — proposals после соответствующих priority/dependency gates.
 
-The [v0.2 documentation status](documentation-status-v0.2.md), historical gap deltas, accepted evidence, frozen release plans and protocol locks are preserved. New source observations belong in an explicitly pinned delta; they must not rewrite a historical observation as though it originally described the new code.
+## Полная карта
+
+| Раздел | Документы |
+| --- | --- |
+| Продукт | [Обзор](product/overview.md), [сценарии](product/scenarios.md), [Memory Workspace](product/memory-workspace.md) |
+| Текущее состояние | [Реестр возможностей](status.md), [пробелы](status/open-gaps.md) |
+| Начало работы | [Подготовка](getting-started.md), [API-упражнение](guides/memory-api-exercise.md), [Console](guides/console.md) |
+| Архитектура | [Карта](architecture.md), [домен](domain-model.md), [память и время](design/memory-time.md), [retrieval](design/retrieval-context.md), [исполнение](design/execution.md), [транзакции](design/transactions.md), [материалы](design/materials.md), [обучение и health](design/learning-health.md) |
+| Справка | [HTTP](reference/http.md), [маршруты](reference/route-catalog.md), [Memory](reference/memory.md), [retrieval](reference/retrieval.md), [MCP](reference/mcp.md), [CLI](reference/cli.md), [конфигурация](reference/configuration.md), [словарь](reference/glossary.md) |
+| Эксплуатация | [Развёртывание](operations/deployment.md), [runbook](operations/runbook.md), [обновление/restore](operations/backup-restore.md), [ошибки](operations/troubleshooting.md), [БД](database-schema.md), [безопасность](security-and-rls.md) |
+| Разработка | [Старт](development/README.md), [тесты](development/testing.md), [workflow агентов](development/agent-workflow.md), [приёмка релиза](development/release.md) |
+| Решения и планы | [Нормативный индекс](specs/README.md), [карта программ](plans/README.md), [расширения реализации](implementation/README.md) |
+| Сопровождение документов | [Правила](maintenance/README.md), [источники](maintenance/sources.md), [карта перехода](maintenance/migration-map.md), [отчёт проверки](maintenance/validation-report.md) |
+| История | [Архив и сохранённые основания](history/README.md) |
+
+## Как читать статусы
+
+«Найдено в исходниках» — статическое наблюдение, а не успешный запуск. «Зафиксировано в evidence» — результат указанного исполнителя на указанном срезе, а не новый независимый прогон. «Нормативный контракт» — требование. «Предлагаемый проект» — решение для review. «Не проверено» — ограничение знания, а не автоматически отсутствие функции.
+
+Текущий реестр — [status.md](status.md). Старый файл `current-implementation.md` остаётся историческим документом своего baseline и не является обновляемой сводкой этой редакции.
+
+---
+[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)

@@ -1,91 +1,38 @@
-# PostgreSQL Schema & Migrations Reference
+# PostgreSQL: канонические данные, проекции и миграции
 
-## Documentation status
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-This document describes the **current implementation schema foundation** captured by the inspected implementation baseline `729d456f70f4de93c97d05cce795c09025c62f24`.
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-It is not the target v0.2 domain schema specification. The normative target model is defined in:
+## Что является источником схемы
 
-- [`specs/vestrace-domain-model-v0.2.md`](specs/vestrace-domain-model-v0.2.md)
-- [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md)
-- [`specs/vestrace-crypto-data-governance-contract-v0.2.md`](specs/vestrace-crypto-data-governance-contract-v0.2.md)
+Точные таблицы, constraints, guarded SQL functions, ownership и grants определяются ordered `migrations/` и PostgreSQL adapters выбранной сборки. Список имён здесь — карта ответственности, не альтернативная DDL. Документация не резервирует номер следующей миграции.
 
-The v0.2 documentation merge did not add, edit, or apply runtime migrations.
+Canonical memory identities/revisions, исходные events, Run history и authoritative governance facts отличаются от search documents, vectors и caches. Таблица в БД не становится канонической только из-за места хранения. Производные представления пересоздаются из более авторитетного состояния и не переписывают его ради локальной согласованности.
 
-## Migration source of truth
+## Существующая память
 
-The ordered [`migrations/`](../migrations/) directory is the authoritative implementation migration history. Documentation must not maintain a claimed maximum migration number.
+`memories` указывает на активную immutable revision. `memory_revisions` хранит содержимое, temporal metadata и classification. `memory_sources` связывает с источником. В текущем repository эти части и поисковая проекция движутся одной транзакцией, включая CAS; outbox/idempotency на service boundary пока отдельны. F003 усиливает общий commit, не отрицает существующую атомарность нижнего уровня.
 
-Runtime compatibility checks applied `_sqlx_migrations` entries against the embedded migration set by version, success state and checksum. Missing, extra, failed or modified migration records make the database not ready.
+## Изоляция
 
-## Current storage role
+Scoped transaction устанавливает workspace/principal из аутентифицированного RequestContext. Application authorization, explicit workspace predicates, RLS и narrow runtime grants дополняют друг друга. Администратор БД не является корректным substitute для проверки запрета runtime identity.
 
-PostgreSQL is the primary authoritative transactional store for the inspected implementation: workspaces/principals, Run state/history, Memory state/revisions/provenance, jobs/outbox/idempotency, retrieval journals, audit and related product metadata.
+Для новой таблицы проверяются composite ownership keys, foreign references в том же workspace, immutable columns и допустимые state transitions. Полная readonly projection не должна случайно принимать writes через generic adapter.
 
-The target architecture preserves PostgreSQL as the authoritative transactional/domain-state store, while target artifact bytes may live in governed local content-addressed storage. A CAS hash identifies/integrity-checks bytes; it does not replace domain metadata or authorization.
+## Миграции
 
-## Current major schema areas
+Изменения только forward. Нельзя исправить уже применённую миграцию так, чтобы checksum-история новой среды расходилась со старой. Provisioning/upgrade владельцев и functions проверяются и на чистой, и на обновляемой disposable БД.
 
-The migration history contains foundations for:
+Миграции MW 0196–0199 в прежнем плане — кандидаты, а 0195 назван в P04/14E. Перед реализацией сверить актуальный ряд и исправить план целиком при коллизии. Не выполнять proposed DDL автоматически из документационного пакета.
 
-- extensions, identity and RLS;
-- sessions/events/memory/revisions/provenance/relations;
-- retrieval journals/context packs;
-- policy/approval/audit/provider/model foundations;
-- agents/skills/workflows and execution-related structures;
-- Run event store/streams/checkpoints;
-- jobs/outbox/idempotency;
-- security/product/enterprise-oriented schema additions.
-- typed `evaluation_facts` raw evaluation evidence (migration 0123);
-- separate `learned_projections` and `learning_proposals` proposal-only learning state (migration 0124).
+## Рост данных
 
-The source migration SQL, not this summary, is authoritative for exact table/column definitions.
+Для каждой новой сущности определить границы: canonical history, rebuildable projection, временный staging или observation. Индекс, TTL и очистка не должны удалять evidence, которое ещё требуется retention/recovery. Объём и задержки сначала измеряются на синтетических и реальных разрешённых workload; произвольная таблица benchmarks не заменяет измерения.
 
-## Run event store
+Точная будущая модель source/import/receipt находится в [MW data contract](implementation/memory-workspace/02-data-and-transactions.md).
 
-Current Run persistence uses append-oriented event history plus projections and recovery checkpoints.
+---
+**Основание:** [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [S07: crates/vestrace-application/src/governed_mutation.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
 
-The inspected foundation includes:
-
-- `run_events` — sequenced event envelopes;
-- `run_streams` — current stream version / optimistic concurrency;
-- `run_checkpoints` — serialized recovery state with integrity metadata;
-- `agent_runs` — current/read projection metadata.
-
-The application layer replays canonical Run history and can rebuild projections.
-
-## Memory foundation
-
-Current schema supports Memory identity/revisions, provenance/relations and retrieval-related projections/journals.
-
-Database-level integrity includes append-only event enforcement and an invariant requiring active memories to have a source in the inspected implementation snapshot.
-
-The v0.2 target Domain Model introduces additional semantics such as Claim, richer Evidence/Derivation, conflicts, sharing, health/repair, external effects and governance. Their appearance in target docs does **not** imply corresponding migration tables currently exist.
-
-## Row-Level Security
-
-Multi-tenant tables use workspace-bound RLS policies. Conceptually:
-
-```sql
-ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY <table_name>_workspace_isolation ON <table_name>
-    FOR ALL
-    USING (workspace_id = vestrace_current_workspace_id())
-    WITH CHECK (workspace_id = vestrace_current_workspace_id());
-```
-
-Scoped transactions establish workspace/principal context. Application-level authorization remains required in addition to RLS.
-
-## Derived-state rule
-
-Target v0.2 requires derived indexes/caches/projections to be rebuildable from more authoritative state. Database presence does not automatically make a table authoritative; authority is defined by the Domain/Architecture Contract.
-
-`evaluation_facts` remains raw source evidence. `learned_projections` is explicitly advisory and keeps source fact/evidence lineage. `learning_proposals` stores versioned, workspace-scoped proposals only; the L2 repository and HTTP surface expose no asset-apply operation.
-
-## Schema evolution rule
-
-- migrations remain forward-only implementation artifacts;
-- applied migrations are not silently rewritten;
-- target requirements that need schema changes require explicit future migration planning and implementation review;
-- migration qualification must verify data/history/invariant preservation before a release/profile claim relies on the new schema.
+[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)

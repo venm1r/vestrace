@@ -1,44 +1,32 @@
-# Vestrace Planning Index
+# Планы: приоритеты, зависимости и действующие обязательства
 
-Planning documents describe intended work and acceptance criteria; they do not by themselves authorize implementation or prove runtime availability. Use the [documentation index](../README.md) to distinguish normative requirements, source-pinned observations and proposed extensions.
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-## Frozen v0.2 → v1.0 transition package
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-The historical 36-PR transition package remains intact:
+## Три разные карты
 
-- [PR specification index](v0.2-to-v1.0-pr-specification-index.md).
-- [36-PR execution matrix](v0.2-to-v1.0-36-pr-execution-matrix.md).
-- [Future PR review checklist](future-pr-review-checklist.md).
-- [Consolidated implementation roadmap](../implementation-plan-v0.2.md).
+| Документ | Роль | Что не следует из него |
+| --- | --- | --- |
+| Исторический 36-PR transition | Переход от исходного v0.2 baseline, сохранённый для истории требований | Что его номера автоматически описывают нынешнюю очередь |
+| Frozen P01–P12 | Действующий утверждённый full-v1 delivery program | Что все отмеченные в его тексте этапы уже приняты на текущем коде |
+| MW-00–MW-07 | Предлагаемое расширение Memory/Context API, UI, import/sync/export | Что оно включено в v1 или меняет protected P04 scope |
 
-Its original baseline and qualification claims are not advanced by registering a newer document.
+Новая [дорожная карта](../roadmap/README.md) задаёт продуктовую приоритизацию **P0–P4**. Это не номера implementation packages **P01–P12**. Пакет P08 может быть product priority P3 и при этом оставаться обязательным для полного v1.0.
 
-## v1.0 P01–P12 gate program
+## Операционный порядок
 
-Read the [twelve-package gate program](../superpowers/plans/2026-08-26-vestrace-v1-gate-program.md) together with its linked frozen specification and each detailed package plan. The program has its own dependencies, protected authorities and evidence gates. Its package numbers must not be confused with the 36 historical PR numbers.
+Продолжение P04 принимается по его собственному контракту. P05 зависит от P02/P04. P06 следует за P05, P07 за P06, P08/P09 за P07, P10 за P09, P11 за P08/P10, P12 за P11. Новая таблица не меняет этот граф.
 
-The current repository also contains dated plans under `docs/superpowers/plans/`; the old archive-exclusion wording no longer describes this repository index. This navigation change does not rewrite or supersede those plans.
+MW начинает с отдельного MW-00 и точного review пересечений. Read-only часть может разрабатываться отдельно до полного P04 closure, но context/import readiness не обходят действующие guards. Одновременная работа в общих writer/migration files требует явного порядка, а не optimistic merge.
 
-## Memory Workspace: proposed implementation extension
+## Утверждение нового решения
 
-The selected API, Console and import/sync/export changes are registered separately:
+Владелец выбирает отдельный milestone или изменяет frozen release program явно. До этого дорожная карта и подробные P2/P4 specs являются proposals. При изменении условий повторяются delta review, scope и acceptance matrix. Сроки определяются скоростью принятых вертикальных задач, а не количеством оставшихся галочек.
 
-| Document | Purpose |
-| --- | --- |
-| [Package entry](../implementation/memory-workspace/README.md) | Scope, source baseline and reading order |
-| [Design and decisions](../implementation/memory-workspace/01-design.md) | Proposed decisions MW-D01–MW-D12 |
-| [Integration contract](../implementation/memory-workspace/12-integration.md) | Precedence, overlap and release-program separation |
-| [MW program](../implementation/memory-workspace/08-program.md) | MW-00–MW-07 dependencies and completion gates |
-| [Package plans](../implementation/memory-workspace/plans/README.md) | 23 proposed implementation tasks |
-| [MW-00 preflight](../implementation/memory-workspace/plans/00-preflight.md) | First entry point before product changes |
-| [Acceptance catalog](../implementation/memory-workspace/09-acceptance.md) | Planned positive, negative, crash and race scenarios |
+Ни исторические планы, ни эта карта не дают права commit/push/deploy сами по себе.
 
-**Registration status:** documentation integration requested; technical decisions remain proposed and product implementation is not authorized by this index. MW-00–MW-07 are not P13–P20 and are not silently included in v1.0. Assigning them to a release requires an explicit program decision. Any conflict with active P04 work requires fresh scope coordination; the P04 allowlist is not expanded here.
+---
+**Основание:** [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R18: docs/implementation/memory-workspace/README.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/implementation/memory-workspace/README.md), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
 
-## Precedence by question
-
-For target architecture: Architecture Contract → newer Accepted ADR → specialized normative specifications/invariants → approved transition planning → proposed feature design → historical plan.
-
-For current implementation: exact source/migrations and observed executable evidence → source-pinned implementation documentation → planning assumptions. An old PASS does not qualify a changed commit.
-
-The Memory Workspace JSON Schema and OpenAPI files are proposed companions, not replacements for the runtime-exported schema or protocol lock. Changes to their contract must also update the feature specifications, examples and traceability map.
+[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)

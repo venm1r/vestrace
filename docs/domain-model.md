@@ -1,75 +1,46 @@
-# Vestrace Domain Model
+# Доменная модель и язык проекта
 
-## Documentation status
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-This file is the domain-model entry point for the v0.2 documentation baseline integrated into `main`.
+**Статус:** Руководство по срезу исходников; не свидетельство испытания.
 
-The pre-v0.2 `docs/domain-model.md` at implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` was an implementation-oriented inventory of Rust domain modules and wired/type-only state. It remains useful as a historical implementation snapshot, but it is **not** the normative target domain model.
+## Что чем является
 
-## Normative target model
+| Понятие | Значение | Важное ограничение |
+| --- | --- | --- |
+| Event | Записанное исходное событие | Событие наблюдения не равняется подтверждённому факту |
+| Memory | Устойчивая identity единицы памяти | Содержимое не перезаписывается в ней бесследно |
+| MemoryRevision | Конкретная версия содержимого | Revision identity сохраняет смысл исторической ссылки |
+| MemorySource / EvidenceRef | Происхождение и основание | Источник может быть неполным или ошибочным |
+| Claim | Структурированное утверждение | Claim не равен truth |
+| Conflict | Явное расхождение | Поздний timestamp не разрешает смысловой конфликт автоматически |
+| ContextPack | Подобранное представление | Не приобретает полномочия первоисточника |
+| Run | Каноническое выполнение | UI-сессия или tool call не заменяют Run |
+| ExternalEffect | Внешняя операция и её evidence | Неопределённый outcome не становится failed |
+| Capability | Ограниченное право действия | Role и идентичность сами по себе его не дают |
+| ContentMaterial | Управляемое содержимое в своём lifecycle | Подготовленное содержимое не является Live |
 
-Use:
+Это словарь модели. Доступность реализации отдельных сущностей определяется [состоянием](status.md), а не присутствием строки в таблице.
 
-- [`specs/vestrace-domain-model-v0.2.md`](specs/vestrace-domain-model-v0.2.md) — canonical target entities, authority tiers, aggregate ownership and forbidden conflations;
-- [`specs/vestrace-data-temporal-model-v0.2.md`](specs/vestrace-data-temporal-model-v0.2.md) — temporal/revision semantics;
-- [`specs/vestrace-trust-authority-model-v0.2.md`](specs/vestrace-trust-authority-model-v0.2.md) — identity, capabilities, workspace/federation and trust;
-- [`specs/vestrace-normative-invariants-v0.2.md`](specs/vestrace-normative-invariants-v0.2.md) — stable domain requirements.
+## Статусы и версии не взаимозаменяемы
 
-## Core target distinctions
+В текущем Memory API типы включают `fact`, `preference`, `constraint`, `decision`, `task`, `procedure`, `observation`, `outcome`, `summary`. Статусы включают `candidate`, `active`, `superseded`, `rejected`, `expired`, `deleted`.
 
-The v0.2 target model explicitly keeps these concepts separate:
+`active` описывает жизненный цикл, а не доказанную истинность. `confidence` — сохранённый показатель, а не калиброванная вероятность корректности. `revision_number` описывает содержимое; `state_revision` может дополнительно защищать изменение состояния. Нельзя без проверки API считать эти версии одной и той же величиной.
 
-```text
-Memory != Evidence
-Memory != Claim
-Claim != Truth
-Role != Capability
-Identity != Authority
-Scope != Permission
-Hash != Permission
-Receipt != Confirmed Outcome
-Repair Success != Finding Resolution
-Health != Trust
-Recovery != Revalidation
-Encryption != Governance
-Mount != Local Memory
-Compensation != Rollback
-Projection != Source of Truth
-Milestone Label != Qualified Profile
-```
+## Временные измерения
 
-## Target authority tiers
+Время события, время его записи системой и интервал применимости знания отвечают на разные вопросы. Источник может сообщить о прошлом сейчас. Позднее исправление не должно переписывать дату, когда прежний вывод считался доступным.
 
-```text
-Tier A — source evidence
-  Event / ArtifactRevision / external receipts / human feedback / imported refs
+[Временной контракт](design/memory-time.md) отдельно описывает разницу между выбором исторического содержания и восстановлением того, что система знала тогда.
 
-Tier B — canonical cognition
-  Memory / MemoryRevision / Claim / assessments / provenance / conflicts
+## Редакторские изменения и импорт
 
-Tier C — canonical operational and governance state
-  identity / capability / policy / execution / effects / health / incident / governance
+В MW версия документа, локальная память и ручное исправление имеют разные роли. Их нужно связывать, а не складывать в одну изменяемую строку. Переносимый foreign_id помогает сохранить происхождение при импорте, но не даёт объекту права выдавать себя за локального actor.
 
-Tier D — derived state
-  embeddings / search docs / context caches / aggregate snapshots / projections
-```
+Правила MW остаются предложенными. Нормативный Domain Model и последующие Accepted ADR имеют приоритет; при несовпадении меняется проект реализации либо принимается явно названное уточнение.
 
-Tier D must be rebuildable and must not silently overwrite a higher-authority tier.
+---
+**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R06: docs/domain-model.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/domain-model.md), [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs), [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs).
 
-## Current implementation reference
-
-See [`current-implementation.md`](current-implementation.md) for the concise inspected implementation snapshot.
-
-For the detailed pre-v0.2 implementation-level inventory of Rust types and wired/type-only modules, consult repository history at commit `729d456f70f4de93c97d05cce795c09025c62f24`.
-
-## Planning reference
-
-The source-based gap analysis and future domain transition contracts are documented in:
-
-- [`gap-analysis-v0.2.md`](gap-analysis-v0.2.md)
-- [`plans/README.md`](plans/README.md)
-- [`plans/v0.2-to-v1.0-pr-specification-index.md`](plans/v0.2-to-v1.0-pr-specification-index.md)
-
-## Documentation rule
-
-A target entity in the v0.2 Domain Model does not count as implemented until current implementation evidence identifies its runtime path, persistence contract, migration state where needed, and conformance evidence. A planning document alone is not implementation evidence.
+[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)

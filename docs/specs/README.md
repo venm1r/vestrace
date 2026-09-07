@@ -1,71 +1,37 @@
-# Vestrace Normative Documentation Index
+# Нормативные основания и поясняющие руководства
 
-This directory contains the frozen v0.2 target architecture plus explicitly accepted post-v0.2 architecture extensions.
+**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
 
-> These specifications describe target architecture. They do not by themselves assert current implementation availability.
+**Статус:** Навигация по сохранённым нормативным документам; не новый нормативный контракт.
 
-## Frozen v0.2 normative hierarchy
+Нормативная иерархия не изменена: Architecture Contract → явно уточняющий более новый Accepted ADR → специализированные specs/invariants. Новые руководства и roadmap поясняют и планируют, но не переписывают эту authority. Слова MUST в Proposed MW означают проект будущего контракта, а не уже принятое изменение baseline.
 
-1. [Architecture Contract v0.2](vestrace-architecture-contract-v0.2.md) — top-level product and architecture contract.
-2. [Domain Model v0.2](vestrace-domain-model-v0.2.md) — entities, authority tiers and aggregate boundaries.
-3. [Normative Invariants Catalog](vestrace-normative-invariants-v0.2.md) — stable MUST/SHOULD requirement IDs.
-4. [Trust & Authority Model](vestrace-trust-authority-model-v0.2.md) — capabilities, delegation, risk, approvals, workspaces and trust.
-5. [Data & Temporal Model](vestrace-data-temporal-model-v0.2.md) — revisions, validity, occurrence/recording time and historical queries.
-6. [Execution & External Effects Contract](vestrace-execution-external-effects-contract-v0.2.md) — durable execution, side effects, idempotency and reconciliation.
-7. [Health / Repair / Incident Contract](vestrace-health-repair-incident-contract-v0.2.md) — findings, repair, recovery and revalidation. Read together with [ADR-0009](../adr/0009-finding-disposition-is-not-integrity-state.md), which clarifies that `SUPPRESSED` / `ACCEPTED_RISK` are disposition overlays, not finding integrity states.
-8. [Crypto & Data Governance Contract](vestrace-crypto-data-governance-contract-v0.2.md) — classification, secrets, crypto, retention, deletion and export.
-9. [Qualification / Conformance Specification](vestrace-qualification-conformance-spec-v0.2.md) — profiles, hard gates, fault scenarios and qualification bundles. Read together with [ADR-0010](../adr/0010-qualification-profile-scope-follows-evidence-closure.md), which clarifies milestone/profile evidence scope.
-10. [Version Roadmap v0.2 → v1.0](vestrace-version-roadmap-v0.2-to-v1.0.md) — release capability/qualification sequence.
-11. [`docs/adr/`](../adr/) — accepted architecture decisions.
+## Сохранённые документы
 
-## Accepted post-v0.2 extensions
+- [Architecture Contract](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md)
+- [Domain Model](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-domain-model-v0.2.md)
+- [Invariants](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-normative-invariants-v0.2.md)
+- [Trust / Authority](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-trust-authority-model-v0.2.md)
+- [Data / Temporal](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-data-temporal-model-v0.2.md)
+- [Execution / Effects](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-execution-external-effects-contract-v0.2.md)
+- [Health / Repair](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-health-repair-incident-contract-v0.2.md)
+- [Crypto / Data Governance](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-crypto-data-governance-contract-v0.2.md)
+- [Qualification](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-qualification-conformance-spec-v0.2.md)
+- [Frozen version roadmap](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-version-roadmap-v0.2-to-v1.0.md)
 
-- [Brain–Face–Organ System Model](vestrace-brain-face-organ-system-model.md) — system-level decomposition for the future autonomous-agent product: `Vestrace + Prime-like Runtime` as Brain, Desktop/CLI + Host Broker as Face, and replaceable execution endpoints as Organs.
-- [ADR-0011](../adr/0011-brain-face-organ-system-decomposition.md) — accepts that decomposition while preserving the v0.2 single-authority, capability, external-effect, and trust laws.
+Оригиналы по прежним путям сохраняются в репозитории. В этом архиве-переработке они не продублированы; pinned ссылки открывают ровно исходный срез. Изменения только оглавления не меняют тела спецификаций, requirement IDs или квалификацию.
 
-Post-v0.2 extensions MUST NOT be interpreted as retroactively changing v0.2 implementation availability, qualification claims, or the frozen 36-PR v0.2→v1.0 transition package unless a later transition document explicitly amends that package.
+## Accepted расширения и новые proposals
 
-## Proposed implementation extensions (not normative amendments)
+Brain–Face–Organ остаётся принятым system-level extension с собственными границами. [Обзор архитектуры](../architecture.md) поясняет его, но не объявляет дополнительный runtime реализованным.
 
-- [Memory Workspace](../implementation/memory-workspace/README.md) — source-pinned implementation design for Memory/Context API, Console editing and source import/sync/export; baseline `6f6102536e9a535b7086db14573bf45fe750ad71`.
-- [Integration and precedence](../implementation/memory-workspace/12-integration.md) — correspondence with the frozen architecture, reused authorities, release-program boundary and unresolved implementation gates.
-- [MW-00–MW-07 plans](../implementation/memory-workspace/plans/README.md) — proposed tasks and future acceptance, not evidence of available functionality.
+[Memory Workspace](../implementation/memory-workspace/README.md) — отдельный интегрированный Proposed design. [Новая roadmap](../roadmap/README.md) — приоритизация дальнейших решений. Ни один из них не заменяет утверждённые release gates без явного amendment.
 
-This registration does not mark MW-D01–MW-D12 as Accepted ADRs and does not change any frozen normative requirement, protocol lock, migration, or P01–P12 gate. The design's MUST clauses govern the proposed extension only after the relevant design decisions and execution scope are approved. In a conflict, the existing normative hierarchy wins; the package must be revised rather than silently weakening it. In particular, a byte-bounded response must not claim the hard-token guarantees of the normative ContextPack.
+## Реализация и история
 
-## Legacy files in this directory
+Для source reality читать [status](../status.md), а для старых результатов — [history](../history/README.md). Нарушение кода относительно нормы записывается как gap; сам факт, что код так работает, не отменяет норму.
 
-The pre-v0.2 `r1-*` specifications are historical implementation/design artifacts, not part of the normative v0.2 set. See [LEGACY.md](LEGACY.md).
+---
+**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R10: docs/adr/0001-memory-first-persistent-cognition.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
 
-## Conflict resolution
-
-For the frozen v0.2 baseline:
-
-1. the Architecture Contract v0.2 has highest priority;
-2. an Accepted newer ADR may explicitly supersede or clarify an older decision;
-3. specialized v0.2 specs refine but may not silently weaken the Architecture Contract or a newer Accepted ADR;
-4. legacy/current implementation documentation must be labeled as implementation status rather than target architecture.
-
-For post-v0.2 extensions:
-
-1. they MUST preserve frozen v0.2 laws unless a new ADR explicitly supersedes a specific decision;
-2. they MUST identify themselves as post-baseline extensions;
-3. they MUST NOT silently rewrite implementation or qualification status.
-
-Older specs are retained as historical design artifacts unless explicitly updated or marked superseded.
-
-## Documentation state
-
-The v0.2 normative architecture consistency pass is complete. A source-based gap analysis against implementation commit `729d456f70f4de93c97d05cce795c09025c62f24` and a complete 36-PR transition package are integrated into `main` alongside the frozen v0.2 set.
-
-The Brain–Face–Organ model is a later accepted documentation extension. It defines system topology and authority boundaries only; it does not claim the Brain runtime, Face/Host Broker, or Organ layer is implemented.
-
-See:
-
-- [`../documentation-status-v0.2.md`](../documentation-status-v0.2.md)
-- [`../documentation-post-merge-audit-v0.2.md`](../documentation-post-merge-audit-v0.2.md)
-- [`../gap-analysis-v0.2.md`](../gap-analysis-v0.2.md)
-- [`../plans/README.md`](../plans/README.md)
-- [`../plans/v0.2-to-v1.0-pr-specification-index.md`](../plans/v0.2-to-v1.0-pr-specification-index.md)
-
-The normative documents define target requirements only. Runtime code, migrations, and qualification claims require separate implementation and executable evidence.
+[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
