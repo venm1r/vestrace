@@ -12,9 +12,15 @@ use std::{
 
 use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use vestrace_application::{EmbeddingOutputKeyBinding, FenceReceipt, MaterialKeyVault, VaultError};
+use vestrace_application::{
+    EmbeddingOutputKeyBinding, EmbeddingResultPreparationId, FenceReceipt, MaterialKeyVault,
+    VaultError,
+};
 use vestrace_domain::trust::{KeyProvider, KeyReference, SecretResolutionRequest};
-use vestrace_domain::{ErasureReceipt, IntentNonce, MaterialKeyId, VaultReceipt, ZeroizingDek};
+use vestrace_domain::{
+    ErasureReceipt, IntentNonce, MaterialKeyBindingReceipt, MaterialKeyId, VaultReceipt,
+    ZeroizingDek,
+};
 use zeroize::Zeroize as _;
 
 use super::{EnvelopeCipher, KEY_LENGTH, MountedSecretStoreKeyProvider, Sealed};
@@ -80,6 +86,26 @@ struct WitnessStage {
     version: u8,
     claim_receipt: uuid::Uuid,
     receipt: uuid::Uuid,
+}
+
+/// The only decision pathname consulted by both specialized mutators.
+/// Old processes that do not consult this stage must be stopped on upgrade.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum OutputDisposition {
+    Bound {
+        version: u8,
+        claim_receipt: uuid::Uuid,
+        authority: Authority,
+        preparation_id: uuid::Uuid,
+        binding_receipt: uuid::Uuid,
+    },
+    Retire {
+        version: u8,
+        claim_receipt: uuid::Uuid,
+        authority: Authority,
+        fence_receipt: uuid::Uuid,
+    },
 }
 
 impl Authority {
@@ -399,6 +425,19 @@ impl HostMaterialKeyVault {
         authority: Authority,
     ) -> Result<VaultReceipt, VaultError> {
         let claim = self.claim(key, authority)?;
+        if claim.authority.output_key() {
+            match self.output_disposition(key, &claim)? {
+                Some(OutputDisposition::Bound { .. }) => {
+                    self.output_envelope(key, &claim)?;
+                    return Ok(VaultReceipt::from_uuid(claim.receipt));
+                }
+                Some(OutputDisposition::Retire { .. }) => {
+                    self.retired(key, &claim)?;
+                    return Err(VaultError::ErasurePrepared);
+                }
+                None => {}
+            }
+        }
         self.retired(key, &claim)?;
         self.test_checkpoint("before_envelope");
         let candidate = EnvelopeStage {
@@ -452,12 +491,149 @@ impl HostMaterialKeyVault {
         callback(&dek);
         Ok(())
     }
+    fn output_disposition(
+        &self,
+        key: MaterialKeyId,
+        claim: &Claim,
+    ) -> Result<Option<OutputDisposition>, VaultError> {
+        if claim.version != VERSION || claim.receipt.is_nil() || !claim.authority.output_key() {
+            return Err(VaultError::Unavailable);
+        }
+        let disposition = self.read::<OutputDisposition>(key, "output-disposition")?;
+        let fence = self.read::<WitnessStage>(key, "fence")?;
+        let erased = self.read::<WitnessStage>(key, "erased")?;
+        for witness in [fence.as_ref(), erased.as_ref()].into_iter().flatten() {
+            if witness.version != VERSION
+                || witness.claim_receipt != claim.receipt
+                || witness.receipt.is_nil()
+            {
+                return Err(VaultError::Unavailable);
+            }
+        }
+        if erased.is_some() && fence.is_none() {
+            return Err(VaultError::Unavailable);
+        }
+        if self.active_dir(key).is_dir() == self.retired_active_dir(key).is_dir()
+            || (erased.is_some() && self.active_dir(key).exists())
+            || (self.retired_active_dir(key).exists() && fence.is_none())
+        {
+            return Err(VaultError::Unavailable);
+        }
+        if let Some(ref value) = disposition {
+            let (version, receipt, authority) = match value {
+                OutputDisposition::Bound {
+                    version,
+                    claim_receipt,
+                    authority,
+                    preparation_id,
+                    binding_receipt,
+                } => {
+                    if preparation_id.is_nil()
+                        || binding_receipt.is_nil()
+                        || fence.is_some()
+                        || erased.is_some()
+                        || !self.active_dir(key).is_dir()
+                    {
+                        return Err(VaultError::Unavailable);
+                    }
+                    (*version, *claim_receipt, authority)
+                }
+                OutputDisposition::Retire {
+                    version,
+                    claim_receipt,
+                    authority,
+                    fence_receipt,
+                } => {
+                    if fence_receipt.is_nil()
+                        || fence.as_ref().is_some_and(|f| f.receipt != *fence_receipt)
+                    {
+                        return Err(VaultError::Unavailable);
+                    }
+                    (*version, *claim_receipt, authority)
+                }
+            };
+            if version != VERSION || receipt != claim.receipt || !authority.same(&claim.authority) {
+                return Err(VaultError::Unavailable);
+            }
+        }
+        Ok(disposition)
+    }
+
+    fn output_claim(&self, binding: &EmbeddingOutputKeyBinding) -> Result<Claim, VaultError> {
+        if self.read_legacy(binding.key_id)?.is_some() {
+            return Err(VaultError::BindingMismatch);
+        }
+        let claim: Claim = self
+            .read(binding.key_id, "claim")?
+            .ok_or(VaultError::NotFound)?;
+        if claim.version != VERSION
+            || claim.receipt.is_nil()
+            || !claim.authority.same(&Authority::output(binding))
+        {
+            return Err(VaultError::BindingMismatch);
+        }
+        Ok(claim)
+    }
+
+    fn output_envelope(
+        &self,
+        key: MaterialKeyId,
+        claim: &Claim,
+    ) -> Result<EnvelopeStage, VaultError> {
+        let envelope: EnvelopeStage = serde_json::from_slice(
+            &fs::read(self.active_stage(key, "envelope")).map_err(|_| VaultError::Unavailable)?,
+        )
+        .map_err(|_| VaultError::Unavailable)?;
+        if envelope.version != VERSION || envelope.claim_receipt != claim.receipt {
+            return Err(VaultError::Unavailable);
+        }
+        Ok(envelope)
+    }
+
+    fn output_retirement_decision(
+        &self,
+        key: MaterialKeyId,
+        claim: &Claim,
+    ) -> Result<uuid::Uuid, VaultError> {
+        if let Some(OutputDisposition::Bound { .. }) = self.output_disposition(key, claim)? {
+            return Err(VaultError::BindingMismatch);
+        }
+        // A completed old retirement keeps its fence. It never becomes Bound.
+        let fence_receipt = self
+            .read::<WitnessStage>(key, "fence")?
+            .map(|f| f.receipt)
+            .unwrap_or_else(|| FenceReceipt::new().as_uuid());
+        let candidate = OutputDisposition::Retire {
+            version: VERSION,
+            claim_receipt: claim.receipt,
+            authority: claim.authority.clone(),
+            fence_receipt,
+        };
+        self.test_checkpoint("before_output_retire_decision");
+        self.publish(key, "output-disposition", &candidate)?;
+        match self
+            .output_disposition(key, claim)?
+            .ok_or(VaultError::Unavailable)?
+        {
+            OutputDisposition::Bound { .. } => Err(VaultError::BindingMismatch),
+            OutputDisposition::Retire { fence_receipt, .. } => {
+                self.test_checkpoint("output_retire_decision");
+                Ok(fence_receipt)
+            }
+        }
+    }
+
     fn retire_new(
         &self,
         key: MaterialKeyId,
         authority: Authority,
     ) -> Result<ErasureReceipt, VaultError> {
         let claim = self.claim(key, authority)?;
+        let output_fence = if claim.authority.output_key() {
+            Some(self.output_retirement_decision(key, &claim)?)
+        } else {
+            None
+        };
         if let Some(erased) = self.read::<WitnessStage>(key, "erased")? {
             let _ = fs::remove_file(self.retired_active_dir(key).join("envelope"));
             if erased.version == VERSION && erased.claim_receipt == claim.receipt {
@@ -468,7 +644,7 @@ impl HostMaterialKeyVault {
         let fence = WitnessStage {
             version: VERSION,
             claim_receipt: claim.receipt,
-            receipt: FenceReceipt::new().as_uuid(),
+            receipt: output_fence.unwrap_or_else(|| FenceReceipt::new().as_uuid()),
         };
         let _ = self.publish(key, "fence", &fence)?;
         let installed_fence: WitnessStage =
@@ -511,6 +687,72 @@ impl HostMaterialKeyVault {
 }
 
 impl MaterialKeyVault for HostMaterialKeyVault {
+    fn bind_embedding_output(
+        &self,
+        binding: &EmbeddingOutputKeyBinding,
+        preparation: EmbeddingResultPreparationId,
+    ) -> Result<MaterialKeyBindingReceipt, VaultError> {
+        if preparation.as_uuid().is_nil() {
+            return Err(VaultError::BindingMismatch);
+        }
+        let key = binding.key_id;
+        let claim = self.output_claim(binding)?;
+        self.output_disposition(key, &claim)?;
+        self.retired(key, &claim)?;
+        // No decision may bless a missing or foreign envelope.
+        self.output_envelope(key, &claim)?;
+        let candidate = OutputDisposition::Bound {
+            version: VERSION,
+            claim_receipt: claim.receipt,
+            authority: claim.authority.clone(),
+            preparation_id: preparation.as_uuid(),
+            binding_receipt: MaterialKeyBindingReceipt::new().as_uuid(),
+        };
+        self.test_checkpoint("before_output_bind_decision");
+        self.publish(key, "output-disposition", &candidate)?;
+        match self
+            .output_disposition(key, &claim)?
+            .ok_or(VaultError::Unavailable)?
+        {
+            OutputDisposition::Retire { .. } => Err(VaultError::ErasurePrepared),
+            OutputDisposition::Bound {
+                preparation_id,
+                binding_receipt,
+                ..
+            } => {
+                if preparation_id != preparation.as_uuid() {
+                    return Err(VaultError::BindingMismatch);
+                }
+                self.test_checkpoint("output_bind_decision");
+                Ok(MaterialKeyBindingReceipt::from_uuid(binding_receipt))
+            }
+        }
+    }
+
+    fn with_bound_embedding_output_key(
+        &self,
+        binding: &EmbeddingOutputKeyBinding,
+        preparation: EmbeddingResultPreparationId,
+        receipt: MaterialKeyBindingReceipt,
+        callback: &mut dyn FnMut(&ZeroizingDek),
+    ) -> Result<(), VaultError> {
+        let claim = self.output_claim(binding)?;
+        match self
+            .output_disposition(binding.key_id, &claim)?
+            .ok_or(VaultError::Provisional)?
+        {
+            OutputDisposition::Bound {
+                preparation_id,
+                binding_receipt,
+                ..
+            } if preparation_id == preparation.as_uuid()
+                && binding_receipt == receipt.as_uuid() => {}
+            _ => return Err(VaultError::BindingMismatch),
+        }
+        let envelope = self.output_envelope(binding.key_id, &claim)?;
+        self.open(binding.key_id, binding.nonce, envelope.envelope, callback)
+    }
+
     fn create_if_absent(
         &self,
         key: MaterialKeyId,
@@ -545,11 +787,11 @@ impl MaterialKeyVault for HostMaterialKeyVault {
         binding: &EmbeddingOutputKeyBinding,
         callback: &mut dyn FnMut(&ZeroizingDek),
     ) -> Result<(), VaultError> {
-        let claim: Claim = self
-            .read(binding.key_id, "claim")?
-            .ok_or(VaultError::NotFound)?;
-        if claim.version != VERSION || !claim.authority.same(&Authority::output(binding)) {
-            return Err(VaultError::BindingMismatch);
+        let claim = self.output_claim(binding)?;
+        match self.output_disposition(binding.key_id, &claim)? {
+            Some(OutputDisposition::Bound { .. }) => return Err(VaultError::BindingMismatch),
+            Some(OutputDisposition::Retire { .. }) => return Err(VaultError::ErasurePrepared),
+            None => {}
         }
         if self
             .read::<WitnessStage>(binding.key_id, "erased")?

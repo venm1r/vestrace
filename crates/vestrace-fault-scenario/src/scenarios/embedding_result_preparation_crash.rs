@@ -215,18 +215,9 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         WorkspaceId::from_uuid(fixture.workspace_id),
         PrincipalId::from_uuid(fixture.principal_id),
     );
-    let source = create_live_source(&runtime, &fixture)
+    let (vault, outputs) = prepare_dispatch_outputs(&owner, &runtime, &fixture, &context)
         .await
-        .unwrap_or_else(|error| die(format!("live source setup failed: {error}")));
-    attach_source_to_evidence(&owner, &fixture, source)
-        .await
-        .unwrap_or_else(|error| die(format!("evidence source attachment failed: {error}")));
-    let (vault, outputs, acceptance_receipt) = prepare_outputs(&runtime, &fixture, &context)
-        .await
-        .unwrap_or_else(|error| die(format!("output-key setup failed: {error}")));
-    record_allowed_delivery_policy(&runtime, acceptance_receipt, outputs.len())
-        .await
-        .unwrap_or_else(|error| die(format!("delivery data policy setup failed: {error}")));
+        .unwrap_or_else(|error| die(format!("guarded output setup failed: {error}")));
 
     // The pre-network authority is durable before the loopback recipient is
     // touched. This is also what makes the later lease release observable.
@@ -406,6 +397,21 @@ async fn attach_source_to_evidence(
         .bind(Uuid::now_v7()).bind(fixture.workspace_id).bind(fixture.evidence_id).bind(source.as_uuid())
         .execute(&mut *transaction).await.map_err(dispatch::sql)?;
     transaction.commit().await.map_err(dispatch::sql)
+}
+
+/// Shared pre-dispatch fixture: acceptance owns the output identities and real
+/// host reconciliation supplies every receipt required by the admission gate.
+pub(super) async fn prepare_dispatch_outputs(
+    owner: &PgPool,
+    runtime: &PgPool,
+    fixture: &dispatch::Fixture,
+    context: &RequestContext,
+) -> Result<(Arc<HostMaterialKeyVault>, Vec<DeliveryOutputIdentity>), String> {
+    let source = create_live_source(runtime, fixture).await?;
+    attach_source_to_evidence(owner, fixture, source).await?;
+    let (vault, outputs, acceptance_receipt) = prepare_outputs(runtime, fixture, context).await?;
+    record_allowed_delivery_policy(runtime, acceptance_receipt, outputs.len()).await?;
+    Ok((vault, outputs))
 }
 
 async fn prepare_outputs(

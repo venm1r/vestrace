@@ -6,37 +6,23 @@
 //! refusal and immutable-result behavior without direct result-table DML.
 
 mod common;
+use common::result_preparation_fixture::*;
 
-use std::{fs, path::Path};
-
-use chrono::{DateTime, Duration, Utc};
-use sqlx::{FromRow, PgPool, Row, migrate::Migrator};
+use chrono::Utc;
+use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 use vestrace_application::{
-    AcceptDeliveryOutputs, AcceptEmbeddingJob, DeliveryOutputIdentity,
-    EmbeddingDataPolicyDecisionRecord, EmbeddingDataPolicyDecisionRepository,
-    EmbeddingDataPolicyMode, EmbeddingJobRepository, EmbeddingOutputKeyProgress,
-    EmbeddingOutputKeyRepository, EmbeddingOutputKeyService, IdempotencyRecord, OutboxMessage,
-    PreDispatchTerminalState, PreDispatchTerminationEvidence, RequestEmbeddingOutputRetirement,
+    EmbeddingJobRepository, EmbeddingOutputKeyRepository, PreDispatchTerminalState,
+    PreDispatchTerminationEvidence, RequestEmbeddingOutputRetirement,
     TerminateEmbeddingJobPreDispatch,
 };
 use vestrace_domain::{
-    AuditEvent, AuthorizationRequest, Capability, ContentMaterialId, DataDestination,
-    EmbeddingSpaceId, IntentNonce, MaterialKeyCreationIntentId, MaterialKeyId,
-    ModelRequestEvidenceId, PolicyDecision, PolicyDecisionReason, PolicyDecisionResult,
-    PolicyInputState, ResourceScope, RiskCategory, Sensitivity,
-    embedding::EmbeddingJobKind,
-    id::{AuditEventId, OutboxId, PolicyDecisionId},
-    trust::{KeyPurpose, KeyReference, SecretResolutionRequest},
+    AuthorizationRequest, Capability, PolicyDecision, PolicyDecisionReason, PolicyDecisionResult,
+    PolicyInputState, ResourceScope, RiskCategory, id::PolicyDecisionId,
 };
-use vestrace_infrastructure::crypto::{HostMaterialKeyVault, MOUNTED_SECRET_STORE_PROVIDER};
 use vestrace_infrastructure::postgres::{
-    PgEmbeddingDataPolicyDecisionRepository, PgEmbeddingJobRepository,
-    PgEmbeddingOutputKeyRepository, PgStore,
+    PgEmbeddingJobRepository, PgEmbeddingOutputKeyRepository, PgStore,
 };
-
-static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
-const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 
 const RESULT_TABLES: [&str; 6] = [
     "embedding_space_corpus_states",
@@ -57,38 +43,6 @@ type CredentialResultMarker = (
     String,
     String,
 );
-
-fn provisioner_sql_from(marker: &str) -> &'static str {
-    let start = PROVISIONER
-        .find(marker)
-        .unwrap_or_else(|| panic!("missing provisioner marker {marker}"));
-    PROVISIONER[start..]
-        .rsplit_once("\nSQL\n")
-        .map(|(sql, _)| sql)
-        .expect("the provisioner must contain the SQL heredoc terminator")
-}
-
-async fn install_extensions_from_real_provisioner(pool: &PgPool) {
-    let statements = PROVISIONER
-        .lines()
-        .filter(|line| line.starts_with("CREATE EXTENSION IF NOT EXISTS "))
-        .collect::<Vec<_>>()
-        .join("\n");
-    sqlx::raw_sql(&statements).execute(pool).await.unwrap();
-}
-
-async fn hand_database_to_runtime(pool: &PgPool) {
-    sqlx::query("ALTER SCHEMA public OWNER TO vestrace")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO vestrace', current_database()); END $$",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
 
 #[sqlx::test(migrations = false)]
 async fn result_preparation_schema_is_guarded_and_runtime_dml_is_refused(pool: PgPool) {
@@ -281,38 +235,6 @@ async fn result_preparation_schema_is_guarded_and_runtime_dml_is_refused(pool: P
     runtime.close().await;
 }
 
-const RESULT_MODEL: &str = "text-embedding-nomic-embed-text-v1.5";
-const BOOTSTRAP_KEY_ID: &str = "result-preparation-output-key-bootstrap";
-const BOOTSTRAP_SCOPE: &str = "result-preparation-output-key-bootstrap";
-const BOOTSTRAP_ALGORITHM: &str = "aes-256-gcm-v1";
-
-struct ResultFixture {
-    runtime: PgPool,
-    accepted: common::AcceptedJob,
-    sources: Vec<ContentMaterialId>,
-    outputs: Vec<DeliveryOutputIdentity>,
-    policy_cause: Uuid,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DeliveryPolicyCase {
-    ExactAllowed,
-    WrongCause,
-    WrongAttempt,
-    WrongInputCount,
-    Denied,
-}
-
-#[derive(Clone, Debug)]
-struct CommitAttempt {
-    job_id: Uuid,
-    effect_id: Uuid,
-    expected_version_delta: i64,
-    response_model: String,
-    output_count: usize,
-    dimensions: Vec<i32>,
-}
-
 #[derive(Debug, Eq, FromRow, PartialEq)]
 struct RefusedPreparationState {
     markers: i64,
@@ -349,55 +271,6 @@ struct ResultPreparedFenceState {
     generation_epoch: i64,
 }
 
-struct OutputVaultFixture {
-    bootstrap: tempfile::TempDir,
-    vault: tempfile::TempDir,
-}
-
-impl OutputVaultFixture {
-    fn new() -> Self {
-        let bootstrap = tempfile::TempDir::new().unwrap();
-        write_bootstrap(bootstrap.path());
-        Self {
-            bootstrap,
-            vault: tempfile::TempDir::new().unwrap(),
-        }
-    }
-
-    fn vault(&self, workspace: vestrace_domain::WorkspaceId) -> HostMaterialKeyVault {
-        HostMaterialKeyVault::new(
-            self.vault.path(),
-            self.bootstrap.path(),
-            KeyReference::new(
-                MOUNTED_SECRET_STORE_PROVIDER,
-                BOOTSTRAP_KEY_ID,
-                "v1",
-                KeyPurpose::Storage,
-                BOOTSTRAP_SCOPE,
-                BOOTSTRAP_ALGORITHM,
-            )
-            .unwrap(),
-            SecretResolutionRequest::new(
-                workspace,
-                BOOTSTRAP_SCOPE,
-                "test://result-preparation-output-key",
-            ),
-        )
-        .unwrap()
-    }
-}
-
-fn write_bootstrap(root: &Path) {
-    let key = root.join(BOOTSTRAP_KEY_ID);
-    let version = key.join("v1");
-    fs::create_dir_all(&version).unwrap();
-    fs::write(key.join("scope"), BOOTSTRAP_SCOPE).unwrap();
-    fs::write(key.join("purpose"), "storage").unwrap();
-    fs::write(key.join("algorithm"), BOOTSTRAP_ALGORITHM).unwrap();
-    fs::write(version.join("state"), "active").unwrap();
-    fs::write(version.join("private.pkcs8"), [0x5A; 32]).unwrap();
-}
-
 #[derive(Debug, FromRow)]
 struct ResultPreparedState {
     markers: i64,
@@ -416,394 +289,6 @@ struct ResultPreparedState {
     sensitivity: String,
     classification_labels: Vec<String>,
     has_unclassified: bool,
-}
-
-async fn scoped(transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>, workspace: Uuid) {
-    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
-        .bind(workspace.to_string())
-        .fetch_one(&mut **transaction)
-        .await
-        .unwrap();
-}
-
-async fn live_source(runtime: &PgPool, accepted: &common::AcceptedJob) -> ContentMaterialId {
-    let material_id = ContentMaterialId::new();
-    let intent_id = MaterialKeyCreationIntentId::new();
-    let key_id = MaterialKeyId::new();
-    let mut framed_ciphertext = vec![0x51_u8; 4096];
-    framed_ciphertext[..5].copy_from_slice(b"VMRF\x01");
-    let mut transaction = runtime.begin().await.unwrap();
-    scoped(&mut transaction, accepted.context.workspace_id.as_uuid()).await;
-    sqlx::query("SELECT vestrace_reserve_material_key_creation_intent($1,$2,$3,$4,$5,'model_request_input',$6,0)")
-        .bind(intent_id.as_uuid()).bind(accepted.context.workspace_id.as_uuid())
-        .bind(material_id.as_uuid()).bind(key_id.as_uuid()).bind(Uuid::now_v7())
-        .bind(accepted.job_id.as_uuid()).execute(&mut *transaction).await.unwrap();
-    sqlx::query("SELECT vestrace_record_material_key_provisional_created($1)")
-        .bind(intent_id.as_uuid())
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    sqlx::query("SELECT vestrace_record_material_key_provisional_receipt($1,$2)")
-        .bind(intent_id.as_uuid())
-        .bind(Uuid::now_v7())
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    sqlx::query("SELECT vestrace_prepare_content_material($1,$2,$3,4096)")
-        .bind(intent_id.as_uuid())
-        .bind(Uuid::now_v7())
-        .bind(framed_ciphertext)
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    sqlx::query("SELECT vestrace_bind_material_key_creation_intent($1,$2)")
-        .bind(intent_id.as_uuid())
-        .bind(Uuid::now_v7())
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    sqlx::query("SELECT vestrace_finalize_bound_content_material($1)")
-        .bind(intent_id.as_uuid())
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    transaction.commit().await.unwrap();
-    material_id
-}
-
-async fn attach_source_to_evidence(
-    owner: &PgPool,
-    accepted: &common::AcceptedJob,
-    source: ContentMaterialId,
-    ordinal: i64,
-) {
-    let mut transaction = owner.begin().await.unwrap();
-    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-    scoped(&mut transaction, accepted.context.workspace_id.as_uuid()).await;
-    sqlx::query("INSERT INTO model_request_evidence_nodes(id,workspace_id,evidence_root_id,ordinal,reference_kind,reference_id) VALUES($1,$2,$3,$4,'governed_input_material',$5)")
-        .bind(Uuid::now_v7()).bind(accepted.context.workspace_id.as_uuid()).bind(accepted.evidence_id)
-        .bind(ordinal).bind(source.as_uuid()).execute(&mut *transaction).await.unwrap();
-    transaction.commit().await.unwrap();
-}
-
-fn outputs() -> Vec<DeliveryOutputIdentity> {
-    (0..2)
-        .map(|output_ordinal| DeliveryOutputIdentity {
-            output_ordinal,
-            intent_id: MaterialKeyCreationIntentId::new(),
-            material_id: ContentMaterialId::new(),
-            key_id: MaterialKeyId::new(),
-            nonce: IntentNonce::new(),
-        })
-        .collect()
-}
-
-fn acceptance_command(
-    accepted: &common::AcceptedJob,
-    receipt_id: Uuid,
-    output_set: Vec<DeliveryOutputIdentity>,
-) -> AcceptDeliveryOutputs {
-    let at = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-    AcceptDeliveryOutputs {
-        receipt_id,
-        idempotency_key: format!("result-preparation-{receipt_id}"),
-        acceptance: AcceptEmbeddingJob {
-            job_id: accepted.job_id,
-            space_registration_id: EmbeddingSpaceId::from_uuid(accepted.space_registration_id),
-            kind: EmbeddingJobKind::Delivery,
-            model_binding_snapshot_id: accepted.snapshot_id,
-            intent: accepted.intent.clone(),
-            model_request_evidence_id: ModelRequestEvidenceId::from_uuid(accepted.evidence_id),
-            retries_unknown_embedding_job_id: None,
-            expected_predecessor_version: None,
-            idempotency: Some(IdempotencyRecord {
-                idempotency_key: format!("result-preparation-{receipt_id}"),
-                workspace_id: accepted.context.workspace_id,
-                request_hash: format!("result-preparation:{receipt_id}"),
-                response_payload: None,
-                status: "completed".into(),
-                created_at: at,
-                expires_at: at + Duration::hours(24),
-            }),
-            outbox: vec![OutboxMessage {
-                id: OutboxId::from_uuid(receipt_id),
-                workspace_id: accepted.context.workspace_id,
-                topic: "embedding.job.delivery_accepted".into(),
-                payload: serde_json::json!({"receipt_id": receipt_id}),
-                created_at: at,
-                attempts: 0,
-            }],
-            audit: AuditEvent::new(
-                AuditEventId::from_uuid(receipt_id),
-                accepted.context.workspace_id,
-                accepted.context.principal_id,
-                "embedding.job.delivery_accepted",
-                "embedding_job",
-                accepted.job_id.as_uuid(),
-                serde_json::json!({"receipt_id": receipt_id}),
-                at,
-            )
-            .unwrap(),
-        },
-        outputs: output_set,
-    }
-}
-
-async fn reconcile_output_receipts(
-    runtime: &PgPool,
-    accepted: &common::AcceptedJob,
-    output_set: &[DeliveryOutputIdentity],
-) {
-    let vault_fixture = OutputVaultFixture::new();
-    let service = EmbeddingOutputKeyService::new(
-        std::sync::Arc::new(PgEmbeddingOutputKeyRepository::new(PgStore::from_pool(
-            runtime.clone(),
-        ))),
-        std::sync::Arc::new(vault_fixture.vault(accepted.context.workspace_id)),
-    );
-    let mut reconciled = 0usize;
-    let mut aggregate_prepared = false;
-    for _ in 0..=output_set.len() {
-        match service.reconcile_one(&accepted.context).await.unwrap() {
-            Some(EmbeddingOutputKeyProgress::WaitingForResultKeys) => reconciled += 1,
-            Some(EmbeddingOutputKeyProgress::Prepared { .. }) => {
-                reconciled += 1;
-                aggregate_prepared = true;
-            }
-            None => break,
-            other => panic!("output-key fixture did not prepare its exact output: {other:?}"),
-        }
-    }
-    assert_eq!(reconciled, output_set.len());
-    assert!(
-        aggregate_prepared,
-        "the exact output aggregate was not prepared"
-    );
-}
-
-async fn dispatch_through_embedding_fence(runtime: &PgPool, accepted: &common::AcceptedJob) {
-    let mut transaction = runtime.begin().await.unwrap();
-    scoped(&mut transaction, accepted.context.workspace_id.as_uuid()).await;
-    sqlx::query("SELECT * FROM vestrace_try_admit_provider_dispatch($1,$2,$3,$4,$5,$6,$7,$8,'embedding_job',NULL,NULL,$9,NULL,NULL,NULL,60)")
-        .bind(Uuid::now_v7()).bind(Uuid::now_v7()).bind(Uuid::now_v7())
-        .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.connection_id)
-        .bind(accepted.connection_revision_id).bind(accepted.external_effect_id).bind(accepted.evidence_id)
-        .bind(accepted.snapshot_id).execute(&mut *transaction).await.unwrap();
-    let authorization_id = Uuid::now_v7();
-    sqlx::query("INSERT INTO external_effect_authorizations(id,effect_id,workspace_id,policy_id,policy_version,subject_id,capability,operation,resource_scope,result,reason,input_state,matched_grant_id,decided_at,payload) SELECT $1,id,workspace_id,NULL,'result-preparation-v1',$2,'export.read','produce a governed embedding','http://127.0.0.1:1234/v1/embeddings','allow','configured_allowance','{}'::jsonb,NULL,NOW(),'{}'::jsonb FROM external_effect_intents WHERE id=$3 AND workspace_id=$4")
-        .bind(authorization_id).bind(accepted.context.principal_id.as_uuid()).bind(accepted.external_effect_id)
-        .bind(accepted.context.workspace_id.as_uuid()).execute(&mut *transaction).await.unwrap();
-    sqlx::query("INSERT INTO external_effect_lifecycle_transitions(effect_id,workspace_id,status,cause,cause_ref,recorded_at) VALUES($1,$2,'authorized','authorization_recorded',$3,NOW())")
-        .bind(accepted.external_effect_id).bind(accepted.context.workspace_id.as_uuid()).bind(authorization_id.to_string())
-        .execute(&mut *transaction).await.unwrap();
-    sqlx::query("INSERT INTO external_effect_lifecycle_transitions(effect_id,workspace_id,status,cause,cause_ref,recorded_at,dispatch_owner,dispatch_expires_at) VALUES($1,$2,'dispatching','dispatch_started',$3,NOW(),'result-preparation-test',NOW()+INTERVAL '60 seconds')")
-        .bind(accepted.external_effect_id).bind(accepted.context.workspace_id.as_uuid()).bind(accepted.external_effect_id.to_string())
-        .execute(&mut *transaction).await.unwrap();
-    transaction.commit().await.unwrap();
-}
-
-async fn record_delivery_policy(runtime: &PgPool, cause: Uuid, policy: DeliveryPolicyCase) {
-    let causal_reference_id = if matches!(policy, DeliveryPolicyCase::WrongCause) {
-        Uuid::now_v7()
-    } else {
-        cause
-    };
-    let delivery_attempt = if matches!(policy, DeliveryPolicyCase::WrongAttempt) {
-        Some(2)
-    } else {
-        Some(1)
-    };
-    let input_count = if matches!(policy, DeliveryPolicyCase::WrongInputCount) {
-        1
-    } else {
-        2
-    };
-    let allowed = !matches!(policy, DeliveryPolicyCase::Denied);
-    PgEmbeddingDataPolicyDecisionRepository::new(PgStore::from_pool(runtime.clone()))
-        .record(&EmbeddingDataPolicyDecisionRecord {
-            id: Uuid::now_v7(),
-            purpose: vestrace_application::EmbeddingPurpose::Delivery,
-            causal_reference_id,
-            delivery_attempt,
-            batch_ordinal: None,
-            destination: DataDestination::LocalModel,
-            classification: Sensitivity::Confidential,
-            classification_labels: vec!["alpha".into(), "beta".into()],
-            unclassified_count: 1,
-            input_count,
-            classification_allowed: allowed,
-            destination_allowed: true,
-            allowed,
-            reason: "test allowed delivery".into(),
-            policy_version: "result-preparation-v1".into(),
-            mode: EmbeddingDataPolicyMode::Enforce,
-            decided_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-}
-
-async fn result_fixture_with_policy_and_auth(
-    pool: &PgPool,
-    policy: DeliveryPolicyCase,
-    credential_backed: bool,
-) -> ResultFixture {
-    let runtime = common::runtime_pool(pool).await;
-    let accepted = if credential_backed {
-        common::prepare_delivery_embedding_job_with_pinned_credential(pool, &runtime).await
-    } else {
-        common::prepare_delivery_embedding_job(pool, &runtime).await
-    };
-    let sources = vec![
-        live_source(&runtime, &accepted).await,
-        live_source(&runtime, &accepted).await,
-        live_source(&runtime, &accepted).await,
-    ];
-    common::make_dispatchable(pool, &runtime, &accepted).await;
-    for (offset, source) in sources.iter().copied().enumerate() {
-        attach_source_to_evidence(pool, &accepted, source, 8 + offset as i64).await;
-    }
-    let output_set = outputs();
-    let acceptance_receipt = Uuid::now_v7();
-    PgEmbeddingOutputKeyRepository::new(PgStore::from_pool(runtime.clone()))
-        .accept_delivery_outputs(
-            &accepted.context,
-            acceptance_command(&accepted, acceptance_receipt, output_set.clone()),
-        )
-        .await
-        .unwrap();
-    reconcile_output_receipts(&runtime, &accepted, &output_set).await;
-    record_delivery_policy(&runtime, acceptance_receipt, policy).await;
-    dispatch_through_embedding_fence(&runtime, &accepted).await;
-    ResultFixture {
-        runtime,
-        accepted,
-        sources,
-        outputs: output_set,
-        policy_cause: acceptance_receipt,
-    }
-}
-
-async fn result_fixture_with_policy(pool: &PgPool, policy: DeliveryPolicyCase) -> ResultFixture {
-    result_fixture_with_policy_and_auth(pool, policy, false).await
-}
-
-async fn result_fixture(pool: &PgPool) -> ResultFixture {
-    result_fixture_with_policy(pool, DeliveryPolicyCase::ExactAllowed).await
-}
-
-async fn result_fixture_with_pinned_credential(pool: &PgPool) -> ResultFixture {
-    result_fixture_with_policy_and_auth(pool, DeliveryPolicyCase::ExactAllowed, true).await
-}
-
-async fn provision_result_behavior_database(pool: &PgPool) {
-    install_extensions_from_real_provisioner(pool).await;
-    hand_database_to_runtime(pool).await;
-    sqlx::raw_sql(provisioner_sql_from(
-        "-- P02 migrations run as the runtime role",
-    ))
-    .execute(pool)
-    .await
-    .expect("the real provisioner must install the runtime migration bridge");
-    let runtime = common::runtime_pool(pool).await;
-    MIGRATOR
-        .run(&runtime)
-        .await
-        .expect("the restricted runtime must apply the result-preparation migration");
-    runtime.close().await;
-}
-
-fn exact_attempt(fixture: &ResultFixture) -> CommitAttempt {
-    CommitAttempt {
-        job_id: fixture.accepted.job_id.as_uuid(),
-        effect_id: fixture.accepted.external_effect_id,
-        expected_version_delta: 0,
-        response_model: RESULT_MODEL.into(),
-        output_count: fixture.outputs.len(),
-        dimensions: vec![768; fixture.outputs.len()],
-    }
-}
-
-async fn try_commit_result(
-    fixture: &ResultFixture,
-    preparation: Uuid,
-    receipt: Uuid,
-    attempt: &CommitAttempt,
-) -> Result<Uuid, sqlx::Error> {
-    let mut transaction = fixture.runtime.begin().await.unwrap();
-    scoped(
-        &mut transaction,
-        fixture.accepted.context.workspace_id.as_uuid(),
-    )
-    .await;
-    let mut framed = vec![0x51_u8; 4096];
-    framed[..5].copy_from_slice(b"VMRF\x01");
-    let result = async {
-        let (lease, dispatch): (Uuid, Uuid) = sqlx::query_as(
-            "SELECT lease.id,lifecycle.id FROM provider_concurrency_leases lease \
-             JOIN external_effect_lifecycle_transitions lifecycle ON lifecycle.workspace_id=lease.workspace_id AND lifecycle.effect_id=lease.external_effect_id \
-             WHERE lease.workspace_id=$1 AND lease.external_effect_id=$2 AND lifecycle.status='dispatching' \
-             ORDER BY lifecycle.ordinal DESC LIMIT 1",
-        )
-        .bind(fixture.accepted.context.workspace_id.as_uuid())
-        .bind(fixture.accepted.external_effect_id)
-        .fetch_one(&mut *transaction)
-        .await?;
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT vestrace_lock_embedding_result_completion_authority($1,$2,$3,$4,$5,$6,$7)",
-        )
-        .bind(fixture.accepted.context.workspace_id.as_uuid())
-        .bind(attempt.job_id)
-        .bind(attempt.effect_id)
-        .bind(fixture.accepted.connection_id)
-        .bind(fixture.accepted.connection_revision_id)
-        .bind(dispatch)
-        .bind(lease)
-        .fetch_one(&mut *transaction)
-        .await?;
-        let version: i64 = sqlx::query_scalar(
-            "SELECT version FROM embedding_jobs WHERE workspace_id=$1 AND id=$2",
-        )
-        .bind(fixture.accepted.context.workspace_id.as_uuid())
-        .bind(fixture.accepted.job_id.as_uuid())
-        .fetch_one(&mut *transaction)
-        .await?;
-        sqlx::query_scalar(
-            "SELECT vestrace_commit_embedding_result_preparation($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-        )
-        .bind(fixture.accepted.context.workspace_id.as_uuid())
-        .bind(attempt.job_id)
-        .bind(attempt.effect_id)
-        .bind(preparation)
-        .bind(receipt)
-        .bind(version + attempt.expected_version_delta)
-        .bind(&attempt.response_model)
-        .bind((0..attempt.output_count).map(|_| Uuid::now_v7()).collect::<Vec<_>>())
-        .bind((0..attempt.output_count).map(|_| framed.clone()).collect::<Vec<_>>())
-        .bind(&attempt.dimensions)
-        .fetch_one(&mut *transaction)
-        .await
-    }
-    .await;
-    match result {
-        Ok(prepared) => {
-            transaction.commit().await?;
-            Ok(prepared)
-        }
-        Err(error) => {
-            transaction.rollback().await.unwrap();
-            Err(error)
-        }
-    }
-}
-
-async fn commit_result(fixture: &ResultFixture, preparation: Uuid, receipt: Uuid) -> Uuid {
-    try_commit_result(fixture, preparation, receipt, &exact_attempt(fixture))
-        .await
-        .unwrap()
 }
 
 async fn refused_state(pool: &PgPool, fixture: &ResultFixture) -> RefusedPreparationState {
@@ -1047,7 +532,7 @@ async fn result_preparation_binds_its_active_credential_snapshot_tuple(pool: PgP
         .credential
         .as_ref()
         .expect("the credential fixture must expose its guarded pinned revision");
-    let (expected_intent, expected_blocker, intent_state, blocker_kind, blocker_state): (
+    let (expected_intent, historical_blocker, intent_state, blocker_kind, blocker_state): (
         Uuid,
         Uuid,
         String,
@@ -1068,15 +553,16 @@ async fn result_preparation_binds_its_active_credential_snapshot_tuple(pool: PgP
             AND snapshot.branch='credential' \
             AND intent.state='active' \
             AND blocker.target_kind='credential' AND blocker.state='nonterminal' \
-          ORDER BY blocker.id LIMIT 1",
+          AND blocker.id=$3",
     )
     .bind(fixture.accepted.context.workspace_id.as_uuid())
     .bind(fixture.accepted.snapshot_id)
+    .bind(pinned.completion_blocker_id)
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(intent_state, "active");
-    assert_eq!(expected_blocker, pinned.completion_blocker_id);
+    assert_eq!(historical_blocker, pinned.completion_blocker_id);
     assert_eq!(blocker_kind, "effect");
     assert_eq!(blocker_state, "nonterminal");
 
@@ -1085,6 +571,16 @@ async fn result_preparation_binds_its_active_credential_snapshot_tuple(pool: PgP
         commit_result(&fixture, preparation, Uuid::now_v7()).await,
         preparation,
         "the guarded result command must accept the active credential branch"
+    );
+    let expected_blocker: Uuid = sqlx::query_scalar(
+        "SELECT blocker_id FROM embedding_job_credential_completion_blockers WHERE workspace_id=$1 AND job_id=$2 AND external_effect_id=$3 AND model_binding_snapshot_id=$4 AND credential_revision_id=$5 AND credential_intent_id=$6",
+    ).bind(fixture.accepted.context.workspace_id.as_uuid())
+     .bind(fixture.accepted.job_id.as_uuid()).bind(fixture.accepted.external_effect_id)
+     .bind(fixture.accepted.snapshot_id).bind(pinned.revision_id).bind(expected_intent)
+     .fetch_one(&pool).await.unwrap();
+    assert_ne!(
+        expected_blocker, historical_blocker,
+        "new preparation owns fresh protection without adopting an unrelated blocker"
     );
     let marker: CredentialResultMarker = sqlx::query_as(
         "SELECT marker.auth_branch,marker.credential_revision_id,marker.credential_intent_id, \
@@ -1484,6 +980,9 @@ async fn result_preparation_loader_refuses_a_marker_missing_an_exact_source_depe
     .execute(&mut *owner)
     .await
     .unwrap();
+    // Corruption injection bypasses both historical and forward write guards;
+    // the unchanged runtime loader assertion below remains the independent oracle.
+    sqlx::query("ALTER TABLE embedding_projection_source_dependencies DISABLE TRIGGER embedding_projection_source_dependencies_finalization_complete").execute(&mut *owner).await.unwrap();
     let deleted = sqlx::query(
         "DELETE FROM embedding_projection_source_dependencies \
           WHERE workspace_id=$1 AND projection_id=$2 AND source_ordinal=$3 \
@@ -1515,6 +1014,7 @@ async fn result_preparation_loader_refuses_a_marker_missing_an_exact_source_depe
     .execute(&mut *owner)
     .await
     .unwrap();
+    sqlx::query("ALTER TABLE embedding_projection_source_dependencies ENABLE TRIGGER embedding_projection_source_dependencies_finalization_complete").execute(&mut *owner).await.unwrap();
     owner.commit().await.unwrap();
 
     let dependencies: i64 = sqlx::query_scalar(
@@ -1749,6 +1249,9 @@ async fn result_preparation_loader_refuses_projection_with_mismatched_policy_lab
     .execute(&mut *owner)
     .await
     .unwrap();
+    // Corruption injection bypasses both historical and forward write guards;
+    // the unchanged runtime loader assertion below remains the independent oracle.
+    sqlx::query("ALTER TABLE embedding_projection_entries DISABLE TRIGGER embedding_projection_entries_finalization_complete").execute(&mut *owner).await.unwrap();
     let updated = sqlx::query(
         "UPDATE embedding_projection_entries \
             SET classification_labels=ARRAY['corrupted-label']::TEXT[] \
@@ -1774,6 +1277,7 @@ async fn result_preparation_loader_refuses_projection_with_mismatched_policy_lab
     .execute(&mut *owner)
     .await
     .unwrap();
+    sqlx::query("ALTER TABLE embedding_projection_entries ENABLE TRIGGER embedding_projection_entries_finalization_complete").execute(&mut *owner).await.unwrap();
     owner.commit().await.unwrap();
 
     let persisted: (i64, Vec<String>, Vec<String>, String, String) = sqlx::query_as(

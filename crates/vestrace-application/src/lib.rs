@@ -126,6 +126,12 @@ pub use effect_repository::{
     LostDispatchRecovery, SharedExternalEffectRepository, UndeliveredOutcome,
     WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
+pub use embedding::finalization::{
+    EmbeddingOutputCommitment, EmbeddingResultBoundOutput, EmbeddingResultCommitter,
+    EmbeddingResultFinalizationAuthority, EmbeddingResultFinalizationProgress,
+    EmbeddingResultFinalizationRepository, EmbeddingResultFinalizationService,
+    EmbeddingResultPublication,
+};
 pub use embedding::{
     AcceptDeliveryOutputs, AcceptEmbeddingJob, DeliveryOutputAcceptanceReceipt,
     DeliveryOutputIdentity, EmbeddingJobRepository, EmbeddingJobTerminationReceipt,

@@ -251,3 +251,94 @@ fn write_url_file(database_url: &str) -> PathBuf {
     std::fs::write(&path, database_url).expect("the database URL file is writable");
     path
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "needs PostgreSQL plus the vestrace runtime role; run with --ignored --nocapture"]
+async fn result_finalization_survives_a_real_child_abort(pool: PgPool) {
+    provisioned_runtime(&pool).await.close().await;
+    let database_url = ephemeral_database_url(&pool).await;
+    let url_file = write_url_file(&database_url);
+    let runtime_url =
+        std::env::var("VESTRACE_RUNTIME_DATABASE_URL").expect("runtime role is required");
+    let output = Command::new(scenario_binary())
+        .arg("--database-url-file")
+        .arg(&url_file)
+        .arg("--scenario")
+        .arg("embedding_result_finalization_crash")
+        .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
+        .env("VESTRACE_FAULT_POINT", "finalization_checkpoint_matrix")
+        .env("VESTRACE_RUNTIME_DATABASE_URL", runtime_url)
+        .output()
+        .expect("finalization scenario starts");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "finalization proof failed: {stderr}"
+    );
+    let observation: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("one JSON observation");
+    assert_eq!(
+        observation["scenario"],
+        "embedding_result_finalization_crash"
+    );
+    assert_eq!(observation["proved"], true);
+    assert_eq!(observation["loopback_requests"], 1);
+    assert_eq!(observation["output_count"], 2);
+    assert_eq!(observation["published_replay_without_vault"], true);
+    let checkpoints = observation["checkpoints"].as_array().unwrap();
+    assert_eq!(checkpoints.len(), 5);
+    for (index, point) in [
+        "host_bound_before_sql",
+        "strict_receipt_subset",
+        "all_bound_before_publish",
+        "sql_before_commit",
+        "after_commit",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(checkpoints[index]["point"], *point);
+        assert_eq!(checkpoints[index]["aborted"], true);
+        assert!(checkpoints[index]["pid"].as_u64().unwrap() > 0);
+        assert_eq!(checkpoints[index]["sql_bindings"], [0, 1, 2, 2, 2][index]);
+        assert_eq!(checkpoints[index]["host_bound"], [1, 1, 2, 2, 2][index]);
+        assert_eq!(
+            checkpoints[index]["publications"],
+            if index == 4 { 1 } else { 0 }
+        );
+    }
+    assert_eq!(checkpoints[3]["sql_rollback_exact"], true);
+    let sql_legs = observation["sql_legs"]
+        .as_array()
+        .expect("individual SQL leg observations");
+    let expected = [
+        "publication_insert",
+        "event_insert",
+        "material_0",
+        "attachment_0",
+        "intent_0",
+        "projection_0",
+        "material_1",
+        "attachment_1",
+        "intent_1",
+        "projection_1",
+        "corpus_update",
+        "generation_update",
+        "ready_stale",
+        "blocker_0",
+        "blocker_1",
+        "job_succeeded",
+    ];
+    assert_eq!(sql_legs.len(), expected.len());
+    for (leg, stage) in sql_legs.iter().zip(expected) {
+        assert_eq!(leg["stage"], stage);
+        assert_eq!(leg["after_row_observed"], true);
+        assert_eq!(leg["child_killed"], true);
+        assert_eq!(leg["backend_ended"], true);
+        assert_eq!(leg["rollback_exact"], true);
+        assert!(leg["pid"].as_u64().unwrap() > 0);
+        assert!(leg["backend_pid"].as_u64().unwrap() > 0);
+    }
+    let _ = std::fs::remove_file(url_file);
+}

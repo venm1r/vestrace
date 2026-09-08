@@ -3737,3 +3737,1201 @@ queries, source/vector erasure propagation, or compose the production embedding
 executor in the worker. It establishes a complete, recoverable delivery
 publication and a durable rebuild fact for those later reviewed blocks. P04,
 G0 and v1.0 remain incomplete after this task alone.
+
+### Task 14E continuation review — REVISE (2026-09-08)
+
+#### Goal and authority
+
+The user requested continuation through `cdx` and explicitly assigned the
+Claude lead role to the current coordinator. The coordinator owns planning,
+technical decisions and acceptance; an independent Codex reviewer inspected
+the existing 14E proposal read-only. No external Claude review completed.
+
+Reviewed baseline: `0a0344f1bde61ee569bbb6188e3849701e77e105`, initially clean.
+The root `PLAN.md` describes historical Slice 18; its classification writer
+and retrieval-policy follow-up already exist in the code. The current
+continuation is the 14E proposal above, after the recorded 14D acceptance.
+The accepted scope remains 120 change paths and 23 protected paths. This
+review does not activate the proposed five-path scope amendment, rewrite an
+applied migration, or claim that 14E is implemented.
+
+#### Independent findings, verified against the baseline
+
+1. **BLOCKER — attachment history prevents publication.** The proposal removes
+   generic prepared attachments while preserving specialized attachment
+   history. `0194_embedding_job_result_preparation.sql:499` makes that history
+   reference the generic attachment with `ON DELETE RESTRICT`. Merely deferring
+   validation does not permit the proposed committed state.
+2. **MAJOR — credential blocker ownership is not established.** The preparation
+   command at `0194_embedding_job_result_preparation.sql:1170-1174` selects a
+   nonterminal blocker by credential intent and UUID ordering, without a
+   job/effect owner predicate. Its validator at lines 635-641 does not supply
+   that missing ownership. A marker's blocker id alone cannot authorize
+   terminalizing another operation's protection.
+3. **MAJOR — bind and retirement need one cross-process decision.** The host
+   vault publishes independent stages through hard links, whereas
+   `material_vault.rs:471-488` can publish an erasure fence and remove the
+   envelope. A read of "not bound" followed by a separate write is not an
+   exclusive decision: retirement could pass the check before binding wins.
+
+Independent verdict: **VERDICT: REVISE**. The lead verified all three findings.
+The recorded 14D verdict remains limited to its original ResultPrepared
+boundary; it is not evidence that the proposed publication path is safe.
+
+#### Required revisions to the implementation contract
+
+- **Historical attachment invariant:** forward migration 0195 must replace
+  the incompatible FK, not delete or rewrite the specialized history. Before
+  publication, an exact generic attachment must exist. After publication, the
+  immutable specialized tuple must be justified by the exact publication,
+  binding receipt and Live projection, with no generic attachment or ordinary
+  reference. Enumerate and update the existing preparation/dependency
+  validators and replay queries that assume `result_finalizing`, an extant
+  attachment or a nonterminal completion blocker. Preserve prepared and
+  published branches explicitly; dropping the FK alone is insufficient.
+- **Owned credential completion protection:** define a durable, unique
+  `(workspace, job, effect, credential intent)` completion-blocker association
+  and the guarded command that creates it. Publication may terminalize only
+  that owned blocker. Existing markers must not acquire ownership by adopting
+  whichever credential blocker their old marker happens to name. The revised
+  contract must define a fail-closed upgrade/recovery path for those markers,
+  preserving unrelated blockers and immutable marker history. Forward-replace
+  the preparation and validation functions where necessary; do not edit 0194.
+- **Host bind/retire arbitration:** bind and provisional retirement must
+  compete through the same atomic cross-process decision, keyed by the exact
+  immutable claim. Specify the durable winner record, loser behavior,
+  handling of pre-existing fence/erased stages, and restart recovery without
+  a stale process lock. A separate `bound` check followed by publication of
+  `fence` is forbidden. A binding winner keeps its usable envelope and exact
+  receipt; a retirement winner cannot produce a successful binding receipt.
+  Ordinary unwrap remains forbidden for specialized output claims.
+
+#### Additional observable acceptance requirements
+
+- Upgrade a real 0194 prepared fixture, publish all outputs, then query both
+  the preserved specialized history and absence of generic attachments.
+  Independently attempt dangling history and a partial Live set as the runtime
+  role; both transactions must fail. Exercise prepared and published replay.
+- Use two jobs sharing one credential and an unrelated nonterminal blocker.
+  Publish one job and verify by persisted ids that only its owned completion
+  blocker terminates. Repeat with an old marker whose selected blocker has no
+  job-owned association; it must not release the unrelated blocker.
+- Coordinate separate host-vault processes at bind/retire decision boundaries.
+  Exercise both winners, kill a process after the durable decision, reopen the
+  vault and prove the same winner. A bind winner must lend the exact key through
+  the bound callback; a retire winner must refuse binding and key use. Check
+  host files and callback counts, not only returned errors.
+- Mutation proofs must independently remove the historical-state predicate,
+  blocker-owner comparison and common arbitration. Each unchanged probe must
+  observe the unsafe state or fail to reject it, then pass after exact restore.
+  These augment, rather than replace, the proposal's existing mutation suite.
+
+#### Verification status and next step
+
+This continuation performed source/contract review only. No Rust, SQL, vault,
+scope arrays or preflight captures changed; no test or runtime acceptance is
+claimed. Complete the revised concrete interface/SQL/upgrade contract and its
+exact file-to-proof mapping before a builder starts. Reconcile any additional
+paths with the proposed five-path amendment; do not silently expand it.
+
+### Task 14E revised implementation contract (2026-09-08)
+
+#### Goal
+
+Finish the delivery-only ResultPrepared chain with durable host key binding
+and one atomic publication of all outputs. This section supersedes conflicting
+mechanics in the 2026-09-07 proposal; the rest of that proposal's requirements
+and mutation obligations remain in force. It is the implementation plan for
+this continuation, kept in the already-scoped evidence path. Historical root
+`PLAN.md` and the frozen P04 plan are not rewritten.
+
+#### Requirements
+
+- A committed preparation fixes workspace, job, effect, policy, response model,
+  ordered outputs, source dependencies and identities. All new authority is
+  embedding-owned. Existing Run/Step completion is not an embedding finalizer.
+- Binding is durable outside SQL; publication is one SQL transaction after all
+  exact host receipts exist. No recovery branch performs a provider dispatch.
+- Published replay returns the persisted publication before vault access,
+  current admission/credential checks or new UUID allocation affects its result.
+  It still authenticates the workspace and checks the exact requested
+  preparation/job/effect identity and complete immutable publication evidence.
+- A partial set of bindings remains recoverable and non-Live. A partial Live
+  set, dangling attachment history, an ordinary output reference or an
+  unowned blocker release cannot commit.
+
+#### Non-goals
+
+No rebuild result preparation, retrieval-query completion, Ready-generation
+builder, vector query, transition activation, source/vector erasure propagation
+or production embedding executor composition. No profile, P04, G0 or release
+qualification follows from this task. Delivery publication deliberately makes
+current Ready generations stale until the later builder runs.
+
+#### Constraints and exact scope
+
+Baseline is `0a0344f1bde61ee569bbb6188e3849701e77e105`. The only dirty path
+at this planning step is this evidence document. Preserve all prior changes.
+The live 120-change/23-protected scope is not amended by writing this plan.
+After explicit acceptance of the scope amendment, add exactly the five paths
+listed under "Proposed exact scope amendment" above, yielding 125/23. All new
+tables and forward function replacements below live in migration 0195; no
+additional migration or Rust module is required. No manifest, dependency,
+lockfile, toolchain, secret or protected-authority edit is authorized. Applied
+migrations through 0194 remain byte-identical. No commit, push or deployment.
+
+The existing reopened preflight records HEAD
+`58e7dac3cef7cc106d59f7ba3560bdbd37de76c0`; its verification against this
+baseline fails. Before implementation, record the approved amendment in this
+document, update the module/test counts and both preflight scope arrays, then
+capture a new reopened dirty snapshot at the actual HEAD with raw porcelain
+bytes and SHA256 for every protected path. Preserve the original preflight's
+historical snapshot fields. Do not hand-edit hashes to make an old capture pass.
+The reopened verifier must pass before the builder changes production code.
+
+#### Implementation plan
+
+**1. Define the embedding-owned application interfaces.**
+
+Create `crates/vestrace-application/src/embedding/finalization.rs`; export its
+types from `embedding/mod.rs` and `lib.rs`. Add the following contract, using
+existing domain ID types and `ApplicationError`:
+
+```rust
+struct EmbeddingResultFinalizationAuthority {
+    preparation_id: EmbeddingResultPreparationId,
+    job_id: EmbeddingJobId,
+    effect_id: ExternalEffectId,
+}
+struct EmbeddingResultBoundOutput {
+    binding: EmbeddingOutputKeyBinding,
+    projection_id: uuid::Uuid,
+    receipt: MaterialKeyBindingReceipt,
+    ciphertext: Vec<u8>,
+}
+enum EmbeddingResultFinalizationProgress {
+    Published(EmbeddingResultPublication),
+    NeedsBinding(Vec<EmbeddingOutputKeyBinding>),
+    ReadyToPublish(Vec<EmbeddingResultBoundOutput>),
+}
+```
+
+`EmbeddingResultPublication` contains the stored publication, preparation,
+job, effect, space and rebuild-event UUIDs plus output count, terminal job
+version, resulting corpus revision, live-member count and generation epoch.
+Counts use checked `u64`/SQL `BIGINT` conversion. Ciphertext/commitment-bearing
+values must not derive payload-printing `Debug`.
+
+`EmbeddingResultFinalizationRepository` exposes async `load_progress(context,
+authority)`, `record_binding(context, authority, binding, receipt)` and
+`publish(context, authority, publication_id, rebuild_event_id, commitments)`.
+All arguments are borrowed except proposed UUIDs and the commitment vector.
+The return values are respectively progress, the persisted exact receipt,
+and publication. `EmbeddingOutputCommitment` names projection id and output
+ordinal with `[u8; 32]` bytes; the repository derives every other identity from
+persisted rows, never from a caller's "already bound" claim.
+
+`EmbeddingResultFinalizationService::finalize(&RequestContext,
+&EmbeddingResultFinalizationAuthority)` repeatedly loads progress, binds only
+the missing outputs in ordinal order and records each receipt. It computes
+commitments only for the all-bound phase, then publishes once. Any failure
+returns immediately; a new invocation resumes stored progress. It has no
+provider dependency and holds no SQL transaction over a vault operation.
+
+Add default-unavailable vault methods to `material/vault.rs` and explicit
+`Arc<T>` forwarding in `crates/vestrace-application/src/provider_dispatch.rs:416`:
+
+```rust
+fn bind_embedding_output(&self, binding: &EmbeddingOutputKeyBinding,
+    preparation: EmbeddingResultPreparationId)
+    -> Result<MaterialKeyBindingReceipt, VaultError>;
+fn with_bound_embedding_output_key(&self, binding: &EmbeddingOutputKeyBinding,
+    preparation: EmbeddingResultPreparationId, receipt: MaterialKeyBindingReceipt,
+    use_dek: &mut dyn FnMut(&ZeroizingDek)) -> Result<(), VaultError>;
+```
+
+Before implementing the service, add unit probes named
+`published_replay_never_touches_vault`, `partial_binding_resumes_missing_only`,
+`changed_preparation_or_binding_is_refused`, and
+`commitment_failure_never_calls_publish` in the new module. Use independent
+repository state and vault call counters, including a vault that fails on
+every call during published replay.
+
+**2. Linearize host binding and provisional retirement.**
+
+Modify `crates/vestrace-infrastructure/src/crypto/material_vault.rs` only for
+specialized output claims. Publish one immutable per-key `output-disposition`
+stage using the existing same-directory synced-temp/hard-link primitive.
+Its tagged value is either `Bound { claim_receipt, preparation_id,
+binding_receipt }` or `Retire { claim_receipt, fence_receipt }`, with version
+and complete claim identity validation. The hard link to this single pathname
+is the competing processes' linearization point; there is no separate
+check-then-write choice between `bound` and `fence` pathnames.
+
+Binder requires the exact claim, an installed matching envelope, and no
+historical fence/erased stage. On a Bound winner, same preparation adopts the
+stored receipt; another preparation conflicts. On a Retire winner it refuses
+without a receipt. Retirement must win/adopt Retire before publishing fence,
+moving active storage or deleting the envelope; Bound refuses all those
+effects. Restart after either decision reuses its stored witness. Corrupt,
+contradictory or incomplete records fail closed without deleting evidence.
+Existing completed retirements remain replayable and never become Bound.
+
+The ordinary unwrap/prepare-erasure/erase methods keep refusing specialized
+claims. Provisional sealing checks disposition before key use; a call admitted
+before the Bound decision may finish, but every later call refuses. Such an
+in-flight seal has no authority to replace the already immutable SQL
+ResultPrepared ciphertext. Bound-key use checks the exact Bound decision and
+receipt. The callback borrow and zeroization rules remain unchanged.
+
+The upgrade requires stopping every old process that can access this host
+vault before enabling the new binary. Mixed old/new vault writers are
+unsupported: an old retire implementation does not consult disposition.
+Record process-abort/restart evidence only; synced file contents plus the
+existing hard-link protocol are not new power-loss durability qualification.
+
+Put independent-process winner/restart tests in the already-scoped
+`crates/vestrace-infrastructure/tests/embedding_output_keys.rs`. Force both
+orders at the common decision; inspect receipt files, envelope availability
+and callback counts after reopening the vault. Kill a winner after decision
+and before subsequent work. Also prove wrong preparation, reseal-after-bind,
+generic unwrap/erasure refusal and old retired-record replay.
+
+**3. Establish credential completion ownership in forward SQL.**
+
+Migration 0195 creates immutable
+`embedding_job_credential_completion_blockers(workspace_id, job_id,
+external_effect_id, model_binding_snapshot_id, credential_revision_id,
+credential_intent_id, blocker_id)` with one association per workspace/job,
+one owner per blocker and exact workspace-scoped foreign-key tuples. The
+associated generic blocker is `target_kind='credential', blocker_kind='effect',
+state='nonterminal', usable_until=NULL` at creation. No-auth jobs have no row.
+
+An internal guarded helper
+`vestrace_ensure_embedding_credential_completion_blocker(UUID,UUID,UUID)`
+accepts workspace/job/effect only and derives all credential identities.
+It acquires permanent connection, pinned credential activation guard and
+credential intent locks in that order, revalidates the immutable snapshot and
+active, unerased credential, then inserts a fresh blocker and association in
+one transaction or returns the existing exact owner. It is not executable by
+runtime or PUBLIC directly. Do not widen the generic candidate-only
+`vestrace_record_material_erasure_blocker` contract (0174:837-853).
+
+Forward-replace the 0194 preparation command so new credential markers name
+this owned blocker. Add immutable
+`embedding_result_credential_blocker_adoptions(workspace_id, preparation_id,
+historical_blocker_id, owned_blocker_id)` for old markers. A guarded
+`vestrace_adopt_embedding_result_credential_blocker(UUID,UUID,UUID,UUID)`
+takes workspace/preparation/job/effect, verifies the complete original marker
+and still-valid historical protection under the same guards, and creates or
+reuses a fresh exact owned association. It preserves the old marker and old
+blocker's ownership/state. Only active, unerased credentials are recoverable
+by this command; rotated, revoked, retired or erasure-prepared credentials
+return a typed conflict with no partial adoption. No automatic ownership
+backfill runs during migration. Exact adoption replay converges.
+
+Prepared-state validation follows the owned association (or its exact legacy
+adoption) and requires that owned blocker nonterminal. Until adoption, valid
+legacy preparations remain identifiable as prepared but the finalization
+service invokes adoption before any host bind. A missing/terminal historical
+blocker cannot be used to reconstruct protection retrospectively. Published
+validation requires terminal owned protection tied to the exact publication;
+the historical blocker is never released by this command.
+
+Guard changes to specialized owned blockers so no generic terminalization or
+direct owner DML can release them without the exact publication in the same
+transaction. This guard is implemented in 0195 on `material_erasure_blockers`;
+ordinary blockers retain their existing behavior. Source completion blockers
+remain the exact 0194 source-dependency-owned set, not all blockers on a source.
+
+**4. Implement the SQL publication authority and phase invariants.**
+
+Create the three originally proposed tables
+`embedding_result_key_binding_receipts`, `embedding_job_result_publications`
+and `embedding_index_rebuild_events`, in addition to the two credential tables.
+Binding rows include exact preparation/job/effect/output/projection/intent/
+material/key/nonce and host receipt identity. Publication and rebuild event
+have mutual exact identity constraints; publication is unique by preparation
+and job. Add monotonic `live_member_count BIGINT NOT NULL DEFAULT 0` to
+`embedding_space_corpus_states` (0194 has no Live projections to backfill).
+
+Public runtime commands are:
+
+```sql
+vestrace_load_embedding_result_finalization(UUID, UUID, UUID, UUID)
+vestrace_record_embedding_result_key_binding(UUID, UUID, UUID, UUID, BIGINT, UUID)
+vestrace_publish_embedding_job_result(UUID, UUID, UUID, UUID, UUID, UUID,
+                                     UUID[], BIGINT[], BYTEA[])
+```
+
+The common first four arguments are workspace/preparation/job/effect. Record
+adds ordinal/receipt, deriving the entire remaining tuple in SQL. Publish adds
+proposed publication/event IDs and aligned projection/ordinal/commitment
+arrays. Reject nulls, empty/unequal arrays, duplicate or noncontiguous ordinals,
+wrong projection order and commitments not exactly 32 bytes. The loader
+returns phase plus exact output rows or the complete stored publication;
+adoption runs in the repository before returning NeedsBinding for a legacy
+credential marker. Unknown phase or incomplete rows are errors, never idle.
+
+All commands use a shared installation permit in the repository. A new SQL
+completion-lock helper derives connection and credential from the marker; it
+does not call the pre-dispatch readiness gate or reacquire a released dispatch
+lease. Lock order is connection -> credential guard/intent/owned blocker ->
+space registration -> corpus -> generation guard -> ordered Ready generations
+-> marker/policy -> ordered source material/intent/blocker -> job/effect ->
+ordered output binding/intent/material/attachment/projection. The publication
+fast path precedes current mutable-state gating, after exact scoped identity
+validation. Run same-space finalizers, 14D preparation and erasure races in
+both orders to verify this order against existing authorities.
+
+Before changing rows, revalidate every predicate in original contract item 9.
+Use existing marker.expected_job_version as the exact Running version; promote
+to Succeeded with one checked increment. Source dependencies must still be Live
+and their exact blockers nonterminal at this point. Credential branch must
+have its owned association and active pinned credential. No-auth must have
+none. Record-binding changes ResultPrepared -> Bound only after its exact
+specialized receipt row exists; generic bind cannot manufacture that row.
+
+Remove only the incompatible FK from specialized attachment history to
+`prepared_material_attachments`; keep its identity, intent and projection FKs.
+Replace it with a deferred phase invariant, triggered by changes to generic
+attachments, specialized history, projections, binding receipts, material
+intents and publications. Prepared/Bound requires one exact generic attachment,
+prepared bytes/material, immutable matching history and no Live projection.
+Published requires no generic attachment or ordinary reference, exact preserved
+history, all Live outputs, 32-byte commitments and the one complete publication.
+Validate the affected preparation on attachment DELETE using OLD identity;
+an inner join that hides missing rows is not a completeness check.
+
+Forward-replace these existing functions inside 0195, preserving all unrelated
+owner branches and their previous refusal behavior:
+
+- `vestrace_bind_material_key_creation_intent` and
+  `vestrace_finalize_bound_content_material` (0170:269,301): specialize binding
+  through an exact receipt row and refuse generic Live finalization.
+- `vestrace_validate_material_key_creation_intent` (0170:445): specialized
+  Live requires zero ordinary references plus exact publication/projection.
+- `vestrace_validate_embedding_result_preparation` (0194:567),
+  `vestrace_validate_embedding_projection_dependency` (0194:654): explicit
+  prepared versus published invariants; historical dependency identity remains
+  immutable, current Live source state is checked when publishing.
+- `vestrace_load_embedding_result_eligibility` (0194:746) and
+  `vestrace_lock_embedding_job_recovery_authority` (0194:967): validate complete
+  published evidence before their old pre-dispatch/prepared-only gates.
+- `vestrace_lock_embedding_result_completion_authority` (0194:714): exact
+  published preparation replay must not fail its current Running-only check
+  before the preparation repository can reach the published fast path.
+- `vestrace_commit_embedding_result_preparation` (0194:1125): owned credential
+  protection and semantic replay for a complete already-published result.
+
+Replace the projection's unconditional update-rejection trigger and fixed-state
+CHECKs with exactly one guarded result_finalizing -> live transition; keep
+immutable identity/policy/source fields unchanged. For this slice retention
+remains blocked pending later erasure propagation, represented as
+`blocked_pending_erasure_propagation` for Live. No automatic retention release
+is implied by publication. Add a deferred all-output publication invariant
+covering generic attachment deletions and job, blocker, corpus, generation and
+event changes, not just the immutable preparation INSERT.
+
+One publication transaction updates all material/intent/projection states,
+removes generic attachments, stores commitments/publication/event, increments
+corpus revision once and live-member count by the exact output count, increments
+generation epoch once, marks every current Ready generation stale, terminates
+only exact owned completion blockers and appends job Succeeded. New UUIDs lose
+to a committed semantic publication. Every leg rolls back together. Later
+publications in the same space may advance counters; historical publications
+validate their immutable before/after event chain, not equality with today's
+global counters.
+
+**5. Implement the repository, commitments and recovery integration.**
+
+Create `crates/vestrace-infrastructure/src/postgres/embedding_result_finalization_repository.rs`
+and export it in `postgres/mod.rs`. Implement the application port using
+`DrainMutationPermit`, typed SQL decoding and narrow SQLSTATE mapping: 42501
+is authority refusal, 22023 malformed input, 23514/55000 lifecycle conflict;
+serialization/deadlock and connection failures are not successful replay.
+No plaintext vector is read by this repository.
+
+Put the concrete commitment implementation in this same new module using the
+existing `ring` dependency and the bound vault callback. HMAC-SHA256 input is
+ASCII `vestrace.embedding-output.commitment.v1` followed by a NUL byte, then
+fixed 16-byte workspace/preparation/job/effect/projection/intent/material/key/
+nonce UUIDs, unsigned 64-bit big-endian output ordinal and ciphertext length,
+then ciphertext bytes. The DEK is the HMAC key; never persist it, an unkeyed
+digest or plaintext. Test every tuple field and ciphertext changes the input,
+and zero callbacks occur on mismatched preparation or binding receipt.
+
+The application commitment port is `EmbeddingResultCommitter::commitment(
+&self, context: &RequestContext, authority: &EmbeddingResultFinalizationAuthority,
+output: &EmbeddingResultBoundOutput, dek: &ZeroizingDek)
+-> Result<[u8; 32], ApplicationError>`. The service calls it only inside the
+exact bound-vault callback; an absent callback result or port error refuses
+publication. The infrastructure implementation has no database or provider
+dependency. Add it to the new module's exports.
+
+Update `provider_dispatch_repository.rs` and, only where needed, its application
+recovery type documentation. A succeeded delivery is returned only with a
+complete exact 0195 publication, not simply state='succeeded' plus any marker.
+ResultPrepared continues to return ResumeResultPrepared while partially bound.
+`embedding_result_repository.rs` must accept exact published preparation replay
+without resealing; validate the immutable semantic response tuple as before.
+Keep production worker embedding execution outside this task.
+
+Update `docker/postgres/init-runtime-role.sh` with distinct one-shot
+`vestrace_prepare_p04_result_finalization_upgrade()` /
+`vestrace_finish_p04_result_finalization_upgrade()` helpers. They cover every
+new table, replaced function and new trigger relation, use
+`vestrace_guarded_owner`, revoke temporary privileges on hand-back and revoke
+PUBLIC/trigger-validator execution. Fresh provisioning, runtime upgrade and
+SQLx-superuser fallback must install equivalent forced-RLS/owner/ACL inventories.
+No runtime direct DML grant is introduced, including on owned blocker tables.
+
+#### Acceptance criteria and verification mapping
+
+Every row below names planned probes, not tests already run. Add them to the
+named files; retain existing assertions and production-shaped role fixtures.
+
+| Requirement | Probe and persisted observation | File |
+| --- | --- | --- |
+| Service replay/progress | Four step-1 probes; exact per-output calls and zero calls after Published | new application `embedding/finalization.rs` |
+| Host decision | `binding_and_retirement_have_one_process_winner`; both winners, process death after decision, exact receipt/envelope read-back | infrastructure `tests/embedding_output_keys.rs` |
+| History | `publication_preserves_exact_attachment_history`; old 0194 fixture upgrades, all generic rows disappear, specialized rows remain; dangling history/partial Live rejected | new infrastructure `tests/embedding_result_finalization.rs` |
+| Credential ownership | `publication_releases_only_job_owned_credential_blocker`; two jobs/one credential/unrelated blocker; only winner's owned id terminates | new finalization test file |
+| Legacy credential | `legacy_marker_adoption_never_transfers_old_blocker`; immutable marker unchanged, distinct owned blocker, exact replay; erasure/rotation-first refuses atomically | new finalization test file and `tests/embedding_result_preparation.rs` |
+| Atomic publication | `all_outputs_publish_with_one_corpus_event`; two outputs, one publication/event/version increment, exact counts/commitments, Ready->stale and no ordinary refs | new finalization test file |
+| Concurrency | `finalizers_converge_and_serialize_with_source_erasure`; independent sessions, both lock orders, one publication, no partial visibility; later same-space publication increments again | new finalization test file |
+| Published replay | `published_recovery_needs_no_vault_or_provider`; unavailable vault and provider counter unchanged after commit; changed exact tuple refused | application unit tests and `tests/embedding_effect_recovery.rs` |
+| Upgrade/authority | fresh/runtime-upgrade/SQLx fallback inventories, generic finalizer/terminalizer refusals, prepared/published corruption matrix | `tests/embedding_schema_contract.rs`, `tests/embedding_runtime_role_refusals.rs`, `tests/p03_upgrade_provisioning.rs`, `tests/runtime_role_cannot_write_directly.rs` |
+| Real crash | `result_finalization_survives_a_real_child_abort`; host-bind-before-SQL, strict receipt subset, all-bound-before-publish, aborted SQL legs and after-commit; provider listener exactly one request | new fault `scenarios/embedding_result_finalization_crash.rs`, fault `main.rs`/`settings.rs`, root `tests/embedding_fault_scenario_e2e.rs` |
+
+Update common fixtures only in `crates/vestrace-infrastructure/tests/common/mod.rs`
+when reuse is required. The credential preparation test's old lowest-UUID
+expectation is replaced with persisted job/effect ownership while retaining its
+snapshot checks. The fault scenario's report must fit existing report/settings
+types or use already-scoped `report.rs`; it must invoke the real finalization
+service and reopen host vault/database state after a real child PID exits.
+
+RED -> restore -> GREEN probes independently remove: exact preparation match
+in Bound adoption; common bind/retire arbitration; historical attachment phase
+predicate; credential blocker-owner comparison; complete all-bound count;
+generic Live finalizer refusal; one Live source recheck; one output promotion;
+corpus/generation/Ready coupling; rebuild-event/Succeeded atomic leg; and
+published-first recovery. For each record full original/mutant/restored SHA256,
+unchanged probe command and exits, and its persisted unsafe-state or external
+counter observation. A constraint that still blocks a mutant means that probe
+has not established mutation sensitivity; do not label compilation failure RED.
+
+Run Cargo commands serially with the prepared PostgreSQL/runtime-role fixture
+environment; never print connection secrets. Run focused probes first, then:
+
+```text
+cargo test -p vestrace-application embedding::finalization -- --nocapture
+cargo test -p vestrace-application embedding::result -- --nocapture
+cargo test -p vestrace-infrastructure --test embedding_result_finalization -- --nocapture
+cargo test -p vestrace-infrastructure --test embedding_result_preparation -- --nocapture
+cargo test -p vestrace-infrastructure --test embedding_output_keys -- --nocapture
+cargo test -p vestrace-infrastructure --test embedding_effect_recovery -- --nocapture
+cargo test -p vestrace-infrastructure --test embedding_schema_contract --test embedding_runtime_role_refusals --test p03_upgrade_provisioning --test runtime_role_cannot_write_directly -- --nocapture
+cargo build -p vestrace-fault-scenario
+cargo test --test embedding_fault_scenario_e2e -- --ignored --nocapture --test-threads=1
+cargo fmt --all -- --check
+cargo clippy -p vestrace-application -p vestrace-infrastructure -p vestrace-fault-scenario --all-targets -- -D warnings
+node --test tests/p02_scope.test.mjs tests/p03_scope.test.mjs tests/p04_scope.test.mjs
+node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-04r-preflight.json --scope p04-scope.mjs
+node scripts/protocol-lock.mjs --check .
+git -c safe.directory=E:/Soft/vestrace diff --check
+```
+
+#### Planning verification and acceptance state
+
+Observed during this planning continuation: P04 scope tests **6 passed, 0
+failed, exit 0**. Reopened dirty-baseline check **exit 1** with
+`preflight HEAD differs from current HEAD`, as documented above. No Cargo,
+database migration, host-vault mutation or acceptance probe was run.
+An independent read-only review of this revised contract returned
+**VERDICT: APPROVE**, with no BLOCKER, MAJOR or MINOR findings. The lead accepts
+the revised plan, including active-only legacy recovery and the prohibition on
+mixed-version host writers. This is plan acceptance, not implementation
+acceptance. The proposed 125/23 scope amendment still requires explicit user
+acceptance before the builder starts; the stale reopened preflight must then
+be recaptured and verified. Final planning-document `git diff --check` passed.
+
+#### Task 14E user approval and scope activation (2026-09-08)
+
+The user replied `eутверждаю` to the explicit request to approve the revised
+14E implementation plan and exactly five additional scope paths (120 -> 125,
+23 protected paths unchanged). This authorizes implementation of the revised
+contract and the five-path amendment listed above. The coordinator continues
+as lead under the user's explicit role assignment; a separate persistent Codex
+builder performs implementation. Prior planning/review text remains historical.
+
+Both preflight scope arrays and the scope test are updated to 125/23. The
+reopened snapshot is recaptured from the live worktree at the actual HEAD,
+with raw porcelain and protected-file hashes; its previous capture is retained
+as historical provenance inside that JSON. The original preflight's historical
+snapshot fields remain unchanged. Production implementation starts only after
+the updated scope tests and reopened verifier pass.
+
+#### Task 14E implementation entry checks (2026-09-08)
+
+The scope module and both preflight arrays now contain exactly 125 change
+paths and 23 protected paths. The original preflight's old 102-path array is
+retained in `scope_synchronization_history`; its historical capture fields
+are unchanged. The reopened preflight's full previous 120-path capture is
+retained in `previous_captures`; its current capture uses the live approved
+HEAD and five dirty planning/scope files. Reopened verification returned
+**exit 0**, focused P04 scope tests **6/6**, and combined P02/P03/P04 scope
+tests **16/16, exit 0**. These are entry-gate results, not 14E acceptance.
+
+The existing local `vestrace-test-postgres` container was restarted without
+deleting data. PostgreSQL accepts connections on loopback port 55432; database
+`vestrace_test` uses bootstrap role `test` (superuser). Runtime `vestrace` and
+`vestrace_guarded_owner` are both non-superuser and lack CREATEDB. A real
+runtime login was verified without changing roles or passwords. Credential
+values are not recorded here. SHA256 values for all 124 existing migration
+files were captured before production edits for final immutability checking.
+
+The first Terra builder stopped on a usage-limit error before production
+edits. A replacement persistent native Codex builder owns SQL, repository,
+provisioning and integration; a bounded helper owns application and then host
+vault work. Cargo execution is serialized through the integration builder.
+
+#### Task 14E implementation review corrections (2026-09-08)
+
+Live schema review found that the revised plan's name
+`embedding_index_generations` is incorrect: the existing Ready-generation
+relation is `embedding_corpus_generations` (including the ready/stale lifecycle
+in migration 0191). Publication locking, staling and provisioning inventories
+must use that existing relation. This corrects a schema anchor within the
+approved files; it does not authorize a new table or a scope expansion.
+
+Exact legacy-adoption replay must follow the established owned blocker after
+validating the current pinned credential and exact association. Historical
+nonterminal protection is required when first creating the adoption; once the
+fresh owned protection exists, a legitimate completion by the historical
+blocker's unrelated owner must not invalidate that adoption. The finalizer
+still never releases or changes the historical blocker.
+
+Runtime provisioning exposed an existing ownership round-trip ACL loss for
+`vestrace_publish_embedding_corpus_generation(UUID,UUID,UUID,BIGINT)`:
+the generation-fence bridge changes its owner back without restoring runtime
+execution, whereas migration 0191's fallback explicitly grants that execution
+(0191:252). The 0195 finish helper and SQLx fallback must restore that exact
+documented grant; fixtures must continue calling the guarded function as
+runtime. No broader function or table read grants are authorized by this fix.
+
+During implementation an attempted blanket restoration of table SELECT was
+rejected by automatic approval review before execution. The narrower accepted
+repair restores only the eleven documented preexisting table reads and four
+preexisting REFERENCES grants; generic attachments, ordinary references and
+erasure blockers receive no new runtime reads. Existing migrations remain
+unchanged: a fresh comparison against the captured 124 SHA256 values found
+zero differences. The reopened dirty/scope verifier also returned exit 0.
+These observations do not constitute full 14E acceptance.
+
+The SQL command and deferred invariants intentionally enforce overlapping
+safety predicates. For mutation qualification, an explicitly documented
+composite fault-injection mutant may disable the minimal enforcement sites
+of one logical invariant to expose that invariant's unsafe persisted state.
+It is not evidence that deleting one statement alone defeats the remaining
+guards. Every mutant must list all changed sites, retain the unchanged probe
+and assertions, run only against an ephemeral database, and record full
+original/mutant/restored hashes plus exact restoration and GREEN before the
+next mutant. Compile failures, SQL refusals and another guard blocking the
+unsafe state do not qualify as mutation-sensitive RED. Unrelated safeguards
+must remain enabled; different logical invariants are tested independently.
+
+#### Task 14E interim observed verification (2026-09-08)
+
+The builder reported `cargo +stable test -p vestrace-application
+embedding::finalization -- --nocapture`: exit 0, 7 passed, 0 failed. The
+repository decoding/HMAC unit filter passed 3 tests, exit 0. The focused host
+`embedding_output_keys output_disposition_` run passed 2 tests, exit 0,
+including actual independent-process decision winners/death and legacy/corrupt
+record handling. These are focused results, not the full host suite.
+
+The first real end-to-end publication probe,
+`cargo +stable test -p vestrace-infrastructure --test
+embedding_result_finalization all_outputs_publish_with_one_corpus_event --
+--nocapture`, returned exit 0: 1 passed, 0 failed, 1 filtered out (5.15 s).
+It used the real service, PostgreSQL repository and host vault for two outputs;
+persisted assertions covered exact keyed commitments, immutable attachment
+history, corpus/event/job changes, Ready-to-stale and published replay with an
+unavailable vault. The partial-binding probe had separately passed. Later
+credential/concurrency additions and the crash scenario were not yet executed
+at this checkpoint.
+
+The full 14D regression initially returned 12 passed and 2 failed. Both failures
+were corruption-fixture trigger-restoration errors with pending new deferred
+events (SQLSTATE 55006). The fixture was updated to bypass the new write guard
+alongside its existing corruption injection, retaining the independent runtime
+loader refusal assertions. Its corrected rerun was still pending here.
+
+Independent lead checks: combined P02/P03/P04 scope tests 16/16, exit 0;
+`node scripts/protocol-lock.mjs --check .` exit 0. Full acceptance, mutation
+qualification and fault execution remain outstanding at this checkpoint.
+
+The later full finalization run passed 7/7, including shared-credential
+ownership, genuine 0194-to-0195 legacy adoption, revocation-first refusal,
+concurrent finalizers and both source-erasure lock orders. A subsequent run
+including two additional history/generic-finalizer probes passed 9/9. The
+corrected 14D regression passed 14/14. The accompanying schema run passed
+15 tests and failed one closed-world function-inventory check; the provisioner
+was updated to use its actual `allowed_targets` and
+`runtime_executable_targets` arrays, with the rerun still pending here.
+
+One planned winning-race scenario has a live authority constraint:
+`vestrace_rotate_credential` is last replaced in migration 0185 (definition at
+1299). Its active embedding-head check at 1484-1496 refuses rotation with
+`rotation requires P04 embedding transition evidence`; no later replacement
+exists. A successful rotation-first fixture must not bypass that guard or
+manufacture transition authority. The existing refusal is retained; successful
+rotation-before-adoption remains unexercised in this slice. Similarly, there
+is no existing runtime completion command for the historical unrelated generic
+credential blocker; direct owner mutation is not legitimate completion proof.
+
+
+#### Task 14E observed mutation records (interim)
+
+These records are observed builder results, independently reviewed by the lead.
+They do not replace the still-outstanding full eleven-invariant matrix.
+
+**extra published identity validation** (additional).
+
+Command: `cargo +stable test -p vestrace-application malformed_published_identity_is_refused_before_vault -- --nocapture`.
+
+Observation: Published wrong identity accepted; unchanged Conflict assertion failed at finalization.rs:534.
+
+- Original SHA256: `DEDD67A6CB3E679DB68613AECFE324E520EF2390DF31E09E0A86989B6BFC3F7E`
+- Mutant SHA256: `70A290AA9E643407B3DD9CB56E650E1C0BE2F719592BB29C5D9A655209473CCC`
+- Restored SHA256: `DEDD67A6CB3E679DB68613AECFE324E520EF2390DF31E09E0A86989B6BFC3F7E`
+- RED exit 101; restored GREEN exit 0.
+
+**host exact preparation match in Bound adoption** (required).
+
+Command: `cargo +stable test -p vestrace-infrastructure --test embedding_output_keys output_binding_is_exact_durable_and_refuses_generic_and_provisional_access -- --nocapture`.
+
+Mutant: bind winner check preparation_id != requested changed to preparation_id.is_nil().
+
+Observation: wrong preparation returned Ok(MaterialKeyBindingReceipt) rather than Err(BindingMismatch); unchanged test failed line3026.
+
+- Original SHA256: `D1342962660DB84D0BA2ACAB162FC665CC91087C7A4B35067CA9E222A332CADD`
+- Mutant SHA256: `8A185AED25A16FCF64E52F9A86CE131C306A99D1CBDA38096E384EBD62E61647`
+- Restored SHA256: `D1342962660DB84D0BA2ACAB162FC665CC91087C7A4B35067CA9E222A332CADD`
+- RED exit 101; restored GREEN exit 0.
+
+**host common bind/retire arbitration** (required).
+
+Command: `cargo +stable test -p vestrace-infrastructure --test embedding_output_keys output_disposition_process_winners_survive_death_and_refuse_the_loser -- --nocapture`.
+
+Mutant: bypass only output_retirement_decision common publication/adoption after before-decision checkpoint; retain initial precheck and return candidate fence.
+
+Observation: RED 101, 0 pass/1 fail: stale retirement loser succeeded with persisted erasure receipt after Bound winner at test line3149; exact restore GREEN0 1pass/0fail0.40s, RAII cleanup leaves no orphan.
+
+- Original SHA256: `D1342962660DB84D0BA2ACAB162FC665CC91087C7A4B35067CA9E222A332CADD`
+- Mutant SHA256: `EDCFD331FEF679D5ADE2DA505D7D2CE3238494DE56026A6D268561E8DE9E803E`
+- Restored SHA256: `D1342962660DB84D0BA2ACAB162FC665CC91087C7A4B35067CA9E222A332CADD`
+- Unchanged final probe SHA256: `533FD4DD092BBF6BDA36607EF34FC331E6A4310413CA8CD6F1059FE5AC65B12F`
+- RED exit 101; restored GREEN exit 0.
+
+#### Task 14E crash and expanded gate checkpoint
+
+`cargo +stable build -p vestrace-fault-scenario` returned exit 0. The subsequent
+ignored `result_finalization_survives_a_real_child_abort` root E2E probe passed
+1/1, exit 0 (20.61 s). Its unchanged assertions verified five explicit crash
+checkpoints plus all sixteen exact SQL-leg observations: actual child PIDs,
+observed AFTER-row advisory barriers, OS process termination, database backend
+termination, exact persisted rollback, reopened bound-key callbacks, two
+published outputs, one loopback provider request and vault-free Published
+replay. This is process-death evidence, not power-loss qualification.
+
+The corrected schema suite passed 16/16, exit 0. The expanded finalization
+suite passed 14/15; the remaining failure was the guarded legacy credential
+erasure fixture's commit (`23514`, credential erasure preparation inconsistent).
+It remains unresolved here and is not an ignored or passing test. Existing
+rotation and historical-blocker authority limits described above also remain.
+
+A new deterministic all-bound publication race regression passed unchanged
+(1/1, exit 0, 5.50 s): current SQL already rechecked Published after acquiring
+the connection guard. No pre-fix RED is claimed for that path. Public legacy
+adoption separately received the corresponding post-connection Published check;
+its additional focused regression was pending at this checkpoint.
+
+#### Task 14E further qualification checkpoint
+
+The focused public-adoption replay after guarded credential revocation passed
+1/1, exit 0. The legacy erasure-first probe still fails, exit 101: read-only
+precommit diagnostics observed intent `erasure_prepared`, occupancy `activated`,
+one ciphertext row, one prepared event, zero terminal events and zero audit
+tombstones. Commit rejects with SQLSTATE 23514. Source review identifies two
+historical candidate-only checks: `vestrace_validate_material_erasure()` and
+`vestrace_finalize_credential_material_erasure(UUID,UUID)` in migration 0174.
+The guarded retired/revoked preparation in 0181 preserves activated occupancy.
+No fixture occupancy rewrite, validator bypass or upstream repair was applied.
+Any repair needs its own explicit contract; this remains a failed acceptance
+probe, not passing evidence.
+
+Independent read-only review of application finalization, host disposition,
+repository/recovery adapters and the crash harness returned PASS for that Rust
+subset with no new confirmed BLOCKER/MAJOR findings. It did not review SQL during
+mutation execution and is not overall Task 14E acceptance.
+
+The following SQL mutation runs used the unchanged finalization test file
+SHA256 `55D240229B04FDE18EF0E3F6A2F5347ED60C158ABECE86F962F397E46C60B841`.
+For every row the original and byte-exact restored migration SHA256 was
+`3C159DEB3259E92A88A78CDC984897C778759A085AE459460C29A25C5B2E5BBC`.
+Each RED exited 101 with one failing behavioral probe; each restored GREEN
+exited 0 with 1/1 passing, before the next mutation began.
+
+- Attachment history: command `cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization publication_preserves_exact_attachment_history -- --nocapture`.
+  Remove only prepared-phase `output.attachments<>1`. RED observed committed
+  immutable history pointing to a missing generic attachment. Mutant SHA256
+  `388AE3300035A503E2569331712B65856EBE16D28215F6E572BE3EE38FC7C0C2`.
+- Published-first loader/service: command `cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization all_outputs_publish_with_one_corpus_event -- --nocapture`.
+  Replace the loader's Published return with coherent `ready_to_publish` phase.
+  RED reached the forbidden NeverVault callback (`published replay touched vault`).
+  Mutant SHA256 `90FAFAE46E594F5590E54FDB3C916812A03CE7B4DA2F0DA77A7EDD7FCC0C3AF7`.
+  This does not independently qualify the recovery branch.
+- Job/publication coupling: same `all_outputs_publish_with_one_corpus_event` command.
+  Omit Succeeded/version UPDATE, its immediate NOT FOUND check and the matching
+  published job-state/version predicate. RED observed committed publication,
+  event, two Live outputs and counters 1/2/1 with job Running/version 2 instead
+  of Succeeded/version 3. Mutant SHA256
+  `B2E2C0C5ED029E3D60AF6FB942A60BC221392BA892FB918C2285DF9D04A7326C`.
+  Event omission itself is not qualified by this composite mutant.
+- Ready invalidation: same full-publication command. Omit Ready-to-stale UPDATE
+  and the matching invalidated-generation stale predicate. RED observed persisted
+  generation `ready` instead of `stale`. Mutant SHA256
+  `60287023901CE7159214DBFDF702ABB67F8D5F43355954D47AD5B24C8C58333F`.
+- Corpus/generation counters: same full-publication command. Omit corpus
+  revision/live-member UPDATE, generation-epoch UPDATE and the matching current
+  counter consistency block. RED observed committed publication/event and
+  Succeeded job with counters 0/0/0 instead of 1/2/1. Mutant SHA256
+  `BA4A0F91CB264C1EF5976AF95AE18FCBB34A4781120938E8A4EE861FD9F5844A`.
+
+These are explicitly bounded logical-invariant fault injections, not claims
+that removing each individual line defeats every independent guard.
+
+Output projection promotion used the same full-publication command, original /
+restored SQL hash and unchanged probe hash recorded above. The composite omitted
+the projection Live/retention/commitment UPDATE and only its matching central
+published predicates and material-validator `p.state='live'` check. RED exit 101
+observed committed publication/event, Live materials/intents and Succeeded job
+with zero Live projections/commitments instead of two. Mutant SHA256
+`00F62DCBBBF36F222F5BAE19CD8CC2D98CFED84F9C978C1CBED42E611D7B1F5F`;
+restored GREEN exit 0, 1/1 (5.03 s).
+
+Broader runtime verification subsequently passed: `embedding_effect_recovery`
+19/19, `embedding_runtime_role_refusals` 3/3, `p03_upgrade_provisioning` 7/7 and
+`runtime_role_cannot_write_directly` 45/45, all exit 0. The upgrade test's exact
+guarded-table inventory was extended from 92 to 97 for the five new 0195 tables,
+conditional on observed successful migration 195 for historical-stage probes.
+Root reviewed this diff; no production privilege was changed for this repair.
+P02/P03/P04 scope tests again passed 16/16; protocol lock, reopened baseline and
+diff checks returned 0. All 124 pre-0195 migration hashes still match the entry
+capture byte-for-byte.
+
+Two required single-gate mutation attempts did **not** establish sensitivity.
+Both used original/restored SQL SHA256
+`3C159DEB3259E92A88A78CDC984897C778759A085AE459460C29A25C5B2E5BBC`
+and unchanged test SHA256
+`27030735598864AE08CC2681E00FEC8120CE55F739DE1CBDCB716F99DD98444B`.
+
+- `cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization generic_finalizer_cannot_publish_bound_embedding_output -- --nocapture`:
+  removing only the generic finalizer's explicit embedding-output refusal gave
+  1/1 PASS, exit 0, because remaining validators still refused the unsafe commit.
+  Persisted Live/ordinary-reference counts did not change. Mutant SHA256
+  `F36D54637CDCD22A8AB8F0CE7A644483B98244CBC858AA07E8D3ABB118EBDA14`;
+  exact restore also passed 1/1, exit 0 (4.80 s).
+- `cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization partial_binding_preserves_history_and_stays_non_live -- --nocapture`:
+  removing only the `phase<>'ready_to_publish'` exception gave 1/1 PASS, exit 0.
+  Strict-subset direct publication still refused and rolled back with identical
+  persisted Facts. Mutant SHA256
+  `CE78BF6464513DCB924D1CF6EEF5AD923FF704F7F4F3E1F71D7906DACF6E80F5`;
+  exact restore passed 1/1, exit 0 (5.05 s).
+
+Neither run is RED evidence. Root declined to remove multiple independent
+validation families solely to manufacture unsafe success. The two explicit
+mutation-acceptance obligations remain unqualified; no acceptance waiver is
+inferred from redundant defenses.
+
+The Live-source composite did establish behavioral sensitivity. Command:
+`cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization publication_defensively_refuses_a_corrupted_non_live_source -- --nocapture`.
+Remove only the central source material/intent Live predicates and their
+locked-source recheck; retain identities, blockers and dependency validation.
+RED exit 101 observed committed publication/event, Live outputs and Succeeded
+job over the explicitly corrupted non-Live source instead of unchanged prepared
+Facts. Original/restored SQL SHA256
+`3C159DEB3259E92A88A78CDC984897C778759A085AE459460C29A25C5B2E5BBC`;
+mutant `399C04CB013E022542EF2FA330C06BFBDD6F39F084DF124FFAE622CA2909FE35`;
+unchanged probe SHA256
+`27030735598864AE08CC2681E00FEC8120CE55F739DE1CBDCB716F99DD98444B`.
+Exact restore GREEN: exit 0, 1/1 (4.91 s). This is a defensive-corruption probe,
+not evidence that legitimate source erasure won against a nonterminal blocker.
+
+Credential blocker ownership mutation: command
+`cargo +stable test -p vestrace-infrastructure --test embedding_result_finalization publication_releases_only_job_owned_credential_blocker -- --nocapture`.
+The release query additionally selected same-workspace/same-credential effect
+blockers with no owned association. No other job-owned blocker or independent
+validator was changed. RED exit 101 observed the unrelated blocker's persisted
+state `terminal` instead of `nonterminal`; exact restore GREEN exit 0, 1/1
+(6.20 s). Original/restored SQL SHA256
+`3C159DEB3259E92A88A78CDC984897C778759A085AE459460C29A25C5B2E5BBC`;
+mutant `60005E946020DB21167870247BD062D6E4627796EE092FC4DB253255A8DA7320`;
+unchanged probe SHA256
+`27030735598864AE08CC2681E00FEC8120CE55F739DE1CBDCB716F99DD98444B`.
+
+All eleven planned logical-invariant mutation attempts have now been addressed:
+nine have qualifying unsafe-state/callback RED -> exact restore -> GREEN
+evidence; generic-finalizer and all-bound single-gate attempts remain explicitly
+NOT SENSITIVE. The Succeeded leg satisfies the contract's rebuild-event **or**
+Succeeded alternative; no independent event-omission claim is needed or made.
+Published-first evidence is the actual loader/service NeverVault callback test;
+the additional real repository recovery regression is positive evidence only.
+
+#### Task 14E final expanded checks (before dispatch-fixture repair rerun)
+
+Final focused unit runs passed: application result 4/4, application finalization
+7/7 and infrastructure finalization HMAC/decode 3/3, all exit 0. The complete
+finalization suite passed 16/17, exit 101; the sole failure is the retained
+historical credential-erasure commit. The new production-shaped repository
+recovery test passed: after guarded credential revocation, two real recovery
+calls return Succeeded with unchanged publication/history/Facts and dispatch,
+admission, lease, effect and receipt footprints.
+
+The first complete ignored fault suite returned 2/3, exit 101. Result preparation
+and finalization passed; old dispatch setup failed before its checkpoint because
+bare job acceptance supplied no exact output receipts to the 0194 admission
+gate. The fixture was repaired in the two already-scoped dispatch/preparation
+scenario files by sharing the existing real-host output acceptance/receipt/source
+policy setup. Original checkpoints, baseline assertions and production guards
+remain. Root independently reviewed the diff. Full rebuild/rerun is pending at
+this checkpoint; the repaired fixture is not yet declared passing here.
+
+`cargo +stable fmt --all -- --check` returned exit 0 after targeted formatting.
+The exact mandatory Clippy command returned exit 101 before changed components
+were checked, on existing domain lints:
+
+- `src/conformance/cases.rs:4719,8855,8914`: cloned_ref_to_slice_refs.
+- `src/retrieval/mod.rs:46`, `src/security/capability.rs:20`,
+  `src/security/mod.rs:143`: derivable_impls.
+
+An additional diagnostic run of the same selected packages with `--no-deps`
+also returned 101, at existing application `src/runs/recovery.rs:282`
+(`manual_contains`). This diagnostic is not a replacement for the mandatory
+command and does not establish a clean lint result for the changed components.
+No lint was suppressed and these unrelated files were not edited.
+
+The repaired full fault suite subsequently passed **3/3, exit 0 (43.41 s)**
+after a successful binary rebuild. The original dispatch scenario retained all
+four checkpoints/control baselines; preparation crash and finalization's five
+checkpoints plus sixteen SQL-leg observations also passed. No fault mutation
+remains active. Root verified final 0195 SHA256
+`3C159DEB3259E92A88A78CDC984897C778759A085AE459460C29A25C5B2E5BBC`.
+Final P02/P03/P04 scope tests passed 16/16, exit 0; reopened dirty-baseline and
+protocol-lock checks returned 0 with the repaired scoped fixture files present.
+
+**Task 14E acceptance: NOT APPROVED.** The delivery path is implemented and the
+authorized verification/fixture repairs above are complete, but acceptance is
+not inferred from those passing subsets. Outstanding:
+
+1. Legacy credential-erasure-first acceptance still fails at the historical
+   candidate-only validator (full finalization suite 16/17, exit 101).
+2. Generic-finalizer and complete all-bound single-gate mutation obligations
+   remain NOT SENSITIVE; their original criteria have not been waived.
+3. Mandatory Clippy exits 101 on unrelated existing domain lints. The additional
+   no-deps diagnostic also fails on existing application recovery code.
+4. Successful rotation-before-adoption remains unexercised because the existing
+   guarded rotation command requires future P04 embedding transition evidence.
+   Its actual refusal is verified; that is not a successful rotation-first race.
+
+The following repair proposal is the next concrete, unactivated decision.
+Its approval alone would not waive mutation, lint or rotation qualification.
+Final test-file SHA256 after edition-2024 formatting is
+`F68C2846A4A2AA8F3F052FDDD1F261430AE41F36BD64BBE0071534C037B03D22`.
+The proof records retain their actual run-time hashes; subsequent assertion
+wrapping is nonsemantic and does not replace those captures retrospectively.
+Final post-repair formatter and exact diff checks both returned exit 0.
+
+#### Proposed separate retired/revoked credential erasure repair — NOT AUTHORIZED
+
+Problem: the legitimate 0181 retired/revoked entrypoint reaches ErasurePrepared
+with activated occupancy, but both 0174 preparation validation and credential
+finalization accept only candidate occupancy. The first transaction cannot
+commit; changing only its validator would leave finalization failing after host
+erasure. This is upstream of embedding finalization. The frozen P03 plan
+requires exact non-current Retired/Revoked destruction (Task 3, lines 228/335).
+
+Proposed forward-only repair, subject to explicit approval:
+
+1. Add `migrations/0196_retired_credential_erasure.sql`, replacing only
+   `vestrace_validate_material_erasure()` and
+   `vestrace_finalize_credential_material_erasure(UUID,UUID)` with the original
+   candidate branch retained and a narrowly evidenced activated branch. Require
+   exact intent/workspace/connection/slot/revision identity, an existing
+   non-current slot, and immutable exact revoked activation or outgoing
+   rotation evidence. Preserve fence, receipt, bytes, events, audit, content
+   and completed-finalizer replay checks. No Active/current admission.
+2. Extend the existing one-shot provisioning/hand-back pattern for these two
+   replacements: guarded owner, private validator, only the existing runtime
+   finalizer signature executable. Fresh, runtime-upgrade and SQLx fallback
+   must have equivalent inventories. No runtime grants to lifecycle tables.
+3. Add full ordinary erasure lifecycle tests to existing
+   `crates/vestrace-infrastructure/tests/credential_activation.rs`, reusing its
+   guarded activation/rotation/revocation setup with a new real host-vault
+   fixture in that file. Existing mock vaults and generated receipts/ciphertext
+   are not host erasure proof. Execute the runtime-authorized 0181 prepare
+   command, actual HostMaterialKeyVault fence/erase and the existing repository
+   record_fence/finalize_credential methods, observing committed state between
+   phases and exact final receipt replay. Refuse Active/current and mismatched
+   or missing evidence. Retain Candidate-abandon and content regression coverage.
+4. Re-run the existing 14E legacy-marker erasure-first refusal against an old
+   0194 marker after upgrading to the repaired schema, with erasure winning
+   before adoption. Do not claim that unmodified 0194 could commit this erasure.
+   The marker stays immutable and the refusal must leave no owned blocker.
+5. Capture regression RED before the new migration and GREEN afterward, all
+   existing credential activation tests, content/Candidate regressions, exact
+   upgrade/ACL checks and the complete 14E finalization suite.
+
+Exact additional scope paths proposed: the new 0196 migration and existing
+`crates/vestrace-infrastructure/tests/credential_activation.rs` (125 -> 127
+change paths; protected paths remain 23). Other edits are limited to the
+already-authorized provisioner, upgrade/schema/finalization tests and scope /
+preflight / evidence administration. Old migrations remain byte-identical.
+This section is a reviewable proposal only; no scope activation or repair has
+been performed. It does not authorize transition-aware credential rotation,
+embedding erasure propagation or production embedding execution.
+The generic MaterialErasureService currently calls the superseded P02 Candidate
+entrypoint through `src/postgres/erasure.rs`; composing ordinary retired/revoked
+erasure into that service is explicitly outside this two-path repair. The new
+probe proves the authorized guarded-command/repository/real-host route, not
+production service composition. Independent plan review identified this limit;
+the proposed test route above has been corrected accordingly.
+
+#### Retired/revoked credential repair — user approval and entry
+
+The user explicitly replied `подтверждаю` to the two-path proposal above.
+This activates precisely `migrations/0196_retired_credential_erasure.sql` and
+`crates/vestrace-infrastructure/tests/credential_activation.rs`: change scope
+125 -> 127, protected scope unchanged at 23. The proposal and its corrected
+real-host test route are now the implementation contract. Earlier NOT AUTHORIZED
+wording records the proposal's historical state, not the current authorization.
+
+Both preflights retain their historical baseline fields. Their new scope
+amendment records the actual entry HEAD, raw untracked-aware status, hashes of
+the existing dirty files and all 125 pre-0196 migrations before activation.
+Old migrations including 0195 must remain byte-identical. The accepted review
+correction requires a real host-vault fixture and the existing guarded SQL /
+repository route; it does not compose the generic erasure service. Existing
+mutation, lint and rotation evidence gaps remain separate and are not waived.
+
+Entry gates passed: P02/P03/P04 scope 16/16, exit 0; reopened baseline exit 0.
+The entry amendment captures 29 dirty paths and 125 existing migrations.
+
+#### Credential repair observed RED before 0196
+
+Command: `cargo +stable test -p vestrace-infrastructure --test credential_activation erasure_uses_real_host_and_commits -- --nocapture`.
+Migration 0196 was absent. Both new legitimate runtime tests failed at the
+preparation COMMIT: 0 passed, 2 failed, exit 101; SQLSTATE 23514,
+`credential erasure preparation is inconsistent`, validator line 64. Revoked
+and rotated/retired fixtures used actual host-created keys and codec ciphertext.
+Neither reached host erasure. The unchanged probe file SHA256 was
+`AE7AB59D9C4B808646EA353CB1423DDD4A60100560281382E1BB3BFB06ECD36E`.
+This is the behavioral regression RED, not a compilation or fixture-setup
+failure. The functions-only upgrade bridge was present but not invoked; the
+old validators/finalizer remained unchanged.
+
+The unchanged pre-0196 `erasure_is_one_way` suite passed 16/16, exit 0
+(14.23 s), establishing the content/Candidate baseline before repair.
+
+#### Credential repair observed GREEN and review
+
+After adding 0196, the identical real-host command and probe SHA256 above
+passed 2/2, exit 0 (4.49 s). Both routes committed preparation, actual host
+fence/erase, repository finalization, exact ciphertext/event/audit observations
+and receipt replay. New migration SHA256:
+`C5B828DF1A6B8E646905A5605CBC044AA73AB3B936E7A7E2DF0563EB078CA230`.
+An initial cached test executable had retained the old embedded migration list;
+that rerun was not new-schema evidence. Mtime-only invalidation forced a real
+rebuild without changing the probe bytes before the GREEN recorded here.
+
+Independent read-only review returned APPROVE for the two-function repair.
+Root additionally compared the content branch, finalizer lock/replay prefix and
+SQL mutation/audit tail with 0174; each is identical after newline normalization.
+The new activated branch requires exact occupancy/intent/revision/key identity,
+an existing non-current slot and exact immutable revoked or rotation evidence.
+The total `IS NOT TRUE` check refuses NULL eligibility. Only the two functions
+change ownership during runtime upgrade; no table ownership or ACL is lent.
+
+Full repair verification then passed, all exit 0: credential activation 16/16,
+embedding result finalization 17/17, embedding schema 16/16, unchanged
+`erasure_is_one_way` 16/16 and upgrade provisioning 9/9. Upgrade evidence includes
+fresh provisioning, runtime 0195 -> 0196 with identical table owner/ACL/RLS
+inventory, SQLx-superuser fallback and closed one-shot function bridges.
+The historical finalization fixture creates its immutable marker under 0194,
+upgrades through 0196, observes the real lease expire, commits guarded credential
+erasure preparation, and then observes adoption refuse without any owned blocker
+or marker mutation. It does not claim that old 0194 could commit erasure.
+Root rechecked all 125 pre-0196 migrations: every entry hash remains unchanged.
+
+A further defensive finalizer probe initially passed 1/1, but root review found
+its other revoked credential was in a different workspace and hidden by RLS.
+That run established missing-evidence refusal only. The probe is being corrected
+to use a legitimate, runtime-visible other tuple in the same workspace before
+claiming substitution refusal. Only the exact target revoked event is removed
+inside the isolated fixture, with the sole disabled immutable trigger restored
+and checked before the runtime finalizer; no production guard is weakened.
+
+#### Credential repair final acceptance — APPROVED
+
+The corrected defensive fixture creates another legitimate revoked credential
+in the same workspace, with different connection/slot/revision/intent. Before
+corruption, it observes that event under the guarded function's actual owner
+and workspace-RLS context. After removing only the target event and restoring
+its immutable trigger, the runtime finalizer rejects the real host-erasure
+receipt with 23514 and leaves SQL state/ciphertext/events/audits unchanged.
+This is explicitly a defensive-corruption test, not a legitimate deletion of
+immutable evidence and not a claim that runtime has table SELECT/DDL rights.
+
+Final frozen-source `credential_activation` run: **17/17, exit 0 (10.85 s)**.
+Test SHA256: `DFCEF263833CD333C3D2F0C3E01FF86EDFE71BCF0AA9E0058A92EA145957D003`.
+An earlier run overlapped the final fixture edit and is not attributed to this
+source capture. The original unchanged two-test RED/GREEN capture remains as
+recorded above. No production SQL changed after the reviewed 0196 hash.
+
+Final verification: finalization 17/17, schema 16/16, content/Candidate erasure
+16/16, upgrade/fallback 9/9; all exit 0. Formatter and diff checks returned 0.
+Root's final P02/P03/P04 scope tests passed 16/16, exit 0; reopened baseline and
+protocol lock returned 0. Scope remains 127/23. All 125 preceding migrations,
+including 0195, remain byte-identical to the approved repair entry capture.
+
+Lead verdict: **APPROVED for this two-path credential repair only**. It removes
+the historical erasure blocker from Task 14E's 17-test finalization gate. It
+does not constitute full Task 14E/P04 acceptance: the two NOT-SENSITIVE mutation
+obligations, the existing Clippy failures and the successful rotation-before-
+adoption qualification remain unresolved. Generic erasure service composition
+is unchanged and outside this repair. No commit, push or deployment occurred.
+
+#### Task 14E final qualification evidence amendment - AUTHORIZED
+
+The earlier Clippy failure used floating `+stable` (1.97), contrary to the
+repository pin. The exact approved command uses plain `cargo` under
+`rust-toolchain.toml` 1.85.0. Its first real run found two scoped fixture
+compatibility/lint issues: nested `use super as common` and an explicit
+`unwrap_or_else(WorkspaceId::new)`. The minimal equivalent fixes are
+`use crate::common` and `unwrap_or_default()`; `WorkspaceId::default()` delegates
+to `new()`. The unchanged approved Clippy command then passed, exit 0 (1m02s).
+`cargo fmt --all -- --check` and diff check also returned 0. The floating-stable
+errors remain historical diagnostics and are not the pinned acceptance gate.
+
+Migration 0185 intentionally refuses current-head rotation at lines 1484-1496
+until later transition authority exists; transition activation is an explicit
+Task 14E non-goal. The existing test proves that rotation itself refused. It
+does not prove the separate contract requirement at lines 4028-4030 that
+adoption refuses after a credential has already been lawfully rotated/retired.
+The successful ordinary retirement-erasure lifecycle from 0196 uses a different
+configuration and cannot substitute for that legacy-adoption scenario.
+
+Two mutation requirements remain internally inconsistent with the implemented
+independent defenses. Removing either named entry gate alone still reaches a
+separate validator and cannot commit unsafe state. Independent source review
+found no single narrow enforcement seam that permits the required unsafe state
+without disabling multiple distinct safety families. Manufacturing such a
+composite would weaken more authority than the named mutant and would provide
+misleading evidence.
+
+The user explicitly approved this exact amendment in the current continuation turn.
+No approval timestamp is asserted here. Authorized amendment:
+
+1. For **only** generic-finalizer refusal and complete-all-bound count, replace
+   the unsafe-persisted-state RED requirement with a defense-preserving mutation
+   proof. Strengthen the unchanged probes to assert the primary gate's exact
+   SQLSTATE/message and an independently observed complete Facts/history
+   baseline before evaluating the error.
+2. Remove only the named primary gate. RED is the unchanged probe rejecting the
+   different downstream refusal: generic finalization reaches its deferred
+   embedding-output invariant; partial publication reaches the checked unbound
+   intent/update or equivalent exact downstream invariant. A separate connection
+   must observe no Live output, no ordinary reference, no publication/event and
+   unchanged job/counter/history state. Record actual downstream SQLSTATE/message,
+   full original/mutant/restored SHA256 and exits.
+3. Restore exact bytes. GREEN must re-establish the primary error and identical
+   persisted baseline. Do not weaken or remove any downstream validator.
+4. Keep all nine existing unsafe-state/external-callback RED -> restore -> GREEN
+   mutation records unchanged. This is not a general mutation waiver.
+5. Explicitly defer the lawful successful rotation-before-adoption proof for a
+   current embedding dependency to the slice that introduces transition-aware
+   rotation authority. Task 14E retains the verified atomic refusal of the
+   current 0185 rotation command and the 0196 ordinary retirement lifecycle,
+   but neither is labelled adoption-after-rotation proof. The later slice must
+   commit a legal rotation first and then prove adoption returns the typed
+   conflict with no owned blocker, publication or marker mutation. It may not
+   bypass the existing guard or synthesize transition evidence.
+6. No production code, migration, privilege or scope change is authorized by
+   this amendment. Only the already-scoped finalization probe and evidence files
+   may change. Scope remains 127/23; all migrations remain byte-identical.
+
+When the two authorized defense-preserving RED/restore/GREEN runs succeed,
+Task 14E may be accepted after final scope/baseline/protocol/format/diff checks.
+P04, G0 and v1.0 remain incomplete.
+
+
+#### Authorized final qualification amendment: observed defense-preserving proofs
+
+Both probes use unchanged test source SHA256 `FEE146D71CD1FBCAD171B1CCD942706D1DE371A9EF59860DE6245360B4A21081` (`embedding_result_finalization.rs`). The full ordinary baseline passed 17/17, exit 0, before mutation execution. Fault injection changes only the named primary statement in a disposable SQLx database function obtained with `pg_get_functiondef`; no migration bytes or downstream validation families change. Function definition restoration occurs before the error oracle. Original/restored definitions are byte-identical; owner, exact proacl and runtime EXECUTE are asserted unchanged before/after. Both functions retain owner `vestrace_guarded_owner`, ACL `{vestrace_guarded_owner=X/vestrace_guarded_owner,vestrace=X/vestrace_guarded_owner}`, runtime EXECUTE true.
+
+For each attempt, the runtime transaction is committed on unexpected command success or rolled back on error. A separate owner-pool observer reads complete Facts and immutable history after that transaction ends. Before checking the error, both probes independently assert exact baseline equality: publications/events 0, bindings 1, history 2, generic attachments 2, Live materials/intents/projections 0, commitments 0, ordinary references 0, nonterminal source blockers 6, job running/version 2, corpus revision/live-member count/generation epoch 0. History bytes/identities also compare equal. Thus these are defense-preserving primary-gate sensitivity proofs, not unsafe persisted-state proofs. The nine earlier unsafe-state/external-callback records remain unchanged.
+
+Generic finalizer:
+- Unchanged command: `cargo test -p vestrace-infrastructure --test embedding_result_finalization generic_finalizer_cannot_publish_bound_embedding_output -- --nocapture`.
+- Mutation selected only with `VESTRACE_TEST_FINALIZATION_PRIMARY_MUTANT=generic`; removes the exact embedding-output primary refusal in `vestrace_finalize_bound_content_material(uuid)`.
+- Original/restored function SHA256: `A7767832F886249FAC8E3CA0BDFC8AA7410B52D8BB5DE9AC968C5D56ABA33F93`; mutant: `6F6AD479182132B3E3C786D754EF124BA403E8D68A9B0CBA55DC47E04A3E0D7F`.
+- RED exit 101, 0/1: actual downstream SQLSTATE 23514, `Live material requires its exact Bound promotion`; unchanged exact-primary-message assertion fails after unchanged persisted Facts/history are observed.
+- After exact restoration and removing the environment selector: GREEN exit 0, 1/1; primary SQLSTATE 23514, `embedding output requires specialized publication`, same baseline.
+
+Complete-all-bound primary gate:
+- Unchanged command: `cargo test -p vestrace-infrastructure --test embedding_result_finalization partial_binding_preserves_history_and_stays_non_live -- --nocapture`.
+- Mutation selected only with `VESTRACE_TEST_FINALIZATION_PRIMARY_MUTANT=all_bound`; removes only the `phase <> ready_to_publish` primary refusal in `vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[])`.
+- Original/restored function SHA256: `FE5EBDB2AED217C1B414D0B9B843DEE555C810251C1E9EB74DF1EFF794206338`; mutant: `718EF1444C3D4DE9C30FB65ACBB7C9063DDBC78ADAB92ECAF9E26A8AAA079364`.
+- RED exit 101, 0/1: downstream SQLSTATE 23514, `publication intent changed`; unchanged exact-primary-message assertion fails after the separate observer verifies the complete baseline.
+- After exact restoration and removing the selector: GREEN exit 0, 1/1; primary SQLSTATE 23514, `publication requires all exact bindings`, same baseline.
+
+Discarded harness attempt: replacing the function while SET LOCAL ROLE was `vestrace_guarded_owner` failed before mutation installation with 42501 `permission denied for schema public`. This is not a qualifying RED. The corrected harness uses the existing SQLx owner pool for isolated function replacement/restoration, without grants or ownership changes. A restored-mode probe after the discarded attempt passed 1/1.
+
+
+Final-source rerun: pinned Clippy identified `format_collect` only in the new test SHA renderer; replacing it with equivalent `fold`/`write!` made the exact mandatory pinned Clippy command exit 0. `cargo fmt --all -- --check` exited 0. The final test SHA256 is `5AF4C388913B4A83C8D900FCA376F1006A0DDAEDA8F5715920A3EC0A28C0D4A9`. Both unchanged commands above were rerun on this final source: generic RED 101 / restored GREEN 0 (1/1), all-bound RED 101 / restored GREEN 0 (1/1). All original/mutant/restored function hashes, observed primary/downstream messages, authority comparisons and complete Facts/history baselines were identical to the records above. This final rerun supersedes the earlier source hash for qualification.
+
+Root-independent final checks: combined P02/P03/P04 node scope tests exit 0, 16/16; reopened dirty-baseline verifier exit 0; protocol lock exit 0. The 125-entry pre-0196 migration digest capture was checked in full with zero mismatches. Migration 0196 SHA256 remained `C5B828DF1A6B8E646905A5605CBC044AA73AB3B936E7A7E2DF0563EB078CA230`.
+
+
+Review correction before acceptance: the earlier range replacement had also removed the original partial-binding probe's positive resume tail. Independent review recovered its exact prior text: reload NeedsBinding, compare the complete missing binding to the second original binding, resume through the real repository/host-vault/HMAC service, assert two Live materials and unchanged immutable history. That exact tail has been restored after the new primary-refusal assertion. The preceding source-SHA finality claim is superseded; qualification requires the subsequent full-suite and proof reruns on the restored complete probe. No downstream SQL guard, production source or migration changed.
+
+
+Final pinned regression gates (plain Cargo, repository toolchain 1.85.0):
+- `cargo test -p vestrace-infrastructure --test embedding_result_finalization --test credential_activation -- --nocapture`: exit 0; finalization 17/17, credential activation 17/17. The subsequent review restoration affects only the finalization test and is separately rerun below.
+- `cargo test -p vestrace-application embedding::finalization -- --nocapture`: exit 0, 7/7; `cargo test -p vestrace-application embedding::result -- --nocapture`: exit 0, 4/4.
+- `cargo test -p vestrace-infrastructure --test embedding_result_preparation --test embedding_output_keys --test embedding_effect_recovery --test embedding_schema_contract --test embedding_runtime_role_refusals --test p03_upgrade_provisioning --test runtime_role_cannot_write_directly -- --nocapture`: exit 0; preparation 14/14, output keys 28/28, recovery 19/19, schema 16/16, embedding runtime refusals 3/3, upgrade provisioning 9/9, direct-write refusal 45/45.
+- `cargo build -p vestrace-fault-scenario`: exit 0. `cargo test --test embedding_fault_scenario_e2e -- --ignored --nocapture --test-threads=1`: exit 0, 3/3 (42.07 seconds), including the actual finalization child-abort matrix.
+- After restoring the original partial-resume assertions, `cargo fmt --all -- --check`: exit 0; exact `cargo clippy -p vestrace-application -p vestrace-infrastructure -p vestrace-fault-scenario --all-targets -- -D warnings`: exit 0.
+
+
+Final complete-probe qualification (supersedes both earlier test-source hashes): SHA256 `DED3E5944022719575F5E0A1A1E46B757E0B93411CFC03DB07B733382698045A`. The original positive partial-binding resume tail is present verbatim. `cargo test -p vestrace-infrastructure --test embedding_result_finalization -- --nocapture` passed 17/17, exit 0 (23.95 seconds), before the final proof pairs. Exact pinned fmt and Clippy both exited 0 on these bytes.
+
+Both unchanged focused commands recorded above were then run again on this complete final probe: generic mutant exit 101 / restored exit 0 (1/1); all-bound mutant exit 101 / restored exit 0 (1/1). The actual original/mutant/restored function hashes are unchanged from the two records above. Generic downstream refusal remained 23514 `Live material requires its exact Bound promotion`; all-bound downstream refusal remained 23514 `publication intent changed`. Restored runs re-established their exact original primary messages. Every run observed the separate-connection complete persisted Facts/history baseline before the primary-error assertion; both restorations were byte-identical and retained exact owner/proacl/runtime EXECUTE. The restored all-bound GREEN additionally executed the original exact missing-binding comparison and successful real-service resume to two Live materials with unchanged history.
+
+Builder recommendation: ACCEPT Task 14E qualification under the explicitly authorized final amendment. Nine unsafe-state/external-callback mutation records and these two defense-preserving primary-gate records are retained with their distinct meanings. Successful rotation-before-legacy-adoption remains explicitly deferred until the transition-aware rotation authority exists; no bypass is introduced and ordinary retired credential erasure is not presented as that proof. This recommendation does not close the remaining P04/G0/v1.0 program packages. No commit, push or deployment was performed.
+
+#### Task 14E final lead acceptance - APPROVED
+
+The lead accepts Task 14E under the user-authorized final qualification
+amendment. The final complete probe SHA256 is
+`DED3E5944022719575F5E0A1A1E46B757E0B93411CFC03DB07B733382698045A`.
+The final independent read-only review returned `VERDICT: APPROVE` after the
+original partial-binding resume assertions were restored. Both amended
+mutation proofs completed RED 101 -> exact restore -> GREEN 0, the final
+17-test finalization suite and all recorded pinned acceptance gates passed,
+scope remains 127/23, and all migration digests remain unchanged.
+
+This acceptance closes Task 14E only. The approved rotation-before-adoption
+deferral remains binding, and P04, G0, and v1.0 remain incomplete. No commit,
+push, or deployment was performed.

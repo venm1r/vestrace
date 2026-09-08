@@ -1332,3 +1332,81 @@ async fn enrollment_and_termination_serialize_on_the_embedding_job_lock_chain(po
     );
     runtime.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+async fn result_finalization_runtime_inventory_preserves_prior_acl_and_closes_new_authority(
+    pool: PgPool,
+) {
+    common::result_preparation_fixture::provision_result_behavior_database(&pool).await;
+    for table in [
+        "embedding_job_credential_completion_blockers",
+        "embedding_result_credential_blocker_adoptions",
+        "embedding_result_key_binding_receipts",
+        "embedding_job_result_publications",
+        "embedding_index_rebuild_events",
+    ] {
+        let inventory: (String, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT pg_get_userbyid(relowner),relrowsecurity,relforcerowsecurity,has_table_privilege('vestrace',$1,'INSERT'),has_table_privilege('vestrace',$1,'UPDATE'),has_table_privilege('vestrace',$1,'DELETE'),has_table_privilege('vestrace',$1,'TRIGGER') FROM pg_class WHERE oid=$1::regclass",
+        ).bind(table).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            inventory,
+            (
+                "vestrace_guarded_owner".into(),
+                true,
+                true,
+                false,
+                false,
+                false,
+                false
+            ),
+            "{table}"
+        );
+    }
+    for signature in [
+        "vestrace_ensure_embedding_credential_completion_blocker(uuid,uuid,uuid)",
+        "vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)",
+        "vestrace_lock_embedding_result_finalization(uuid,uuid,uuid,uuid)",
+        "vestrace_validate_embedding_credential_completion_owner()",
+        "vestrace_guard_embedding_credential_completion_blocker()",
+        "vestrace_guard_embedding_projection_publication()",
+        "vestrace_validate_embedding_result_preparation()",
+    ] {
+        let authority: (String, bool, bool) = sqlx::query_as(
+            "SELECT pg_get_userbyid(proowner),prosecdef,has_function_privilege('vestrace',oid,'EXECUTE') FROM pg_proc WHERE oid=$1::regprocedure",
+        ).bind(signature).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            authority,
+            ("vestrace_guarded_owner".into(), true, false),
+            "{signature}"
+        );
+    }
+    for signature in [
+        "vestrace_load_embedding_result_finalization(uuid,uuid,uuid,uuid)",
+        "vestrace_record_embedding_result_key_binding(uuid,uuid,uuid,uuid,bigint,uuid)",
+        "vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[])",
+        "vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid)",
+        //0191's published fallback promises this same runtime capability.
+        "vestrace_publish_embedding_corpus_generation(uuid,uuid,uuid,bigint)",
+    ] {
+        let allowed: bool =
+            sqlx::query_scalar("SELECT has_function_privilege('vestrace',$1,'EXECUTE')")
+                .bind(signature)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(allowed, "{signature}");
+    }
+    for table in [
+        "credential_revisions",
+        "credential_key_creation_intents",
+        "embedding_space_registrations",
+    ] {
+        let previous: bool =
+            sqlx::query_scalar("SELECT has_table_privilege('vestrace',$1,'REFERENCES')")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(previous, "preexisting REFERENCES must survive0195: {table}");
+    }
+}

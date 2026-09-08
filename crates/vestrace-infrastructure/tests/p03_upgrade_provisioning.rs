@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 92] = [
+const EXPECTED_GUARDED_TABLES: [&str; 97] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -98,6 +98,11 @@ const EXPECTED_GUARDED_TABLES: [&str; 92] = [
     "embedding_projection_entries",
     "embedding_job_result_prepared_attachments",
     "embedding_projection_source_dependencies",
+    "embedding_job_credential_completion_blockers",
+    "embedding_result_credential_blocker_adoptions",
+    "embedding_result_key_binding_receipts",
+    "embedding_job_result_publications",
+    "embedding_index_rebuild_events",
     "embedding_transition_plan_recipes",
     "embedding_transition_plans",
     "embedding_transitions",
@@ -239,6 +244,13 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
     .await
     .unwrap();
 
+    let result_finalization_migration_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=195 AND success)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
     let guarded: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname FROM pg_class AS c \
          JOIN pg_namespace AS n ON n.oid = c.relnamespace \
@@ -270,6 +282,17 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
             "embedding_projection_entries",
             "embedding_job_result_prepared_attachments",
             "embedding_projection_source_dependencies",
+        ] {
+            expected_guarded.remove(table);
+        }
+    }
+    if !result_finalization_migration_applied {
+        for table in [
+            "embedding_job_credential_completion_blockers",
+            "embedding_result_credential_blocker_adoptions",
+            "embedding_result_key_binding_receipts",
+            "embedding_job_result_publications",
+            "embedding_index_rebuild_events",
         ] {
             expected_guarded.remove(table);
         }
@@ -661,6 +684,7 @@ async fn fresh_database_runs_real_provisioner_before_runtime_migrator(pool: PgPo
     let runtime = runtime_pool(&pool).await;
     MIGRATOR.run(&runtime).await.unwrap();
     assert_final_p03_schema(&runtime, true).await;
+    assert_retired_credential_erasure_function_inventory(&runtime).await;
     runtime.close().await;
 }
 
@@ -1713,4 +1737,97 @@ async fn existing_0183_volume_refreshes_and_invokes_dependency_grant_before_disp
             "post-0184 bootstrap must remove the installer"
         );
     }
+}
+
+async fn assert_retired_credential_erasure_function_inventory(pool: &PgPool) {
+    for (signature, executable) in [
+        ("vestrace_validate_material_erasure()", false),
+        (
+            "vestrace_finalize_credential_material_erasure(uuid,uuid)",
+            true,
+        ),
+    ] {
+        let actual: (String, bool, bool, bool) = sqlx::query_as(
+            "SELECT pg_get_userbyid(proowner),prosecdef,has_function_privilege('vestrace',oid,'EXECUTE'),EXISTS(SELECT 1 FROM aclexplode(coalesce(proacl,acldefault('f',proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') FROM pg_proc WHERE oid=$1::regprocedure",
+        ).bind(signature).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            actual,
+            ("vestrace_guarded_owner".into(), true, executable, false),
+            "{signature}"
+        );
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn existing_0195_runtime_erasure_upgrade_changes_only_two_function_owners(pool: PgPool) {
+    install_extensions_from_real_provisioner(&pool).await;
+    hand_database_to_runtime(&pool).await;
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let runtime = runtime_pool(&pool).await;
+    let through_0195 = Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 195)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    };
+    through_0195.run(&runtime).await.unwrap();
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let inventory_query = "SELECT relname,pg_get_userbyid(relowner),coalesce(relacl::text,''),relrowsecurity,relforcerowsecurity FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r' ORDER BY relname";
+    let before: Vec<(String, String, String, bool, bool)> = sqlx::query_as(inventory_query)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    MIGRATOR.run(&runtime).await.unwrap();
+    let after: Vec<(String, String, String, bool, bool)> = sqlx::query_as(inventory_query)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "0196 must not transfer table ownership or alter table ACL/RLS"
+    );
+    assert_retired_credential_erasure_function_inventory(&runtime).await;
+    for name in [
+        "vestrace_prepare_retired_credential_erasure_upgrade()",
+        "vestrace_finish_retired_credential_erasure_upgrade()",
+    ] {
+        let executable: bool =
+            sqlx::query_scalar("SELECT has_function_privilege('vestrace',$1,'EXECUTE')")
+                .bind(name)
+                .fetch_one(&runtime)
+                .await
+                .unwrap();
+        assert!(!executable, "one-shot bridge must close: {name}");
+    }
+    MIGRATOR.run(&runtime).await.unwrap();
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_retired_credential_erasure_function_inventory(&runtime).await;
+    let helpers:i64=sqlx::query_scalar("SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('vestrace_prepare_retired_credential_erasure_upgrade','vestrace_finish_retired_credential_erasure_upgrade')").fetch_one(&pool).await.unwrap();
+    assert_eq!(helpers, 0);
+}
+
+#[sqlx::test(migrations = false)]
+async fn retired_credential_erasure_sqlx_fallback_preserves_exact_function_acl(pool: PgPool) {
+    install_extensions_from_real_provisioner(&pool).await;
+    MIGRATOR.run(&pool).await.unwrap();
+    assert_retired_credential_erasure_function_inventory(&pool).await;
 }

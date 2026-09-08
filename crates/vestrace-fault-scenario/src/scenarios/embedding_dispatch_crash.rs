@@ -161,7 +161,19 @@ fn replace_database(url: &str, database: &str) -> Result<String, String> {
 /// guarded revisions, pre-existing effect intent, qualification/snapshot rows,
 /// acceptance, admission policy, and complete request evidence.
 pub(super) async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, String> {
-    build_fixture_with_job(owner, runtime, true).await
+    // Job acceptance must atomically fix its outputs; an already accepted bare
+    // job cannot be backfilled with guessed identities under the current gate.
+    let fixture = build_result_preparation_fixture(owner, runtime).await?;
+    let context = RequestContext::new(
+        WorkspaceId::from_uuid(fixture.workspace_id),
+        PrincipalId::from_uuid(fixture.principal_id),
+    );
+    super::embedding_result_preparation_crash::prepare_dispatch_outputs(
+        owner, runtime, &fixture, &context,
+    )
+    .await?;
+    assert_baseline(owner, &fixture).await?;
+    Ok(fixture)
 }
 
 /// Result preparation receives its delivery job from the guarded output

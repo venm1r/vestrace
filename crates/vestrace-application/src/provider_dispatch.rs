@@ -414,6 +414,24 @@ pub trait GovernedRunStepInputAuthority: Send + Sync {
 /// change scope; the trait is ours, so the impl is well-formed anywhere in
 /// this crate.
 impl<T: crate::MaterialKeyVault + ?Sized> crate::MaterialKeyVault for std::sync::Arc<T> {
+    fn bind_embedding_output(
+        &self,
+        binding: &crate::EmbeddingOutputKeyBinding,
+        preparation: crate::EmbeddingResultPreparationId,
+    ) -> Result<vestrace_domain::MaterialKeyBindingReceipt, crate::VaultError> {
+        (**self).bind_embedding_output(binding, preparation)
+    }
+
+    fn with_bound_embedding_output_key(
+        &self,
+        binding: &crate::EmbeddingOutputKeyBinding,
+        preparation: crate::EmbeddingResultPreparationId,
+        receipt: vestrace_domain::MaterialKeyBindingReceipt,
+        use_dek: &mut dyn FnMut(&vestrace_domain::ZeroizingDek),
+    ) -> Result<(), crate::VaultError> {
+        (**self).with_bound_embedding_output_key(binding, preparation, receipt, use_dek)
+    }
+
     fn create_if_absent(
         &self,
         key_id: MaterialKeyId,

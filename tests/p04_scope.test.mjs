@@ -131,7 +131,8 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // point: scope that grows without an amendment fails here.
   // Task 14B adds only the explicitly authorized forward migration 0192.
   // Task 14C adds the six explicitly authorized output-key preparation paths.
-  assert.equal(changeScopePaths.length, 120);
+  // Task 14E adds the five explicitly approved finalization paths (2026-09-08).
+  assert.equal(changeScopePaths.length, 127);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });

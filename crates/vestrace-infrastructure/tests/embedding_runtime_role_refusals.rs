@@ -6,7 +6,7 @@ use sqlx::{
 };
 use uuid::Uuid;
 
-const P04_GUARDED_TABLES: [&str; 14] = [
+const P04_GUARDED_TABLES: [&str; 19] = [
     "embedding_space_registrations",
     "embedding_corpus_generations",
     "embedding_jobs",
@@ -21,6 +21,11 @@ const P04_GUARDED_TABLES: [&str; 14] = [
     "embedding_transition_barriers",
     "embedding_transition_barrier_recipes",
     "embedding_corpus_generation_members",
+    "embedding_job_credential_completion_blockers",
+    "embedding_result_credential_blocker_adoptions",
+    "embedding_result_key_binding_receipts",
+    "embedding_job_result_publications",
+    "embedding_index_rebuild_events",
 ];
 
 async fn runtime_pool(source: &PgPool) -> PgPool {

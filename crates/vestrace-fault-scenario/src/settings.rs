@@ -12,6 +12,7 @@ pub enum Scenario {
     CredentialIntent,
     EmbeddingDispatch,
     EmbeddingResultPreparation,
+    EmbeddingResultFinalization,
 }
 
 impl Scenario {
@@ -22,6 +23,7 @@ impl Scenario {
             "credential_intent_crash" => Ok(Self::CredentialIntent),
             "embedding_dispatch_crash" => Ok(Self::EmbeddingDispatch),
             "embedding_result_preparation_crash" => Ok(Self::EmbeddingResultPreparation),
+            "embedding_result_finalization_crash" => Ok(Self::EmbeddingResultFinalization),
             other => Err(format!("unknown scenario '{other}'")),
         }
     }
@@ -34,6 +36,7 @@ enum ScenarioPoint {
     Intent(EffectFaultPoint),
     Embedding(EffectFaultPoint),
     EmbeddingResultPreparation,
+    EmbeddingResultFinalization,
 }
 
 /// What one invocation was asked to do, and whether it is allowed to.
@@ -113,6 +116,12 @@ impl ScenarioSettings {
                 }
                 ScenarioPoint::EmbeddingResultPreparation
             }
+            Scenario::EmbeddingResultFinalization => {
+                if requested != "finalization_checkpoint_matrix" {
+                    return Err(format!("unknown fault point '{requested}'"));
+                }
+                ScenarioPoint::EmbeddingResultFinalization
+            }
         };
 
         let url_file = url_file
@@ -158,7 +167,8 @@ impl ScenarioSettings {
                 self.scenario,
                 point.as_str()
             ),
-            ScenarioPoint::EmbeddingResultPreparation => panic!(
+            ScenarioPoint::EmbeddingResultPreparation
+            | ScenarioPoint::EmbeddingResultFinalization => panic!(
                 "point() is defined only for the external-effect scenario, but this \
                  invocation is result preparation"
             ),
@@ -171,7 +181,8 @@ impl ScenarioSettings {
             ScenarioPoint::Intent(point) => Some(point),
             ScenarioPoint::Effect(_)
             | ScenarioPoint::Embedding(_)
-            | ScenarioPoint::EmbeddingResultPreparation => None,
+            | ScenarioPoint::EmbeddingResultPreparation
+            | ScenarioPoint::EmbeddingResultFinalization => None,
         }
     }
 
@@ -318,6 +329,23 @@ mod tests {
         )
         .expect_err("the result scenario must not borrow dispatch fault points");
         assert!(error.contains("unknown fault point"), "{error}");
+    }
+
+    #[test]
+    fn result_finalization_has_only_its_checkpoint_matrix() {
+        let settings = settings_for(
+            Some("embedding_result_finalization_crash"),
+            "finalization_checkpoint_matrix",
+        )
+        .unwrap();
+        assert_eq!(settings.scenario(), Scenario::EmbeddingResultFinalization);
+        assert!(
+            settings_for(
+                Some("embedding_result_finalization_crash"),
+                "after_result_prepared_before_return"
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -307,19 +307,33 @@ async fn prepare_candidate(pool: &PgPool, fixture: &Fixture) -> Candidate {
 }
 
 async fn fixture(pool: &PgPool) -> Fixture {
-    let context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
+    fixture_with_host(pool, None).await
+}
+
+async fn fixture_with_host(pool: &PgPool, host: Option<&RealErasureHost>) -> Fixture {
+    fixture_with_host_in_workspace(pool, host, None).await
+}
+
+async fn fixture_with_host_in_workspace(
+    pool: &PgPool,
+    host: Option<&RealErasureHost>,
+    existing_workspace: Option<WorkspaceId>,
+) -> Fixture {
+    let context = RequestContext::new(existing_workspace.unwrap_or_default(), PrincipalId::new());
     let connection_id = ConnectionId::new();
     let slot_id = CredentialSlotId::new();
     let execution_guard_id = Uuid::now_v7();
     let activation_guard_id = Uuid::now_v7();
     let connector_id = Uuid::now_v7();
 
-    sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
-        .bind(context.workspace_id.as_uuid())
-        .bind(format!("credential-activation-{}", context.workspace_id))
-        .execute(pool)
-        .await
-        .unwrap();
+    if existing_workspace.is_none() {
+        sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
+            .bind(context.workspace_id.as_uuid())
+            .bind(format!("credential-activation-{}", context.workspace_id))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     sqlx::query("INSERT INTO principals (id, workspace_id, identifier) VALUES ($1, $2, $3)")
         .bind(context.principal_id.as_uuid())
         .bind(context.workspace_id.as_uuid())
@@ -391,7 +405,11 @@ async fn fixture(pool: &PgPool) -> Fixture {
             occupancy_id: Uuid::nil(),
         },
     };
-    fixture.first = prepare_candidate(pool, &fixture).await;
+    fixture.first = if let Some(host) = host {
+        prepare_real_candidate(&runtime_pool(pool).await, &fixture, host).await
+    } else {
+        prepare_candidate(pool, &fixture).await
+    };
 
     let connection_revision_id = Uuid::now_v7();
     fixture.connection_revision_id = connection_revision_id;
@@ -1240,4 +1258,494 @@ async fn runtime_role_cannot_insert_activation_or_rotation_events(pool: PgPool) 
         Some("42501")
     );
     runtime.close().await;
+}
+
+// The ordinary erasure probes below own real durable envelopes. Existing
+// activation-only fixtures and their assertions remain unchanged.
+struct RealErasureHost {
+    bootstrap: tempfile::TempDir,
+    storage: tempfile::TempDir,
+}
+impl RealErasureHost {
+    fn new() -> Self {
+        let bootstrap = tempfile::tempdir().unwrap();
+        let key = bootstrap.path().join("credential-erasure-test");
+        std::fs::create_dir_all(key.join("v1")).unwrap();
+        for (name, bytes) in [
+            ("scope", b"credential-erasure".as_slice()),
+            ("purpose", b"storage".as_slice()),
+            ("algorithm", b"aes-256-gcm-v1".as_slice()),
+        ] {
+            std::fs::write(key.join(name), bytes).unwrap();
+        }
+        std::fs::write(key.join("v1/state"), b"active").unwrap();
+        std::fs::write(key.join("v1/private.pkcs8"), [0x67_u8; 32]).unwrap();
+        Self {
+            bootstrap,
+            storage: tempfile::tempdir().unwrap(),
+        }
+    }
+    fn vault(
+        &self,
+        context: &RequestContext,
+    ) -> vestrace_infrastructure::crypto::HostMaterialKeyVault {
+        use vestrace_domain::trust::{KeyPurpose, KeyReference, SecretResolutionRequest};
+        use vestrace_infrastructure::crypto::{
+            HostMaterialKeyVault, MOUNTED_SECRET_STORE_PROVIDER,
+        };
+        HostMaterialKeyVault::new(
+            self.storage.path(),
+            self.bootstrap.path(),
+            KeyReference::new(
+                MOUNTED_SECRET_STORE_PROVIDER,
+                "credential-erasure-test",
+                "v1",
+                KeyPurpose::Storage,
+                "credential-erasure",
+                "aes-256-gcm-v1",
+            )
+            .unwrap(),
+            SecretResolutionRequest::new(
+                context.workspace_id,
+                "credential-erasure",
+                "test://retired-credential-erasure",
+            ),
+        )
+        .unwrap()
+    }
+}
+async fn prepare_real_candidate(
+    runtime: &PgPool,
+    fixture: &Fixture,
+    host: &RealErasureHost,
+) -> Candidate {
+    use vestrace_domain::{CredentialKeyCreationIntentId, CredentialRevisionId};
+    use vestrace_infrastructure::crypto::{CredentialMaterialCodec, CredentialMaterialContext};
+    let candidate = Candidate {
+        intent_id: Uuid::now_v7(),
+        revision_id: Uuid::now_v7(),
+        occupancy_id: Uuid::now_v7(),
+    };
+    let key = MaterialKeyId::new();
+    let nonce = IntentNonce::new();
+    let mut tx = scoped_transaction(runtime, &fixture.context).await;
+    sqlx::query("SELECT vestrace_reserve_credential_preparing_occupancy($1,$2,$3,$4)")
+        .bind(candidate.occupancy_id)
+        .bind(fixture.context.workspace_id.as_uuid())
+        .bind(fixture.connection_id.as_uuid())
+        .bind(fixture.slot_id.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_reserve_credential_key_creation_intent($1,$2,$3,$4,$5,$6,$7,$8,'credential_v2')")
+        .bind(candidate.intent_id).bind(fixture.context.workspace_id.as_uuid()).bind(fixture.connection_id.as_uuid()).bind(fixture.slot_id.as_uuid()).bind(candidate.occupancy_id).bind(candidate.revision_id).bind(key.as_uuid()).bind(nonce.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("SELECT vestrace_record_credential_key_provisional_created($1)")
+        .bind(candidate.intent_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let vault = host.vault(&fixture.context);
+    let receipt = vault.create_if_absent(key, nonce).unwrap();
+    let material_context = CredentialMaterialContext {
+        profile: "credential_v2",
+        workspace_id: fixture.context.workspace_id,
+        connection_id: fixture.connection_id,
+        credential_slot_id: fixture.slot_id,
+        credential_revision_id: CredentialRevisionId::from_uuid(candidate.revision_id),
+        material_key_id: key,
+        intent_id: CredentialKeyCreationIntentId::from_uuid(candidate.intent_id),
+        intent_nonce: nonce,
+    };
+    let mut ciphertext = None;
+    vault
+        .unwrap(key, &mut |dek| {
+            ciphertext = Some(
+                CredentialMaterialCodec::new()
+                    .seal(&material_context, dek, b"ephemeral-test-credential")
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+    let mut tx = scoped_transaction(runtime, &fixture.context).await;
+    sqlx::query("SELECT vestrace_record_credential_key_provisional_receipt($1,$2)")
+        .bind(candidate.intent_id)
+        .bind(receipt.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_create_credential_prepared_material($1,$2,$3)")
+        .bind(candidate.intent_id)
+        .bind(Uuid::now_v7())
+        .bind(ciphertext.unwrap())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_bind_credential_key_creation_intent($1,$2)")
+        .bind(candidate.intent_id)
+        .bind(Uuid::now_v7())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_finalize_bound_credential_candidate($1)")
+        .bind(candidate.intent_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    candidate
+}
+
+async fn real_ordinary_erasure(
+    owner: &PgPool,
+    runtime: &PgPool,
+    fixture: &Fixture,
+    host: &RealErasureHost,
+    candidate: Candidate,
+) {
+    use vestrace_application::MaterialErasureRepository;
+    let mut tx = scoped_transaction(runtime, &fixture.context).await;
+    let prepared: (Uuid,Uuid,Option<Uuid>) = sqlx::query_as("SELECT preparation_id,material_key_id,finalized_erasure_receipt FROM vestrace_prepare_retired_or_revoked_credential_erasure($1)")
+        .bind(candidate.intent_id).fetch_one(&mut *tx).await.unwrap();
+    tx.commit().await.expect(
+        "legitimate activated-occupancy erasure preparation must commit before host erasure",
+    );
+    assert!(prepared.2.is_none());
+    let before: (String,String,i64,i64) = sqlx::query_as("SELECT i.state,o.state,(SELECT count(*) FROM credential_prepared_materials WHERE intent_id=i.id),(SELECT count(*) FROM material_erasure_events WHERE preparation_id=$2 AND event_kind='erasure_prepared') FROM credential_key_creation_intents i JOIN credential_guard_occupancies o ON o.id=i.occupancy_id WHERE i.id=$1")
+        .bind(candidate.intent_id).bind(prepared.0).fetch_one(owner).await.unwrap();
+    assert_eq!(
+        before,
+        ("erasure_prepared".into(), "activated".into(), 1, 1)
+    );
+    let key = MaterialKeyId::from_uuid(prepared.1);
+    let vault = host.vault(&fixture.context);
+    let mut callbacks = 0;
+    vault.unwrap(key, &mut |_| callbacks += 1).unwrap();
+    assert_eq!(callbacks, 1);
+    let fence = vault.prepare_erasure(key).unwrap();
+    let repository = PgMaterialErasureRepository::new(PgStore::from_pool(runtime.clone()));
+    repository
+        .record_fence(&fixture.context, prepared.0, fence)
+        .await
+        .unwrap();
+    let receipt = vault.erase(key).unwrap();
+    assert_eq!(
+        repository
+            .finalize_credential(&fixture.context, prepared.0, receipt)
+            .await
+            .unwrap(),
+        receipt
+    );
+    let after: (String,String,i64,i64,i64,i64,Uuid) = sqlx::query_as("SELECT i.state,o.state,(SELECT count(*) FROM credential_prepared_materials WHERE intent_id=i.id),(SELECT count(*) FROM material_erasure_events WHERE preparation_id=p.id AND event_kind='erasure_prepared'),(SELECT count(*) FROM material_erasure_events WHERE preparation_id=p.id AND event_kind='destroyed'),(SELECT count(*) FROM material_erasure_audit_tombstones WHERE preparation_id=p.id),p.erasure_receipt FROM credential_key_creation_intents i JOIN credential_guard_occupancies o ON o.id=i.occupancy_id JOIN material_erasure_preparations p ON p.credential_intent_id=i.id WHERE i.id=$1")
+        .bind(candidate.intent_id).fetch_one(owner).await.unwrap();
+    assert_eq!(
+        after,
+        (
+            "destroyed".into(),
+            "destroyed".into(),
+            0,
+            1,
+            1,
+            1,
+            receipt.as_uuid()
+        )
+    );
+    assert_eq!(host.vault(&fixture.context).erase(key).unwrap(), receipt);
+    assert!(
+        host.vault(&fixture.context)
+            .unwrap(key, &mut |_| panic!("destroyed key callback"))
+            .is_err()
+    );
+    assert_eq!(
+        repository
+            .finalize_credential(&fixture.context, prepared.0, receipt)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert!(
+        repository
+            .finalize_credential(
+                &fixture.context,
+                prepared.0,
+                ErasureReceipt::from_uuid(Uuid::now_v7())
+            )
+            .await
+            .is_err()
+    );
+    let final_counts: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM material_erasure_events WHERE preparation_id=$1),(SELECT count(*) FROM material_erasure_audit_tombstones WHERE preparation_id=$1)").bind(prepared.0).fetch_one(owner).await.unwrap();
+    assert_eq!(final_counts, (2, 1));
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn revoked_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
+    let host = RealErasureHost::new();
+    let fixture = fixture_with_host(&pool, Some(&host)).await;
+    let runtime = runtime_pool(&pool).await;
+    let repository = PgCredentialActivationRepository::new(PgStore::from_pool(runtime.clone()));
+    repository
+        .activate_first(
+            fixture.context.clone(),
+            activate_command(&fixture, fixture.first, 0),
+        )
+        .await
+        .unwrap();
+    repository
+        .revoke(
+            fixture.context.clone(),
+            revoke_command(&fixture, fixture.first, 1),
+        )
+        .await
+        .unwrap();
+    real_ordinary_erasure(&pool, &runtime, &fixture, &host, fixture.first).await;
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn retired_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
+    let host = RealErasureHost::new();
+    let fixture = fixture_with_host(&pool, Some(&host)).await;
+    let runtime = runtime_pool(&pool).await;
+    let repository = PgCredentialActivationRepository::new(PgStore::from_pool(runtime.clone()));
+    repository
+        .activate_first(
+            fixture.context.clone(),
+            activate_command(&fixture, fixture.first, 0),
+        )
+        .await
+        .unwrap();
+    let successor = prepare_real_candidate(&runtime, &fixture, &host).await;
+    repository
+        .rotate(
+            fixture.context.clone(),
+            rotation_command(&fixture, fixture.first, successor, 1),
+        )
+        .await
+        .unwrap();
+    real_ordinary_erasure(&pool, &runtime, &fixture, &host, fixture.first).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn ordinary_erasure_refuses_candidate_active_and_foreign_identity(pool: PgPool) {
+    let host = RealErasureHost::new();
+    let fixture = fixture_with_host(&pool, Some(&host)).await;
+    let runtime = runtime_pool(&pool).await;
+    let repository = PgCredentialActivationRepository::new(PgStore::from_pool(runtime.clone()));
+    // Candidate has neither outgoing rotation nor revoked evidence. Active
+    // remains current. Neither is an ordinary erasure authority.
+    for active in [false, true] {
+        if active {
+            repository
+                .activate_first(
+                    fixture.context.clone(),
+                    activate_command(&fixture, fixture.first, 0),
+                )
+                .await
+                .unwrap();
+        }
+        let mut tx = scoped_transaction(&runtime, &fixture.context).await;
+        let attempted =
+            sqlx::query("SELECT * FROM vestrace_prepare_retired_or_revoked_credential_erasure($1)")
+                .bind(fixture.first.intent_id)
+                .execute(&mut *tx)
+                .await;
+        let result = match attempted {
+            Ok(_) => tx.commit().await,
+            Err(error) => {
+                tx.rollback().await.unwrap();
+                Err(error)
+            }
+        };
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM material_erasure_preparations WHERE credential_intent_id=$1",
+        )
+        .bind(fixture.first.intent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "ineligible credential must not acquire durable erasure authority"
+        );
+        assert_eq!(
+            result
+                .unwrap_err()
+                .as_database_error()
+                .and_then(|e| e.code())
+                .as_deref(),
+            Some("23514")
+        );
+    }
+    repository
+        .revoke(
+            fixture.context.clone(),
+            revoke_command(&fixture, fixture.first, 1),
+        )
+        .await
+        .unwrap();
+    for (context, intent) in [
+        (fixture.context.clone(), Uuid::now_v7()),
+        (
+            RequestContext::new(WorkspaceId::new(), fixture.context.principal_id),
+            fixture.first.intent_id,
+        ),
+    ] {
+        let mut tx = scoped_transaction(&runtime, &context).await;
+        let result =
+            sqlx::query("SELECT * FROM vestrace_prepare_retired_or_revoked_credential_erasure($1)")
+                .bind(intent)
+                .execute(&mut *tx)
+                .await;
+        let result = match result {
+            Ok(_) => tx.commit().await,
+            Err(error) => {
+                tx.rollback().await.unwrap();
+                Err(error)
+            }
+        };
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM material_erasure_preparations WHERE credential_intent_id=$1",
+        )
+        .bind(fixture.first.intent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "wrong workspace or intent must leave no preparation"
+        );
+        assert!(result.is_err());
+    }
+    let key: Uuid = sqlx::query_scalar(
+        "SELECT material_key_id FROM credential_key_creation_intents WHERE id=$1",
+    )
+    .bind(fixture.first.intent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let mut callbacks = 0;
+    host.vault(&fixture.context)
+        .unwrap(MaterialKeyId::from_uuid(key), &mut |_| callbacks += 1)
+        .unwrap();
+    assert_eq!(callbacks, 1, "refusals must preserve the actual host key");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn credential_finalizer_defensively_requires_its_exact_revocation_evidence(pool: PgPool) {
+    use vestrace_application::MaterialErasureRepository;
+    let host = RealErasureHost::new();
+    let target = fixture_with_host(&pool, Some(&host)).await;
+    let other =
+        fixture_with_host_in_workspace(&pool, Some(&host), Some(target.context.workspace_id)).await;
+    let runtime = runtime_pool(&pool).await;
+    let activation = PgCredentialActivationRepository::new(PgStore::from_pool(runtime.clone()));
+    for fixture in [&target, &other] {
+        activation
+            .activate_first(
+                fixture.context.clone(),
+                activate_command(fixture, fixture.first, 0),
+            )
+            .await
+            .unwrap();
+        activation
+            .revoke(
+                fixture.context.clone(),
+                revoke_command(fixture, fixture.first, 1),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(target.context.workspace_id, other.context.workspace_id);
+    assert_ne!(target.connection_id, other.connection_id);
+    assert_ne!(target.slot_id, other.slot_id);
+    assert_ne!(target.first.revision_id, other.first.revision_id);
+    // Match the SECURITY DEFINER execution role and target workspace without
+    // granting direct runtime reads on the private lifecycle evidence table.
+    let mut visible = scoped_transaction(&pool, &target.context).await;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *visible)
+        .await
+        .unwrap();
+    let other_visible: i64 = sqlx::query_scalar("SELECT count(*) FROM credential_activation_events WHERE credential_intent_id=$1 AND event_kind='revoked'")
+        .bind(other.first.intent_id).fetch_one(&mut *visible).await.unwrap();
+    assert_eq!(
+        other_visible, 1,
+        "the mismatched revoked tuple must be visible to the guarded function in the target workspace"
+    );
+    visible.commit().await.unwrap();
+    let mut tx = scoped_transaction(&runtime, &target.context).await;
+    let prepared: (Uuid,Uuid) = sqlx::query_as("SELECT preparation_id,material_key_id FROM vestrace_prepare_retired_or_revoked_credential_erasure($1)")
+        .bind(target.first.intent_id).fetch_one(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let key = MaterialKeyId::from_uuid(prepared.1);
+    let vault = host.vault(&target.context);
+    let fence = vault.prepare_erasure(key).unwrap();
+    PgMaterialErasureRepository::new(PgStore::from_pool(runtime.clone()))
+        .record_fence(&target.context, prepared.0, fence)
+        .await
+        .unwrap();
+    // Explicit defensive corruption, not a legal lifecycle winner. Remove only
+    // this target's actual revoked event; another legitimate revoked tuple
+    // remains and must never supply authority for the target's finalizer.
+    let mut corrupt = scoped_transaction(&pool, &target.context).await;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *corrupt)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE credential_activation_events DISABLE TRIGGER credential_activation_events_immutable").execute(&mut *corrupt).await.unwrap();
+    let removed = sqlx::query("DELETE FROM credential_activation_events WHERE workspace_id=$1 AND connection_id=$2 AND credential_slot_id=$3 AND credential_revision_id=$4 AND credential_intent_id=$5 AND event_kind='revoked'")
+        .bind(target.context.workspace_id.as_uuid()).bind(target.connection_id.as_uuid()).bind(target.slot_id.as_uuid()).bind(target.first.revision_id).bind(target.first.intent_id)
+        .execute(&mut *corrupt).await.unwrap();
+    assert_eq!(removed.rows_affected(), 1);
+    sqlx::query("ALTER TABLE credential_activation_events ENABLE TRIGGER credential_activation_events_immutable").execute(&mut *corrupt).await.unwrap();
+    let enabled: bool = sqlx::query_scalar("SELECT tgenabled='O' FROM pg_trigger WHERE tgrelid='credential_activation_events'::regclass AND tgname='credential_activation_events_immutable'")
+        .fetch_one(&mut *corrupt).await.unwrap();
+    assert!(
+        enabled,
+        "event immutability restored before corruption commit and real finalizer"
+    );
+    corrupt.commit().await.unwrap();
+    let evidence: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM credential_activation_events WHERE credential_intent_id=$1 AND event_kind='revoked'),(SELECT count(*) FROM credential_activation_events WHERE credential_intent_id=$2 AND event_kind='revoked')")
+        .bind(target.first.intent_id).bind(other.first.intent_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(evidence, (0, 1));
+    let snapshot_sql = "SELECT jsonb_build_object('intent',to_jsonb(i),'occupancy',to_jsonb(o),'preparation',to_jsonb(p),'ciphertext',(SELECT encode(ciphertext,'hex') FROM credential_prepared_materials WHERE intent_id=i.id),'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM material_erasure_events e WHERE preparation_id=p.id),'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM material_erasure_audit_tombstones a WHERE preparation_id=p.id)) FROM credential_key_creation_intents i JOIN credential_guard_occupancies o ON o.id=i.occupancy_id JOIN material_erasure_preparations p ON p.credential_intent_id=i.id WHERE i.id=$1";
+    let before: serde_json::Value = sqlx::query_scalar(snapshot_sql)
+        .bind(target.first.intent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(before["intent"]["state"], "erasure_prepared");
+    assert!(before["preparation"]["erasure_receipt"].is_null());
+    assert_eq!(before["events"].as_array().unwrap().len(), 1);
+    assert!(before["audit"].is_null());
+    let receipt = vault.erase(key).unwrap();
+    let mut finalize = scoped_transaction(&runtime, &target.context).await;
+    let attempted = sqlx::query("SELECT vestrace_finalize_credential_material_erasure($1,$2)")
+        .bind(prepared.0)
+        .bind(receipt.as_uuid())
+        .execute(&mut *finalize)
+        .await;
+    let attempted = match attempted {
+        Ok(_) => finalize.commit().await,
+        Err(error) => {
+            finalize.rollback().await.unwrap();
+            Err(error)
+        }
+    };
+    let after: serde_json::Value = sqlx::query_scalar(snapshot_sql)
+        .bind(target.first.intent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Do not print ciphertext or full credential rows on a failing assertion.
+    assert!(
+        after == before,
+        "unsafe persisted destruction used another credential's revocation evidence"
+    );
+    assert_eq!(
+        attempted
+            .unwrap_err()
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("23514")
+    );
+    assert_eq!(host.vault(&target.context).erase(key).unwrap(), receipt);
 }

@@ -7,6 +7,7 @@
 
 pub mod barrier;
 pub mod carry;
+pub mod finalization;
 pub mod job;
 pub mod keys;
 pub mod result;
@@ -14,6 +15,12 @@ pub mod transition;
 
 pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
 pub use carry::{AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping};
+pub use finalization::{
+    EmbeddingOutputCommitment, EmbeddingResultBoundOutput, EmbeddingResultCommitter,
+    EmbeddingResultFinalizationAuthority, EmbeddingResultFinalizationProgress,
+    EmbeddingResultFinalizationRepository, EmbeddingResultFinalizationService,
+    EmbeddingResultPublication,
+};
 pub use job::{
     AcceptEmbeddingJob, EmbeddingJobRepository, EmbeddingJobTerminationReceipt,
     EmbeddingJobTerminationService, PreDispatchTerminalState, PreDispatchTerminationEvidence,

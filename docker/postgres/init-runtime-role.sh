@@ -1916,4 +1916,192 @@ BEGIN
     END IF;
 END
 $bootstrap$;
+
+-- P04 0195 owns a distinct one-shot forward upgrade. The existing preparation
+-- bridge remains unchanged for historical and freshly installed databases.
+DO $finalization_bootstrap$
+DECLARE applied BOOLEAN:=false;
+BEGIN
+ IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+   EXECUTE 'SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=195 AND success)' INTO applied;
+ END IF;
+ IF applied THEN
+   DROP FUNCTION IF EXISTS public.vestrace_prepare_p04_result_finalization_upgrade();
+   DROP FUNCTION IF EXISTS public.vestrace_finish_p04_result_finalization_upgrade();
+ ELSE
+ EXECUTE $function$
+ CREATE OR REPLACE FUNCTION public.vestrace_prepare_p04_result_finalization_upgrade()
+ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+ DECLARE item TEXT; target REGPROCEDURE; owner_name TEXT;
+ BEGIN
+   IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=195 AND success) THEN
+     RAISE EXCEPTION 'finalization upgrade already closed' USING ERRCODE='42501';
+   END IF;
+   FOREACH item IN ARRAY ARRAY['embedding_jobs','embedding_job_result_preparations','embedding_job_result_prepared_attachments','embedding_space_corpus_states','embedding_projection_entries','prepared_material_attachments','embedding_projection_source_dependencies','material_key_creation_intents','content_materials','content_material_bytes','content_material_ordinary_references','material_erasure_blockers','embedding_index_generation_guards','embedding_corpus_generations'] LOOP
+     SELECT pg_get_userbyid(relowner) INTO owner_name FROM pg_class WHERE oid=to_regclass('public.'||item);
+     IF owner_name IS DISTINCT FROM 'vestrace_guarded_owner' AND owner_name IS DISTINCT FROM 'vestrace' THEN
+       RAISE EXCEPTION 'finalization table hand-back unavailable: %',item USING ERRCODE='42501';
+     END IF;
+     EXECUTE format('ALTER TABLE public.%I OWNER TO vestrace',item);
+   END LOOP;
+   FOREACH item IN ARRAY ARRAY['vestrace_validate_embedding_credential_completion_owner()','vestrace_ensure_embedding_credential_completion_blocker(uuid,uuid,uuid)','vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid)','vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)','vestrace_embedding_output_binding_identities(uuid,uuid)','vestrace_embedding_publication_json(uuid,uuid)','vestrace_lock_embedding_result_finalization(uuid,uuid,uuid,uuid)','vestrace_load_embedding_result_finalization(uuid,uuid,uuid,uuid)','vestrace_record_embedding_result_key_binding(uuid,uuid,uuid,uuid,bigint,uuid)','vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[])','vestrace_bind_material_key_creation_intent(uuid,uuid)','vestrace_finalize_bound_content_material(uuid)','vestrace_validate_material_key_creation_intent()','vestrace_load_embedding_result_eligibility(uuid,uuid,uuid)','vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid)','vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[])','vestrace_lock_embedding_job_recovery_authority(uuid,uuid)','vestrace_validate_embedding_projection_dependency()','vestrace_validate_embedding_result_preparation()','vestrace_guard_embedding_projection_publication()','vestrace_guard_embedding_credential_completion_blocker()'] LOOP
+     target:=to_regprocedure('public.'||item);
+     IF target IS NOT NULL THEN
+       SELECT pg_get_userbyid(proowner) INTO owner_name FROM pg_proc WHERE oid=target;
+       IF owner_name IS DISTINCT FROM 'vestrace_guarded_owner' AND owner_name IS DISTINCT FROM 'vestrace' THEN
+         RAISE EXCEPTION 'finalization function hand-back unavailable: %',item USING ERRCODE='42501';
+       END IF;
+       EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace',target);
+     END IF;
+   END LOOP;
+   -- Restore baseline REFERENCES after earlier ownership roundtrips.
+   GRANT REFERENCES ON TABLE public.credential_revisions,public.credential_key_creation_intents,public.embedding_space_registrations TO vestrace;
+   REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_p04_result_finalization_upgrade() FROM vestrace;
+ END $body$
+ $function$;
+ EXECUTE $function$
+ CREATE OR REPLACE FUNCTION public.vestrace_finish_p04_result_finalization_upgrade()
+ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+ DECLARE item TEXT; target REGPROCEDURE;
+   allowed_targets REGPROCEDURE[] := ARRAY[
+     to_regprocedure('public.vestrace_validate_embedding_credential_completion_owner()'),
+     to_regprocedure('public.vestrace_ensure_embedding_credential_completion_blocker(uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_embedding_output_binding_identities(uuid,uuid)'),
+     to_regprocedure('public.vestrace_embedding_publication_json(uuid,uuid)'),
+     to_regprocedure('public.vestrace_lock_embedding_result_finalization(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_load_embedding_result_finalization(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_record_embedding_result_key_binding(uuid,uuid,uuid,uuid,bigint,uuid)'),
+     to_regprocedure('public.vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[])'),
+     to_regprocedure('public.vestrace_bind_material_key_creation_intent(uuid,uuid)'),
+     to_regprocedure('public.vestrace_finalize_bound_content_material(uuid)'),
+     to_regprocedure('public.vestrace_validate_material_key_creation_intent()'),
+     to_regprocedure('public.vestrace_load_embedding_result_eligibility(uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[])'),
+     to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)'),
+     to_regprocedure('public.vestrace_validate_embedding_projection_dependency()'),
+     to_regprocedure('public.vestrace_validate_embedding_result_preparation()'),
+     to_regprocedure('public.vestrace_guard_embedding_projection_publication()'),
+     to_regprocedure('public.vestrace_guard_embedding_credential_completion_blocker()')
+   ];
+   runtime_executable_targets REGPROCEDURE[] := ARRAY[
+     to_regprocedure('public.vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_load_embedding_result_finalization(uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_record_embedding_result_key_binding(uuid,uuid,uuid,uuid,bigint,uuid)'),
+     to_regprocedure('public.vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[])'),
+     to_regprocedure('public.vestrace_bind_material_key_creation_intent(uuid,uuid)'),
+     to_regprocedure('public.vestrace_finalize_bound_content_material(uuid)'),
+     to_regprocedure('public.vestrace_load_embedding_result_eligibility(uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid)'),
+     to_regprocedure('public.vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[])'),
+     to_regprocedure('public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid)')
+   ];
+ BEGIN
+   IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=195 AND success) THEN
+     RAISE EXCEPTION 'finalization finish already closed' USING ERRCODE='42501';
+   END IF;
+
+ FOREACH item IN ARRAY ARRAY['embedding_jobs','embedding_job_result_preparations','embedding_job_result_prepared_attachments','embedding_space_corpus_states','embedding_projection_entries','prepared_material_attachments','embedding_projection_source_dependencies','material_key_creation_intents','content_materials','content_material_bytes','content_material_ordinary_references','material_erasure_blockers','embedding_index_generation_guards','embedding_corpus_generations','embedding_job_credential_completion_blockers','embedding_result_credential_blocker_adoptions','embedding_result_key_binding_receipts','embedding_job_result_publications','embedding_index_rebuild_events'] LOOP
+   EXECUTE format('ALTER TABLE public.%I OWNER TO vestrace_guarded_owner',item);
+   EXECUTE format('REVOKE INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES ON TABLE public.%I FROM vestrace',item);
+   -- Preserve only preexisting reads:0187:419-421,0194:1447-1448, provisioner922-934.
+   IF item=ANY(ARRAY['embedding_jobs','embedding_corpus_generations','embedding_space_corpus_states','embedding_index_generation_guards','embedding_job_result_preparations','embedding_projection_entries','embedding_job_result_prepared_attachments','embedding_projection_source_dependencies','material_key_creation_intents','content_materials','content_material_bytes']) THEN EXECUTE format('GRANT SELECT ON TABLE public.%I TO vestrace',item); END IF;
+   IF item=ANY(ARRAY['embedding_jobs','embedding_corpus_generations','material_key_creation_intents','content_materials']) THEN EXECUTE format('GRANT REFERENCES ON TABLE public.%I TO vestrace',item); END IF;
+ END LOOP;
+ FOREACH target IN ARRAY allowed_targets LOOP
+   item:=target::text;
+   IF target IS NULL THEN RAISE EXCEPTION 'finalization function absent: %',item USING ERRCODE='42501'; END IF;
+   EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
+   EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target);
+   IF target=ANY(runtime_executable_targets) THEN EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target); END IF;
+ END LOOP;
+ -- Restore exact documented0191fallback grant lost in its two-phase owner bridge.
+ GRANT EXECUTE ON FUNCTION public.vestrace_publish_embedding_corpus_generation(UUID,UUID,UUID,BIGINT) TO vestrace;
+
+   REVOKE EXECUTE ON FUNCTION public.vestrace_finish_p04_result_finalization_upgrade() FROM vestrace;
+ END $body$
+ $function$;
+ REVOKE ALL ON FUNCTION public.vestrace_prepare_p04_result_finalization_upgrade() FROM PUBLIC;
+ REVOKE ALL ON FUNCTION public.vestrace_finish_p04_result_finalization_upgrade() FROM PUBLIC;
+ GRANT EXECUTE ON FUNCTION public.vestrace_prepare_p04_result_finalization_upgrade() TO vestrace;
+ GRANT EXECUTE ON FUNCTION public.vestrace_finish_p04_result_finalization_upgrade() TO vestrace;
+ END IF;
+END $finalization_bootstrap$;
+
+-- 0196 repairs only the two existing credential-erasure functions. No table
+-- ownership or lifecycle-table access is lent to the runtime migrator.
+DO $credential_erasure_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=196 AND success)' INTO applied;
+    END IF;
+    IF applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_retired_credential_erasure_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_retired_credential_erasure_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_retired_credential_erasure_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+        DECLARE target REGPROCEDURE; owner_name TEXT;
+            allowed_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_validate_material_erasure()'),
+                to_regprocedure('public.vestrace_finalize_credential_material_erasure(uuid,uuid)')
+            ];
+        BEGIN
+            IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(
+                SELECT 1 FROM public._sqlx_migrations WHERE version=196 AND success
+            ) THEN
+                RAISE EXCEPTION 'credential erasure upgrade already closed' USING ERRCODE='42501';
+            END IF;
+            FOREACH target IN ARRAY allowed_targets LOOP
+                SELECT pg_get_userbyid(proowner) INTO owner_name FROM pg_proc WHERE oid=target;
+                IF target IS NULL OR owner_name IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                    RAISE EXCEPTION 'credential erasure exact function hand-back unavailable' USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace',target);
+            END LOOP;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_retired_credential_erasure_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_retired_credential_erasure_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $body$
+        DECLARE target REGPROCEDURE; owner_name TEXT;
+            allowed_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_validate_material_erasure()'),
+                to_regprocedure('public.vestrace_finalize_credential_material_erasure(uuid,uuid)')
+            ];
+            runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_finalize_credential_material_erasure(uuid,uuid)')
+            ];
+        BEGIN
+            IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(
+                SELECT 1 FROM public._sqlx_migrations WHERE version=196 AND success
+            ) THEN
+                RAISE EXCEPTION 'credential erasure finish already closed' USING ERRCODE='42501';
+            END IF;
+            FOREACH target IN ARRAY allowed_targets LOOP
+                SELECT pg_get_userbyid(proowner) INTO owner_name FROM pg_proc WHERE oid=target;
+                IF target IS NULL OR owner_name IS DISTINCT FROM 'vestrace' THEN
+                    RAISE EXCEPTION 'credential erasure exact replacement unavailable' USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target);
+                IF target=ANY(runtime_executable_targets) THEN
+                    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target);
+                END IF;
+            END LOOP;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_retired_credential_erasure_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_retired_credential_erasure_upgrade() FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_retired_credential_erasure_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_retired_credential_erasure_upgrade() TO vestrace;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_retired_credential_erasure_upgrade() TO vestrace;
+    END IF;
+END $credential_erasure_bootstrap$;
+
 SQL

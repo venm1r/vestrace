@@ -75,6 +75,27 @@ pub enum VaultError {
 
 /// The host-owned authority for material DEKs and their witnessed erasure fence.
 pub trait MaterialKeyVault: Send + Sync {
+    /// Durably binds the exact provisional output to its committed preparation.
+    /// Implementations must arbitrate this against provisional retirement.
+    fn bind_embedding_output(
+        &self,
+        _binding: &EmbeddingOutputKeyBinding,
+        _preparation: crate::EmbeddingResultPreparationId,
+    ) -> Result<vestrace_domain::MaterialKeyBindingReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
+    /// Lends a bound key only after verifying the complete binding and witness.
+    fn with_bound_embedding_output_key(
+        &self,
+        _binding: &EmbeddingOutputKeyBinding,
+        _preparation: crate::EmbeddingResultPreparationId,
+        _receipt: vestrace_domain::MaterialKeyBindingReceipt,
+        _use_dek: &mut dyn FnMut(&ZeroizingDek),
+    ) -> Result<(), VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
     /// Creates the reserved key once, returning the original receipt on an exact replay.
     fn create_if_absent(
         &self,

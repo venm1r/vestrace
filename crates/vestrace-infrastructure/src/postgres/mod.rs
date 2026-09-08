@@ -14,6 +14,7 @@ pub mod credential_intent;
 pub mod embedding_data_policy_decision_repository;
 pub mod embedding_job_repository;
 pub mod embedding_key_repository;
+pub mod embedding_result_finalization_repository;
 pub mod embedding_result_repository;
 pub mod embedding_store;
 pub mod embedding_transition_repository;
@@ -88,6 +89,9 @@ pub use credential_intent::PgCredentialIntentRepository;
 pub use embedding_data_policy_decision_repository::PgEmbeddingDataPolicyDecisionRepository;
 pub use embedding_job_repository::PgEmbeddingJobRepository;
 pub use embedding_key_repository::PgEmbeddingOutputKeyRepository;
+pub use embedding_result_finalization_repository::{
+    EmbeddingOutputHmacCommitter, PgEmbeddingResultFinalizationRepository,
+};
 pub use embedding_result_repository::PgEmbeddingResultRepository;
 pub use embedding_store::PgEmbeddingStore;
 pub use embedding_transition_repository::PgEmbeddingTransitionRepository;

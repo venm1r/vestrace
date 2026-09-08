@@ -41,6 +41,8 @@ use vestrace_infrastructure::{
 mod credential_intent_crash;
 #[path = "scenarios/embedding_dispatch_crash.rs"]
 mod embedding_dispatch_crash;
+#[path = "scenarios/embedding_result_finalization_crash.rs"]
+mod embedding_result_finalization_crash;
 #[path = "scenarios/embedding_result_preparation_crash.rs"]
 mod embedding_result_preparation_crash;
 #[path = "scenarios/material_intent_crash.rs"]
@@ -199,7 +201,8 @@ mod intent_support {
             vestrace_fault_scenario::settings::Scenario::EmbeddingDispatch => {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
-            vestrace_fault_scenario::settings::Scenario::EmbeddingResultPreparation => {
+            vestrace_fault_scenario::settings::Scenario::EmbeddingResultPreparation
+            | vestrace_fault_scenario::settings::Scenario::EmbeddingResultFinalization => {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
         };
@@ -362,6 +365,12 @@ async fn main() {
                 embedding_result_preparation_crash::run_child(&settings).await;
             }
             finish(embedding_result_preparation_crash::run_parent(&settings).await);
+        }
+        Scenario::EmbeddingResultFinalization => {
+            if settings.is_child() {
+                embedding_result_finalization_crash::run_child(&settings).await;
+            }
+            finish(embedding_result_finalization_crash::run_parent(&settings).await);
         }
     }
 

@@ -1188,6 +1188,24 @@ impl ProviderDispatchRepository for PgProviderDispatchRepository {
                 }
             }
             "succeeded" if row.has_receipt && row.has_result_preparation => {
+                // A delivery marker is preparation evidence, not publication
+                // authority. Re-read the complete 0195 publication before
+                // reporting the terminal result to a recovering worker.
+                let publication: serde_json::Value = sqlx::query_scalar(
+                    "SELECT vestrace_load_embedding_result_finalization($1,marker.id,$2,$3) \
+                     FROM embedding_job_result_preparations marker \
+                     WHERE marker.workspace_id=$1 AND marker.job_id=$2 AND marker.external_effect_id=$3",
+                )
+                .bind(context.workspace_id.as_uuid())
+                .bind(job_id.as_uuid())
+                .bind(row.external_effect_id)
+                .fetch_one(postgres_transaction(permit.unit_of_work_mut())?.connection())
+                .await
+                .map_err(map_embedding_job_recovery_error)?;
+                if publication.get("phase").and_then(serde_json::Value::as_str) != Some("published")
+                {
+                    return Err(embedding_job_recovery_refused());
+                }
                 EmbeddingJobAttemptRecovery::Succeeded
             }
             _ => return Err(embedding_job_recovery_refused()),

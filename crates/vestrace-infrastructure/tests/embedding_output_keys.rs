@@ -711,6 +711,17 @@ fn output_vault_process_actor() {
         "output_retire" => vault
             .retire_embedding_output(&binding)
             .map(|receipt| format!("ok:{}", receipt.as_uuid())),
+        "output_bind" => vault
+            .bind_embedding_output(
+                &binding,
+                vestrace_application::EmbeddingResultPreparationId::from_uuid(
+                    uuid::Uuid::parse_str(
+                        &std::env::var("VESTRACE_OUTPUT_PREPARATION_ID").unwrap(),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .map(|receipt| format!("ok:{}", receipt.as_uuid())),
         "ordinary_create" => vault
             .create_if_absent(binding.key_id, binding.nonce)
             .map(|receipt| format!("ok:{}", receipt.as_uuid())),
@@ -2995,4 +3006,287 @@ async fn retirement_requires_owned_authority_then_erases_and_releases_source_blo
         .expect("the exact retired output releases its source erasure blocker");
     erasure.rollback().await.unwrap();
     runtime.close().await;
+}
+
+#[test]
+fn output_binding_is_exact_durable_and_refuses_generic_and_provisional_access() {
+    use vestrace_application::EmbeddingResultPreparationId;
+    use vestrace_domain::MaterialKeyBindingReceipt;
+    let f = Fixture::new();
+    let b = f.binding();
+    let p = EmbeddingResultPreparationId::new();
+    f.vault().create_embedding_output_if_absent(&b).unwrap();
+    let receipt = f.vault().bind_embedding_output(&b, p).unwrap();
+    assert_eq!(f.vault().bind_embedding_output(&b, p).unwrap(), receipt);
+    let mut calls = 0;
+    f.vault()
+        .with_bound_embedding_output_key(&b, p, receipt, &mut |_| calls += 1)
+        .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(
+        f.vault()
+            .bind_embedding_output(&b, EmbeddingResultPreparationId::new()),
+        Err(VaultError::BindingMismatch)
+    );
+    assert!(
+        f.vault()
+            .with_bound_embedding_output_key(&b, p, MaterialKeyBindingReceipt::new(), &mut |_| {
+                calls += 1
+            })
+            .is_err()
+    );
+    assert!(
+        f.vault()
+            .with_bound_embedding_output_key(
+                &b,
+                EmbeddingResultPreparationId::new(),
+                receipt,
+                &mut |_| calls += 1
+            )
+            .is_err()
+    );
+    for changed in 0..7 {
+        let mut other = b.clone();
+        match changed {
+            0 => other.workspace_id = WorkspaceId::new(),
+            1 => other.job_id = EmbeddingJobId::new(),
+            2 => other.intent_id = MaterialKeyCreationIntentId::new(),
+            3 => other.material_id = ContentMaterialId::new(),
+            4 => other.key_id = MaterialKeyId::new(),
+            5 => other.nonce = IntentNonce::new(),
+            _ => other.output_ordinal += 1,
+        }
+        assert!(
+            f.vault()
+                .with_bound_embedding_output_key(&other, p, receipt, &mut |_| calls += 1)
+                .is_err()
+        );
+        assert!(f.vault().bind_embedding_output(&other, p).is_err());
+    }
+    assert!(
+        f.vault()
+            .with_embedding_output_key(&b, &mut |_| calls += 1)
+            .is_err()
+    );
+    assert_eq!(
+        f.vault().unwrap(b.key_id, &mut |_| calls += 1),
+        Err(VaultError::Provisional)
+    );
+    assert_eq!(
+        f.vault().prepare_erasure(b.key_id),
+        Err(VaultError::Provisional)
+    );
+    assert_eq!(f.vault().erase(b.key_id), Err(VaultError::Provisional));
+    assert!(f.vault().retire_embedding_output(&b).is_err());
+    assert_eq!(calls, 1);
+    let dir = f.vault.path().join(b.key_id.to_string());
+    assert!(dir.join("active/envelope").is_file());
+    assert!(!dir.join("fence").exists());
+    assert!(!dir.join("erased").exists());
+}
+
+// A failing mutation assertion must not leave a paused child holding the
+// Windows test executable open across the mandatory restore/GREEN build.
+struct OutputDecisionChild(Option<std::process::Child>);
+impl Drop for OutputDecisionChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[test]
+fn output_disposition_process_winners_survive_death_and_refuse_the_loser() {
+    use vestrace_application::EmbeddingResultPreparationId;
+    use vestrace_domain::MaterialKeyBindingReceipt;
+    for bind_wins in [true, false] {
+        let f = Fixture::new();
+        let b = f.binding();
+        let p = EmbeddingResultPreparationId::new();
+        f.vault().create_embedding_output_if_absent(&b).unwrap();
+        let artifacts = TempDir::new().unwrap();
+        let (winner, loser, checkpoint) = if bind_wins {
+            ("output_bind", "output_retire", "output_bind_decision")
+        } else {
+            ("output_retire", "output_bind", "output_retire_decision")
+        };
+        // Admit the losing process before the winning immutable decision.
+        // It must rejoin the same pathname arbitration after its stale reads.
+        let loser_result = artifacts.path().join("loser-result");
+        let loser_marker = artifacts.path().join("loser-marker");
+        let loser_checkpoint = if bind_wins {
+            "before_output_retire_decision"
+        } else {
+            "before_output_bind_decision"
+        };
+        let mut loser_command = fault_child_command(
+            &f,
+            &b,
+            loser,
+            loser_checkpoint,
+            &loser_marker,
+            &loser_result,
+        );
+        loser_command.env("VESTRACE_OUTPUT_PREPARATION_ID", p.as_uuid().to_string());
+        let mut loser_child = OutputDecisionChild(Some(loser_command.spawn().unwrap()));
+        wait_for_checkpoint(loser_child.0.as_mut().unwrap(), &loser_marker);
+        let marker = artifacts.path().join("winner-marker");
+        let result = artifacts.path().join("winner-result");
+        let mut command = fault_child_command(&f, &b, winner, checkpoint, &marker, &result);
+        command.env("VESTRACE_OUTPUT_PREPARATION_ID", p.as_uuid().to_string());
+        let mut child = OutputDecisionChild(Some(command.spawn().unwrap()));
+        wait_for_checkpoint(child.0.as_mut().unwrap(), &marker);
+        let dir = f.vault.path().join(b.key_id.to_string());
+        let decision_before = fs::read(dir.join("output-disposition")).unwrap();
+        let decision: serde_json::Value = serde_json::from_slice(&decision_before).unwrap();
+        assert_eq!(decision["kind"], if bind_wins { "bound" } else { "retire" });
+        assert!(dir.join("active/envelope").exists());
+        assert!(!dir.join("fence").exists());
+        fs::write(loser_marker.with_extension("release"), b"release").unwrap();
+        let rejected = finish_child(loser_child.0.take().unwrap(), &loser_result);
+        assert!(
+            rejected.starts_with("err:"),
+            "loser unexpectedly succeeded: {rejected}"
+        );
+        assert!(dir.join("active/envelope").exists());
+        assert!(!dir.join("fence").exists());
+        child.0.as_mut().unwrap().kill().unwrap();
+        assert!(!child.0.as_mut().unwrap().wait().unwrap().success());
+        let replay_result = artifacts.path().join("replay-result");
+        let mut command = child_command(&f, &b, winner, &replay_result);
+        command.env("VESTRACE_OUTPUT_PREPARATION_ID", p.as_uuid().to_string());
+        let witness = parse_child_uuid(&finish_child(command.spawn().unwrap(), &replay_result));
+        assert_eq!(
+            fs::read(dir.join("output-disposition")).unwrap(),
+            decision_before
+        );
+        let mut calls = 0;
+        if bind_wins {
+            assert_eq!(
+                decision["binding_receipt"].as_str().unwrap(),
+                witness.to_string()
+            );
+            f.vault()
+                .with_bound_embedding_output_key(
+                    &b,
+                    p,
+                    MaterialKeyBindingReceipt::from_uuid(witness),
+                    &mut |_| calls += 1,
+                )
+                .unwrap();
+            assert_eq!(calls, 1);
+            assert!(dir.join("active/envelope").exists());
+            assert!(!dir.join("fence").exists());
+        } else {
+            assert!(!dir.join("active/envelope").exists());
+            assert!(!dir.join("retired-active/envelope").exists());
+            let fence: serde_json::Value =
+                serde_json::from_slice(&fs::read(dir.join("fence")).unwrap()).unwrap();
+            assert_eq!(fence["receipt"], decision["fence_receipt"]);
+            assert!(
+                f.vault()
+                    .with_bound_embedding_output_key(
+                        &b,
+                        p,
+                        MaterialKeyBindingReceipt::new(),
+                        &mut |_| calls += 1
+                    )
+                    .is_err()
+            );
+            assert!(
+                f.vault()
+                    .with_embedding_output_key(&b, &mut |_| calls += 1)
+                    .is_err()
+            );
+            assert_eq!(calls, 0);
+            assert_eq!(
+                f.vault().retire_embedding_output(&b).unwrap().as_uuid(),
+                witness
+            );
+        }
+    }
+}
+
+#[test]
+fn output_disposition_legacy_retirement_and_corrupt_records_fail_closed() {
+    use vestrace_application::EmbeddingResultPreparationId;
+    let f = Fixture::new();
+    let b = f.binding();
+    let p = EmbeddingResultPreparationId::new();
+    f.vault().create_embedding_output_if_absent(&b).unwrap();
+    let erased = f.vault().retire_embedding_output(&b).unwrap();
+    let dir = f.vault.path().join(b.key_id.to_string());
+    // 14C persisted these exact stages but had no output-disposition.
+    fs::remove_file(dir.join("output-disposition")).unwrap();
+    let fence = fs::read(dir.join("fence")).unwrap();
+    assert!(f.vault().bind_embedding_output(&b, p).is_err());
+    assert_eq!(f.vault().retire_embedding_output(&b).unwrap(), erased);
+    assert_eq!(fs::read(dir.join("fence")).unwrap(), fence);
+    for corruption in 0..5 {
+        let f = Fixture::new();
+        let b = f.binding();
+        f.vault().create_embedding_output_if_absent(&b).unwrap();
+        let receipt = f.vault().bind_embedding_output(&b, p).unwrap();
+        let dir = f.vault.path().join(b.key_id.to_string());
+        let mut decision: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("output-disposition")).unwrap()).unwrap();
+        match corruption {
+            0 => {
+                decision["claim_receipt"] = serde_json::json!(uuid::Uuid::now_v7());
+            }
+            1 => {
+                decision["authority"]["job_id"] = serde_json::json!(uuid::Uuid::now_v7());
+            }
+            2 => {
+                decision["version"] = serde_json::json!(99);
+            }
+            3 => {
+                decision.as_object_mut().unwrap().remove("binding_receipt");
+            }
+            _ => {
+                let claim: serde_json::Value =
+                    serde_json::from_slice(&fs::read(dir.join("claim")).unwrap()).unwrap();
+                fs::write(dir.join("fence"),serde_json::to_vec(&serde_json::json!({"version":1,"claim_receipt":claim["receipt"],"receipt":uuid::Uuid::now_v7()})).unwrap()).unwrap();
+            }
+        }
+        fs::write(
+            dir.join("output-disposition"),
+            serde_json::to_vec(&decision).unwrap(),
+        )
+        .unwrap();
+        let original = fs::read(dir.join("output-disposition")).unwrap();
+        let envelope = fs::read(dir.join("active/envelope")).unwrap();
+        assert!(f.vault().bind_embedding_output(&b, p).is_err());
+        assert!(f.vault().retire_embedding_output(&b).is_err());
+        let mut calls = 0;
+        assert!(
+            f.vault()
+                .with_bound_embedding_output_key(&b, p, receipt, &mut |_| calls += 1)
+                .is_err()
+        );
+        assert_eq!(calls, 0);
+        assert_eq!(fs::read(dir.join("output-disposition")).unwrap(), original);
+        assert_eq!(fs::read(dir.join("active/envelope")).unwrap(), envelope);
+    }
+}
+
+#[test]
+fn bound_creation_replay_never_regenerates_a_missing_envelope() {
+    let f = Fixture::new();
+    let b = f.binding();
+    let p = vestrace_application::EmbeddingResultPreparationId::new();
+    let created = f.vault().create_embedding_output_if_absent(&b).unwrap();
+    f.vault().bind_embedding_output(&b, p).unwrap();
+    assert_eq!(
+        f.vault().create_embedding_output_if_absent(&b).unwrap(),
+        created
+    );
+    let dir = f.vault.path().join(b.key_id.to_string());
+    let decision = fs::read(dir.join("output-disposition")).unwrap();
+    fs::remove_file(dir.join("active/envelope")).unwrap();
+    assert!(f.vault().create_embedding_output_if_absent(&b).is_err());
+    assert!(!dir.join("active/envelope").exists());
+    assert_eq!(fs::read(dir.join("output-disposition")).unwrap(), decision);
 }
