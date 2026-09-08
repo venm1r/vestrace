@@ -1,36 +1,29 @@
-# Конфигурация и поддерживаемая среда
+# Configuration and environment
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Source of truth
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+Read [Cargo.toml](../../Cargo.toml), [rust-toolchain.toml](../../rust-toolchain.toml), AppConfig, [Compose](../../docker-compose.yml), the server/worker entry points, and frontend configuration in the selected checkout. This page does not duplicate every default.
 
-## Источник значений
+Configuration separates non-secret settings from environment/mounted secret stores. The documented precedence is defaults → optional TOML → `VESTRACE_` environment with `__` nesting → typed CLI overrides. Unknown TOML fields are rejected. A secret database URL must not migrate into public configuration.
 
-Читать `Cargo.toml`, `rust-toolchain.toml`, `AppConfig`, `docker-compose.yml`, entrypoints server/worker и frontend config выбранного checkout. Этот документ не хранит второй полный список defaults.
+## Operational groups
 
-Конфигурация проекта разделяет non-secret параметры и секретные environment/mounted stores. В описанном runtime порядке применяются defaults, optional TOML, `VESTRACE_` environment с `__` для вложенности и typed CLI overrides. Неизвестные TOML-поля отклоняются; секретный database URL не должен мигрировать в публичный конфиг.
-
-## Основные группы
-
-| Группа | Значение для эксплуатации |
+| Group | What matters |
 | --- | --- |
-| Database | URL из secret environment; pool и scope; ограниченная runtime identity |
-| HTTP | Bind и proxy boundary; loopback dev не равно public deployment |
-| Workspaces | Какую область worker обслуживает; пустая область не означает успешную полезную работу |
-| Provider execution | Material vault root и отдельный read-only bootstrap root; identity ключа, не plaintext |
-| Policy | Capability engine и явные disclosure/destination constraints |
-| Observability | Безопасные structured logs без credentials/content |
-| Qualification/recovery | Включение процедур с точными prerequisites, не возможность административно поставить trusted |
+| Database | Secret URL, pooling/scope, and restricted runtime identity. |
+| HTTP | Bind and proxy boundary; loopback development is not public deployment. |
+| Workspaces | Which scope a worker serves; an empty scope is not useful completion. |
+| Provider execution | Persistent material vault and separate read-only bootstrap root; key identity, not plaintext. |
+| Policy | Capabilities and explicit disclosure/destination constraints. |
+| Observability | Structured logs without content or credentials. |
+| Qualification/recovery | Exact prerequisites, not an administrative switch to trusted. |
 
-Root volumes и permitted external destinations должны совпадать у участвующих processes. Shared governed provider graph уменьшает расхождения, но настройка deployment всё равно проверяется отдельно.
+Participating processes must use compatible root volumes and allowed destinations. A shared governed provider graph reduces drift but does not qualify deployment configuration by itself.
 
-## Матрица подтверждения среды
+## Environment evidence
 
-Baseline называет Rust 1.85, Node 22 и PostgreSQL 17/pgvector, а также Compose services. Ни Windows, ни Linux, ни конкретная файловая система не объявлены этой документацией квалифицированными новым запуском. Для release запишите OS, kernel/filesystem, architecture, image digests, toolchain, role layout и model/provider settings.
+The supplied checkout pins Rust 1.85.0, uses edition 2024, and declares Node 22 and PostgreSQL 17/pgvector in its build/deployment files. This refactor does not newly qualify Windows, Linux, a filesystem, or a deployment topology.
 
-Изменение filesystem semantics для key vault, Node/TypeScript major или PostgreSQL/extensions требует отдельной проверки. Обновление lockfiles — кодовая/зависимостная задача, не часть переработки документов.
+For release, record OS, kernel/filesystem, architecture, image digests, toolchain, roles, and model/provider settings. Changes to vault filesystem semantics, Node/TypeScript major versions, or PostgreSQL/extensions require separate verification. Lockfile upgrades are outside this documentation change.
 
----
-**Основание:** [R03: crates/vestrace-cli/src/main.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-cli/src/main.rs), [R04: docker-compose.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml), [R05: docs/getting-started.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/getting-started.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R12: .github/workflows/ci.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/.github/workflows/ci.yml).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** repository configuration files and [source register](../maintenance/sources.md).

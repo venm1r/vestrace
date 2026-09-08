@@ -1,97 +1,177 @@
-# 05. Импорт, повторная синхронизация и конфликт с редактором
+# 05. Import, synchronization, and editorial conflicts
 
-## 5.1 Форматы и пределы
+**Status:** Proposed contract. MW-04 initially enables new/unchanged imports; updates of existing
+sources require MW-05 acceptance.
 
-Вход документов: JSON envelope `ImportPreviewRequest` с `mode=documents`, collection_id, base_collection_version, scan_kind и documents. Каждый document имеет external_id UUID, relative_path, format, content, classification и явные confidence/importance. Markdown и text хранятся как точная строка UTF-8; не выполняется извлечение semantic claims и не исполняется frontmatter.
+## 5.1 Input formats and bounds
 
-Лимиты: 1..100 documents; один content 1..65 536 UTF-8 bytes; суммарно до 8 MiB декодированного content. Byte checks выполняются сервером, а не только JSON maxLength. BOM и недопустимый UTF-8 отклоняются; CRLF/LF сохраняются в snapshot, не маскируют изменённый источник. Unicode/path handling не нормализует содержимое. Повторная отправка того же текста означает те же UTF-8 bytes.
+Documents use ImportPreviewRequest with mode=documents, collection_id, base_collection_version,
+scan_kind, and documents. Each item contains UUID external_id, relative_path, format, content,
+classification, and explicit confidence/importance. Store Markdown/plain text as exact UTF-8;
+perform no semantic-claim extraction or frontmatter execution.
 
-JSON package переносимости имеет mode=portable и отдельную schema, не произвольный документ, который модель должна угадать. Unknown fields, duplicate JSON object keys и dangling internal references отклоняются до canonical apply. Parser сохраняет bounded size, depth ≤ 32 и число nodes ≤ 20 000; NaN/Infinity невозможны в JSON.
+Accept 1–100 documents, each containing 1–65,536 UTF-8 bytes, with at most 8 MiB decoded content.
+The server checks bytes, not just JSON maxLength. Reject BOM and invalid UTF-8. Preserve CRLF/LF
+and content Unicode exactly; path handling must not normalize the text. Identical text replay
+means identical UTF-8 bytes.
 
-## 5.2 Локальный scanner
+Portability uses mode=portable and its own schema, not a format guessed by a model. Reject
+unknown fields, duplicate JSON keys, and dangling references before canonical Apply. Bound
+parser depth to 32 and nodes to 20,000, as well as byte size. JSON NaN/Infinity are invalid.
 
-Предлагаемая CLI группа: `vestrace sources scan|preview|apply|status|export`. Она является клиентом HTTP, не получает прямой database URL и не запускает второй сервер. `scan` требует явный `--root` и `--state-file` вне сканируемой папки; новые UUID сохраняются через temporary file + atomic replace локального mapping. Mapping не источник серверной authority.
+## 5.2 Local scanner
 
-Scanner обходит только regular files с разрешёнными suffix. Symlink, junction/reparse point, path traversal, absolute/UNC/drive path и escape за root отклоняются; изменение файла во время чтения даёт retryable scan-changed, не смешанный snapshot. Полагаться только на предварительный realpath нельзя: открыть handle без following links и проверить объект перед/после чтения на поддерживаемой платформе. Если безопасный способ для конкретной OS не реализован, CLI отклоняет этот режим, а не молча снижает защиту. Browser upload не читает server filesystem.
+The proposed CLI group `vestrace sources scan|preview|apply|status|export` is an HTTP client,
+not another server or direct database client. scan requires explicit --root and --state-file
+outside the scanned root. Persist stable UUID mappings through a temporary mapping file and
+atomic replacement; the mapping is not server authority.
 
-По умолчанию исключаются .git, .env, private-key/credential files, node_modules, target, hidden directories и любые внешние URLs. Это защита от случайной загрузки, не гарантия отсутствия секретов в обычном .md. Пользователь видит точный список и подтверждает право загрузить данные. Аудит не сохраняет абсолютные пути.
+Read only regular files with permitted suffixes. Reject symlink, junction/reparse points,
+traversal, absolute/UNC/drive paths, and root escape. A file changing during capture yields
+retryable scan-changed, not mixed bytes. A preliminary realpath check is insufficient: open
+handles without following links and verify the object before/after reading on the supported
+platform. Refuse a mode when the OS-specific safe path is unimplemented. Browser uploads do
+not read the server filesystem.
 
-`partial` scan сообщает только перечисленные файлы. `complete` — заявление доверенного клиента, что весь выбранный набор просмотрен без ошибки. Отсутствие прежнего external_id в полном scan создаёт Missing observation; автоматически удалять source/memory нельзя. Результат частичного/ошибочного scan не обозначается complete.
+Exclude .git, .env, private-key/credential files, node_modules, target, hidden directories,
+and external URLs by default. These filters prevent some accidents, not all secrets in .md
+files. Show the exact selection and require permission to upload. Do not record absolute
+paths in audit.
 
-Rename: тот же external_id и новый locator сохраняют source identity. Если после переименования scanner не может надёжно сопоставить ID, он предлагает явное mapping. Сравнение content hash не доказывает rename; два одинаковых файла остаются разными sources.
+A partial scan reports listed files only. A complete scan is the trusted client's explicit
+assertion that the entire selected scope was inspected successfully. An absent old external_id
+then creates Missing, never automatic source/memory deletion. Failed/partial scans cannot claim
+completeness. Stable external_id plus a new locator preserves identity; otherwise renames need
+explicit mapping. Equal hashes alone cannot establish a rename; identical files can be distinct sources.
 
-## 5.3 Безопасный staging
+## 5.3 Protected staging
 
-`POST /v1/source-imports` сначала валидирует envelope, текущие права и supported storage labels. Затем резервирует operation/input identities с idempotency и сохраняет payload через новый narrow `SourcePayloadStore` — consumer существующих MaterialIntentCommands [S17]. Он не использует embedding_output key operations и не объявляет generic vault callback готовым без проверки.
+POST /v1/source-imports validates shape, current rights, and supported labels first. Reserve
+operation/input identity with idempotency, then store payload through narrow SourcePayloadStore,
+a consumer of existing MaterialIntentCommands. It uses no embedding-output key operations and
+cannot assume an unreviewed generic vault callback meets the contract.
 
-Материал проходит существующий reserve → ciphertext preparation → bind → Live protocol. Vault/файловые операции выполняются вне PostgreSQL transaction. В БД находятся typed material references, receipts и метаданные; outbox и audit содержат только IDs. Потерянные до ContentPrepared байты не восстанавливаются из памяти умершего процесса. Такой upload требует повторной передачи: previous intent сначала корректно retire через existing authority, новый attempt связан с тем же operation, PreviewReady не выставляется.
+Follow reserve → ciphertext preparation → bind → Live under the existing material protocol.
+Vault/filesystem work happens outside PostgreSQL transactions. Store typed refs, receipts,
+and metadata; audit/outbox contain IDs, not content. Bytes lost before ContentPrepared cannot
+be recovered from a dead process. Require retransmission, lawfully retire the old intent before
+a successor, and bind the new attempt to the same operation; do not report PreviewReady.
 
-Успешный response 201 PreviewReady возможен только после durable сохранения **всех** одобренных input snapshots. Если HTTP response потерян, exact replay возвращает уже готовую operation/preview. Partial staging не создаёт active memory и не становится successful preview; status отражает staging/needs_upload. Пользовательское тело повторно используется только при совпадении semantic request tuple.
+Return 201 PreviewReady only when **all** approved input snapshots are durable. Exact replay
+of a lost response returns the existing ready operation. Partial staging creates no active
+memory and stays staging/needs_upload. Retransmitted content is usable only when the semantic
+request tuple matches.
 
-Истечение preview через 24 часа (предлагаемый default) переводит его в Expired и инициирует lawful retirement staged material. Время не доказывает отсутствие живого vault writer: expiry fence и material lifecycle должны победить продолжающийся writer до erasure. Staging endpoints не читают arbitrary path/URL, не загружают npm dependencies и не вызывают LLM.
+The proposed default preview expiry is 24 hours. Expiry initiates lawful retirement. Time alone
+does not prove a live vault writer is gone: the expiry fence/material lifecycle must defeat
+that writer before erasure. Staging cannot fetch arbitrary paths/URLs, download dependencies,
+or invoke an LLM.
 
-## 5.4 Preview
+## 5.4 Immutable preview
 
-Preview фиксирует: operation_id, preview_revision, collection configuration version, current policy version, immutable inputs, base source head, base memory head/state revision и disposition по item. Dispositions: `new`, `update`, `unchanged`, `rename`, `conflict`, `missing`.
+Pin operation_id, preview_revision, collection configuration version, policy version, immutable
+inputs, base source head, base memory head/state revision, and each item's disposition.
 
-- New: external_id отсутствует в текущей collection.
-- Unchanged: exact source content/format/label и locator не изменились. Случайный import operation UUID не создаёт новую source revision.
-- Rename: изменился только locator, identity stable. История locator фиксируется как metadata change; content memory revision не создаётся без изменения content.
-- Update: source изменился, effective memory всё ещё соответствует последнему accepted import и manual_override=false.
-- Conflict: source изменился при manual edit/override, либо semantic choice небезопасно вывести из сохранённых versions.
-- Missing: explicit observation полного scan, не операция удаления.
+| Disposition | Decision basis |
+| --- | --- |
+| new | external_id is absent from the collection. |
+| unchanged | Exact source content/format/label and locator did not change. A random new operation ID does not create a revision. |
+| rename | Only locator changed under established identity; record metadata history without a content revision. |
+| update | Source changed, effective memory still matches the last accepted import, and manual_override=false. |
+| conflict | Source changed alongside manual editing/override, or saved versions cannot establish a safe semantic choice. |
+| missing | Explicit complete-scan observation, not deletion. |
 
-Смена classification для существующей source-backed memory отклоняется с CLASSIFICATION_TRANSITION_REQUIRED; она не является обычным update. При необходимости пользователь должен применить отдельный принятый governance workflow, которого этот пакет не добавляет.
+Changed classification on existing source-backed memory returns CLASSIFICATION_TRANSITION_REQUIRED,
+not update. A needed label transition belongs to a separate accepted governance workflow.
 
-## 5.5 Подтверждение и применение
+## 5.5 Confirmation and per-item application
 
-Apply принимает exact preview_revision и список item_ids. Он заново проверяет права, expiry, configuration и base collection version. В одной транзакции reserve active_import_id коллекции, freeze выбранный item set, audit/receipt и по одному outbox сообщению `memory.source_import.apply` на изменяемый item. Topic не выпускается без смонтированного обработчика.
+Apply accepts exact preview_revision and item_ids. Recheck current authorization, expiry,
+configuration, and base collection version. Atomically reserve active_import_id, freeze selected
+items, write audit/receipt, and enqueue one `memory.source_import.apply` message per mutable
+item. The topic must have a production handler before it is published.
 
-Preview не даёт необратимого разрешения на будущие байты. Иные входы требуют другой preview. Если collection изменилась до Apply — PREVIEW_STALE без частичного приёма. На одну collection действует один applying batch; manual edits разрешены и обрабатываются per-item CAS.
+Preview does not permanently authorize future bytes. Changed input requires another preview;
+a collection change before Apply returns PREVIEW_STALE without partial admission. At most one
+batch applies per collection. Manual editing remains allowed and is observed by per-item CAS.
 
-Обработчик использует контекст инициатора операции, заново разрешённый из durable identity и текущих grants. Worker own ExecutionWrite не повышает полномочия первоначального пользователя. При revoked permission item получает blocked_policy outcome; остальные уже committed items не отменяются. Service делает per-item canonical transaction через shared commit_in.
+Resolve the initiating principal from durable identity and current grants. The worker's own
+ExecutionWrite cannot elevate that actor. Revocation produces blocked_policy without undoing
+already committed items. Apply each item through shared commit_in.
 
-Atomic item включает capture Event, immutable SourceRevision, Memory/Revision/SourceLink, binding, search projection, audit, exact item receipt и update progress. Source head не указывает на недописанную revision. Batch не держит одну транзакцию на всё и может быть completed_with_issues.
+One item transaction includes capture Event, immutable SourceRevision, Memory/Revision/SourceLink,
+binding, search projection, audit, exact receipt, and progress. No source head points to an
+incomplete revision. A batch is not one long transaction and may finish completed_with_issues.
 
-После commit до outbox ack процесс может умереть; повтор видит item receipt. Error в pre-commit не оставляет новую memory/source head. Unchanged item имеет результат наблюдения, но не canonical revision и не embedding request. Index invalidation отправляется через принятый общий путь, без legacy raw-provider shortcut. При отсутствии завершённого поддерживаемого indexing path readiness остаётся pending/blocked.
+Death after item commit/before outbox acknowledgement replays from the receipt. Pre-commit
+failure leaves no new head. Unchanged input records an observation outcome, not a canonical
+revision or embedding request. Use the accepted index-invalidation path; no raw-provider shortcut.
+Without an available supported indexing path, report pending/blocked instead of ready.
 
-## 5.6 Статусы
+## 5.6 Progress, cancellation, and expiry
 
-Operation: `staging`, `needs_upload`, `preview_ready`, `applying`, `completed`, `completed_with_issues`, `cancelled`, `expired`. Это business progress, не новая модель исполнения.
+Operation states: staging, needs_upload, preview_ready, applying, completed,
+completed_with_issues, cancelled, expired. These are business progress, not another runtime.
 
-Item: `staged`, `queued`, `applied`, `unchanged`, `conflict`, `missing`, `skipped`, `blocked_policy`, `failed`. У applied есть immutable canonical receipt. Retryable transport/storage failures остаются ответственностью существующего outbox; исчерпание попыток отражается как failed + dead-letter evidence, а не бесконечный pending.
+Item states: staged, queued, applied, unchanged, conflict, missing, skipped, blocked_policy,
+failed. Applied items have immutable receipts. Existing outbox retry policy owns transport/
+storage failures; exhausted attempts become failed with dead-letter evidence, not infinite pending.
 
-Index states отдельно: `not_required`, `pending`, `ready`, `blocked`, `failed`. Ready обосновывается фактическим qualified publication, а не количеством drained messages. `worker --once` code 0 означает работу в цикле, не успешный весь import.
+Index states are separate: not_required, pending, ready, blocked, failed. Ready requires actual
+qualified publication, not drained-message count. Worker --once exit 0 reports cycle work, not
+success of the entire import.
 
-Cancel берёт operation/collection guard. После cancellation fence новые item transactions не применяются; уже начавший canonical commit либо побеждает целиком, либо rollback. Уже applied content не уничтожается и не откатывается. Необработанные элементы становятся skipped; итог отчёт указывает applied subset.
+Cancellation takes operation/collection guards. After the fence, new item transactions cannot
+apply. An already-started canonical commit wins wholly or rolls back. Keep committed content;
+mark unprocessed items skipped and report the applied subset. Expiry and Apply must serialize
+so cleanup cannot retire material already owned by accepted application.
 
-## 5.7 Трёхсторонняя синхронизация
+## 5.7 Three-way synchronization
 
-B = accepted source revision; I = immutable incoming source revision; M = current effective memory revision.
+B = accepted base source revision; I = immutable incoming source revision; M = current effective memory.
 
-| Изменился источник | Есть manual edit/override | Решение |
-|---|---|---|
-| Нет | Нет | Unchanged |
-| Нет | Да | Сохранить M, не создавать конфликт из-за одного повторного scan |
-| Да | Нет | CAS применяет I как новую effective memory revision |
-| Да | Да | SourceConflict; B/I/M сохраняются, M не изменяется |
+| Source changed | Manual edit/override | Outcome |
+| --- | --- | --- |
+| No | No | Unchanged. |
+| No | Yes | Preserve M; another scan alone creates no conflict. |
+| Yes | No | CAS applies I as a new effective memory revision. |
+| Yes | Yes | Preserve B/I/M in SourceConflict and keep M unchanged. |
 
-`accept_source`: новая memory revision с I, manual_override=false, source binding advances.  
-`keep_manual`: M сохраняется; отдельный resolution Event связывает override с I, manual_override=true. При следующем source change возникает новая необходимость проверки.  
-`merge`: пользователь задаёт новый текст; новая revision с B/I/M provenance, manual_override=true. Это human-authored merge, не детерминированное восстановление.
+accept_source creates a revision from I, clears manual_override, and advances the binding.
+keep_manual preserves M and its content revision, records a resolution Event binding override
+to I, and keeps manual_override=true; another source change needs fresh review. merge uses
+explicit user-authored text to create a new revision with B/I/M provenance and override=true.
+It is human merging, not deterministic repair.
 
-Все три команды сравнивают expected_conflict_version и exact current memory/state + incoming source references. Любая смена basis после UI preview — 409. Решение не обновляет I, не удаляет B и не превращает source timestamp в authority.
+All decisions require expected_conflict_version, exact current memory/state, and incoming
+source references. A changed basis after inspection returns 409. Resolution never rewrites I,
+deletes B, or makes a source timestamp authoritative.
 
-Для первой версии допускается только один открытый conflict на source. Новый sync того же source при открытом conflict возвращает conflict_pending и не supersede-ит основания автоматически. Пользователь сначала решает текущий конфликт или явно отменяет его через принятую процедуру; это ограничение предотвращает ложные двухсторонние merges.
+Initially allow one open conflict per source. New sync returns conflict_pending rather than
+silently superseding its bases. Resolve or explicitly cancel the current conflict through an
+accepted procedure before replacing it. This prevents false two-way merges.
 
-## Уточнение границ preview
+## 5.8 Preview envelope and rollout
 
-Для complete scan максимум 100 preview items относится к объединению входных и потенциально Missing источников. Если это объединение больше лимита, сервер отказывает INPUT_LIMIT_EXCEEDED и предлагает bounded partial scans; он не усекает список и не делает вывод Missing по неполному snapshot. Пустой complete scan требует explicit empty confirmation через отдельный будущий contract и в MVP не выполняется автоматически.
+For complete scans, the 100-item limit covers the union of incoming and potentially Missing
+sources. If larger, refuse INPUT_LIMIT_EXCEEDED and use bounded partial scans. Never truncate
+or infer Missing from an incomplete snapshot. Empty complete scans need a separate future
+explicit-empty confirmation contract and are not automatically executed in the MVP.
 
-Первый MW-04 допускает new/unchanged initial imports; изменение уже существующего source включается только после принятия MW-05. UI показывает not_enabled для такой sync, а не использует прямую update ветку. В PreviewReady решения immutable; repreview создаёт новое намерение с новым key.
+MW-04 enables new/unchanged inputs only; MW-05 enables updates. Show not_enabled for unsupported
+sync rather than bypassing it with direct update. PreviewReady decisions are immutable;
+repreview is new intent with a new key.
 
-## Правка памяти, пока конфликт уже открыт
+## 5.9 Additional editing after conflict detection
 
-`source_conflicts.manual_revision_id` — M0 на момент обнаружения; он остаётся неизменным. GET ConflictDetail возвращает `original_manual_revision` (M0), `manual_revision` (разрешённый текущий M) и текущий `memory_state_revision` в одном согласованном чтении. Поэтому дополнительная правка пользователя не делает конфликт навсегда неразрешимым: UI показывает отличие M0/M, пользователь подтверждает решение с актуальными expected_memory_revision_id/state. Original B/I/M0 не переписывается, resolution event содержит фактически использованный M.
+source_conflicts.manual_revision_id is detection-time M0 and remains immutable. ConflictDetail
+returns original_manual_revision=M0, current permitted manual_revision=M, and memory_state_revision
+consistently. Extra editing does not make a conflict permanently unresolvable: show M0→M,
+then confirm against current expected_memory_revision_id/state. Preserve original B/I/M0;
+record the M actually used in resolution evidence.
 
-Обычная correction связанной памяти атомарно устанавливает `MemorySourceBinding.manual_override=true` и продвигает binding version в том же writer/UoW. Это авторство определяется маршрутом/типизированной application-командой, а не пользовательским полем `origin_kind`. Import writer обновляет last_import_memory_revision_id и не изображает импорт ручной правкой. Explicit conflict resolutions обновляют binding согласно своему решению.
+Ordinary correction of bound memory atomically sets manual_override=true and advances the
+binding version inside the shared writer/UoW. Authorship comes from the typed route/command,
+not caller-supplied origin_kind. Import updates last_import_memory_revision_id without
+impersonating a manual edit. Explicit conflict resolutions update the binding according to
+their decision.

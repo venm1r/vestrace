@@ -1,39 +1,35 @@
-# Memory Workspace: выбранное расширение
+# Memory Workspace
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed product extension. This page defines user value; the [implementation package](../implementation/memory-workspace/README.md) is the single detailed specification.
 
-**Статус:** Обзор Proposed-проекта; не утверждение реализации.
+## One coherent workflow
 
-## Три согласованные задачи
+Import a document → find and read the relevant knowledge → inspect its source and revision → correct it → request useful context → synchronize an updated source without losing the correction → export an authorized selection.
 
-Направление объединяет простой Memory/Context API, управление памятью в Console и импорт/синхронизацию/переносимость. Его полезный результат — один замкнутый цикл, а не независимые подсистемы с разными правилами записи.
+The Console, CLI, and background handlers remain clients of one canonical memory model and one governed write boundary. The source document and effective memory can legitimately differ after a human correction; the interface must show that distinction.
 
-Знание загружается, находится, проверяется по источнику, исправляется и выдаётся клиенту; обновление источника не уничтожает редакторскую работу. Продуктовый интерфейс скрывает внутренние технические идентификаторы там, где они не нужны, но не скрывает неопределённость, запрет или неполную обработку.
+## Scope
 
-## Что уже спроектировано
+| Capability | User-facing result | Primary package |
+| --- | --- | --- |
+| Memory and context reads | Content, exact revisions, history, browse, and bounded rendered context | MW-01 |
+| Corrections and restore | Version-checked changes, preserved history, and durable replay receipts | MW-02 |
+| Console | Library, detail, editor, conflict handling, and honest availability states | MW-03 |
+| Source import | Bounded formats, exact-byte preview, explicit Apply, and durable progress | MW-04 |
+| Synchronization | Base/incoming/manual conflicts, explicit resolution, Missing and cancellation | MW-05 |
+| Portability | Authorized JSON/Markdown export and foreign-to-local import mapping | MW-06 |
+| Acceptance | Upgrade, restricted-role, fault, and end-to-end checks | MW-07 |
 
-Основной документ — [пакет реализации](../implementation/memory-workspace/README.md). В нём находятся предметные требования, предлагаемые DTO/routes, транзакционная модель, правила sync, OpenAPI-компаньон и тестовые примеры. Их не следует копировать в этот обзор и редактировать в двух местах.
+MW-00 precedes implementation and reconciles the current source tree, protected scope, and shared authorities.
 
-| Этап | Назначение |
-| --- | --- |
-| MW-00 | Сверить дерево, зависимости, номера миграций и точный scope |
-| MW-01 | Полезное чтение памяти, библиотека, история и контекст |
-| MW-02 | Атомарные исправления и квитанции повторных запросов |
-| MW-03 | Реальный UI поверх публичного API |
-| MW-04 | Источники, предпросмотр и применение импорта |
-| MW-05 | Синхронизация и конфликты с ручными правками |
-| MW-06 | Экспорт и импорт переносимого пакета |
-| MW-07 | Сквозная проверка и обновление с существующими данными |
+## Deliberate limits
 
-## Что не решено публикацией документов
+The first importer accepts small Markdown/plain-text documents and the defined JSON format. It does not need an LLM, crawler, automatic watcher, PDF parser, OCR, or semantic auto-merger. Detailed byte and batch limits are in the package; they are product limits, not benchmark results.
 
-Решения MW сохраняют статус Proposed. Размещение документов не назначает их в релиз v1.0, не расширяет P04 allowlist и не резервирует номера будущих миграций. Несколько compatibility gates требуют проверки живого кода перед реализацией.
+A familiar interface must not hide incompatible revisions, missing content, unavailable indexing, or a denied historical read. A successful import is not automatically a searchable generation. A byte-bounded response is not a qualified hard-token guarantee.
 
-Первоначальные границы пакета — Markdown/текст/описанный JSON, ограниченные объёмы, один выбранный client path. Нет обязательного LLM extractor, автоматического смыслового слияния, отдельного vault, произвольного чтения серверной файловой системы и переноса полномочий.
+## Release relationship
 
-## Как принимать решение о начале
+The extension remains Proposed and its release placement is unassigned unless the owner explicitly amends a program. It neither becomes P13–P20 nor removes obligations from the frozen P01–P12 v1.0 program.
 
-Сначала читать baseline и MW-00, затем проверить зависимости по текущему commit. Принимать каждый пакет по его работающему сценарию, включая запреты, конкуренцию и restart. При изменении предпосылок исправлять спецификацию и тестовые ожидания совместно. Ожидаемый результат теста не является уже полученным evidence.
-
----
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+See [design decisions](../implementation/memory-workspace/01-design.md), [API](../implementation/memory-workspace/03-api.md), and [program mapping](../roadmap/program-mapping.md).

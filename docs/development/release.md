@@ -1,34 +1,27 @@
-# Alpha, full v1.0 и правила выпуска
+# Alpha, full v1.0, and release acceptance
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Separate version, features, and qualification
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+Version number, available capabilities, and qualification verdict must agree but cannot replace one another. A large test count does not establish API stability. `0.1.0-alpha.1` is a proposed trial label, not an assigned release or date.
 
-## Три независимых решения
+## Bounded alpha
 
-Номер версии, список доступных функций и qualification verdict должны согласовываться, но не заменяют друг друга. Большое число тестов не означает API stability. Модель `0.1.0-alpha.1` — предлагаемое имя раннего публичного испытания; оно не назначается этим документом и не устанавливает дату.
+A narrow memory-first alpha needs an explicitly approved shipping manifest, intact shared safety gates, a supported environment/data scope, and disclosed limitations. It is not full v1.0 and must not promise unfinished AG-UI/A2A or unrestricted production use.
 
-## Ограниченная alpha
+Require real installation, reads, edits/history, declared import behavior, preservation across selected failures, and negative access-control tests. Every shipped function needs acceptance. Hiding a menu does not exempt shared authorities still used by other functions.
 
-Может включать узкий memory-first сценарий, если явно утверждён shipping manifest, сохранены общие safety gates, описаны supported environment/данные и ограничения. Она не называется полным v1.0 и не обещает недоведённые AG-UI/A2A или unrestricted production usage.
+## Full v1.0
 
-Для alpha нужны реальная установка, чтение/изменение/история, объявленный импортный сценарий, сохранность при выбранных сбоях и отрицательные проверки доступа. Любая включённая функция должна иметь свою acceptance; отсутствие меню не освобождает общие используемые authorities от проверки.
+The frozen P01–P12 program remains binding until an explicit amendment. P06–P11 cannot be removed merely because their product priority is P3. P12 needs fresh exact-environment evidence. MW does not become part of v1.0 just by appearing on the roadmap.
 
-## Полный действующий v1.0
+## Release record
 
-Frozen P01–P12 остаётся обязательным планом до отдельного amendment. P06–P11 нельзя выкинуть из v1.0 только потому, что в продуктовой очереди они помечены P3. P12 требует fresh exact-environment evidence. MW не становится частью v1.0 автоматически от наличия этой дорожной карты.
+Identify source, build, images, configuration, models, and protocols. Include executed tests, known limitations, populated-version upgrade, restore verification, compatibility policy, and a reporting channel. Skipped, blocked, and unexecuted checks are not PASS.
 
-## Release checklist
+Release notes explain what the user can now do, necessary preparation, and unsupported scope. Credentials, fixture-only administrative bypasses, and architectural praise are not release evidence.
 
-Нужны exact source/build/images/config/model/protocol identities; выполненные tests; limitations; миграция с существующей версии; проверка restore; правила compatibility; доступный канал report. Пропущенная, blocked или неисполненная проверка не считается PASS.
+## Before 1.0
 
-Release notes перечисляют, что пользователь теперь может сделать, какую подготовку нужно выполнить и какой scope не поддерживается. Не помещать credentials, fixture административные обходы и маркетинговую оценку архитектуры как proof.
+Describe breaking API/data/schema changes and transition policy before making them. Pre-1.0 is not permission to damage data silently. Revision history and export/restore matter even while public APIs evolve.
 
-## Контракт до 1.0
-
-Перед изменением API/data/schema описать breaking surface и transition policy. Pre-1.0 не является разрешением незаметно портить данные. История ревизий и экспорт/restore остаются важными даже при изменяемом внешнем API.
-
----
-**Основание:** [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [frozen program](../superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [qualification specification](../specs/en/vestrace-qualification-conformance-spec-v0.2.md).

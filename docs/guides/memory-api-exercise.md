@@ -1,35 +1,31 @@
-# Практикум: записать событие, память и выполнить поиск
+# Walkthrough: event, memory, and retrieval
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** Source-defined current request shapes. This walkthrough was not executed during the refactor. Use synthetic data in a disposable workspace with configured server/policy and EventWrite, MemoryWrite, MemoryRead, and ContextRetrieve capabilities.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+All requests below use Bearer authentication; mutations use a distinct stable Idempotency-Key per logical operation. See [HTTP conventions](../reference/http.md). These requests create durable data.
 
-## Область сценария
+## 1. Record the source event
 
-Ниже показаны текущие структуры запросов из HTTP-кода. Предпосылки: уже настроенный локальный сервер, token с EventWrite/MemoryWrite/MemoryRead/ContextRetrieve и разрешённая policy. Выполнение этих запросов создаёт долговременные записи; используйте только синтетические данные в одноразовом workspace. Этот практикум не запускался в данной среде.
-
-## 1. Сохранить происхождение
-
-`POST /v1/events` с отдельным `Idempotency-Key`:
+Send `POST /v1/events`:
 
 ```json
 {
   "event_type": "documentation.example",
-  "payload": {"statement": "В учебном проекте принято решение использовать PostgreSQL."},
+  "payload": {"statement": "The tutorial project selected PostgreSQL."},
   "session_id": null
 }
 ```
 
-Из ответа сохраните `id`. Это event данного источника, не независимо доказанная истинность утверждения.
+Keep the returned id. It identifies provenance, not independent proof that the statement is true.
 
-## 2. Создать память
+## 2. Create memory
 
-`POST /v1/memories`, другой устойчивый ключ логического запроса:
+Send `POST /v1/memories` with a different stable idempotency key:
 
 ```json
 {
   "kind": "decision",
-  "content": "Учебное решение: использовать PostgreSQL.",
+  "content": "Tutorial decision: use PostgreSQL.",
   "confidence": 0.5,
   "importance": 0.5,
   "source_event_id": "10000000-0000-4000-8000-000000000003",
@@ -37,21 +33,19 @@
 }
 ```
 
-UUID в примере — демонстрационный, его нужно заменить реально полученным event ID. Числа 0.5 — учебные допустимые значения, не измеренная вероятность истинности. Политика установки может требовать classification; передайте только разрешённое значение её vocabulary.
+**Replace the synthetic UUID with the actual event ID from step 1.** Scores are example assessments, not measured probabilities. Supply classification only according to the installation's vocabulary. Successful persistence does not establish index/generation readiness.
 
-Успех сохранения ещё не доказывает готовность embedding/generation. Отдельно проверьте [границы P04](../status.md).
+## 3. Read metadata
 
-## 3. Получить метаданные
+`GET /v1/memories/{id}` returns id, kind, status, classification, created_at, and updated_at. The reviewed DTO does not include content or active content-revision number. Do not infer response fields from an internal domain object. Full external detail/history is proposed in MW-01.
 
-`GET /v1/memories/{id}` в этом baseline возвращает метаданные. Нельзя ожидать поля `content` или current revision number лишь потому, что они есть во внутреннем domain type. Новый detail/history контракт находится в [MW-01](../implementation/memory-workspace/plans/01-memory-read-context.md).
+## 4. Search
 
-## 4. Поиск
-
-`POST /v1/retrieval/search`:
+Send `POST /v1/retrieval/search`:
 
 ```json
 {
-  "query": "Какую базу выбрали для учебного проекта?",
+  "query": "Which database did the tutorial project select?",
   "intent": "decision_recall",
   "limit": 10,
   "time_perspective": "current",
@@ -59,17 +53,28 @@ UUID в примере — демонстрационный, его нужно �
 }
 ```
 
-Проверьте кандидаты, exact revision refs, degraded/warnings. Текущий HTTP ContextPack — сводка, не готовый текст для модели. Отсутствие кандидатов не доказывает отсутствие знания: проверьте scope, состояние записи и доступность каналов.
+Inspect candidates, revision references, warnings, and degraded channels. The current HTTP ContextPack is a summary, not rendered model input. An empty result does not prove absence: check scope, lifecycle, and channel availability.
 
-## 5. Новая ревизия
+## 5. Add a revision
 
-Endpoint существует: `POST /v1/memories/{id}/revisions`; требуется числовой `If-Match` ожидаемой content revision и source event нового основания. Не угадывайте номер на действующей общей памяти: полноценный внешний read/edit loop ещё проектируется. На изолированном только что созданном примере первая content revision формируется как 1, но concurrent writer может изменить это до запроса; conflict нужно обрабатывать, не обходить.
+Record another source event first. `POST /v1/memories/{id}/revisions` requires numeric If-Match for the expected content-revision number and a revision body:
 
-## Итог наблюдения
+```json
+{
+  "content": "Corrected tutorial decision: use PostgreSQL with pgvector.",
+  "confidence": 0.5,
+  "importance": 0.5,
+  "source_event_id": "10000000-0000-4000-8000-000000000004",
+  "change_reason": "Record the corrected tutorial decision."
+}
+```
 
-Запишите commit, среду, версии, request IDs и безопасные результаты. Не фиксируйте токены/URL с credentials или пользовательский content. Успешный пример на одной среде не заменяет concurrency, restart, access-control и release tests.
+Replace this UUID with the new event ID. Omit classification to inherit; `null` requests clearing and is not equivalent. See [classification](../reference/memory.md#classification).
 
----
-**Основание:** [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs), [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs), [S05: crates/vestrace-application/src/memory/services.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs), [R01: crates/vestrace-http/src/auth.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs).
+Do not guess a revision number on shared data. An isolated newly created example starts at content revision 1, but a concurrent writer can advance it. Handle a conflict rather than bypassing the precondition. A convenient full read/edit loop remains MW work.
 
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+## Record results safely
+
+Record source/environment identities and sanitized request IDs/outcomes, not tokens, credential URLs, or user content. One walkthrough does not replace concurrency, restart, authorization, or release testing.
+
+**Sources:** [event and memory handlers](../../crates/vestrace-http/src/api/memory.rs), [memory handlers](../../crates/vestrace-http/src/api/memory.rs), [retrieval](../../crates/vestrace-http/src/api/retrieval.rs).

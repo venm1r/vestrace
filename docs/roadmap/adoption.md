@@ -1,30 +1,42 @@
-# Внешняя валидация и продуктовые критерии
+# External validation and product criteria
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed pilot framework, not a growth forecast.
 
-**Статус:** Предлагаемая внешняя валидация, не план гарантированного роста.
+## Usability first
 
-## Сначала способность пользоваться
+An alpha is useful only when an engineer can complete its declared task without knowing
+internal classes or needing SQL help at every step. The first case is bounded, correctable
+project memory—not a promise to replace an entire agent stack.
 
-Публичная alpha полезна только тогда, когда человек не обязан знать внутренние classes и получать SQL помощь автора на каждом шаге. Первый кейс — ограниченная память проекта с исправлениями, а не обещание заменить весь agent stack.
+Retain the practical promotion direction: a working demo, README/quickstart, technical
+write-ups, and consented pilots. Verify community rules and competitor statistics at the
+time of publication; they are not timeless facts in this technical roadmap.
 
-Из приложенного promotion plan сохраняется направление: работающий demo, README/quickstart, технические разборы и несколько согласованных пилотов. Правила конкретных Reddit/HN площадок и статистика конкурентов в эту техническую дорожную карту не переносятся как вечные факты; перед публикацией их нужно проверять отдельно.
+## Working targets, not predictions
 
-## Предлагаемые метрики, не прогноз
+For the first 12-week cycle **after a usable alpha**, proposed targets are 10 independently
+activated users, 5 returning users, and 2 design-partner teams. These are chosen planning
+goals, not statistical probabilities of success.
 
-Для первого 12-недельного цикла после пригодной для тестирования alpha можно оставить ориентиры: 10 независимых активированных пользователей, 5 повторных и 2 команды-партнёра. Это выбранные рабочие цели из предыдущего плана, не статистическая вероятность успеха.
+Activation means an external user independently completes the declared scenario; record
+assisted setup separately. Returning means another substantive task in a different week.
+A design partner has a specific permitted use case and at least two feedback sessions;
+the label does not imply payment or production deployment.
 
-Activation: внешний человек самостоятельно завершил объявленный сценарий. Assisted setup отмечается отдельно. Returning: другая содержательная задача в другую неделю. Design partner: конкретный разрешённый сценарий и как минимум две сессии обратной связи; не оплаченный клиент и не production deployment по умолчанию.
+## Technical measures
 
-## Технические метрики рядом с adoption
+Record time to first result, completed setups, failure reasons, manual interventions, and
+upgrade cost. Compare retrieval quality on a fixed corpus. Safety remains a separate gate:
+a higher average score cannot compensate for disclosure or silent overwrite.
 
-Записывать время до первого результата, долю законченных установок, причины отказов, количество необходимых ручных правок и стоимость обновления. Retrieval quality сравнивать на фиксированном corpus. Safety cases имеют отдельный gate: средняя оценка не компенсирует утечку или silent overwrite.
+Collection is voluntary, without hidden telemetry or user content in marketing reports.
+A public case study needs separate permission for names/quotations and actual measurements.
 
-Сбор данных добровольный, без скрытой telemetry и без содержимого пользователей в marketing reports. Публичный кейс использует отдельное разрешение на имя/цитаты и конкретные измерения.
+## Act on observations
 
-## Решения по результатам
+Poor installation completion points to onboarding. Setup without repeat use calls for
+rechecking the recurring task. Returning users blocked by temporal errors suggest F201/F202;
+external-runtime demand suggests F203. A request for hosting without demonstrated core value
+requires problem validation, not automatically building SaaS.
 
-Люди не устанавливают → сократить onboarding. Устанавливают, не возвращаются → проверить повторяющуюся задачу. Возвращаются, но упираются в temporal ошибки → приоритет F201/F202. Требуют внешнего агента → F203. Требуют hosting без понятной пользы ядра → сначала проверить проблему, не автоматически строить SaaS.
-
----
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Roadmap](README.md) · [Evaluation](../evaluation/README.md)

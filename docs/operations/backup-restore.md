@@ -1,35 +1,28 @@
-# Обновление и восстановление: процедура допуска
+# Backup, upgrade, and recovery acceptance
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** Requirements for P05/P12 verification, not an already executed disaster-recovery procedure. No unverified command here promises restoration of a live installation.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## Recovery set
 
-**Это требования к проверке P05/P12, а не уже исполненный disaster-recovery runbook.** Документация не содержит непроверенной команды, обещающей восстановить живую установку.
+A consistent recovery set includes the canonical database and required WAL, material keys, fingerprints, and secret dependencies of the specific implementation. Arbitrary independent volume copies may be inconsistent. Establish the freeze/drain boundary and exact receipts before backup.
 
-## Объект восстановления
+## Controlled experiment
 
-Согласованный набор включает каноническую БД и требуемые WAL/material key/fingerprint/secret dependencies конкретной реализации. Не каждый volume можно независимо скопировать в произвольный момент. Установить допустимую freeze/drain границу и exact receipts до резервирования.
-
-## Контрольный эксперимент
-
-1. В изолированной среде создать данные через штатные API: несколько источников, revisions, Run и permitted materials.
-2. Зафиксировать safe inventory ожидаемых IDs, контрольных запросов и прав. Не сохранять ключи в отчёте.
-3. Выполнить принятую оператором процедуру резервирования и записать durable boundaries.
-4. Восстановить в отдельном окружении, не поверх исходной установки.
-5. Проверить историю, isolation, применимость ключей, допустимое recovery незавершённых работ и продолжение сценария.
-6. Повторить с отсутствующим обязательным компонентом: отказ должен объяснять зависимость, а не создавать новую пустую истину.
+1. In isolation, create sources, revisions, Runs, and permitted materials through normal APIs.
+2. Record a safe inventory of expected identities, queries, and permissions, without keys.
+3. Execute the operator-approved backup procedure and record durable boundaries.
+4. Restore to a separate environment, never over the original.
+5. Check history, isolation, key usability, recovery of unfinished work, and continued operation.
+6. Repeat with a required component missing: refusal must identify the dependency rather than fabricate a new empty state.
 
 ## Upgrade
 
-Миграцию проверить на старом допустимом срезе с существующими данными и на чистой БД. Недостаточно проверить parse SQL или успешный startup. Нужны owner/grants, constrained writes, replay и rollback целой business transaction при ошибке.
+Test migration against both a populated supported baseline and an empty database. Parsing SQL or starting successfully is insufficient. Verify owners/grants, constrained writes, replay, and rollback of complete business transactions on error.
 
-Downgrade не объявлять поддерживаемым без отдельного обратного contract. Для forward-only миграций типичный план восстановления — возврат совместимого окружения из проверенной копии, а не откат произвольного SQL. Точное решение принадлежит операторскому плану.
+Do not claim downgrade support without an inverse contract. A forward-only migration may require restoration of a compatible environment from a tested backup, not arbitrary reverse SQL. The exact strategy belongs in the operator plan.
 
-## Релизный отчёт
+## Report
 
-Записать какую процедуру исполнили, на какой среде, что восстановлено и какие проверки не выполнялись. RPO/RTO остаются измеряемыми метриками, не выдуманными SLA. Проверка knowledge JSON round-trip из MW не заменяет этот эксперимент.
+Record the actual procedure, target, restored data, and checks not run. RPO/RTO are measured outcomes, not invented service guarantees. MW knowledge JSON round-trip does not replace installation restore testing.
 
----
-**Основание:** [R04: docker-compose.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [Compose](../../docker-compose.yml), [frozen release program](../superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [governance](../specs/en/vestrace-crypto-data-governance-contract-v0.2.md).

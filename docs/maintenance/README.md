@@ -1,40 +1,72 @@
-# Сопровождение документации
+# Maintaining the English documentation
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Edition:** 2026-09-08. **Input:** user-supplied archive at
+`3e05dfbdce063aa44a3a9e5a7a84c274597e8188`. This is a documentation-only refactor.
 
-**Статус:** Редакционные правила новой документации.
+## Document ownership
 
-## Единые источники
+Active guides explain tasks and current source boundaries. Frozen originals, Accepted ADRs,
+protected plans, and recorded evidence keep their existing authority and bytes. Complete English
+[reading editions](../specs/en/README.md) accompany the 11 normative documents; they do not
+replace the originals. Historical verification reports have `.en.md` reading companions.
 
-Current status опирается на source observation с exact pin. Нормативные specs/ADR сохраняют authority. Roadmap feature-register.json является источником приоритетных карточек. MW package хранит свои требования, схемы, examples и plans один раз. Монолитный Markdown и ZIP — производные поставки.
+Preserve Proposed/Accepted distinctions, technical identifiers, original source pins, and exact
+requirements. A route declaration is not a runtime result. Document tests do not close P04,
+G0, MW feature qualification, P12, or TRUSTED.
 
-## Когда обновлять
+## Editable sources and generated views
 
-При изменении API/controller/route inventory обновить reference и examples. При замыкании production path добавить новый факт со ссылкой на observed evidence; не исправлять старый verdict как будто он описывал новую версию. При изменении roadmap dependencies проверить acyclic graph и release relationship. При изменении MW — пересчитать его manifest по собственной процедуре и сохранить исторический отчёт, а не подделывать прежнюю проверку.
+| Editable source | Derived view |
+| --- | --- |
+| docs/roadmap/feature-register.json | Five P0–P4 roadmap pages. |
+| docs/reference/route-catalog.json | Selected route reference. |
+| MW traceability.json | Acceptance catalog, requirement/task/case mapping. |
+| MW traceability.json + task-details.json + file-plan.json | Eight package plans. |
 
-## Статусы
+Edit these JSON sources, then regenerate from the repository root:
 
-Использовать SOURCE_PRESENT, PARTIAL_SURFACE, RECORDED_PARTIAL_ACCEPTANCE, DESIGN_ONLY или явно NOT_AUDITED. Для выполненной проверки нужны команда, environment, input digest и результат. Маркер NOT_RUN_HERE не исправлять на PASS при простом review текста.
+```bash
+python docs/maintenance/render_catalogs.py
+python docs/maintenance/render_catalogs.py --check
+python docs/maintenance/update_manifests.py .
+```
 
-## Проверка
+The generated plans share execution rules in MW plans/README.md. Do not maintain independent
+copies of requirements or repeated task procedures.
 
-В этой поставке имеется отдельный documentation validator: links/anchors, JSON, sources/dependencies, corpus refs, безопасный scope patch и сохранённый MW tree. Он не проверяет product behavior и не присваивает qualification. Внешние URL live-check автоматически не выполняется.
+## Validation
 
-### Повторить проверку этой поставки
-
-Проверяйте распакованную поставку в отдельном каталоге. Python 3.10+; нужны `markdown-it-py` и `jsonschema`. Зависимости устанавливаются только в выбранную вами среду. Из корня распакованной поставки:
+Use Python 3.10+, markdown-it-py, jsonschema, and Bash for shell-snippet syntax checks.
+No product credentials, network, database, or model are needed.
 
 ```bash
 python docs/maintenance/validate_documentation.py .
+python -m unittest discover -s docs/maintenance/tests -p 'test_*.py'
+python docs/implementation/memory-workspace/verification/validate_bundle.py
 ```
 
-Валидатор не обращается к сети и не изменяет файлы. Bash-примеры проверяются только через `bash -n`, не выполняются. `payload-manifest.json` фиксирует байты поставки; после сознательного редактирования несовпадение ожидаемо и требует новой проверки/манифеста. Это не тест runtime Vestrace.
+The main validator checks active links/anchors, closed fences, JSON, generated views, normative
+translation parity, traceability, fixture validation, and current manifest hashes. It also
+checks original preserved code/contract/evidence bytes against the supplied-archive inventory.
+Historical pre-existing broken references are reported separately, not silently counted as
+successful links. See the exact executed scope in [the current report](english-validation-report.md).
 
-## Изменения и интеграция
+Bash snippets are parsed with bash -n, not executed. Unicode fixture payloads stay byte-for-byte
+unchanged; in particular, the multi-byte 40,000-character negative case must not be translated
+into ASCII and accidentally become valid. Frozen Russian originals and historical reports
+are intentional language-preservation exceptions, with English reading copies linked nearby.
 
-Архив — overlay к repository 07e2977. Не удалять существующий `docs/`, не переименовывать исторические authority files. Предпочтительно применять проверенный patch в отдельной рабочей ветке с review. Перед применением к иному commit провести новый delta.
+## Current versus historical verification
 
-Новые docs-only changes не дают разрешение изменять code/migrations/protocol locks. Для выполнения feature-плана нужен отдельный accepted scope и проверка dependencies.
+Original payload-manifest.json, validation-result.json, scope-result.json, and MW verification
+records describe the older documentation deliveries. They are preserved as historical records,
+not rewritten to claim a fresh PASS. This edition uses english-payload-manifest.json and
+english-validation-result.json, plus MW english-file-manifest.json. Current validator entrypoints
+select the current manifest explicitly; original validator source is retained under
+[history](../history/editorial-2026-09-07/README.md).
 
----
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](sources.md)
+Before publishing edits, regenerate views and manifests, run the validators and negative
+regression tests, inspect the exact diff, and record checks not run. External URL availability
+and semantic translation review are distinct from local structural validation.
+
+[Source register](sources.md) · [Migration map](migration-map.md) · [Input reconciliation](input-reconciliation.md)

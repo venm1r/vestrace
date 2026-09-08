@@ -1,45 +1,78 @@
-# 07. Безопасность, очистка и наблюдаемость
+# 07. Security, cleanup, and observability
 
-## 7.1 Threat model расширения
+**Status:** Proposed extension requirements. Existing authorization/material authorities remain in force.
 
-Рассматриваются злонамеренный MCP/HTTP caller, устаревший browser, два конкурентных writers, hostile imported Markdown/JSON, ошибочный local scanner, умирающий worker, неизвестный исход HTTP POST, отозванное право между preview и apply/download. Компрометация host root, PostgreSQL superuser и модели как универсального «здравого смысла» не решается этим пакетом.
+## 7.1 Threat model
 
-Обязательная граница: identity получена trusted middleware. Workspace selection проверяется относительно токена. Worker не получает право пользователя из JSON и не использует собственный широкий principal для обхода чужого denied request. Collection name, path и source title могут быть чувствительными данными.
+Consider malicious MCP/HTTP callers, stale browsers, concurrent writers, hostile imported
+Markdown/JSON, incorrect scanners, worker death, unknown POST outcomes, and revocation between
+preview and Apply/download. This package does not solve host-root or PostgreSQL-superuser
+compromise, nor make a model a universal security oracle.
 
-## 7.2 Content disclosure
+Trusted middleware establishes identity. Validate workspace selection against the token.
+Workers cannot take actor authority from JSON or use their broader service principal to bypass
+a denied user request. Names, paths, and source titles can themselves be sensitive.
 
-List/detail/history/context/source diff/export используют единый `MemoryReadService`/policy projection. Проверки классификации делаются до передачи content ranker/model и до формирования snippets. Browser roles не являются enforcement. Исторический более закрытый label проверяется по собственной revision, а не current memory label.
+## 7.2 Disclosure
 
-Capabilities на уровне операции и read/destination predicates на уровне content должны быть выполнены одновременно. Missing/denied refs не раскрываются безопасными «подсказками» с чужими именами. Audit и metrics содержат operation IDs и агрегированные статусы только в разрешённом scope.
+List, detail, history, context, source diff, and export share MemoryReadService/policy projection.
+Check classification before sending content to a ranker/model or generating snippets. Browser
+roles do not enforce security. Check each historical revision's own label, not only the current
+memory label. Both operation capability and content read/destination predicates must pass.
 
-## 7.3 Storage boundary
+Safe-looking hints must not reveal denied references/names. Audit/metrics contain operation
+IDs and aggregate status only within authorized scope. No forbidden counts or titles are exposed
+through diagnostics.
 
-Новые source/upload/export payloads идут через existing MaterialIntentCommands, существующий vault и erasure [S17]. Новый `SourcePayloadStore` лишь адаптирует эту authority к source input и не содержит собственную криптографическую state machine.
+## 7.3 Storage
 
-MW-04 должен доказать lawful обычный content owner, чтение и cleanup. Embedding-specific provisional keys из 14C/D для документов запрещены. Не создавать успех фиктивным VaultReceipt. Если существующий content owner/read API не позволяет нужную привязку, оформить явное расширение того же owner model в MW-04, с raw-SQL/runtime-role тестами, а не использовать другой store.
+Source/upload/export payloads use existing MaterialIntentCommands, vault, and erasure. The narrow
+SourcePayloadStore adapts this authority; it does not introduce another cryptographic state machine.
 
-Ключи/receipts связываются с workspace и owner tuple. Host-vault операции не выполняются внутри БД-транзакции. Временное plaintext живёт только в bounded request/process buffer и очищается после завершения насколько это позволяет используемый тип; нельзя обещать полную zeroization JavaScript/OS buffers. Logger не принимает content body. Системные temp-директории не являются storage для staging.
+MW-04 must establish a lawful ordinary-content owner, read path, and cleanup. Do not reuse
+embedding-specific 14C/D provisional keys or fabricate VaultReceipts. When owner/read APIs
+cannot express a binding, explicitly extend the same owner model with raw-SQL/runtime-role
+tests instead of choosing another store.
 
-## 7.4 Чувствительность и label changes
+Bind keys/receipts to workspace and owner tuple. Perform vault work outside SQL transactions.
+Plaintext is limited to bounded request/process buffers and cleared as the types allow; do
+not promise complete JavaScript/OS-buffer zeroization. Loggers must not accept content bodies.
+System temporary directories are not staging storage.
 
-Label taxonomy не имеет автоматически выведенного порядка. Нельзя решить «internal < confidential» на основании строки, если принятый policy model этого не задаёт. Обычный editor и sync сохраняют нынешнюю classification. Другой label → отказ и отдельный governance workflow. Imported labels не исполняются как local policy.
+## 7.4 Classification and secrets
 
-No-secret default scan — предупреждение против случайности, не DLP guarantee. Для экспорта plaintext дополнительно требуется explicit actor intent и разрешённый destination. Скачанный JSON/Markdown получает ясное предупреждение о чувствительном содержимом.
+Do not derive a severity order from label spelling. An ordering such as internal < confidential
+must come from accepted policy, not string comparison. Ordinary editing/sync preserves labels;
+other labels require refusal and separate governance. Imported labels are not executable policy.
 
-## 7.5 Idempotency, retry и наблюдаемые исходы
+Default scanner exclusions reduce accidents, not a DLP guarantee. Plaintext export requires
+explicit intent and a permitted destination. Warn that downloaded JSON/Markdown may be sensitive.
 
-В новом API Idempotency-Key scoped к operation/principal/workspace. Возврат старой receipt требует доступа сегодня. Body fingerprint никогда не строится из случайных result IDs; он не является открытым equality oracle.
+## 7.5 Replay and outcomes
 
-`result-unknown` — допустимое клиентское состояние. После timeout нельзя показывать «ничего не сохранилось». Повтор с тем же body/key или чтение известной operation — правильное действие. Retry outbox доставляет запрос не менее одного раза, не гарантирует один вызов handler; canonical receipt/unique guards обеспечивают один бизнес-эффект [S08].
+New Idempotency-Key scope includes operation/principal/workspace. Receipt disclosure requires
+current rights. Fingerprints exclude random result IDs and must not become public equality oracles.
 
-## 7.6 Эксплуатационные сигналы
+result-unknown is a valid client state. Timeout does not mean nothing was saved: retry identical
+body/key or read the known operation. At-least-once can invoke a handler repeatedly; canonical
+receipts and unique guards establish one business mutation, not a claim of one handler invocation.
 
-Без raw текста: число PreviewReady/applying/blocked/failed, длительность staging/apply, возраст незавершённой операции, dead-letter items, projection pending и причины неподдерживаемого tokenizer/storage. Такие metrics сами не являются proof of correctness и не повышают state до Trusted.
+## 7.6 Operational signals
 
-У job есть ссылки на реальные item receipts и исходные тестируемые states. После restart оператор видит, что уже committed, что требует retransmit, что отменено и что blocked. Doctor/repair не получают отдельного пути DML: переиспользуются existing guarded commands.
+Within permitted scope, expose counts of preview_ready/applying/blocked/failed, staging/apply
+duration, unfinished-operation age, dead-letter items, pending projections, and unsupported
+counter/storage reasons—without raw text. Metrics do not establish correctness or Trusted state.
 
-## 7.7 Readiness и supported environment
+After restart, show actual receipts and whether work committed, needs retransmission, was
+cancelled, or is blocked. Doctor/repair uses guarded commands, not a separate DML bypass.
 
-До включения: migration/schema gate; narrow provisioner; ordinary material vault support; `memory.source_import.apply` и `memory.export.prepare` registered в настоящем worker; callback actor resolution; supported tokenizer только при заявлении token cap. Возможность write/edit зависит от approved shared mutation path, а Context/embedding readiness дополнительно от завершённых текущих generation boundaries.
+## 7.7 Readiness
 
-Отключённая функция отображается как unavailable/not_enabled. Feature flag не разрешает обход security checks. Флаг не меняет значения legacy endpoint и не включает permissive defaults. Backup/restore/new content-owner compatibility проверяются отдельно от импорта знаний.
+Require schema/migration compatibility, narrow provisioning, ordinary-material support, real
+worker registration of memory.source_import.apply and memory.export.prepare, and durable actor
+resolution. Qualified tokenizers are required when claiming a token cap. Write/edit readiness
+requires the shared atomic writer; context/indexing additionally requires generation readiness.
+
+Disabled features show unavailable/not_enabled. Flags cannot bypass checks, alter legacy semantics,
+or enable permissive defaults. Backup/restore and new owner compatibility are qualified separately
+from knowledge import.

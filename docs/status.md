@@ -1,43 +1,66 @@
-# Текущее состояние и границы утверждений
+# Implementation status and evidence boundaries
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** Supplied archive `3e05dfbdce063aa44a3a9e5a7a84c274597e8188`.
+**Method:** Selected source inspection and reading existing evidence; no runtime execution.
+The ZIP comment identifies the commit. Hash comparison checks which earlier observations
+still concern identical source bytes; it is not a full repository audit.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## Read the status dimensions separately
 
-## Срез
+| Label | Meaning | Does not establish |
+| --- | --- | --- |
+| Source present | The relevant definition/implementation is in the inspected source. | A complete runtime path or supported deployment. |
+| Limited surface | An existing interface exposes only part of the intended workflow. | Absence of useful internal components. |
+| Recorded acceptance | An existing evidence record reports acceptance at its named boundary. | A new test run by the author of this edition. |
+| Proposed | A documented extension awaits explicit acceptance and implementation. | An available endpoint, CLI command, or release feature. |
+| Not established | The available review does not establish the broader claim. | Proof that the feature cannot exist elsewhere. |
 
-Документация привязана к `07e2977a20b05c5b16953a206a6d68bdbff3a052` (`docs: integrate memory workspace design`). Сравнение с `6f610253` показало одну интеграционную правку документации: runtime-код не изменён. Именно указанный пользователем commit, а не движущийся HEAD, является основанием этой редакции. Незапушенные изменения не входят в срез. Использованы выбранные исходники и сохранённый манифест предшествующего review; полного повторного аудита всех файлов нет.
+## Important update: Task 14E is recorded as approved
 
-Здесь **нет новых runtime evidence**. Даже запись «опубликовано в evidence» означает чтение результата автора репозитория, а не повторение его эксперимента в этой среде.
+The supplied [P04 evidence](development-evidence/v1-g0-04-embedding-transition-foundation.md)
+ends with **“Task 14E final lead acceptance - APPROVED.”** It records the final independent
+read-only review, the 17-test finalization suite, and the amended RED→restore→GREEN checks.
+This edition **read that record; it did not rerun those tests**.
 
-## Реестр
+The approval closes **Task 14E only**. The rotation-before-adoption deferral remains binding;
+**P04, G0, and full v1.0 remain incomplete according to that same record**. Earlier guides
+ending at 14D/ResultPrepared must not continue to describe publication as merely proposed.
+Nor may the newer task approval be expanded into full embedding/retrieval or release qualification.
 
-| Возможность | Статус | Граница | Основание |
-| --- | --- | --- | --- |
-| HTTP identity | **Найдено в коде** | Bearer-токен разрешается сервером; identity-заголовки заменяются. | [R01](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs) |
-| Инвентарь маршрутов | **Найдено в коде** | Route descriptor задаёт capability/risk; наличие descriptor не доказывает полноценный handler. | [R02](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/route_inventory.rs) |
-| Создание/ревизия Memory | **Найдено в коде** | memory/revision/source/search пишутся вместе; outbox/idempotency затем отдельно. | [S05](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs) |
-| Получение памяти HTTP/MCP | **Ограничено** | GET memory отдаёт метаданные; содержимое и номер ревизии не входят в текущий MemoryResponse. | [S10](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs) |
-| Библиотека/история для внешнего клиента | **Предложено** | MW проектирует list/detail/history; наличие внутренних ревизий не делает эти routes доступными. | [S03](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs) |
-| ContextPack HTTP | **Ограничено** | Ответ содержит сводку, но не sections/rendered context. | [S11](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs) |
-| Подсчёт токенов | **Ограничено** | Текущий helper использует ceil(UTF-8 bytes/4); это не точный счётчик произвольной модели. | [S12](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/retrieval/context_builder.rs) |
-| Точные исторические ссылки | **Найдено в коде** | Hydrator запрашивает указанную ревизию без подмены текущей. | [R13](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs) |
-| Один цикл worker | **Опубликовано в evidence** | Exit 0/3/1 различает обработку, idle и ошибку; не является успехом всего Run. | [S01](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md) |
-| P04 delivery ResultPrepared | **Опубликовано в evidence** | 14D принят до ResultPrepared; это не Live и не Succeeded. | [S01](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md) |
-| Завершение P04 | **Не подтверждено** | 14E и последующие границы не закрыты опубликованным решением 14D. | [S01](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md) |
-| Редактор памяти Console | **Предложено** | Есть компонент MemoryConsole, но нет маршрута полноценного memory workspace. | [S14](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/main.tsx) |
-| Импорт/синхронизация | **Предложено** | Контракты MW присутствуют только в документационном пакете. | [S03](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs) |
-| Переносимый JSON/Markdown | **Предложено** | Спецификация MW не является работающим exporter. | [S03](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs) |
-| Ключи и content materials | **Компоненты найдены** | Наличие lifecycle primitives не квалифицирует все пути чтения, импорта и удаления. | [S17](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/material/commands.rs) |
-| Готовность v1.0 | **Не подтверждено** | Пакеты/тесты/документы не заменяют P12 и целевую квалификацию. | [R11](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md) |
+## Current memory-first boundaries
 
-Машиночитаемая копия: [capabilities.json](status/capabilities.json). Markdown-таблица генерируется из тех же записей при сборке этой редакции; при дальнейших изменениях оба представления нужно обновлять совместно.
+| Area | Observed boundary | Next work / evidence |
+| --- | --- | --- |
+| HTTP identity | Bearer authentication resolves principal/workspace and replaces caller identity headers. | Verify each actual deployment/token/policy combination. |
+| Route policy | Inventory declares capability/exposure/risk. | Read the handler and composition; an inventory entry is not completion. |
+| Memory persistence | Repository commits memory, revision, source, and search projection with CAS. | Service outbox/idempotency persistence is separate; MW-02 proposes whole-command atomicity. |
+| HTTP memory read | Current MemoryResponse contains metadata, not content/current content-revision number. | Proposed MW-01 detail/history/browse. |
+| MCP memory read | The reviewed get_memory returns a metadata view. | Reuse the authorized query service for useful detail. |
+| HTTP context | ContextPackDto exposes counters/summary, not rendered sections. | Proposed actual-content response and explicit budget semantics. |
+| Token accounting | Existing helper estimates ceil(UTF-8 bytes / 4). | A hard token claim requires a qualified counter; no implicit fallback. |
+| Exact revision hydration | The reviewed hydrator reads the requested revision without a latest fallback. | Validate full temporal/authorization scenarios separately. |
+| Console memory | A presentation component exists; the reviewed router lacks the full library/editor workflow. | Wire real APIs and browser acceptance, not a second Console. |
+| Import/sync/portability | The MW package defines a proposed bounded workflow. | MW-00 scope and dependencies, then implementation and feature acceptance. |
+| Materials | Existing content/key lifecycle mechanisms are present. | Each new staging/read/export owner needs compatibility and recovery evidence. |
+| Release | Frozen P01–P12 program remains authoritative. | Fresh P12 evidence on the exact shipping target. |
 
-## Как трактовать пробелы
+The [machine-readable capability register](status/capabilities.json) is an editorial summary,
+not a test report. Original source records remain pinned; [source deltas](maintenance/source-delta.json)
+identify changed and unchanged inspected files.
 
-«Не подтверждено» нельзя заменять на «отсутствует во всём репозитории». «Найдено в коде» нельзя заменять на «проверено в production». Ошибка документации и дефект реализации — разные вещи: в руководстве исправляется первое, второе получает задачу и проверку, а не исправляется только формулировкой.
+## Migration planning collision
 
-Подробные ограничения и очередность работы — [open-gaps](status/open-gaps.md). Старый pinned implementation snapshot и исторические gap-delta сохранены как основания, но не переписываются задним числом под этот реестр.
+The archive contains `migrations/0196_retired_credential_erasure.sql`. The MW proposal also
+uses `0196_memory_workspace_receipts.sql` as a candidate name. That candidate is **not free**.
+MW-00 must reassign the candidate consistently across the file plan, contracts, task plans,
+and tests before implementation. This documentation does not reserve a replacement number
+or alter any SQL migration.
 
----
-[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)
+## What was not tested here
+
+Rust build/tests/doctests, PostgreSQL grants/races/migrations, HTTP/MCP/worker execution,
+browser interoperability, real model calls, import/export, and backup/restore were not run.
+Documentation checks have their own [validation report](maintenance/english-validation-report.md).
+Do not use their PASS to close any product gate.
+
+[Open gaps](status/open-gaps.md) · [Roadmap](roadmap/README.md) · [Sources](maintenance/sources.md)

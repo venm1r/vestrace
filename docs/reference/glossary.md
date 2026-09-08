@@ -1,40 +1,35 @@
-# Словарь проекта
+# Project glossary
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
-
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
-
-| Термин | Значение в этой документации |
+| Term | Meaning in this documentation |
 | --- | --- |
-| **Memory** | Стабильная identity долговременной записи; не равна доказанной истине. |
-| **MemoryRevision** | Конкретное неизменяемое содержимое/metadata записи. |
-| **Source** | Основание происхождения; его наличие не гарантирует истинность. |
-| **Claim** | Явное утверждение, когда требуется отдельная смысловая модель. |
-| **Provenance** | Связи с источниками и преобразованиями; не автоматическое доверие. |
-| **Canonical state** | Авторитетное состояние своей предметной области. |
-| **Projection** | Перестраиваемое представление; не вправе переписывать основание. |
-| **ContextPack** | Governed представление контекста с ограничениями и provenance. |
-| **Classification label** | Метка vocabulary; порядок severity нельзя придумывать. |
-| **Sensitivity** | Отдельное измерение чувствительности канала/материала. |
-| **Capability** | Ограниченное право операции в текущей policy. |
-| **Run** | Каноническое выполнение; не то же самое, что процесс worker. |
-| **Outbox** | Доставка нужной работы; at-least-once, не второй event log. |
-| **Idempotency** | Сходимость повторов одной логической операции в пределах контракта. |
-| **CAS** | Изменение только при совпадении ожидаемой версии. |
-| **UNKNOWN** | Исход не установлен; не permission to retry. |
-| **ResultPrepared** | Подготовленный durable результат; не обязательно Live/Succeeded. |
-| **Generation** | Идентичность состояния производного индекса по соответствующему contract. |
-| **Material** | Управляемое содержимое с lifecycle/key authorities. |
-| **B/I/M** | Base imported content, Incoming source, текущая Memory; стороны sync decision. |
-| **Qualification** | Принятие свойств по evidence на точном target, не общий комплимент качеству. |
-| **Priority P0–P4** | Предложенный порядок продуктовых групп; не номера frozen packages. |
-| **P01–P12** | Существующие пакеты full-v1 gate program. |
-| **MW-00–MW-07** | Предлагаемая программа Memory Workspace; не дополнение P13+ по умолчанию. |
-| **NOT_RUN_HERE** | В этой работе не выполнялась соответствующая runtime проверка. |
+| Memory | Stable identity of a long-lived record; not proof of truth. |
+| MemoryRevision | Immutable content/metadata version of a memory. |
+| Source | Provenance basis; its existence alone does not establish correctness. |
+| Claim | An explicit assertion when a separate semantic model is needed. |
+| Provenance | Links to sources and transformations, not automatic trust. |
+| Canonical state | Authoritative state for its own domain. |
+| Projection | Rebuildable derived representation that cannot rewrite its basis. |
+| ContextPack | Governed context representation with constraints and provenance. |
+| Classification label | An entry in a policy vocabulary; do not invent a severity ordering. |
+| Sensitivity | A separate sensitivity dimension of content or a channel. |
+| Capability | A bounded right to perform an operation under current policy. |
+| Run | Canonical execution, distinct from a worker process. |
+| Outbox | At-least-once work delivery, not another canonical event log. |
+| Idempotency | Repeated attempts of one logical operation converge within the contract's scope. |
+| CAS | Compare-and-swap: change state only if its expected version matches. |
+| Content-addressed storage | Storage identified by byte content; also sometimes abbreviated CAS, but not compare-and-swap. |
+| UNKNOWN | The outcome is not established; not permission to retry. |
+| ResultPrepared | Durable preparation, not automatically Live or Succeeded. |
+| Generation | Identity of a derived index state under the applicable contract. |
+| Material | Content governed by lifecycle and key authorities. |
+| B/I/M | Base imported source, Incoming source, and current effective Memory in synchronization. |
+| Qualification | Acceptance of specified properties through evidence on an exact target. |
+| P0–P4 | Proposed product-priority groups, not frozen package numbers. |
+| P01–P12 | Existing full-v1 implementation/gate program. |
+| MW-00–MW-07 | Proposed Memory Workspace program, not automatically P13 onward. |
+| NOT_RUN_HERE | The relevant runtime check was not executed in this work. |
 
-Словарь поясняет, но не заменяет exact type/нормативный contract. При различии источником смысла остаётся соответствующий Accepted документ.
+This glossary explains usage but does not replace exact types or normative contracts.
+Applicable Accepted documents control when wording differs.
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Architecture](../architecture.md) · [Normative specifications](../specs/README.md)

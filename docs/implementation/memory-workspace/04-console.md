@@ -1,51 +1,90 @@
-# 04. Console: библиотека, редактор и источники
+# 04. Console: library, editor, and sources
 
-## 4.1 Информационная архитектура
+**Status:** Proposed UI behavior; the corresponding API/application paths must be implemented.
 
-Добавить `/memory`, `/memory/:memoryId`, `/memory/:memoryId/history`, `/sources`, `/imports/:operationId`, `/conflicts/:conflictId`, `/exports/:operationId` в существующий BrowserRouter. Использовать нынешние AppLayout, ErrorBoundary, Surface/Button и design tokens. Новый визуальный бренд, второй SPA и графовый редактор не нужны.
+## 4.1 Information architecture
 
-`MemoryConsole.tsx` переиспользуется как представление detail и становится контейнером для содержимого/истории/редакторских действий. Предложенные новые route modules: MemoryPage, SourcesPage, ImportPage, SourceConflictPage. Export status можно отображать в существующем panel без отдельной тяжёлой subsystem.
+Add `/memory`, `/memory/:memoryId`, `/memory/:memoryId/history`, `/sources`,
+`/imports/:operationId`, `/conflicts/:conflictId`, and `/exports/:operationId` to the existing
+BrowserRouter. Reuse AppLayout, ErrorBoundary, Surface/Button, and design tokens. No new brand,
+second SPA, or graph editor is required.
 
-## 4.2 Библиотека
+Reuse MemoryConsole.tsx for detail, content/history, and editorial actions. Proposed route
+modules are MemoryPage, SourcesPage, ImportPage, and SourceConflictPage. Export status can use
+an existing panel rather than a large separate subsystem.
 
-Поиск и browse — разные режимы. Пустая строка в browse вызывает GET /v1/memories, не фиктивный semantic query. Фильтры: kind, status, collection, временной режим там, где он поддержан сервером. Порядок created_at/id, страницы до 50 по умолчанию. Никаких total counts, полученных из неавторизованного списка.
+## 4.2 Library
 
-Состояния: loading, empty, ready, query-error, cursor-expired, forbidden, unavailable. Empty не используется вместо 503. При CursorExpired сохранять фильтры, объяснять обновление списка и начинать первую страницу. На смене workspace отменить pending fetch; поздний ответ прежнего workspace не попадает в новый UI.
+Browse and search are separate: an empty browse input calls GET /v1/memories, not a fabricated
+semantic query. Filters are kind, status, collection, and server-supported temporal modes.
+Order by created_at/id, default page size 50; no totals from unauthorized record lists.
 
-## 4.3 Карточка и редактор
+Represent loading, empty, ready, query-error, cursor-expired, forbidden, and unavailable
+separately. Never substitute empty for 503. On CursorExpired, preserve filters, explain the
+refresh, and request page one. Abort pending fetches on workspace switch and discard any late
+response from the previous scope.
 
-Detail показывает kind, status, содержимое, ordinal/state revision, заявленную classification, provenance_status, source links и reason последней правки. У percentage confidence подпись «заданная оценка», не «вероятность истинности».
+## 4.3 Detail and editing
 
-Editor states: viewing → editing → submitting → applied; параллельные состояния conflict, failed, result-unknown. Текст draft не уничтожается при конфликте или сетевой ошибке. При 409 рядом показываются база, свежий current и draft. Для повторного намерения после разрешённого сравнения создаётся новый key. При result-unknown повторить прежний запрос тем же key; не обещать, что mutation не произошла.
+Show kind, status, content, ordinal/state revision, declared classification, provenance_status,
+source links, and the latest correction reason. Label percentage confidence **supplied assessment**,
+not probability of truth.
 
-Restore требует выбора разрешённой revision, preview текста и reason. Он создаёт новую revision. Classification поля readonly; попытка изменить их через devtools отклоняется сервером. Нельзя использовать restore для копирования denied истории в более доступную текущую запись.
+Editor states are viewing → editing → submitting → applied, plus conflict, failed, and
+result-unknown. Preserve drafts after conflict/network failure. For 409 display base, current,
+and draft side by side. A deliberate new intent after comparison gets a new key. An unknown
+result reuses the original body/key; never claim the mutation did not occur.
 
-Три origin обозначения: «из источника», «исправлено пользователем», «импортированная история». Legacy-unattributed provenance виден как ограничение, а не заполнен вымышленным actor/source.
+Restore requires a permitted revision, text preview, and reason, and creates a new revision.
+Classification is read-only, including server refusal of developer-tool tampering. Restore
+cannot copy denied history into a less restricted current record.
 
-## 4.4 Sources и импорт
+Distinguish **from source**, **corrected by user**, and **imported history**. Display
+legacy-unattributed provenance as a limitation, not invented source/actor attribution.
 
-В списке источников: имя/relative_path, latest source revision, effective memory revision, manual override, processing state. Абсолютный путь машины отправителя нигде не нужен.
+## 4.4 Sources and import
 
-Import UI шаги: выбрать файлы → явно задать collection/label/оценки → загрузить и получить durable preview → просмотреть new/update/unchanged/conflict/missing → выбрать items → подтвердить точный preview_revision → наблюдать progress.
+Show name/relative_path, latest source revision, effective memory revision, manual override,
+and processing state. The sender's absolute filesystem path is unnecessary.
 
-До PreviewReady Apply выключен. Неизвестный исход загрузки не повод автоматически отправить другой batch. В progress показывать separately canonical applied, FTS readiness и embedding/retrieval readiness; «100% imported» не используется как «всё доступно в поиске».
+The flow is select files → explicitly choose collection/label/ratings → upload and obtain a
+durable preview → inspect new/update/unchanged/conflict/missing → select items → confirm exact
+preview_revision → monitor progress. Disable Apply until PreviewReady. An unknown upload result
+does not justify submitting a different batch automatically.
 
-Partial batch не скрывает item failures. Committed элементы отмечены неизменно; retry не должен создавать вторые копии. Отмена прекращает только непроведённые элементы. UI объясняет, что уже применённые изменения сохранятся.
+Show canonical application, FTS readiness, and embedding/retrieval readiness separately.
+“100% imported” does not mean searchable. Expose item failures in partial batches, preserve
+committed outcomes, and make retries nonduplicating. Cancellation stops only uncommitted items;
+explain that already applied changes remain.
 
-## 4.5 Конфликт sync/edit
+## 4.5 Source/editor conflicts
 
-Показывать B — source, на основе которого редактировали; I — новый источник; M — current manual text. Доступны ровно `accept_source`, `keep_manual`, `merge` с явным текстом и reason. Нет фонового LLM merge.
+Show B (source basis of the edit), I (incoming source), and M (current effective manual content).
+Allow exactly accept_source, keep_manual, or merge with explicit text/reason. No background
+LLM merge exists in this scope.
 
-При changed head или policy до подтверждения — 409/403, заново загрузить bases; не переиспользовать старую картинку diff как разрешение на новый content. Выбор keep_manual записывает управляемый override, а не изменяет I. При следующем изменении источника override снова требует проверки.
+Changed heads/policy before confirmation produce 409/403 and require fresh bases. An old diff
+cannot authorize unseen content. keep_manual records an override instead of changing I; the
+next source change requires review again. When M changed after detection, show immutable M0
+and current M separately as defined in [the sync contract](05-import-sync.md).
 
-## 4.6 Безопасность rendering и доступность
+## 4.6 Rendering and accessibility
 
-Первый выпуск отображает содержимое как text/pre-wrap. Если позже добавляется Markdown renderer, raw HTML выключен, links только http/https с безопасным открытием; javascript/data/file links, remote images, scripts и embedded frames не исполняются. Никакого dangerouslySetInnerHTML с импортированным текстом.
+Initially use text/pre-wrap. Any later Markdown renderer disables raw HTML, opens only safe
+http/https links, and executes no javascript/data/file links, remote images, scripts, or frames.
+Never pass imported content to dangerouslySetInnerHTML.
 
-Dialog имеет доступное название, focus trap и возврат фокуса; form error связан с полем; status не передаётся только цветом; progress объявляется ненавязчиво через aria-live. Во время submit доступен понятный статус, но не второй submit с новым ключом. Draft не сохраняется в localStorage; export скачивается только явным действием.
+Dialogs need accessible names, focus trapping, and focus restoration. Associate errors with
+fields; communicate status through more than color. Use unobtrusive aria-live progress. During
+submission, show state rather than enabling a second request with a new key. Do not store drafts
+in localStorage; export downloads require explicit user action.
 
-## 4.7 Проверка
+## 4.7 Verification
 
-Чистые reducer/view-model проверки выполняются Node test runner по аналогии с текущими mjs tests. Для реальных browser workflows MW-03 добавляет test-only Playwright с exact version в lockfile после согласования dependency diff; scripts `test:memory` и `test:e2e:memory` в baseline ещё нет. Typecheck/компонентный test не засчитываются как запуск browser+HTTP+PostgreSQL.
+Use Node tests for pure reducers/view-models, following existing mjs conventions. MW-03 adds
+test-only Playwright with an exact lockfile version after dependency review. test:memory and
+test:e2e:memory are proposed, not existing at the original baseline. Typechecking/component
+tests do not establish a real browser → HTTP → PostgreSQL workflow.
 
-Обязательны keyboard-only edit/restore, конфликт двух браузерных сессий, workspace switch во время pending fetch, 503 вместо empty, deny исторического текста и импорт Markdown с HTML payload.
+Required browser cases include keyboard edit/restore, conflicting sessions, scope switching
+during fetch, 503 versus empty, denied history, and hostile Markdown/HTML without network loads.

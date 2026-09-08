@@ -1,55 +1,47 @@
-# 08. Программа реализации Memory Workspace
+# 08. Memory Workspace implementation program
 
-**Baseline:** `6f6102536e9a535b7086db14573bf45fe750ad71`. **Статус:** proposed, не изменение P01–P12 и не авторизация записи в защищённые paths.
+**Status:** Proposed; not a P01–P12 amendment or blanket write authorization.
+Original source review remains `6f610253`. MW-00 reconciles the supplied `3e05dfbd` archive
+and any later implementation checkout.
 
-## Порядок и границы
+| Package | Deliverable | Predecessors | Exit boundary |
+| --- | --- | --- | --- |
+| MW-00 | Accepted delta, scope, and dependency map. | This design. | Fresh tree, exact paths/authority, no unresolved P04 overlap. |
+| MW-01 | Read schema/epoch, detail/history/browse, actual context. | MW-00. | Runtime disclosure tests; qualify context separately from detail reads. |
+| MW-02 | Shared atomic writer, correction/restore/replay. | MW-00, MW-01. | One UoW, CAS, exact replay, no legacy bypass. |
+| MW-03 | Wired Console library/editor. | MW-01, MW-02. | Real browser → HTTP → database edits/history/conflicts. |
+| MW-04 | Collections, staging, preview, scanner, import handler. | MW-02, MW-03. | Exact bytes, lawful owner, production worker application. |
+| MW-05 | Resync, B/I/M resolution, cancellation, Missing. | MW-04. | Preserved edits and both race outcomes verified. |
+| MW-06 | Export/portable import, UI/CLI. | MW-04, MW-05. | No authority laundering; protected download. |
+| MW-07 | Upgrade, negative tests, end-to-end feature acceptance. | MW-01–MW-06. | Complete declared workflow and recorded limitations. |
 
-| Пакет | Результат | Предшественники | Порог завершения |
-|---|---|---|---|
-| MW-00 | Принятый delta/scope и карта действующих зависимостей | этот проект | Fresh tree, точные file/authority границы, отсутствие конфликтов с P04 |
-| MW-01 | Read schema/epoch, detail/history/browse и полезный context через единый read path | MW-00 | Runtime content-disclosure tests; context gated отдельно от чтения |
-| MW-02 | Единый atomic writer, correction/restore и replay | MW-00, MW-01 | One UoW, CAS, exact replay, no legacy bypass |
-| MW-03 | Подключённая библиотека/редактор Console | MW-01, MW-02 | Реальный browser → HTTP → DB edit/history/conflict |
-| MW-04 | Source import: коллекции, staging, preview, scanner, handler | MW-02, MW-03 | Exact-byte preview, lawful material owner, worker apply |
-| MW-05 | Повторная sync, B/I/M conflicts, отмена и Missing | MW-04 | Ручная правка сохраняется; две стороны race доказаны |
-| MW-06 | Export/portable import и UI/CLI | MW-04, MW-05 | Перенос без authority laundering, защищённый download |
-| MW-07 | Upgrade, негативные проверки и полная приёмка | MW-01–MW-06 | Работает один целый сценарий и зафиксированы ограничения |
+Accept packages separately. Read-only MW-01 design can start before complete embedding closure,
+but its context gate requires an actually available retrieval generation. MW-04 adds no model
+calls and cannot bypass P04. Existing embedding outbox obligations remain even when indexing
+is blocked. Committing memory alone does not make an import indexed.
 
-Пакеты идут в таком порядке, чтобы каждый принимался отдельно. Разработка read частей MW-01 может идти до окончания 14E, но ContextPack gate не объявляется принятым без настоящей доступной retrieval generation. MW-04 не запускает дополнительные model calls и не чинит P04 обходом; действующие embedding outbox topics после memory mutation сохраняют свои обязательства и blockers. Новую source операцию нельзя объявить indexed на основании одного commit памяти.
+## Scope and migrations
 
-## Планирование на актуальном дереве
+The [file plan](file-plan.json) distinguishes original inspected sources, references needing
+reread, and candidate new files. Each package needs its own preflight/exact allowlist; a new
+file or dependency requires a scoped amendment. Do not rewrite P04 scope lists.
 
-[Карта файлов](file-plan.json) различает прочитанные существующие files, известные references для повторного чтения и proposed новые paths. Это не универсальная allowlist на все пакеты. Перед пакетом builder фиксирует его own preflight, exact paths и protected authorities. Новый файл или dependency требует отдельного scoped amendment; старые P04 lists не редактируются этой программой.
+Candidate 0196–0199 names are not reservations. **0196 is already occupied in the supplied
+archive.** Reconcile all related paths/references before the first SQL write. Accepted P04
+publication work must be reused rather than repeated from an older proposal.
 
-Candidate migrations 0196–0199 — имена для оценки diff, не зарезервированные номера. 0195 назван в P04/14E. Если на момент MW-00 any number занят, переименовать все связанные ссылки одним документационным amendment до первого SQL write.
+## Execution discipline
 
-## Исполнение и evidence
+Follow specification → behavioral RED → minimal implementation → GREEN → negative/mutation
+acceptance → independent review → evidence. A builder's self-review is not independent review.
+Partial successful log excerpts are not a complete test run.
 
-Builder реализует один тестируемый task; reviewer проверяет контракт, а не только diff. Этапы: спецификация → поведенческий RED → минимальная реализация → GREEN → negative/mutation приёмка → независимый review → запись evidence. Review, заявленный builder, не является независимым review. Полный прогон не заменяется grep выбранных успешных строк.
+Create valid targets/fixtures before expecting meaningful RED. Missing targets, compilation
+errors, and absent DATABASE_URL are setup failures. E2E data is produced through actual
+entrypoints; administrative preparation is limited to installation/migration/grants, not
+fabricated completion rows, source records, or receipts.
 
-Планы содержат конкретные proposed tests и команды. Они становятся запускаемыми **после** создания названного test target/fixture; до этого ошибка «target not found» не считается содержательным RED. Test fixture сначала поднимает isolated supported runtime и создаёт данные через production entrypoints, затем assertion ломается на отсутствующем поведении. Database migrations/admin setup — единственное допустимое административное приготовление; completion rows, source data и receipts не сеются напрямую для E2E.
-
-## Общие проверочные команды
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-targets --all-features --locked --no-fail-fast
-cargo test --workspace --doc --all-features --locked
-npm --prefix apps/console ci
-npm --prefix apps/console run typecheck
-npm --prefix apps/console run build
-```
-
-Это рекомендации для существующего toolchain и доступной test-среды, не наблюдённый результат. PostgreSQL URLs/credentials подаются через безопасный setup, не копируются в evidence. Два Cargo процесса одновременно не запускать по умолчанию. `--all-targets` не заменяет doctests [E01]. Playwright scripts и tests ниже добавляются MW-03, их нет в baseline:
-
-```bash
-npm --prefix apps/console run test:memory
-npm --prefix apps/console run test:e2e:memory
-```
-
-## Документы для agentic handoff
-
-Каждый [план пакета](plans/README.md) ссылается на общие specs. Вся информация для тестового сценария находится в [приёмке](09-acceptance.md) и [JSON fixtures](examples/catalog.json). Proposed interfaces описаны в соответствующем task; по совпадению имени в планах нельзя заключать, что такой символ уже есть в коде.
-
-Gate перед commit/merge: exact scoped diff, no secret payloads, confirmed failure paths, full relevant suites, recorded unavailable dependencies. Нет разрешения push/deploy из этого документа. Продуктовый release требует отдельного решения с evidence по конкретному supported environment.
+Shared commands and the full task procedure are in [plans/README](plans/README.md). Every
+requirement links to a task and acceptance case through [traceability](traceability.json).
+New interfaces and test names are proposed until implemented. No commit/push/deploy permission
+arises merely from this program. Release requires a separate exact-target decision.

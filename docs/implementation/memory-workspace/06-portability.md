@@ -1,51 +1,99 @@
-# 06. Экспорт и повторный импорт знаний
+# 06. Knowledge export and reimport
 
-## 6.1 Назначение
+**Status:** Proposed contract. Knowledge transfer is not installation backup or disaster recovery.
 
-Экспорт переносит ограниченный разрешённый набор памяти, исторических ревизий и происхождения. Это не backup PostgreSQL, не восстановление vault, не перенос identities, capabilities, tokens или qualification. Данные, уже скачанные внешним клиентом, нельзя отозвать удалением исходной memory.
+## 6.1 Purpose and formats
 
-JSON — машинный формат `vestrace.memory-package/1`. Markdown — человекочитаемое представление, которое не обещает lossless roundtrip. ZIP upload не поддерживается; пакет — один UTF-8 JSON, чтобы не вводить archive traversal/decompression угрозу в первой версии.
+Export a bounded permitted selection of memories, revision history, and provenance. Do not
+transfer PostgreSQL/vault backup, identities, capabilities, tokens, or qualification. Deleting
+source memory cannot recall copies already downloaded by a client.
 
-## 6.2 Снимок и права
+The machine format is single-file UTF-8 JSON `vestrace.memory-package/1`. Markdown is a readable
+view, not a lossless round-trip format. ZIP upload is excluded to avoid archive traversal/
+decompression risks in the first version.
 
-ExportRequest явно перечисляет 1..100 memory_ids, include_history и format. Server фиксирует selection ревизий в согласованном scoped read и current principal. Пакет ограничен 8 MiB uncompressed. Превышение — typed failure, не обрезанный «полный» пакет.
+## 6.2 Pinned selection and current authorization
 
-Операция зафиксирует канонические selected refs и policy version. Outbox topic `memory.export.prepare` генерирует результат через existing protected material storage. Нельзя сохранять plaintext export в `/tmp`, public artifacts или CDN. GET content заново проверяет доступ к **каждой** pinned memory/revision/source; если доступ был отозван, весь результат withheld и существующий result material retire-ится. Не отдавать прежний downloaded_url, минующий policy.
+ExportRequest explicitly names 1–100 memory_ids, include_history, and format. Pin revisions
+under a consistent scoped read and current principal. Bound the uncompressed package to 8 MiB;
+excess is a typed failure, never truncated “complete” output.
 
-Блокировка выдачи относится к моменту проверки и линейной отправке ответа; невозможно гарантировать отзыв байтов, уже отправленных клиенту. При streaming каждый chunk не становится новой независимой авторизацией; для небольшого MVP формировать bounded response после единой проверки. Disconnect не означает, что клиент ничего не получил.
+Persist selection refs and policy version. Existing `memory.export.prepare` outbox delivery
+builds the result through protected material storage. No plaintext /tmp, public artifact, or
+CDN fallback is allowed. On every content download, reauthorize **each** pinned memory,
+revision, and source. Revocation withholds the whole result and lawfully retires its material.
+Do not reuse a download URL that bypasses those checks.
 
-## 6.3 Состав JSON package
+Authorization concerns the response's linearization/check point. Already transmitted bytes
+cannot be recalled. Streaming chunks are not independent authorization decisions; construct
+the bounded MVP response after one consistent check. Disconnect does not prove nothing was received.
 
-Top-level: schema_version, package_id, generated_at, memories, sources, revision_links, completeness. Foreign UUIDs сохранены как IDs внутри package namespace. Каждая memory содержит kind, selected active_foreign_revision_id и разрешённые revisions. Каждая revision имеет content, declared classification, original timestamps, change_reason и provenance annotations.
+## 6.3 Package allowlist
 
-В package нет active tokens, ключей, server credentials, raw request logs, permissions, key IDs, qualification verdicts и готовых vectors. Неизвестные поля такого рода запрещены schema. Plaintext content уже раскрыт получателю по export policy; весь файл следует считать чувствительным согласно наиболее ограничительному набору исходных obligations.
+Top-level fields are schema_version, package_id, generated_at, memories, sources, revision_links,
+and completeness. Foreign UUIDs identify objects inside the package namespace. Memory contains
+kind, selected active_foreign_revision_id, and permitted revisions. Revision data includes
+content, declared classification, original times, change_reason, and provenance annotations.
 
-При недоступных provenance relations не включать запрещённые IDs/имена; completeness.provenance=`partial`. `completeness.provenance=complete` относится только к closure выбранных ревизий и не означает full history. При неизвестных/скрытых origins ставить partial. `history=selected_current` совместим с complete provenance для текущих выбранных ревизий. Будущая проверка цифровой подписи происхождения не является частью v1 и не превращает файл в доверенный issuer.
+Exclude active tokens, keys/key IDs, server credentials, raw request logs, permissions,
+qualification verdicts, and ready vectors. The closed schema rejects such extra fields.
+Treat exported plaintext according to the most restrictive source obligations.
 
-## 6.4 Импорт package
+Omit denied provenance names/IDs and mark completeness.provenance=partial for hidden/unknown
+origins. complete means closure of the selected revisions, not all historical data.
+history=selected_current may coexist with complete provenance for that selection. A future
+origin signature is outside this version and cannot make the file a trusted issuer automatically.
 
-Тот же preview/apply pipeline имеет `mode=portable`. Выполняются schema/version/limits/references проверки, затем пользователь выбирает target collection и допустимую target classification. Полномочия определяются локально; imported metadata не даёт grant и не снижает label автоматически.
+## 6.4 Shared portable-import pipeline
 
-Локальные memory/source/revision IDs выделяются заново; immutable import mapping связывает package_id + foreign_id с новым local_id в рамках **конкретной операции**. Повтор той же операции возвращает то же mapping. Новое независимое перенесение того же package требует нового явного намерения и показывает duplicate warning, а не молча перезаписывает прежний target.
+Use preview/apply with mode=portable. Validate schema/version/limits/references first, then
+select the target collection and permitted classification. Local policy grants authority;
+imported metadata cannot grant rights or silently downgrade labels.
 
-История импортируется с `recorded_at` локального импорта; `origin_recorded_at` сохраняет заявленное время отправителя. Нельзя вписать foreign actor в локальный Audit как действовавшего пользователя. Импортёр является текущим actor; прошлый actor — неподтверждённая origin annotation. Active означает выбранную версию в новой библиотеке, а не подтверждение истинности.
+Allocate new local memory/source/revision IDs. The immutable mapping binds package_id + foreign_id
+to local_id within **that operation**. Exact replay returns the same mappings. A separate import
+of the same package requires new explicit intent and a duplicate warning, not an overwrite.
 
-All intra-package links проверяются до apply. Cross-item ссылки записываются только после существования обеих локальных сторон и остаются pending/unresolved в промежутке; не выдавать полный provenance до закрытия набора. Для MVP сначала import memories/sources с mapping, затем второй idempotent linking pass через тот же outbox. Batch partial отражается в отчёте, не скрывается.
+Set local recorded_at to import time; preserve sender-claimed time in origin_recorded_at.
+The local audit actor is the actual importer. Foreign actors are unverified annotations, not
+principals to impersonate. Active identifies the selected local revision, not confirmed truth.
 
-## 6.5 Retention и delete
+Validate all intra-package links before Apply. Cross-item links are written only after both
+local endpoints exist; keep pending/unresolved status until then. Import entities/mappings first,
+then execute a second idempotent linking pass through the same handler/topic. Report partial
+batches explicitly and claim complete provenance only after closure.
 
-Default expiry export material — 24 часа, после чего content endpoint возвращает 410 и запускает existing erasure protocol. История операции сохраняет безопасные IDs/исходы в пределах действующей retention policy, не копию содержимого.
+## 6.5 Retention and erasure
 
-Поступившее lawful erasure требование должно инвалидировать staged previews, готовые exports и derived context snapshots, которые содержат эти данные. Обновление версии разрешений не отзовёт локальные копии пользователей; это прямо указано в UI. Нельзя ради удобства replay держать запрещённый content в idempotency response_payload.
+Proposed export-material expiry is 24 hours. Afterwards return 410 and invoke existing erasure.
+Operation history retains only policy-permitted safe IDs/outcomes, not content copies.
+Lawful erasure invalidates managed staged previews, exports, and derived context containing
+the data. Permission changes do not revoke client-local copies; state this in the UI. Do not
+keep denied content in idempotency response_payload for replay convenience.
 
-## 6.6 Приёмка
+## 6.6 Acceptance
 
-Export → preview target → apply → read result сохраняет content выбранных ревизий, разрешённые связи и annotation времени. Local IDs, actor и grants отличаются предсказуемо. Тесты сравнивают граф и content, а не исходные server IDs. Изменение label без разрешённого отображения, неизвестная версия, лишние secret поля, слишком большой пакет и недостающие refs дают refusal до canonical apply.
+Export → target preview → Apply → read preserves selected content, permitted provenance,
+and origin-time annotations. Local IDs, actor, and grants differ predictably. Compare graph
+and content, not sender server IDs. Refuse unauthorized label mapping, unknown versions,
+secret fields, oversize input, and missing references before canonical application.
 
-## Уточнение количества элементов portable import
+## 6.7 Entity bounds and mapping details
 
-Portable import использует максимум 100 canonical entities суммарно (memories + sources), 64 KiB на каждую content revision и 8 MiB UTF-8 во всех content значениях пакета. Полный wire JSON также ограничивается transport лимитом; дубли text fields не освобождают от decoded лимита. В таблице import items одна entity соответствует одному item; foreign revision mappings выделяются при фиксировании item, а links закрываются в финальной фазе того же `memory.source_import.apply`. Phase хранится в операции, не создаёт второй scheduler/state engine.
+Portable import allows at most **100 canonical entities total** (memories + sources),
+**64 KiB per content revision**, and **8 MiB UTF-8 across all content values**. The wire JSON
+also has a transport limit; repeated text fields still count toward decoded size.
 
-Предложенная таблица `portable_import_mappings(workspace_id,operation_id,package_id,foreign_kind,foreign_id,local_id)` имеет unique foreign tuple и unique local_id для данного kind/operation. Item diagnostics для memory entities используют синтетический отображаемый locator `portable/memory/<foreign_id>`, который не является путём чтения/записи диска.
+One entity is one import item. Allocate revision mappings when committing its item; finish
+links in a persisted final phase of the same memory.source_import.apply handler, not a new scheduler.
 
-`keep_manual` при sync фиксирует audit/binding resolution и возвращает MutationReceipt с прежней memory revision; создание пустой текстовой revision не требуется. При импортировании foreign history её номера могут содержать пропуски из-за selection; local revision sequence создаётся заново, origin number сохраняется как аннотация.
+```text
+portable_import_mappings(workspace_id, operation_id, package_id,
+  foreign_kind, foreign_id, local_id)
+```
+
+Require unique foreign tuples and unique local IDs for each kind/operation. Diagnostics use
+`portable/memory/<foreign_id>` only as a synthetic display locator, never a filesystem path.
+Selected foreign ordinals may have gaps; build a new local sequence and retain origin numbers
+as annotations. keep_manual returns the existing memory revision with an audit/binding receipt;
+it does not require an empty text revision.

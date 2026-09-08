@@ -1,46 +1,39 @@
-# Доменная модель и язык проекта
+# Domain model
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Type:** Concept guide, not an implementation checklist. See [status](status.md) and the [normative Domain Model](specs/en/vestrace-domain-model-v0.2.md).
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
-
-## Что чем является
-
-| Понятие | Значение | Важное ограничение |
+| Concept | Meaning | Important boundary |
 | --- | --- | --- |
-| Event | Записанное исходное событие | Событие наблюдения не равняется подтверждённому факту |
-| Memory | Устойчивая identity единицы памяти | Содержимое не перезаписывается в ней бесследно |
-| MemoryRevision | Конкретная версия содержимого | Revision identity сохраняет смысл исторической ссылки |
-| MemorySource / EvidenceRef | Происхождение и основание | Источник может быть неполным или ошибочным |
-| Claim | Структурированное утверждение | Claim не равен truth |
-| Conflict | Явное расхождение | Поздний timestamp не разрешает смысловой конфликт автоматически |
-| ContextPack | Подобранное представление | Не приобретает полномочия первоисточника |
-| Run | Каноническое выполнение | UI-сессия или tool call не заменяют Run |
-| ExternalEffect | Внешняя операция и её evidence | Неопределённый outcome не становится failed |
-| Capability | Ограниченное право действия | Role и идентичность сами по себе его не дают |
-| ContentMaterial | Управляемое содержимое в своём lifecycle | Подготовленное содержимое не является Live |
+| Event | Recorded source event | Observation is not automatically a verified fact |
+| Memory | Stable identity of a unit of memory | Content changes must not erase earlier versions |
+| MemoryRevision | A particular content version | Exact revision identity supports historical references |
+| MemorySource / EvidenceRef | Provenance and supporting evidence | A source may be incomplete or wrong |
+| Claim | Structured assertion | Assertion is not synonymous with truth |
+| Conflict | Explicit disagreement | A later timestamp does not resolve semantic disagreement |
+| ContextPack | Selected derived context | Inclusion does not raise source authority |
+| Run | Canonical execution | A UI session or isolated tool call does not replace it |
+| ExternalEffect | External operation and its evidence | Unknown outcome is not established failure |
+| Capability | Bounded authority to act | Identity or role alone is insufficient |
+| ContentMaterial | Governed content and lifecycle | Prepared is not Live |
 
-Это словарь модели. Доступность реализации отдельных сущностей определяется [состоянием](status.md), а не присутствием строки в таблице.
+## Status and versions
 
-## Статусы и версии не взаимозаменяемы
+The reviewed Memory HTTP parser accepts `fact`, `preference`, `constraint`, `decision`, `task`, `procedure`, `observation`, `outcome`, and `summary`. The lifecycle includes `candidate`, `active`, `superseded`, `rejected`, `expired`, and `deleted`.
 
-В текущем Memory API типы включают `fact`, `preference`, `constraint`, `decision`, `task`, `procedure`, `observation`, `outcome`, `summary`. Статусы включают `candidate`, `active`, `superseded`, `rejected`, `expired`, `deleted`.
+Active is a lifecycle state, not proof of truth. Confidence is a supplied score, not a calibrated probability. Content revision numbering and state_revision protect different dimensions; do not assume they are interchangeable.
 
-`active` описывает жизненный цикл, а не доказанную истинность. `confidence` — сохранённый показатель, а не калиброванная вероятность корректности. `revision_number` описывает содержимое; `state_revision` может дополнительно защищать изменение состояния. Нельзя без проверки API считать эти версии одной и той же величиной.
+Classification is separate from lifecycle and confidence. The current optional label follows [Memory API inheritance rules](reference/memory.md#classification); having a field does not prove universal enforcement.
 
-## Временные измерения
+## Time and provenance
 
-Время события, время его записи системой и интервал применимости знания отвечают на разные вопросы. Источник может сообщить о прошлом сейчас. Позднее исправление не должно переписывать дату, когда прежний вывод считался доступным.
+Occurrence, recording, and validity answer different questions. A source can report an old event today. A later correction must not rewrite when the earlier conclusion became available. [Memory and time](design/memory-time.md) separates historical-content selection from reconstruction of past knowledge.
 
-[Временной контракт](design/memory-time.md) отдельно описывает разницу между выбором исторического содержания и восстановлением того, что система знала тогда.
+A memory-level source link does not establish attribution for a particular revision. Missing historical attribution must remain explicit rather than be reconstructed from nearby timestamps.
 
-## Редакторские изменения и импорт
+## Imports and editing
 
-В MW версия документа, локальная память и ручное исправление имеют разные роли. Их нужно связывать, а не складывать в одну изменяемую строку. Переносимый foreign_id помогает сохранить происхождение при импорте, но не даёт объекту права выдавать себя за локального actor.
+Source versions, local memory, and human corrections have different roles. Link rather than collapse them into one mutable record. A portable foreign_id preserves origin references without impersonating local actors or importing permissions.
 
-Правила MW остаются предложенными. Нормативный Domain Model и последующие Accepted ADR имеют приоритет; при несовпадении меняется проект реализации либо принимается явно названное уточнение.
+MW remains Proposed. Accepted normative documents take precedence. Conflicts require an amended proposal or explicit architectural decision, not silent reinterpretation in a guide.
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R06: docs/domain-model.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/domain-model.md), [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs), [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs).
-
-[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)
+**Sources:** [Memory DTOs](../crates/vestrace-http/src/api/memory.rs), [repository](../crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [normative model](specs/en/vestrace-domain-model-v0.2.md).

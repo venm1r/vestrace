@@ -1,38 +1,29 @@
-# Развёртывание: границы и готовность компонентов
+# Deployment boundaries and readiness
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## First target
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+The roadmap proposes one reproducible local self-hosted environment. That is a qualification goal, not a newly certified platform. CI tags and schema compatibility alone do not qualify filesystem, vault, network policy, or model behavior.
 
-## Поддерживаемый первый путь
+Components include PostgreSQL and role provisioning/migration, server, worker, Console proxy, persistent vault roots, and a separate external read-only bootstrap-secret store. Identify who provisions identities/grants, migrates, and runs the restricted processes.
 
-Рекомендуемая первая цель дорожной карты — одна повторяемая локальная self-hosted среда. Это проект критерия, не новый сертификат поддерживаемой платформы. CI image tags и schema compatibility сами по себе не квалифицируют filesystem, vault, network policy и модель.
-
-Состав: PostgreSQL и provisioning/migrate, server, worker, Console proxy, постоянные vault roots и external read-only bootstrap secret store. Должно быть ясно, кто создаёт identities/grants, кто имеет право мигрировать и кто запускает runtime.
-
-## Таблица readiness
-
-| Уровень | Что проверять | Чего он не доказывает |
+| Layer | Check | Does not establish |
 | --- | --- | --- |
-| Процесс | Liveness и возможность отвечать | Доступность БД и полезной задачи |
-| Schema/storage | Reachability и миграционная совместимость | Наличие модели, прав и готовой generation |
-| Authority | Token, grants, disclosure settings, vault roots | Успех конкретного внешнего вызова |
-| Функция | Полный memory/retrieval/provider сценарий | Квалификацию остальных функций |
-| Релиз | Все required evidence на точном target | Поддержку другой непроверенной среды |
+| Process | Liveness and response | Database or useful-task availability |
+| Schema/storage | Reachability and migration compatibility | Model, permissions, or ready generation |
+| Authority | Token, grants, disclosure policy, vault roots | A particular external call's success |
+| Feature | Complete selected memory/retrieval/provider flow | Other features' qualification |
+| Release | All required evidence on the exact target | Support for another untested environment |
 
-## Перед работой с ценными данными
+## Before valuable data
 
-Записать target identities, описать backup/restore, проверить key custody и сетевые границы. Отдельно установить retention/logging policy. Нельзя считать isolated developer Compose готовой корпоративной topology.
+Record target identities and backup/restore procedures; verify key custody and network boundaries. Define retention/logging policy. An isolated developer Compose deployment is not a ready enterprise topology.
 
-Каждый процесс использует тот же принятый source/image и совместимый storage contract. Не развёртывать отдельно более новый worker с непроверенным старым server только потому, что оба стартуют.
+Processes need the same accepted source/image and compatible storage contract. Do not mix a newer worker with an untested older server merely because both start.
 
-## Deployment changes
+## Changes
 
-Новые frontend routes не расширяют допуск по умолчанию. Admission destination/type model задаётся явной Connection revision. Документация не должна превращать произвольный URL из импортированного файла в server-side fetch.
+New frontend routes do not expand admission by default. Approved destination/type/model settings use explicit Connection revisions. Imported URLs must not become arbitrary server-side fetch instructions.
 
-Для добавления hosted deployment см. [P4](../roadmap/p4-expansion.md); это отдельная программа после валидации основных сценариев.
+Hosted deployment is a separate [P4 proposal](../roadmap/p4-expansion.md), after validating the core scenarios.
 
----
-**Основание:** [R04: docker-compose.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml), [R05: docs/getting-started.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/getting-started.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R16: apps/console/nginx.conf.template](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/apps/console/nginx.conf.template).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [Compose](../../docker-compose.yml), [nginx](../../apps/console/nginx.conf.template), [gate program](../superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).

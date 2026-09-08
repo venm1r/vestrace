@@ -1,119 +1,120 @@
 {
   "format": "vestrace-doc-capabilities/1",
   "baseline_commit": "07e2977a20b05c5b16953a206a6d68bdbff3a052",
-  "review_method": "selected static source review and prior pinned source manifest; no runtime execution",
+  "review_method": "selected static review, exact blob comparisons, and reading recorded acceptance; no runtime execution",
   "items": [
     {
       "id": "identity",
       "name": "HTTP identity",
-      "state": "Найдено в коде",
-      "boundary": "Bearer-токен разрешается сервером; identity-заголовки заменяются.",
+      "state": "SOURCE_PRESENT",
+      "boundary": "Bearer tokens resolve on the server; caller identity headers are replaced.",
       "source_id": "R01"
     },
     {
       "id": "route-policy",
-      "name": "Инвентарь маршрутов",
-      "state": "Найдено в коде",
-      "boundary": "Route descriptor задаёт capability/risk; наличие descriptor не доказывает полноценный handler.",
+      "name": "Route inventory",
+      "state": "SOURCE_PRESENT",
+      "boundary": "Descriptors declare capability/risk; they do not prove complete handlers.",
       "source_id": "R02"
     },
     {
       "id": "memory-write",
-      "name": "Создание/ревизия Memory",
-      "state": "Найдено в коде",
-      "boundary": "memory/revision/source/search пишутся вместе; outbox/idempotency затем отдельно.",
+      "name": "Memory creation/revision",
+      "state": "SOURCE_PRESENT",
+      "boundary": "Memory/revision/source/search commit together; the service persists outbox/idempotency separately.",
       "source_id": "S05"
     },
     {
       "id": "memory-read",
-      "name": "Получение памяти HTTP/MCP",
-      "state": "Ограничено",
-      "boundary": "GET memory отдаёт метаданные; содержимое и номер ревизии не входят в текущий MemoryResponse.",
+      "name": "HTTP/MCP memory reads",
+      "state": "LIMITED",
+      "boundary": "Current MemoryResponse exposes metadata, not content or the active revision number.",
       "source_id": "S10"
     },
     {
       "id": "memory-history",
-      "name": "Библиотека/история для внешнего клиента",
-      "state": "Предложено",
-      "boundary": "MW проектирует list/detail/history; наличие внутренних ревизий не делает эти routes доступными.",
+      "name": "External library/history",
+      "state": "PROPOSED",
+      "boundary": "MW proposes list/detail/history; internal revisions do not imply available public routes.",
       "source_id": "S03"
     },
     {
       "id": "context",
-      "name": "ContextPack HTTP",
-      "state": "Ограничено",
-      "boundary": "Ответ содержит сводку, но не sections/rendered context.",
+      "name": "HTTP ContextPack",
+      "state": "LIMITED",
+      "boundary": "The response summarizes context without sections/rendered content.",
       "source_id": "S11"
     },
     {
       "id": "token-bound",
-      "name": "Подсчёт токенов",
-      "state": "Ограничено",
-      "boundary": "Текущий helper использует ceil(UTF-8 bytes/4); это не точный счётчик произвольной модели.",
+      "name": "Token accounting",
+      "state": "LIMITED",
+      "boundary": "ceil(UTF-8 bytes / 4) is an estimate, not an exact arbitrary-model counter.",
       "source_id": "S12"
     },
     {
       "id": "revision-hydration",
-      "name": "Точные исторические ссылки",
-      "state": "Найдено в коде",
-      "boundary": "Hydrator запрашивает указанную ревизию без подмены текущей.",
+      "name": "Exact historical references",
+      "state": "SOURCE_PRESENT",
+      "boundary": "The hydrator reads the requested revision without substituting the current revision.",
       "source_id": "R13"
     },
     {
       "id": "worker-once",
-      "name": "Один цикл worker",
-      "state": "Опубликовано в evidence",
-      "boundary": "Exit 0/3/1 различает обработку, idle и ошибку; не является успехом всего Run.",
+      "name": "One worker cycle",
+      "state": "RECORDED_EVIDENCE",
+      "boundary": "Exit 0/3/1 distinguishes work, idle, and error; it does not qualify the whole Run.",
       "source_id": "S01"
     },
     {
       "id": "embedding-14d",
-      "name": "P04 delivery ResultPrepared",
-      "state": "Опубликовано в evidence",
-      "boundary": "14D принят до ResultPrepared; это не Live и не Succeeded.",
+      "name": "Historical P04/14D ResultPrepared",
+      "state": "RECORDED_EVIDENCE",
+      "boundary": "14D acceptance ended at ResultPrepared. Later 14E acceptance is recorded separately; this historical verdict is not expanded.",
       "source_id": "S01"
     },
     {
       "id": "embedding-closure",
-      "name": "Завершение P04",
-      "state": "Не подтверждено",
-      "boundary": "14E и последующие границы не закрыты опубликованным решением 14D.",
+      "name": "P04 completion after Task 14E",
+      "state": "NOT_ESTABLISHED",
+      "boundary": "The supplied evidence approves Task 14E only, preserves the rotation-before-adoption deferral, and leaves P04/G0/v1.0 incomplete. No tests were rerun here.",
       "source_id": "S01"
     },
     {
       "id": "console-memory",
-      "name": "Редактор памяти Console",
-      "state": "Предложено",
-      "boundary": "Есть компонент MemoryConsole, но нет маршрута полноценного memory workspace.",
+      "name": "Console memory editor",
+      "state": "PROPOSED",
+      "boundary": "A presentation component exists; a complete library/editor route is not in the reviewed router.",
       "source_id": "S14"
     },
     {
       "id": "source-import",
-      "name": "Импорт/синхронизация",
-      "state": "Предложено",
-      "boundary": "Контракты MW присутствуют только в документационном пакете.",
+      "name": "Source import/synchronization",
+      "state": "PROPOSED",
+      "boundary": "The MW documentation specifies the selected extension; it is not implementation evidence.",
       "source_id": "S03"
     },
     {
       "id": "portable-export",
-      "name": "Переносимый JSON/Markdown",
-      "state": "Предложено",
-      "boundary": "Спецификация MW не является работающим exporter.",
+      "name": "Portable JSON/Markdown",
+      "state": "PROPOSED",
+      "boundary": "The MW specification is not a working exporter.",
       "source_id": "S03"
     },
     {
       "id": "materials",
-      "name": "Ключи и content materials",
-      "state": "Компоненты найдены",
-      "boundary": "Наличие lifecycle primitives не квалифицирует все пути чтения, импорта и удаления.",
+      "name": "Keys and content materials",
+      "state": "COMPONENTS_PRESENT",
+      "boundary": "Lifecycle primitives do not qualify every read/import/erasure path.",
       "source_id": "S17"
     },
     {
       "id": "release",
-      "name": "Готовность v1.0",
-      "state": "Не подтверждено",
-      "boundary": "Пакеты/тесты/документы не заменяют P12 и целевую квалификацию.",
+      "name": "v1.0 release readiness",
+      "state": "NOT_ESTABLISHED",
+      "boundary": "Packages, tests, and documents do not replace P12 qualification on the shipping target.",
       "source_id": "R11"
     }
-  ]
+  ],
+  "editorial_baseline_commit": "3e05dfbdce063aa44a3a9e5a7a84c274597e8188"
 }

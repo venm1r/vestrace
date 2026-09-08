@@ -1,12 +1,12 @@
 {
   "baseline_commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
   "scope_status": "proposal, not a write allowlist",
-  "numbering": "0196–0199 candidates only; 0195 belongs to proposed P04/14E",
+  "numbering": "0196–0199 are historical candidates, not reservations. The supplied 3e05dfbd archive already has 0196_retired_credential_erasure.sql; MW-00 must reconcile all candidate references before SQL.",
   "files": [
     {
       "path": "crates/vestrace-application/src/memory/mod.rs",
       "status": "existing_inspected",
-      "purpose": "Общие memory use cases, экспорт новых query/write портов",
+      "purpose": "Shared memory use cases and exports for new query/write ports.",
       "packages": [
         "MW-01",
         "MW-02"
@@ -15,7 +15,7 @@
     {
       "path": "crates/vestrace-application/src/memory/ports.rs",
       "status": "existing_inspected",
-      "purpose": "Совместимость существующего MemoryRepository, caller-owned write contract",
+      "purpose": "MemoryRepository compatibility and the caller-owned write contract.",
       "packages": [
         "MW-02"
       ]
@@ -23,7 +23,7 @@
     {
       "path": "crates/vestrace-application/src/memory/services.rs",
       "status": "existing_inspected",
-      "purpose": "Перевод затронутых canonical mutations на общий atomic writer",
+      "purpose": "Move affected canonical mutations onto the shared atomic writer.",
       "packages": [
         "MW-02"
       ]
@@ -31,7 +31,7 @@
     {
       "path": "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
       "status": "existing_inspected",
-      "purpose": "Существующий CAS и write in UoW; не вкладывать commit",
+      "purpose": "Existing CAS and writes in a UoW; no nested independent commit.",
       "packages": [
         "MW-02"
       ]
@@ -39,7 +39,7 @@
     {
       "path": "crates/vestrace-application/src/governed_mutation.rs",
       "status": "existing_inspected",
-      "purpose": "Переиспользовать commit_in без отдельной новой authority",
+      "purpose": "Reuse commit_in without introducing another authority.",
       "packages": [
         "MW-02",
         "MW-04",
@@ -58,7 +58,7 @@
     {
       "path": "crates/vestrace-application/src/outbox.rs",
       "status": "existing_inspected",
-      "purpose": "Переиспользовать at-least-once delivery и handler contract",
+      "purpose": "Reuse at-least-once delivery and the handler contract.",
       "packages": [
         "MW-04",
         "MW-06"
@@ -67,7 +67,7 @@
     {
       "path": "crates/vestrace-http/src/api/memory.rs",
       "status": "existing_inspected",
-      "purpose": "Сохранить old wire; подключить новый correction writer",
+      "purpose": "Preserve legacy wire shapes and connect the shared correction writer.",
       "packages": [
         "MW-01",
         "MW-02"
@@ -76,7 +76,7 @@
     {
       "path": "crates/vestrace-http/src/api/retrieval.rs",
       "status": "existing_inspected",
-      "purpose": "Legacy retrieval остаётся неизменным; shared new context service",
+      "purpose": "Preserve legacy retrieval; reuse the new shared context service.",
       "packages": [
         "MW-01"
       ]
@@ -84,7 +84,7 @@
     {
       "path": "crates/vestrace-application/src/retrieval/context_builder.rs",
       "status": "existing_inspected",
-      "purpose": "Единые реальные sections; точное final rendering; counter qualification",
+      "purpose": "Actual sections, exact final rendering, and counter qualification.",
       "packages": [
         "MW-01"
       ]
@@ -92,7 +92,7 @@
     {
       "path": "crates/vestrace-application/src/material/commands.rs",
       "status": "existing_inspected",
-      "purpose": "Ordinary lifecycle используется как зависимость, не embedding shortcut",
+      "purpose": "Consume ordinary material lifecycle; no embedding-specific shortcut.",
       "packages": [
         "MW-04",
         "MW-06"
@@ -101,7 +101,7 @@
     {
       "path": "apps/console/src/memory/MemoryConsole.tsx",
       "status": "existing_inspected",
-      "purpose": "Переиспользуемое представление memory detail",
+      "purpose": "Reusable memory detail view.",
       "packages": [
         "MW-03"
       ]
@@ -109,7 +109,7 @@
     {
       "path": "apps/console/src/sdk/client.ts",
       "status": "existing_inspected",
-      "purpose": "Существующий HTTP transport/error/auth, re-export memory client",
+      "purpose": "Existing HTTP transport, errors, and authentication; re-export memory client.",
       "packages": [
         "MW-03"
       ]
@@ -117,7 +117,7 @@
     {
       "path": "apps/console/src/main.tsx",
       "status": "existing_inspected",
-      "purpose": "Подключить memory/source/import/conflict/export routes",
+      "purpose": "Mount memory/source/import/conflict/export routes.",
       "packages": [
         "MW-03",
         "MW-04",
@@ -128,7 +128,7 @@
     {
       "path": "apps/console/package.json",
       "status": "existing_inspected",
-      "purpose": "Явные scripts и согласованные dev-only зависимости",
+      "purpose": "Explicit scripts and approved development-only dependencies.",
       "packages": [
         "MW-03"
       ]
@@ -136,7 +136,7 @@
     {
       "path": "crates/vestrace-application/src/lib.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Подключить новые модули с узкими exports",
+      "purpose": "Connect new modules with narrow exports.",
       "packages": [
         "MW-01",
         "MW-02",
@@ -148,7 +148,7 @@
     {
       "path": "crates/vestrace-infrastructure/src/postgres/mod.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Экспорт PostgreSQL adapters",
+      "purpose": "Export PostgreSQL adapters.",
       "packages": [
         "MW-01",
         "MW-02",
@@ -160,7 +160,7 @@
     {
       "path": "crates/vestrace-infrastructure/src/postgres/pool.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Изучить existing permit/UoW; менять только при доказанной необходимости",
+      "purpose": "Inspect existing permits/UoW; edit only when necessity is demonstrated.",
       "packages": [
         "MW-00",
         "MW-02"
@@ -169,7 +169,7 @@
     {
       "path": "crates/vestrace-domain/src/lib.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Подключить typed source/import домен",
+      "purpose": "Connect the typed source/import domain.",
       "packages": [
         "MW-04",
         "MW-05",
@@ -179,7 +179,7 @@
     {
       "path": "crates/vestrace-domain/src/id.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Объявить новые typed IDs через нынешний macro",
+      "purpose": "Declare typed IDs through the current macro.",
       "packages": [
         "MW-04",
         "MW-05",
@@ -189,7 +189,7 @@
     {
       "path": "crates/vestrace-http/src/api/mod.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "Mount new endpoints через inventory",
+      "purpose": "Mount new endpoints through the route inventory.",
       "packages": [
         "MW-01",
         "MW-02",
@@ -201,7 +201,7 @@
     {
       "path": "crates/vestrace-http/src/router.rs",
       "status": "existing_referenced_recheck_before_edit",
-      "purpose": "AppState dependencies, не default success",
+      "purpose": "Wire AppState dependencies rather than default-success placeholders.",
       "packages": [
         "MW-01",
         "MW-02",
@@ -790,7 +790,7 @@
     {
       "path": "migrations/0197_source_import_authority.sql",
       "status": "candidate_number_not_reserved",
-      "purpose": "PROPOSED number after reserved 0195; MW-00 reallocates atomically if occupied. Collections, source revisions, staged ownership, import ops/items",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Collections, source revisions, staged ownership, import ops/items",
       "packages": [
         "MW-04"
       ]
@@ -798,7 +798,7 @@
     {
       "path": "migrations/0198_source_sync_conflicts.sql",
       "status": "candidate_number_not_reserved",
-      "purpose": "PROPOSED number after reserved 0195; MW-00 reallocates atomically if occupied. Bindings, B/I/M conflicts, resolution guards",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Bindings, B/I/M conflicts, resolution guards",
       "packages": [
         "MW-05"
       ]
@@ -806,7 +806,7 @@
     {
       "path": "migrations/0199_memory_export_authority.sql",
       "status": "candidate_number_not_reserved",
-      "purpose": "PROPOSED number after reserved 0195; MW-00 reallocates atomically if occupied. Pinned selection, ordinary result ownership, portable mapping",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Pinned selection, ordinary result ownership, portable mapping",
       "packages": [
         "MW-06"
       ]

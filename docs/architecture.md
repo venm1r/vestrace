@@ -1,48 +1,39 @@
-# Архитектура Vestrace
+# Architecture
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Type:** Explanation. [Normative contracts and Accepted ADRs](specs/README.md) remain authoritative; [status](status.md) describes implementation boundaries.
 
-**Статус:** Пояснение архитектуры; нормативные требования сохраняются в specs/ADR.
+## Shared persistent knowledge
 
-## Основная модель
+Vestrace stores long-lived knowledge and governs its use. Memory, source events, revisions, relationships, and authority do not belong to a transient model session. HTTP, MCP, and Console expose one model rather than independently maintained copies of truth.
 
-Vestrace сохраняет долговременное знание и управляет его использованием. Memory, исходные события, ревизии, связи и полномочия не принадлежат transient-сессии модели. HTTP, MCP и Console дают доступ к одной модели, а не поддерживают независимые копии истины.
-
-| Слой | Ответственность | Что не должно переходить в него |
+| Layer | Responsibility | Must not own |
 | --- | --- | --- |
-| Domain | Сущности, допустимые переходы, типы identity/evidence | SQL, transport, секретные bytes в обычных DTO |
-| Application | Use cases, порты, policy/effect orchestration | Прямое знание HTTP/React или локальных таблиц клиента |
-| Infrastructure | PostgreSQL, vault, provider transport, адаптеры | Незаявленные права и вторая бизнес-семантика |
-| HTTP/MCP/CLI | Аутентифицированные входы, типизация запросов, процессная композиция | Обход общего mutation/policy контракта |
-| Console | Проекции и команды пользователя | Прямая запись БД, локальное присвоение trust/status |
+| Domain | Entities, valid transitions, identity, and evidence types | SQL, transport, or secret plaintext in ordinary DTOs |
+| Application | Use cases, ports, policy, and effect coordination | HTTP/React details or client-local storage semantics |
+| Infrastructure | PostgreSQL, vault, provider transport, and adapters | Undeclared authority or competing business rules |
+| HTTP / MCP / CLI | Authenticated entry points, request types, process composition | Bypasses around shared mutation and policy contracts |
+| Console | User-facing views and commands | Direct database writes or locally assigned trust/status |
 
-Это карта ответственности, не утверждение полной реализации каждого целевого механизма.
+This is a responsibility map, not a claim that every target mechanism is implemented.
 
-## Каноническое и производное
+## Canonical records and derived views
 
-Исходное событие фиксирует происхождение. Memory сохраняет identity, а MemoryRevision — конкретное содержимое. Claims и conflicts представляют смысловые утверждения и их расхождения там, где требуется такой контракт. Embeddings, поисковые документы, summaries и ContextPack — производные представления.
+A source event records provenance. Memory preserves identity; MemoryRevision preserves particular content. Claims and conflicts represent assertions and disagreements under their contracts. Embeddings, search documents, summaries, and ContextPacks are derived views.
 
-Производное представление можно перестроить из своих оснований, пока они законно сохранены. Оно не может самовольно исправить более авторитетные данные. Ссылка на источник объясняет происхождение, но не является самостоятельным доказательством истинности утверждения.
+A derived view can be rebuilt from retained, lawfully available inputs. It cannot unilaterally correct more authoritative data. A source reference explains origin; it does not establish truth.
 
-## Одна граница исполнения
+## One execution authority
 
-Run остаётся канонической execution authority. Внешние адаптеры преобразуют команды и наблюдения на границе. Ни retry-обработчик, ни новый importer, ни Console не создают параллельный generic Task/Attempt runtime. Специализированное состояние операции допустимо, когда оно описывает предметный результат, а не становится вторым источником истины о выполнении.
+Run is canonical execution. Adapters translate commands and observations at the boundary. A retry handler, importer, or Console must not create another generic Task/Attempt runtime. Specialized operation state is appropriate when it records a domain outcome rather than competing with execution authority.
 
-## Как читать подробности
-
-[Домен](domain-model.md) объясняет сущности; [память и время](design/memory-time.md) — ревизии; [retrieval](design/retrieval-context.md) — сборку контекста; [транзакции](design/transactions.md) — атомарность; [execution](design/execution.md) — результаты внешних операций; [материалы](design/materials.md) — отделение content и key authority.
+Read [memory and time](design/memory-time.md), [retrieval](design/retrieval-context.md), [transactions](design/transactions.md), [external effects](design/execution.md), and [materials](design/materials.md).
 
 ## Brain–Face–Organ
 
-Принятый системный слой разграничивает постоянную cognition, активное рассуждение, пользовательский/host интерфейс и заменяемые execution endpoints. Его существование в ADR не означает, что отдельный Brain runtime, Host Broker или Organ уже реализован. Угроза этой декомпозиции — дать одному из адаптеров независимые полномочия или историю; это запрещается архитектурной границей.
-
-Подробный нормативный текст доступен через [индекс спецификаций](specs/README.md). Эта глава поясняет его, но не заменяет.
+The accepted system-level decomposition separates persistent cognition, active reasoning, a user/host interface, and replaceable execution endpoints. Its existence in an ADR does not establish implementation of a separate Brain runtime, Host Broker, or Organ. Adapters must not acquire independent authority or authoritative history. See [ADR-0011](adr/0011-brain-face-organ-system-decomposition.md) and the [system model](specs/en/vestrace-brain-face-organ-system-model.md).
 
 ## Memory Workspace
 
-Выбранное расширение добавляет удобный внешний цикл вокруг существующей памяти. Source snapshot не подменяется ручной правкой; importer и редактор сходятся на общей mutation boundary; export проверяет актуальные права. Новые определения и их ограничения находятся в одном [пакете](implementation/memory-workspace/README.md), не дублируются здесь.
+[Memory Workspace](implementation/memory-workspace/README.md) proposes accessible reads, editing, import, sync, and portability around the existing model. A manual edit does not replace a source snapshot. All writers share a mutation boundary; export checks current authorization. Its requirements live in one package, not competing copies across architecture and roadmap pages.
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R10: docs/adr/0001-memory-first-persistent-cognition.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md), [S04: crates/vestrace-application/src/memory/ports.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/ports.rs), [S07: crates/vestrace-application/src/governed_mutation.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs).
-
-[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)
+**Sources:** [Architecture Contract](specs/en/vestrace-architecture-contract-v0.2.md), [Domain Model](specs/en/vestrace-domain-model-v0.2.md), and [source register](maintenance/sources.md).

@@ -1,38 +1,33 @@
-# Пользовательские сценарии и пределы проверки
+# Product scenarios
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Type:** User goals and target workflows. Use [implementation status](../status.md) to distinguish available surfaces from proposals.
 
-**Статус:** Карта сценариев; каждый сценарий явно привязан к текущему коду либо предложению.
+## A project across sessions
 
-## Сценарий A: записать наблюдение и найти его
+A new agent session should recover the project's decisions, constraints, and unfinished work without treating its current prompt as the only history. References must identify the memory revisions that support the result. A second client should see an accepted correction rather than an unrelated copy of the old context.
 
-В подготовленном изолированном окружении пользователь создаёт исходное событие, затем память с его ссылкой. Поиск возвращает кандидата с identity и revision metadata. Это сценарий текущего HTTP-поверхностного упражнения, а не демонстрация полного будущего редактора. В проверенном ответе detail нет содержимого; в ContextPack HTTP нет секций текста.
+Acceptance is not “a search returned text.” It requires the right permitted evidence, the right temporal meaning, and a usable context representation. An inaccessible or unsupported path must be reported explicitly.
 
-Полный пример находится в [упражнении](../guides/memory-api-exercise.md). Успех операции устанавливается по фактическому HTTP-ответу и последующей проверке, а не по отсутствию ошибки у клиента.
+## Correct knowledge without erasing history
 
-## Сценарий B: исправить знание без потери истории
+A user reads a specific revision, supplies a reason, and writes a correction under a version precondition. Another writer's intervening change produces a conflict, not silent overwrite. Restoring old text creates another revision rather than erasing subsequent history. Classification changes require their own governance path.
 
-Пользователь видит текущую ревизию, меняет содержимое и объясняет причину. При конкурентном изменении он получает конфликт, а не незаметное last-write-wins. В текущем коде есть POST новой ревизии и CAS; полный пользовательский цикл чтения/редактирования относится к Memory Workspace.
+## Keep source updates and human edits separate
 
-Целевой критерий: исторический запрос воспроизводит прежнее содержимое в пределах действующих прав и политики хранения, а текущий запрос использует принятое исправление. «Восстановить старый текст» означает создать новую ревизию, а не стереть промежуточные решения.
+Import a bounded documentation folder, inspect a preview, and apply exactly that snapshot. Rescan the same sources without duplicating unchanged knowledge. If upstream and a human editor both changed a record, preserve the base, incoming source, and current memory until an explicit resolution.
 
-## Сценарий C: обновить папку документов
+Missing files are observations, not deletion instructions. Renames require stable identity or a confirmed mapping. These rules belong to the [Memory Workspace proposal](../implementation/memory-workspace/README.md).
 
-Это предлагаемый сценарий MW. Пользователь выбирает локальные файлы, видит предпросмотр точного набора, применяет его и различает принятие данных от готовности поиска. Повторный импорт не дублирует неизменившиеся источники. Ручное исправление не исчезает при обновлении файла.
+## Explain changes in context
 
-Если прежний источник, новый файл и ручная версия расходятся, возникает управляемый sync conflict. Недоступный файл не является доказательством намерения удалить знания. Подробности и приёмочные случаи находятся только в [спецификации синхронизации](../implementation/memory-workspace/05-import-sync.md).
+An operator should be able to inspect why one context differs from another: changed source revisions, temporal selection, permissions, generation, or budget. Distinguish the context Vestrace issued, a client's report of using it, and an independently observed model request. None is interchangeable with the others.
 
-## Сценарий D: внешний запрос с потерянным результатом
+## Transfer knowledge without transferring privileges
 
-Цель execution-контракта — отделить известный результат от неопределённого. Процесс может остановиться после отправки запроса и до записи ответа. Restart сам по себе не доказывает неуспех внешнего действия. Решение о повторе должно опираться на соответствующий контракт и evidence.
+An authorized export contains a bounded selection and its permitted history/provenance. Import assigns new local identities and treats foreign actors, time, and confidence as source annotations. It does not import capabilities, credentials, qualification, or the right to choose local classification. Knowledge export is not installation recovery.
 
-В частности, принятие P04/14D до ResultPrepared не означает завершённого embedding job. Проверка одного worker cycle не доказывает успех всех задач, которые он затронул.
+## Operate through failures
 
-## Сценарий E: перенести знания
+A worker restart should expose durable progress and unresolved outcomes, not fabricate success or repeat an external effect blindly. Operators must be able to distinguish preparation, publication, index readiness, and a completed Run. A backup requires an actual restore experiment before relying on it.
 
-Проект MW экспортирует разрешённое содержимое и происхождение, а не рабочие секреты, capability grants или чужую квалификацию. Новая установка назначает свои идентификаторы и применяет собственные политики. Это переносимый пакет знаний, не полный backup установки и не средство отзыва уже выданных копий.
-
----
-**Основание:** [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs), [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs), [S01: docs/development-evidence/v1-g0-04-embedding-transition-foundation.md](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+The first release should qualify one coherent scenario before widening the promise. See [milestones](../roadmap/milestones.md), [acceptance](../implementation/memory-workspace/09-acceptance.md), and [release rules](../development/release.md).

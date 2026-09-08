@@ -1,42 +1,37 @@
-# Memory API и ревизии: текущий контракт
+# Memory API and revisions
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** Current source-defined HTTP behavior. No runtime execution is claimed.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
-
-## Доступные в прочитанном HTTP пути операции
-
-| Метод и путь | Назначение | Существенная граница |
+| Method and path | Purpose | Boundary |
 | --- | --- | --- |
-| POST `/v1/events` | Записать исходное событие | Не делает любой payload подтверждённым знанием |
-| POST `/v1/memories` | Создать память с основанием | kind/content/confidence/importance/source_event_id/evidence_role и optional classification |
-| GET `/v1/memories/{id}` | Получить метаданные | id/kind/status/classification/created_at/updated_at; нет content/history |
-| POST `/v1/memories/{id}/revisions` | Создать новую content revision | Ожидаемая revision передаётся числовым If-Match |
-| DELETE `/v1/memories/{id}` | Hard purge через отдельную authority | Не кнопка «скрыть»; reason/approval, critical risk и MemoryPurge |
+| POST `/v1/events` | Record a source event | An arbitrary payload is not automatically confirmed knowledge. |
+| POST `/v1/memories` | Create memory with a source | kind/content/confidence/importance/source_event_id/evidence_role and optional classification. |
+| GET `/v1/memories/{id}` | Read metadata | id/kind/status/classification/created_at/updated_at; no content/history. |
+| POST `/v1/memories/{id}/revisions` | Create a content revision | Expected content revision is passed as numeric `If-Match`. |
+| DELETE `/v1/memories/{id}` | Hard purge through separate authority | Critical risk, MemoryPurge, and operation-specific reason/approval; not a hide button. |
 
-Точную структуру optional полей и ошибок сверять с `api/memory.rs`. Для автоматического клиента не выводить DTO из этой сокращённой таблицы.
+The exact optional fields and errors are defined in [api/memory.rs](../../crates/vestrace-http/src/api/memory.rs), not this condensed table.
 
-## Содержимое и provenance
+## Content and provenance
 
-Внутренний `Memory` хранит идентичность и указатель на revision. `MemoryRevision` несёт содержимое и temporal metadata. Их чтение не должно перемешивать текущую identity с произвольным revision другого memory. Ссылка на источник — происхождение утверждения, не логическое доказательство его истинности.
+Memory owns stable identity and an active revision pointer. MemoryRevision carries content and temporal metadata. A read must not combine a memory with an unrelated revision. Provenance records where an assertion came from; it does not prove truth.
 
-Текущий `memory_sources` относится к памяти; новая exact revision↔source связь предусмотрена MW. Историю старых связей нельзя искусственно уточнять до номера ревизии, если необходимых фактов не было сохранено.
+The current memory_sources links are memory-level. MW proposes exact new revision/source links. Do not assign historical links to particular revisions when that relationship was never recorded.
 
-## Запись и concurrency
+## Writes and concurrency
 
-Существующий repository CAS проверяет state/content revisions. Revision update не является безусловным overwrite. Но outbox/idempotency остаются следующими service writes; усиление этой общей границы относится к F003/MW-02.
+Repository CAS compares state/content versions; revision updates are not unconditional overwrites. The service subsequently writes outbox/idempotency separately. [MW-02](../implementation/memory-workspace/plans/02-atomic-corrections.md) strengthens the overall transaction boundary rather than replacing absent CAS.
 
-Повторная активация прежнего содержания оформляется новой revision. `valid_from/valid_until`, `created_at` и номер revision — разные измерения. Отсутствующее occurred time не подменяется mtime локального файла.
+Restoring earlier content creates a new revision. Validity, created_at, and revision number are separate dimensions. A missing event time must not be inferred from a local file's mtime.
 
 ## Classification
 
-Creation принимает vocabulary установки. Обычная revision сейчас наследует label либо допускает идентичное значение; изменение/clear отклоняется, поскольку отдельный переход не реализован в данном пути. Поэтому редактор label read-only до появления законного transition workflow. Не добавлять severity ordering к произвольным labels по алфавиту или имени.
+Creation accepts labels from the installation's vocabulary. On revision, an **omitted** field inherits the current label; an identical explicit label is allowed. Explicit `null` requests clearing and is not equivalent to omission. Changes or clearing are rejected by the current ordinary revision path because a separate classification transition is not implemented there.
 
-## Следующая версия поверхности
+Keep classification read-only in the ordinary editor. Do not infer severity ordering from arbitrary label names, spelling, or alphabetic order.
 
-Detail, history, browse, correction/restore, source import и portable export спроектированы в [MW API](../implementation/memory-workspace/03-api.md). Это extension с отдельной приёмкой, не уже работающий контракт выше.
+## Proposed next surface
 
----
-**Основание:** [S03: crates/vestrace-application/src/memory/mod.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs), [S05: crates/vestrace-application/src/memory/services.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs), [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs).
+Detail, history, browse, corrections/restore, import, and portable export belong to the [MW API design](../implementation/memory-workspace/03-api.md), with separate acceptance. They are not existing endpoints simply because a schema describes them.
 
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [use cases](../../crates/vestrace-application/src/memory/mod.rs), [service](../../crates/vestrace-application/src/memory/services.rs), [repository](../../crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [HTTP](../../crates/vestrace-http/src/api/memory.rs).

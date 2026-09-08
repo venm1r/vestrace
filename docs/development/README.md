@@ -1,34 +1,23 @@
-# Разработчику: правила изменения проекта
+# Development guide
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+Start with [architecture](../architecture.md), [implementation status](../status.md), the [roadmap](../roadmap/README.md), and the exact package for the task. A class reference does not prove a working scenario. When a source baseline changes, reread affected code and dependency evidence.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## Deliver a complete change
 
-## Начать с контракта
+A task needs an aligned contract, implementation, observable behavior, and documentation. Test the user's observable obligation rather than merely an internal call. Fixtures establish a legitimate environment; end-to-end state must come through real entry points rather than fabricated completion records.
 
-Прочитать [архитектуру](../architecture.md), [реестр состояния](../status.md), [приоритеты](../roadmap/README.md) и точный пакет своей задачи. Нельзя считать ссылку на класс доказательством работающего сценария. При изменении нового source baseline перечитать затронутые paths и dependency evidence.
+## Protect unrelated work
 
-## Четыре результата задачи
+Do not change frozen specifications, historical evidence, or applied migrations as an incidental feature change. Root PLAN.md belongs to separate work. Before writing, record the exact allowlist, existing dirty/untracked bytes, and independent review process. MW documents do not grant blanket permission over protected P04 paths.
 
-Нужны изменённый контракт, реализация, проверяемое поведение и актуальная документация. Тест проверяет наблюдаемое обязательство пользователя, а не только то, что вызвана внутренняя функция. База/fixtures готовят законное окружение; E2E данные появляются через реальные entrypoints, а не через подмену completion state.
+## Sequence and modularity
 
-## Границы репозитория
+By default, run one major code package alongside one independent documentation/measurement task. Do not assign competing migration/writer changes simultaneously to one persistent builder. Parallel work needs disjoint scopes and accepted interfaces.
 
-Не менять защищённые frozen specs, historical evidence и applied migrations как побочный эффект новой функции. Root PLAN.md принадлежит отдельной работе. Перед записью зафиксировать exact file allowlist, существующие dirty/untracked bytes и порядок независимого review. Документы MW не дают blanket-разрешение менять P04-scope.
+Keep domain, application, infrastructure, HTTP, CLI, and MCP responsibilities separate. UI and scanners are clients, not new authorities. Split modules for responsibility and readability, not arbitrary line counts. Do not create a second event log, execution runtime, or policy engine for convenience.
 
-## Очерёдность
+## Finish with evidence
 
-По умолчанию один крупный кодовый пакет и одна независимая документационная/измерительная задача. Не планировать одновременно несколько конфликтующих migration/writer changes одним persistent builder. Перед параллельной работой нужны непересекающиеся scope и принятые интерфейсы.
+Review contracts and production composition rather than rely on a builder's account. Report commands actually executed, exit codes, negative tests, and unmet conditions. Commit, merge, and deployment require their own authorization; a documentation page does not perform them.
 
-## Модульность
-
-Сохранять domain/application/infrastructure/HTTP/CLI/MCP слои. UI и scanner — клиенты, не новые authority. Выделять интерфейс по ответственности и читабельности, а не произвольному LOC threshold. Не создавать второй event/runtime/policy engine ради удобства новой задачи.
-
-## Конец задачи
-
-Review контракта и runtime composition важнее убедительного рассказа builder. Перечислить выполненные команды, фактические exit codes, нужные негативные проверки и невыполненные условия. Commit/merge/deploy выполняются только по соответствующему разрешению; эта документация их не выполняет.
-
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R14: scripts/p04-scope.mjs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/scripts/p04-scope.mjs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Testing](testing.md) · [Agent workflow](agent-workflow.md) · [Release rules](release.md) · [Normative contracts](../specs/README.md)

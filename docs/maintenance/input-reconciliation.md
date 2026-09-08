@@ -1,23 +1,31 @@
-# Как учтены приложенные документы
+# Input reconciliation
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## This edition
 
-**Статус:** Редакторская сверка входных материалов.
+The actual input is the uploaded vestrace-main.zip, whose ZIP comment identifies
+`3e05dfbdce063aa44a3a9e5a7a84c274597e8188`. The [input manifest](english-input.json) records
+its digest and extraction scope. Excluded dependencies/build directories are not documentation
+changes. No separate earlier archive was treated as the current implementation baseline.
 
-| Материал | Что сохранено | Что изменено при использовании |
+The original project source was retained for exact comparison. Active documents were translated
+and refactored; source code, CI, schemas served by the runtime, lockfiles, migration SQL, PLAN.md,
+Accepted ADRs, frozen normative originals, and development evidence were not changed.
+
+## Earlier provenance retained in the repository
+
+| Earlier material | Preserved meaning | Treatment now |
 | --- | --- | --- |
-| Handbook RU на 58e7dac3 | Memory-first объяснение, разделение evidence, API/operations тематика | Устаревшие implementation observations не перенесены как состояние 07e2977 |
-| MW Implementation на 6f610253 | Detailed requirements, 8 plans, schemas, fixtures, safety/integration limits | Canonical версия берётся из интегрированного дерева, не из раннего ZIP wrapper |
-| Integrated docs и patch | Размещение MW, navigation authority boundaries | Вводные docs теперь переписаны; прежние integration reports остаются историческими |
-| Монолитные Markdown | Удобное чтение тех же материалов | Не создают вторую authority; новая reading edition генерируется из файлов |
-| Promotion plan | Demo/quickstart/pilots и цели внешней валидации | Текущие правила площадок/рыночные цифры не зафиксированы как вечные факты |
-| Репозиторий 07e2977 | Фактическое наличие интеграции, кодовый ancestor и текущие public surfaces | Выбранные source observations отделены от непроверенных runtime outcomes |
+| Handbook at 58e7dac3 | Memory-first explanation and API/operations topics. | Earlier observations are not promoted to current state. |
+| MW design at 6f610253 | Requirements, eight plans, schemas, fixtures, and boundaries. | Use the integrated package as source; translate and preserve its requirement graph. |
+| Documentation integration at 07e2977a | One package location and authority hierarchy. | New navigation still points to that location; old reports remain historical. |
+| Monolithic Markdown/ZIP exports | Reading conveniences derived from files. | They do not become a second normative authority. |
+| Promotion plan | Demo, onboarding, pilots, and working adoption targets. | Targets are goals, not forecasts; current platform rules require separate verification. |
 
-Контрольные суммы входов находятся в [input-documents.json](input-documents.json). Название архива с прежним SHA не означает, что надо вернуть код назад. Сравнение 6f610253→07e2977 показывает документационный commit; версия runtime ancestors указана явно.
+The old [input-documents.json](input-documents.json) belongs to that earlier reconciliation.
+Its old checksums do not describe the current translated files, and the old statement that MW
+was byte-for-byte unchanged applied only to that integration. This edition changes MW prose
+while preserving requirement/task/case identities, schema semantics, and exact Unicode fixtures.
 
-Полный MW subtree сохранён byte-for-byte; новые roadmap карточки отсылают к нему и не меняют его Proposed decisions, сценарии или candidate migrations. Старые manifest hashes проверяются в своей области, не переинтерпретируются как hashes обновлённых оглавлений.
-
-Нормативные оригиналы и historical evidence не включены второй копией в overlay. Они доступны по прежним путям целевого repo и pinned ссылкам в нормативном/историческом разделах.
-
----
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](sources.md)
+Source manifests keep original reviewed commits/hashes; a separate [source delta](source-delta.json)
+records comparisons against the uploaded snapshot. Recognize recorded 14E acceptance and the
+occupied 0196 candidate without editing historical verdicts or applied SQL.

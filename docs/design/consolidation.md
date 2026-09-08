@@ -1,36 +1,25 @@
-# Проект фоновой консолидации памяти
+# Background memory consolidation
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed functional design for F206.
 
-**Статус:** Предлагаемая функциональная спецификация F206.
+## First bounded artifact
 
-## Первый ограниченный объект
+Begin with an updatable digest of project decisions, constraints, and open questions—not an agent that decides what the system should believe. The user chooses the purpose and permitted source scope.
 
-Обновляемая справка «решения, ограничения и незавершённые вопросы проекта». Не универсальный агент, который сам решает, во что системе верить. Пользователь задаёт цель справки и разрешённую область источников.
+Inputs are exact permitted revisions plus method/model/policy versions. Output is a derived projection with input references, processing watermark, and freshness state. Requested/building/ready/stale/failed describe that projection or an existing Run view, not another task runtime.
 
-## Входы и выходы
+Generating a digest does not change canonical facts. Publishing a canonical memory from it is a separate proposal/mutation with authority and provenance. Usage frequency and model confidence do not automatically raise trust.
 
-Вход — точный набор разрешённых revisions и версия метода/модели/политики. Выход — derived projection со ссылками на эти inputs, watermark обработки и статусом актуальности. Requested, building, ready/stale/failed — состояния этой проекции или проекции существующего Run, а не отдельный generic task runtime.
+## Execution and access
 
-Canonical facts не меняются от выпуска справки. Публикация новой canonical memory из её вывода — отдельное предложение/мутация с полномочиями и provenance. Частота использования или высокая модельная confidence не повышают доверие автоматически.
+Schedule through existing execution/outbox. Recheck sources and destination before disclosure. Retries use immutable input identity. A changing source yields either a valid snapshot result marked stale or cancellation under the accepted contract; silent generation mixing is prohibited.
 
-## Исполнение
+A projection cannot disclose more than its sources permit. Lost access invalidates current serving decisions. Lawful historical retention must agree with source/material erasure blockers. Audit is not an indefinite plaintext digest copy.
 
-Работа ставится в существующий execution/outbox путь. Before-disclosure проверяются источники и destination. При retry используется immutable input identity. Изменение источника во время работы либо приводит к корректному snapshot-result с последующей stale меткой, либо к отмене по принятому contract; молчаливое смешение поколений запрещено.
+## Acceptance and dependencies
 
-## Права и retention
+The digest should help solve a control task with less context without losing decisions or negations. Later correction invalidates freshness. Process recovery must not create two independently accepted results. Recomputing without new information must not increase trusted knowledge.
 
-Projection не получает больше возможностей раскрытия, чем исходники. Loss of access invalidates current serving decisions. Пока projection нужна для законной истории, её хранение согласуется с исходными material/erasure blockers. Audit не становится бессрочной копией summary plaintext.
+Start after F201/F202/F204/F008 and an explicit scope decision. Declare optional LLM use and measure cost/latency. Do not build hidden permanent sleep agents, another policy engine, or automatic belief promotion.
 
-## Acceptance
-
-Справка помогает решить контрольную задачу с меньшим контекстом; исходные решения и отрицания не теряются. Поздняя коррекция инвалидирует актуальность. Повтор после process failure не создаёт два независимых принятых результата. Без новой информации recompute не увеличивает trusted knowledge.
-
-## Зависимости и исключения
-
-Начинать после F201/F202/F204/F008 и явного scope. LLM call optional только там, где заявлен; стоимость и latency измеряются. Не строить скрытые постоянные «sleep agents», новый policy engine или auto-promotion beliefs.
-
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [S08: crates/vestrace-application/src/outbox.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/outbox.rs), [S17: crates/vestrace-application/src/material/commands.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/material/commands.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [architecture](../specs/en/vestrace-architecture-contract-v0.2.md), [outbox](../../crates/vestrace-application/src/outbox.rs), [materials](../../crates/vestrace-application/src/material/commands.rs).

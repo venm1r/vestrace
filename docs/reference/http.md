@@ -1,45 +1,36 @@
-# HTTP: идентичность, ошибки и согласованность
+# HTTP conventions
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** The supplied source snapshot, not every proposed endpoint. The [route catalog](route-catalog.md) describes inventory declarations; the runtime schema and proposed MW OpenAPI are different artifacts. A route descriptor establishes an intended authorization boundary, not a tested handler.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## Identity and authorization
 
-## Граница справочника
+A Bearer token resolves to a workspace/principal. Middleware replaces client-supplied identity headers with those resolved values. Invalid, expired, or revoked credentials must not expose details that help guess a credential. In the reviewed middleware, token-store failure returns `503`, not a misleading `401`.
 
-Справка описывает выбранный срез, а не обещает доступность всех planned routes. [Каталог](route-catalog.md) отражает регистрации inventory; текущий OpenAPI проекта и proposed MW OpenAPI — разные артефакты. Наличие route descriptor говорит об ожидаемой authorization boundary, не о доказанном успешном execution.
+`/health/live` and `/health/ready` are bounded public probes; `/metrics` requires authorization. Capabilities, risk, and current policy determine access. Permission to read data is distinct from permission to transmit it to a model/provider or export destination.
 
-## Идентичность
+## Idempotency and concurrent changes
 
-Bearer-токен разрешается в workspace/principal. Полученные identity values заменяют клиентские headers. Невалидный, истёкший или отозванный token не должен раскрывать, какая именно разновидность отказа помогла угадать credential. Storage failure authentication отличается от invalid credential: в текущем middleware это `503`, а не маскировка под `401`.
+Create a stable `Idempotency-Key` for each logical write. An identical HTTP retry uses the same key; a different command uses another key. The key is not a capability. The legacy memory handler falls back to `x-request-id`; new clients should send the explicit idempotency header instead of depending on that fallback.
 
-Health endpoints `/health/live` и `/health/ready` являются bounded public probes; `/metrics` требует авторизации. Capability и risk определяются inventory и текущей policy. Permission на чтение не эквивалентен разрешению передать data модели или экспортировать его.
+The current revision handler parses `If-Match` as a numeric `u32` string, not a general ETag or `W/"..."`. Do not apply MW's proposed precondition rules to the legacy endpoint without explicit compatibility handling. Run versions and memory content revisions are separate values.
 
-## Повтор и конкурентное изменение
+## Errors
 
-Для новых логических записей клиент создаёт свой устойчивый `Idempotency-Key`. Одинаковая повторная HTTP-попытка использует тот же ключ; другая команда — другой. Ключ не является capability. Текущий memory handler сохраняет legacy fallback на `x-request-id`; новые клиенты должны использовать явный idempotency header и не полагаться на него.
+`ApiError` and the specific handler define exact status/code behavior. Do not treat every 4xx as a missing object or automatically retry every 5xx. An unknown external outcome requires reconciliation rather than blind SDK retry.
 
-`If-Match` в текущем memory revision handler — строка с числом `u32`, не универсальный ETag и не `W/"..."`. Нельзя переносить proposed strong precondition MW на legacy endpoint без явной версии. Run version и memory content revision тоже не одно и то же.
-
-## Ошибки
-
-`ApiError` и конкретный handler — источник точных status/code. Не использовать любую 4xx как сигнал отсутствия объекта и не повторять любой 5xx вслепую. Unknown side effect означает необходимость reconciliation, а не разрешение SDK автоматически повторить команду.
-
-| Наблюдение | Действие клиента |
+| Observation | Client action |
 | --- | --- |
-| 401 | Проверить предоставленный credential, не перебирать workspace headers |
-| 403 / policy refusal | Исправить законный scope/grant либо отказаться от операции |
-| 404 | Обработать отсутствие в разрешённой области; не пробовать скрытые namespaces |
-| Revision/idempotency conflict | Перечитать доступное состояние и принять новое решение |
-| 501 | Функция не реализована на этом маршруте; UI не показывает успех |
-| 503 / unavailable | Сохранить request identity и выяснить, что было committed, прежде чем повторять mutation |
+| 401 | Check the supplied credential, not workspace-header permutations. |
+| 403 / policy refusal | Obtain a lawful scope/grant or stop the operation. |
+| 404 | Handle absence within the permitted scope; do not probe hidden namespaces. |
+| Revision/idempotency conflict | Read permitted current state and make an explicit new decision. |
+| 501 | The route is unimplemented; the UI must not report success. |
+| 503 / unavailable | Preserve request identity and establish what committed before retrying a mutation. |
 
-Таблица — руководство по обработке, не новая глобальная унификация всех существующих кодов ошибок.
+This is handling guidance, not a new uniform error contract for every existing endpoint.
 
-## Минимальная совместимость
+## Compatibility
 
-Additive поля не гарантируют совместимость строгих generated clients. Для каждого изменения проверять schema + реальные responses, deprecation policy и error semantics. Proposed MW endpoints включаются только после implementation/acceptance; их схемы не заменяют runtime schema при сборке текущего клиента.
+Additive fields can still break strict generated clients. Check schema and actual responses, deprecation policy, and errors for each change. Proposed MW routes become available only after implementation and acceptance; their schema is not the runtime schema for an existing client.
 
----
-**Основание:** [R01: crates/vestrace-http/src/auth.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs), [R02: crates/vestrace-http/src/route_inventory.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/route_inventory.rs), [S10: crates/vestrace-http/src/api/memory.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs), [S15: apps/console/src/sdk/client.ts](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/sdk/client.ts).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [authentication](../../crates/vestrace-http/src/auth.rs), [inventory](../../crates/vestrace-http/src/route_inventory.rs), [Memory handlers](../../crates/vestrace-http/src/api/memory.rs), [Console client](../../apps/console/src/sdk/client.ts).

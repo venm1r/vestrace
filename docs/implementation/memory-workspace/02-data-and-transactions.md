@@ -1,82 +1,139 @@
-# 02. Модель данных, полномочия и транзакционные границы
+# 02. Data model and transaction authority
 
-**Все новые типы/таблицы ниже — proposed.** Они дополняют existing Memory/MemoryRevision/Event/MemorySource и не заменяют их.
+**All new objects/tables below are proposed.** They extend existing Memory, MemoryRevision,
+Event, and MemorySource rather than replacing them.
 
-## 2.1 Канонические объекты
+## 2.1 Objects and ownership
 
-| Объект | Назначение и неизменяемая часть | Изменяемая часть |
-|---|---|---|
-| `SourceCollection` | workspace + локальная identity коллекции | имя и configuration revision; один активный apply на коллекцию |
-| `KnowledgeSource` | workspace + collection_id + external_id | текущий source_revision_id, locator, state/version |
-| `SourceRevision` | source_id + ordinal + точный payload material ref + формат + заявленная classification + capture event | отсутствует; исправление — следующая версия |
-| `MemorySourceBinding` | связь memory с source для детерминированного whole-document представления | source revision, import memory revision, manual_override и version |
-| `MemoryRevisionSourceLink` | точная связь memory_revision_id с event/source_revision_id и origin kind | отсутствует |
-| `ImportOperation` | автор, workspace, набор входов, режим, выбранная политика и request identity | staging/preview/apply progress; не самостоятельный scheduler |
-| `ImportItem` | input identity, saved payload, preview disposition и base versions | применённая receipt либо conflict/cancel outcome |
-| `SourceConflict` | тройка B/I/M и версии, вызвавшие конфликт | только отдельное решение с ожидаемой версией |
-| `ExportOperation` | автор, pinned selection, режим экспорта, формат | состояние подготовки и ссылка на защищённый результат |
+| Object | Immutable identity/content | Mutable state |
+| --- | --- | --- |
+| SourceCollection | Workspace and local identity. | Name/configuration revision; one active Apply. |
+| KnowledgeSource | Workspace, collection_id, external_id. | Current revision, locator, state/version. |
+| SourceRevision | Source, ordinal, exact payload material reference, format, declared classification, capture event. | None; a change creates a new revision. |
+| MemorySourceBinding | Memory-to-source relationship for whole-document representation. | Source revision, last imported memory revision, manual_override, version. |
+| MemoryRevisionSourceLink | Exact revision-to-event/source-revision relationship and origin kind. | None. |
+| ImportOperation | Actor, workspace, inputs, mode, selected policy, request identity. | Staging/preview/apply progress, not an independent scheduler. |
+| ImportItem | Input identity, saved payload, disposition, base versions. | Receipt, conflict, or cancellation outcome. |
+| SourceConflict | B/I/M triple and detection versions. | Explicit version-preconditioned resolution. |
+| ExportOperation | Actor, pinned selection, mode, format. | Preparation state and protected result reference. |
 
-`Memory` остаётся владельцем effective содержимого. SourceRevision никогда не становится альтернативным current memory head. Сырой источник и исправленная пользователем память могут различаться; это допустимое, явно показанное состояние.
+Memory owns effective content. SourceRevision cannot become a competing current-memory head.
+Source text and human-corrected memory may differ; display that valid state explicitly.
 
-## 2.2 Identity и provenance
+## 2.2 Identity and provenance
 
-Идентичность source — `(workspace_id, collection_id, external_id)`, не путь и не content hash. `external_id` — стабильный UUID, выбранный локальным scanner или пользователем. Путь — locator для отображения. Один source первой версии порождает одну MemoryKind::Observation с `origin_kind=source_excerpt`. Это запись содержимого источника, а не автоматически подтверждённый semantic fact.
+Source identity is `(workspace_id, collection_id, external_id)`, not path or hash. A stable
+external UUID comes from the scanner/user; path is a locator. Initially each source produces
+one MemoryKind::Observation with origin_kind=source_excerpt, not an automatically confirmed
+semantic fact. Require explicit confidence/importance in preview settings and label them
+as user assessments. Never assign 1.0 as evidence of truth. Ordinals increase per object;
+timestamps do not provide a global revision order.
 
-Импортёр требует явные confidence/importance в настройках preview; они сохраняются как пользовательская оценка. Он не выставляет 1.0 в качестве подтверждения истины документа. UI показывает происхождение оценки. Revision ordinal монотонен внутри объекта; глобального порядка по timestamp не обещается.
+Write new revision-source links in the same transaction as their revision. Mark historical
+memory_sources without exact attribution `legacy_unattributed`; do not backfill from timestamp
+proximity. These links may describe memory-level history but not the proven basis of a
+particular revision. Foreign IDs are annotations, never local actor/workspace/policy/key authority.
 
-Новые canonical revision links записываются при той же транзакции, что и revision. Старые memory_sources не связываются с ревизиями по близким created_at: результат миграции для них — `legacy_unattributed`. Их можно показывать только как исторические источники уровня памяти, а не доказанную основу конкретного изменения.
+## 2.3 Proposed relational schema
 
-Imported provenance хранит foreign identities как аннотации. Они никогда не выбирают локальный workspace, actor, policy, key или authority.
+```text
+memory_workspace_epochs(workspace_id PK, version bigint)
+memory_revision_source_links(workspace_id, memory_id, revision_id, event_id,
+  source_revision_id nullable, origin_kind, actor_id, created_at)
+source_collections(workspace_id, id, name, version, active_import_id nullable, created_at)
+knowledge_sources(workspace_id, id, collection_id, external_id, relative_path,
+  state, version, current_revision_id, created_at)
+source_revisions(workspace_id, id, source_id, revision_number, payload_material_id,
+  payload_intent_id, format, classification, capture_event_id, recorded_at)
+memory_source_bindings(workspace_id, memory_id, source_id, source_revision_id,
+  last_import_memory_revision_id, manual_override, version)
+source_import_operations(workspace_id, id, principal_id, mode, state, version,
+  collection_id, base_collection_version, preview_revision, expires_at,
+  accepted_policy_version, created_at)
+source_import_items(workspace_id, id, operation_id, ordinal, external_id,
+  payload_material_id, base_source_revision_id, base_memory_revision_id,
+  disposition, state, applied_revision_id, conflict_id)
+source_conflicts(workspace_id, id, source_id, memory_id, base_source_revision_id,
+  incoming_source_revision_id, manual_revision_id, version, state,
+  resolution_event_id nullable)
+memory_export_operations(workspace_id, id, principal_id, state, version,
+  format, expires_at, pinned_selection, result_material_id nullable, created_at)
+```
 
-## 2.3 Предлагаемая реляционная схема
+Epochs invalidate browse cursors; they are not canonical knowledge. Revision-source links use
+PK `(workspace_id,revision_id,event_id)` with same-workspace composite FKs to MemoryRevision
+and Event. Collections are unique by `(workspace_id,id)`. Sources are unique by
+`(workspace_id,collection_id,external_id)`. Source ordinals are unique by
+`(workspace_id,source_id,revision_number)`; payload and capture are immutable.
 
-Физические имена:
+The initial binding is unique per `(workspace_id,source_id)` and `(workspace_id,memory_id)`.
+Import items are unique by `(workspace_id,operation_id,ordinal)` and external_id within a
+batch. Conflict references are immutable; resolutions are append-only.
 
-- `memory_workspace_epochs(workspace_id PK, version bigint)` — invalidation epoch для browse cursors; не source of knowledge.
-- `memory_revision_source_links(workspace_id, memory_id, revision_id, event_id, source_revision_id nullable, origin_kind, actor_id, created_at)`; PK `(workspace_id,revision_id,event_id)`; composite FK до MemoryRevision и Event в том же workspace.
-- `source_collections(workspace_id,id,name,version,active_import_id nullable,created_at)`; unique `(workspace_id,id)`.
-- `knowledge_sources(workspace_id,id,collection_id,external_id,relative_path,state,version,current_revision_id,created_at)`; unique `(workspace_id,collection_id,external_id)`.
-- `source_revisions(workspace_id,id,source_id,revision_number,payload_material_id,payload_intent_id,format,classification,capture_event_id,recorded_at)`; unique `(workspace_id,source_id,revision_number)`; payload и capture неизменяемы.
-- `memory_source_bindings(workspace_id,memory_id,source_id,source_revision_id,last_import_memory_revision_id,manual_override,version)`; в первой версии unique `(workspace_id,source_id)` и `(workspace_id,memory_id)`.
-- `source_import_operations(workspace_id,id,principal_id,mode,state,version,collection_id,base_collection_version,preview_revision,expires_at,accepted_policy_version,created_at)`.
-- `source_import_items(workspace_id,id,operation_id,ordinal,external_id,payload_material_id,base_source_revision_id,base_memory_revision_id,disposition,state,applied_revision_id,conflict_id)`; unique `(workspace_id,operation_id,ordinal)` и external_id внутри batch.
-- `source_conflicts(workspace_id,id,source_id,memory_id,base_source_revision_id,incoming_source_revision_id,manual_revision_id,version,state,resolution_event_id nullable)`; immutable три references; resolution append-only.
-- `memory_export_operations(workspace_id,id,principal_id,state,version,format,expires_at,pinned_selection,result_material_id nullable,created_at)`.
+Every child FK includes workspace_id. New content/authority tables require FORCE RLS,
+guarded ownership, no direct runtime DML, and named scoped entrypoints. Test SQL CHECK
+closed sets against domain enums. Do not store raw DEKs, Bearer tokens, global plaintext
+hashes, or full content in audit/outbox.
 
-У каждой дочерней таблицы composite FK содержит workspace_id. Все новые content/authority таблицы получают FORCE RLS, guarded ownership, запрет прямого runtime DML и только именованные scoped entrypoints. Для новых полей с замкнутыми множествами SQL CHECK сверяется с domain enum тестом. В schema не появятся raw DEK, bearer token, глобальный plaintext hash или полный content в audit/outbox.
+Source payloads are material references, not new plaintext content columns. Effective memory
+continues through its existing persistence/security envelope; this proposal does not claim
+that historical memory storage is all encrypted. MW-00 must verify supported labels on every
+used path; refuse unsafe labels rather than introduce a fallback store.
 
-Хранение source payload — только material reference, не новый plaintext `content` столбец. Effective memory content остаётся в нынешнем memory persistence path и его поддерживаемом security envelope; это расширение не объявляет автоматически зашифрованной всю историческую memory storage. MW-00 обязан проверить поддержку выбранных labels всеми используемыми путями. Label, не поддерживаемый безопасно, запрещён для нового сценария.
+## 2.4 Atomic mutation
 
-## 2.4 Атомарная mutation
+Use existing GovernedMutation and `commit_in(&mut dyn UnitOfWork, ...)`. The memory writer
+MUST participate in the caller-owned transaction, without invoking independently committing
+save_memory_with_revision as a nested operation.
 
-В новом baseline доступны `GovernedMutation<T>` и `commit_in(&mut dyn UnitOfWork, ...)` [S07]. Конкретный memory writer MUST работать с caller-owned UoW. `save_memory_with_revision` нельзя вызвать как вложенную commit-операцию из этого writer.
+1. Resolve trusted authentication and perform available preliminary checks.
+2. Open a scoped transaction with InstallationMutationPermit.
+3. Lock/check canonical idempotency identity. Exact committed replay returns its receipt
+   **before repeated state CAS**, but **after current authorization of the result**.
+4. Acquire configuration/policy, optional collection/source/binding, and memory guards in
+   the agreed order; sort IDs within each class. Do not invoke provider/embedding/vault here.
+5. Recheck permissions, classification, and expected revisions under current guards. Commit
+   capture/correction Event, revision, source, exact link, active head, search projection,
+   audit, outbox, and receipt through the shared authority.
+6. Verify the transactional database trigger advances the browse epoch; do not advance it
+   again manually. Commit.
+7. Return the receipt; existing outbox processing handles derived work after commit.
 
-Последовательность для correction/import item:
+MW-00/MW-02 reconcile guard order with every current writer. Do not reorder installation,
+material, or provider guards for import convenience. Resolve order conflicts before code,
+not by accepting a potentially deadlocking transaction.
 
-1. Разрешить identity из доверенного authentication и выполнить доступные предварительные проверки.
-2. Открыть scoped transaction с существующим InstallationMutationPermit.
-3. Проверить/заблокировать canonical idempotency identity; точный committed replay возвращает прежнюю receipt **до** повторной CAS-проверки состояния, но **после** повторной авторизации доступа к результату.
-4. В стандартном порядке взять configuration/policy guards, collection/source/binding при наличии, затем memory; идентификаторы одного класса сортировать. Внутри этой ветки не вызывать provider/embedding/vault.
-5. Повторить authorization, classification и expected revision/state проверку под актуальными guards. Зафиксировать capture/correction Event, MemoryRevision, MemorySource, точный revision link, active head, search projection, audit, outbox и receipt в одной транзакции через shared authority.
-6. Убедиться, что транзакционный DB trigger увеличил browse epoch; не увеличивать его повторно вручную. Commit.
-7. После commit отдавать receipt; дальше существующий outbox запускает derived обработку.
+## 2.5 Idempotency
 
-Порядок guards должен быть согласован со всеми действующими writers во время MW-00/MW-02. Этот документ не разрешает переставить installation/material/provider guards ради удобства импорта. При конфликте порядков меняется план до кода, а не выполняется транзакция с потенциальным deadlock.
+New HTTP keys are UUIDs. Server storage is namespaced by operation, authenticated principal,
+and workspace; target belongs in the fingerprint. Legacy routes retain their wire contract
+through an explicit adapter. Exclude attempt IDs, generated event/revision IDs, and ciphertext
+from logical request equality.
 
-## 2.5 Идемпотентность
+Normalize the closed schema with explicit omitted/null behavior. Array order is either
+meaningful or canonically sorted as the API specifies. Sensitive inputs use approved keyed
+commitments, never public content-hash lookup. Serialization failure is an error, not the
+hash of an empty string.
 
-Новый HTTP client key — UUID. Server storage key namespaced по операции, authenticated principal и workspace; target входит в fingerprint. Старые routes сохраняют прежний wire contract и имеют явный compatibility adapter. В ключ не включаются attempt_id, случайный event UUID или server-generated revision ID.
+A changed body under one key returns 409. Exact replay after a lost response returns the
+same receipt without another revision, audit success, or outbox entry. An unfinished contender
+waits boundedly or receives retryable busy rather than starting a second mutation. Retain
+receipts while operation/export/retry references require them; do not silently extend legacy
+retention. Current authorization always applies to receipt disclosure.
 
-Semantic fingerprint строится из нормализованной закрытой схемы: omitted vs null явно определены, порядок массива источников и selected item ids значим либо canonical sorted согласно API. Случайные UUID результата и ciphertext не входят в equality. Для нового sensitive content использовать существующий approved keyed commitment; никакой публичный SHA-256 содержимого не становится lookup API. Ошибка сериализации — ошибка, не hash пустой строки.
-
-Replay при изменённом теле — 409. Replay exact после потерянного HTTP response — одна и та же canonical receipt, без новых revision, audit success или outbox. Незавершённый конкурентный запрос ожидает ограниченно либо получает retryable busy; он не начинает независимую mutation. Receipt удерживается как минимум пока операция/экспорт/активный retry может ссылаться на неё. Срок старых legacy keys не продлевается молча.
-
-Для import delivery identity фиксирована `(operation_id,item_id,semantic input)`: два OutboxDispatcher не могут применить item дважды. Если commit состоялся, а outbox ack потерян, следующий handler читает durable item receipt и возвращает success без повторных side effects.
+Import identity is `(operation_id,item_id,semantic input)`. Different dispatchers cannot
+apply the item twice. After commit with lost acknowledgement, replay reads the durable
+item receipt and finishes without repeating side effects.
 
 ## 2.6 Read consistency
 
-Detail читает active pointer, revision и её разрешённые источники согласованно. Разрешение видеть memory metadata не автоматически разрешает исторический content; проверяется каждая revision и каждый раскрываемый источник. Изменение прав до точки linearization запроса должно учитываться; уже отправленные клиенту байты отозвать невозможно.
+Read active pointer, revision, and permitted sources consistently. Metadata access is not
+historical-content access; check each revision/source. Rights changes before linearization
+must be observed. Bytes already sent cannot be recalled.
 
-Browse uses keyset `(created_at,id)` и cursor, bound к principal/workspace/filter hash/epoch/policy version. При изменении epoch или policy следующий page получает CURSOR_EXPIRED, UI начинает новую выборку. Не обещается snapshot через несколько минут открытой транзакции. Cursor opaque, защищён от изменения, не содержит скрытых source IDs открытым текстом. Total count отсутствует, если его безопасная семантика не доказана.
-
-History pins максимальную видимую revision на первой странице, но заново проверяет права на каждом запросе. History восстановимого знания ограничена retention: удалённое содержимое не возвращается из cached receipts или export copies.
+Browse uses keyset `(created_at,id)` and a tamper-protected opaque cursor bound to principal,
+workspace, filter hash, epoch, and policy version. Changed epoch/policy produces CURSOR_EXPIRED;
+restart the query. Do not hold a multi-minute transaction or expose hidden IDs in cursors.
+Omit totals unless safe semantics are established. History pins the highest visible revision
+on its first page, but reauthorizes every page. Retention/erasure applies to history, caches,
+receipts, and export-derived reads.

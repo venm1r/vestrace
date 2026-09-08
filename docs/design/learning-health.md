@@ -1,34 +1,27 @@
-# Обратная связь, health, trust и qualification
+# Feedback, health, trust, and qualification
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Feedback is not automatic truth
 
-**Статус:** Пояснение нормативных различий; не полный аудит реализации этих подсистем.
+Test results, user ratings, and model-judge conclusions differ in provenance and weight. Keep raw observations separate from learned projections. Frequency of use may inform ranking but does not establish truth.
 
-## Обратная связь не меняет истину сама
+A learning proposal does not authorize changes to policy, capabilities, assets, or canonical assertions. Those follow their own versioned mutation and review gates. Preserve measurements so conclusions can be reconsidered.
 
-Результат проверки, пользовательская оценка и model-judge заключение имеют разное происхождение и вес. Сырые observations сохраняются отдельно от learned projections. Частое использование записи может быть сигналом ранжирования, но не доказательством истинности.
+## Health and trust
 
-Learning proposal не является разрешением изменить policy, capability, agent asset или каноническое утверждение. Для такого изменения действует соответствующий versioned mutation и review/gate. Так сохраняется возможность пересмотреть вывод без уничтожения исходных измерений.
+A process/database may be healthy while an external outcome remains unknown, restored data remains unverified, or dangerous capabilities remain suspended. Recovery and revalidation are different stages.
 
-## Health и trust
-
-Работающий процесс и доступная БД могут быть healthy, но это не доказывает, что неопределённый внешний эффект установлен, данные восстановлены корректно или прежние опасные полномочия разрешено вернуть. Recovery и revalidation — разные этапы.
-
-Finding описывает нарушение или подозрение. Устранение симптома не всегда разрешает finding. Suppressed/accepted-risk являются отношением к находке, а не подменой её integrity состояния; нормативные уточнения находятся в ADR-0009 через индекс спецификаций.
+A finding records a violation or suspicion. Removing a symptom does not always resolve it. Suppressed/accepted-risk is disposition, not integrity state; [ADR-0009](../adr/0009-finding-disposition-is-not-integrity-state.md) specifies the distinction.
 
 ## Repair
 
-Автоматически исправлять безопасно только то, что однозначно восстанавливается из более авторитетных данных и разрешено действующими полномочиями. Смысловой конфликт двух документов не является детерминированным rebuild. Нельзя «чинить» систему присвоением признака healthy или trusted без наблюдений.
+Automatic repair is justified only when a result is unambiguously reconstructible from higher-authority data and current authority permits it. Semantic conflict is not deterministic rebuild. Assigning healthy/trusted without observations is not repair.
 
-Текущий CLI имеет отдельные команды doctor, plan, repair, rebuild и conformance. Наличие этих команд не означает, что любой целевой профиль или вся семантика repair уже квалифицированы.
+CLI doctor, plan, repair, rebuild, and conformance commands do not by their existence qualify every target profile or repair path.
 
 ## Qualification
 
-Профиль квалифицирует конкретные свойства на конкретном target. Source revision, environment, конфигурация, модели и выполненные проверки должны быть идентифицируемы. Сводка с отсутствующими, пропущенными или неподтверждёнными проверками не становится проходящей только потому, что остальные тесты зелёные.
+A profile qualifies specific properties on a specific target. Identify source, environment, configuration, models, and executed checks. Missing, skipped, or unverified checks do not become PASS because other tests are green.
 
-Документационные проверки этой редакции относятся только к документам и примерам. Они не входят в продуктовую qualification history и не закрывают P12.
+Documentation validation covers text and examples only. It does not contribute product qualification or close P12.
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [R03: crates/vestrace-cli/src/main.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-cli/src/main.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [health contract](../specs/en/vestrace-health-repair-incident-contract-v0.2.md), [qualification contract](../specs/en/vestrace-qualification-conformance-spec-v0.2.md), [CLI](../../crates/vestrace-cli/src/main.rs).

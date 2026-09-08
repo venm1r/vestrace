@@ -1,38 +1,31 @@
-# Транзакционные границы и повтор запросов
+# Transactions and request replay
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## What is already atomic
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+PgMemoryRepository writes memory, a new revision, source, and search projection in one transaction. A revision update checks expected content/state versions. This prevents publishing active memory without its content and basis.
 
-## Какая атомарность уже наблюдается
+MemoryService subsequently saves outbox and idempotency records separately. An atomic part does not make the full command atomic. Failures between those parts and lost responses need separate tests.
 
-PgMemoryRepository записывает memory, новую revision, source и search projection одной транзакцией. Для новой ревизии SQL проверяет ожидаемые content/state versions. Смысл этой границы — не опубликовать active memory без её содержимого и основания.
+## Shared unit of work
 
-MemoryService после этого отдельно сохраняет outbox и idempotency. Поэтому нельзя называть атомарной всю последовательность только потому, что одна её часть атомарна. Сбой между частями и потеря ответа требуют отдельных проверок.
+GovernedMutationApply and GovernedMutationRepository provide `commit` and `commit_in`. The latter participates in the caller's open transaction; it must not silently commit a second transaction. Outbox, idempotency, and audit ports can also participate in one unit of work.
 
-## Общий механизм
+MW-02 proposes committing the receipt with mutation, audit, and follow-up work. This is a requirement for the new path, not a claim that the legacy service already satisfies it.
 
-В application есть GovernedMutationApply и GovernedMutationRepository с `commit`/`commit_in`. Последний предназначен для уже открытой вызывающим транзакции: реализация не должна скрытно открывать и завершать вторую. Outbox/Idempotency/Audit также имеют методы участия в общей unit of work.
+## Idempotency
 
-MW-02 проектирует единый receipt результата вместе с изменением, audit и заданиями на дальнейшую обработку. Это требование нового пути, а не утверждение, что текущий legacy writer ему уже соответствует.
+A key identifies a logical request. The same key with different semantics conflicts. Newly generated attempt UUIDs must not make an identical retry a different command; the current memory fingerprint already excludes them.
 
-## Идемпотентность
-
-Ключ повтора относится к логическому запросу. Повтор с тем же ключом и иной семантикой должен конфликтовать. Случайные UUID, выделенные заново при HTTP-попытке, не должны превращать идентичный повтор в другую команду; текущий memory fingerprint специально исключает такие ID.
-
-Проверка права выполняется в контексте действующего запроса. Старый idempotency receipt не даёт новому principal доступ к результату. Горизонт хранения ключа нужно описывать явно; бессрочная гарантия повтора не следует из cache с expiry.
+Reauthorize under the current request. An old receipt does not grant another principal access to its result. Describe the retention horizon explicitly; an expiring cache does not support an unlimited replay claim.
 
 ## Outbox
 
-Текущий контракт at-least-once: обработчик может повторно получить событие после сбоя между обработкой и подтверждением. Он обязан сходиться на той же предметной идентичности. Нельзя объявить exactly-once на основании имени очереди.
+Delivery is at-least-once: a crash after processing commit and before acknowledgement can repeat an event. Handlers must converge on the same domain identity. A queue name does not establish exactly-once semantics.
 
-Неизвестный topic не превращается в processed. Delivery failure остаётся записанным, применяется backoff; исчерпание попыток даёт dead-letter, а не исчезновение обещанной работы. Payload должен иметь потребителя, а outbox не подменяет канонический event log.
+An unknown topic must remain unprocessed. Persist failure, apply backoff, and retain exhausted attempts as dead-letter rather than dropping promised work. Every payload needs a consumer. Outbox is not a second canonical event log.
 
-## Lock order и внешние операции
+## Lock order and external work
 
-Точный порядок захвата locks берётся из принятого пакета реализации. Во время медленного network/vault вызова нельзя без обоснования удерживать общую SQL-транзакцию. Разрыв между системами оформляется durable intent/witness и процедурой восстановления. Одна успешная половина не означает успех всего действия.
+Use the order from the accepted implementation package. Do not hold a broad SQL transaction across slow network/vault work without a justified contract. Cross-system gaps require durable intent/witnesses and recovery. One successful half does not establish overall success.
 
----
-**Основание:** [S04: crates/vestrace-application/src/memory/ports.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/ports.rs), [S05: crates/vestrace-application/src/memory/services.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs), [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [S07: crates/vestrace-application/src/governed_mutation.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs), [S08: crates/vestrace-application/src/outbox.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/outbox.rs), [S09: crates/vestrace-application/src/idempotency.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/idempotency.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [ports](../../crates/vestrace-application/src/memory/ports.rs), [service](../../crates/vestrace-application/src/memory/services.rs), [repository](../../crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [governed mutation](../../crates/vestrace-application/src/governed_mutation.rs), [outbox](../../crates/vestrace-application/src/outbox.rs), [idempotency](../../crates/vestrace-application/src/idempotency.rs).

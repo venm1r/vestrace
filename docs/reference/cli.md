@@ -1,32 +1,23 @@
-# CLI: существующие группы команд
+# CLI reference
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** Command groups found in source, not commands executed in this refactor. [Clap definitions](../../crates/vestrace-cli/src/main.rs) and the selected binary's `--help` define exact syntax.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
-
-Источник синтаксиса — Clap в `crates/vestrace-cli/src/main.rs`. Команды ниже найдены в source; они не запускались здесь. Перед mutating operation читайте `--help` именно вашего бинарного файла и требования к окружению.
-
-| Команда | Назначение и граница |
+| Command | Purpose and boundary |
 | --- | --- |
-| `server` | HTTP процесс; требует DB/schema/vault/policy prerequisites |
-| `worker` | Постоянный обработчик доступной работы |
-| `worker --once` | Один цикл; 0 — работа, 3 — idle, 1 — ошибка; не full-Run result |
-| `mcp` | MCP process mode |
-| `migrate` | Миграции после предусмотренного role provisioning |
-| `doctor` | Диагностика текущей реализации |
-| `plan --finding-id UUID` | План для названных findings; не generic roadmap editor |
-| `repair --plan-id UUID --current-state-ref REF` | Применение по конкретному плану и состоянию |
-| `rebuild TARGET` | Target задаётся enum исходников и help, не придумывается документацией |
-| `schema FORMAT` | Выдача поддерживаемого schema format |
-| `conformance …` | Qualification artifacts/checks и evidence-bound release |
+| `server` | HTTP process; database/schema/vault/policy prerequisites apply. |
+| `worker` | Persistent processing of available work. |
+| `worker --once` | One cycle: 0 for work, 3 for idle, 1 for an error; not a full Run result. |
+| `mcp` | MCP process mode. |
+| `migrate` | Apply migrations after the required role provisioning. |
+| `doctor` | Diagnose the current implementation. |
+| `plan --finding-id UUID` | Plan for named findings, not a general roadmap editor. |
+| `repair --plan-id UUID --current-state-ref REF` | Apply a particular plan against expected state. |
+| `rebuild TARGET` | Target is defined by the source enum/help, not invented in prose. |
+| `schema FORMAT` | Emit a supported schema format. |
+| `conformance …` | Qualification artifacts/checks and evidence-bound release operations. |
 
-Глобальные `--config` и `--http-bind` не заменяют provisioning. Database URL не помещается в TOML или командную строку: используйте секретную environment выбранного процесса.
+Global `--config` and `--http-bind` do not replace provisioning. Keep database credentials in the process's secret environment, not public TOML or the command line.
 
-В группе conformance присутствуют list/check, bundle/manifest, verify/sign/verify-signature, publish-baseline/release и явно destructive qualification modes. Нельзя называть любую `conformance check` полной production acceptance. Поля target digests, profiles, artifact identity и trust sources читаются из команды и принятого qualification contract.
+Conformance includes list/check, bundle/manifest, verify/sign/verify-signature, publish-baseline/release, and explicitly destructive qualification modes. A `conformance check` is not automatically full production acceptance. Read its target digests, profiles, artifact identities, and trust-source requirements.
 
-Не используйте придуманные `vestrace qualify` или `vestrace doctor --plan` из старых концептуальных примеров. Folder import/export команды MW являются проектом и будут включены только после соответствующей реализации.
-
----
-**Основание:** [R03: crates/vestrace-cli/src/main.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-cli/src/main.rs), [S01: docs/development-evidence/v1-g0-04-embedding-transition-foundation.md](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+Do not use invented commands such as `vestrace qualify` or `vestrace doctor --plan` from old conceptual examples. Proposed MW folder-import/export commands become usable only when implemented.

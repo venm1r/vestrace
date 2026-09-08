@@ -1,40 +1,29 @@
-# Проект развития временного знания и конфликтов
+# Temporal knowledge and semantic conflicts
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed functional design for F201/F202, not an accepted schema.
 
-**Статус:** Предлагаемая функциональная спецификация F201/F202.
+## Scope and query contract
 
-## Область
+Review existing TimePerspective, Claim/Conflict types, and normative temporal specifications first. Do not conflate current, valid-as-of, and recorded-as-known with the existing as_of API.
 
-Это детализация F201/F202 для review, не новая принятая schema. Сначала сверяются existing TimePerspective, Claim/Conflict и authoritative temporal specs. Current, valid-as-of и recorded-as-known не объединяются автоматически в существующий `as_of` API.
+A query identifies its temporal question, time boundary, and permitted scope. Bind answers to exact source/memory revisions, validity, and recording time. When as-known history is insufficient, report unsupported/incomplete semantics rather than reconstructing it from latest timestamps.
 
-## Предлагаемый контракт
+Semantic conflicts concern type-compatible but substantively incompatible assertions. They differ from technical B/I/M sync conflicts. A shared UI may show both, but their resolution authorities remain distinct.
 
-Запрос задаёт, какой вопрос о времени решается, временную границу и разрешённую область. Ответ связывается с exact source/memory revisions, их validity и записанным временем. Если для requested-as-known нет надёжной истории, возвращается явная неподдерживаемая/неполная семантика, а не реконструкция по latest timestamps.
+## Resolution
 
-Смысловой конфликт представляет совместимые по типу, но несовместимые по содержанию утверждения и их источники. Он отличен от технического sync conflict B/I/M. Общий UI может показывать оба, но resolution не использует чужую authority.
+Domain policy may permit treating a source as a correction, retaining competing assertions, narrowing validity, or recording an authorized human decision. Preserve basis, actor, and expected state. Latest-wins is valid only as an explicitly accepted domain policy, never a universal heuristic.
 
-## Разрешение
+A caller without source access must not receive revealing content or conflict details, including hidden names/counts. Reclassification is not ordinary editing.
 
-Допустимые варианты зависят от предметной политики: признать источник исправлением, сохранить конкурирующие утверждения, ограничить validity либо зафиксировать авторизованное human decision. Любое resolution сохраняет основание, actor и ожидаемое состояние. Автоматический latest wins разрешён только как явно принятая предметная policy, не универсальная эвристика.
+## Invalidation
 
-Если один источник закрыт, доступному пользователю нельзя показать его содержимое или детали conflict, из которых оно выводится. Для безопасного ответа допустим ограниченный результат с понятной границей, без утечки hidden counts/names. Reclassification не является обычным content edit.
+Source, revision, and policy changes trigger reconsideration of dependent context/summary projections without rewriting facts of past runs. Historical reads obey current access and retention. Do not reconstruct erased content from approximate summaries.
 
-## Инвалидация
+## Implementation after scope approval
 
-Изменение source/revision/policy вызывает пересмотр зависимых context/summary projections. Оно не переписывает сохранённые факты прошлых запусков. Историческое чтение проходит текущие права и retention; уничтоженный контент не восстанавливается догадкой из приблизительной сводки.
+Define query semantics and a minimal corpus; map existing temporal columns/indexes and missing historical facts; add only necessary backward-compatible query/mutation contracts; test exact revisions, late arrival, competing resolution, and revocation; then implement explanations and evaluate usefulness on the same corpus.
 
-## Порядок реализации после решения владельца
+Do not start with automatic semantic merging. Users first need to see the conflict and its basis.
 
-1. Зафиксировать точную семантику запросов и минимальный corpus.
-2. Сопоставить существующие temporal columns/indexes и missing historical facts.
-3. Добавить только необходимый query/mutation contract с backward compatibility.
-4. Проверить exact revision reads, late-arrival, конкуренцию resolution и revoke.
-5. Подключить UI explanation и оценить полезность на том же corpus.
-
-Не начинать с автоматического semantic merger: сначала пользователь должен видеть проблему и основания.
-
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R13: crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs), [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [temporal model](../specs/en/vestrace-data-temporal-model-v0.2.md), [hydrator](../../crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs), [retrieval](../../crates/vestrace-http/src/api/retrieval.rs).

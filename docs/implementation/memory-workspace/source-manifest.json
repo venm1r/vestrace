@@ -4,7 +4,7 @@
   "baseline_parent": "58e7dac3cef7cc106d59f7ba3560bdbd37de76c0",
   "tree": "e9ed91f8ab0d0c44a9e7c383e8c0be15d6171294",
   "inspected_on": "2026-09-07",
-  "method": "GitHub connector; статическое чтение выбранных файлов и дерева; не запуск продукта",
+  "method": "Original GitHub connector review: selected static file/tree reads, not product execution.",
   "sources": [
     {
       "id": "S01",
@@ -25,7 +25,7 @@
           3650
         ]
       ],
-      "observation": "14B–14D и worker --once; 14D принят до ResultPrepared, 14E — предложение.",
+      "observation": "Historical review at 6f610253: 14B–14D and worker --once; 14D accepted through ResultPrepared and 14E then proposed. See current source delta for later recorded acceptance.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md"
     },
     {
@@ -34,7 +34,7 @@
       "git_blob_sha1": "42763e39781db072c8455a68e4e6fd4f2bc326f0",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "Иерархия нормативных документов; отсутствие автоматического расширения roadmap.",
+      "observation": "Normative document hierarchy; the roadmap is not expanded automatically.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/specs/README.md"
     },
     {
@@ -43,7 +43,7 @@
       "git_blob_sha1": "49445e4b5565495ddfbae6a6646f1bbc08dcf1d0",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "Действующий MemoryUseCases, без list/history read-модели.",
+      "observation": "Existing MemoryUseCases without a list/history read model.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/mod.rs"
     },
     {
@@ -52,7 +52,7 @@
       "git_blob_sha1": "9e0a7ed8f3fd68833541b397002bbc007ff8f414",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "MemoryRepository и атомарная запись memory/revision/source/search.",
+      "observation": "MemoryRepository and atomic memory/revision/source/search persistence.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/ports.rs"
     },
     {
@@ -66,7 +66,7 @@
           525
         ]
       ],
-      "observation": "Outbox и idempotency сохраняются отдельно; fingerprint исключает случайные ID; label transition запрещён.",
+      "observation": "Outbox/idempotency are persisted separately; fingerprints exclude random IDs and label transitions are refused.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/memory/services.rs"
     },
     {
@@ -80,7 +80,7 @@
           255
         ]
       ],
-      "observation": "begin_scoped, CAS памяти, запись ревизии и источника; схема memory_sources без revision_id в INSERT.",
+      "observation": "begin_scoped, memory CAS, and revision/source writes; the memory_sources INSERT has no revision_id.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs"
     },
     {
@@ -89,7 +89,7 @@
       "git_blob_sha1": "dbd786347b67ab8c69ecfa5f11d7f9735c6b0520",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "GovernedMutationRepository::commit_in и GovernedMutationApply.",
+      "observation": "GovernedMutationRepository::commit_in and GovernedMutationApply.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/governed_mutation.rs"
     },
     {
@@ -103,7 +103,7 @@
           225
         ]
       ],
-      "observation": "At-least-once; обработчик обязан быть идемпотентным; 5 попыток, backoff, dead-letter.",
+      "observation": "At-least-once delivery requires idempotent handlers; five attempts, backoff, and dead-letter outcomes.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/outbox.rs"
     },
     {
@@ -112,7 +112,7 @@
       "git_blob_sha1": "1409c9ce0c14e92cb3ada3bf60c857ae4b0aa679",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "IdempotencyRepository::save_in; запись содержит workspace и срок хранения.",
+      "observation": "IdempotencyRepository::save_in; records include workspace and retention expiry.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/idempotency.rs"
     },
     {
@@ -126,7 +126,7 @@
           110
         ]
       ],
-      "observation": "MemoryResponse — метаданные, без content и номера активной ревизии.",
+      "observation": "MemoryResponse exposes metadata, not content or the active revision number.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/memory.rs"
     },
     {
@@ -140,7 +140,7 @@
           174
         ]
       ],
-      "observation": "ContextPackDto — сводка без секций; temporal и intent параметры уже есть.",
+      "observation": "ContextPackDto summarizes without sections; temporal and intent parameters already exist.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs"
     },
     {
@@ -154,7 +154,7 @@
           205
         ]
       ],
-      "observation": "ContextItem.rendered_text и provenance_refs; utf8-bytes/4 как оценка токенов; fallback на explanation.",
+      "observation": "ContextItem.rendered_text/provenance_refs; UTF-8 bytes / 4 token estimate and fallback to explanation.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/retrieval/context_builder.rs"
     },
     {
@@ -163,7 +163,7 @@
       "git_blob_sha1": "ffe3c19e344f25ad222e418829c47804700916e4",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "Компонент памяти существует; данные передаются props, без собственного редактирования.",
+      "observation": "A presentation component receives memory via props, without its own editing workflow.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/memory/MemoryConsole.tsx"
     },
     {
@@ -172,7 +172,7 @@
       "git_blob_sha1": "b5f55a8132f59f739d676844a9aa8c78ee503c4f",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "Memory routes отсутствуют в таблице Routes.",
+      "observation": "The reviewed Routes table has no full memory route.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/main.tsx"
     },
     {
@@ -186,7 +186,7 @@
           155
         ]
       ],
-      "observation": "Общий ApiRequestError и текущие client DTO; расширять, не создавать параллельный auth-клиент.",
+      "observation": "Existing ApiRequestError/client DTOs; extend the transport rather than creating parallel authentication.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/sdk/client.ts"
     },
     {
@@ -195,7 +195,7 @@
       "git_blob_sha1": "9fdacac2cf0ba97f67b3e4a1f1d35ded99968a0f",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
       "inspected_lines": null,
-      "observation": "React, TypeScript, Vite; есть test:protocol, нет общего npm test.",
+      "observation": "React, TypeScript, Vite; test:protocol exists but no general npm test at the reviewed baseline.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/package.json"
     },
     {
@@ -209,7 +209,7 @@
           230
         ]
       ],
-      "observation": "MaterialIntentCommands: reserve/prepare_content/bind/finalize_bound; восстановление не выдумывает утраченный plaintext.",
+      "observation": "MaterialIntentCommands reserve/prepare_content/bind/finalize_bound; recovery does not invent lost plaintext.",
       "url": "https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/material/commands.rs"
     },
     {
@@ -217,7 +217,7 @@
       "path": "apps/console/src/routes",
       "git_tree_sha1": "5f0bf1b0a59ef0e7dbccdf92d2774bacccf984c6",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
-      "observation": "Полный список routes в поддереве, truncated=false; MemoryPage отсутствует.",
+      "observation": "Complete non-truncated route subtree inventory; MemoryPage absent.",
       "url": "https://github.com/venm1r/vestrace/tree/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/routes"
     },
     {
@@ -225,18 +225,18 @@
       "path": "apps/console/src/sdk",
       "git_tree_sha1": "8ce46c47552f61503174288fab9202541110ab37",
       "commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
-      "observation": "client.ts, agUiClient.ts, useApiResource.ts.",
+      "observation": "client.ts, agUiClient.ts, and useApiResource.ts.",
       "url": "https://github.com/venm1r/vestrace/tree/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/src/sdk"
     },
     {
       "id": "E01",
       "url": "https://doc.rust-lang.org/cargo/commands/cargo-test.html",
-      "observation": "--all-targets не включает --doc; doctests запускаются отдельно."
+      "observation": "--all-targets does not include --doc; execute doctests explicitly."
     },
     {
       "id": "E02",
       "url": "https://www.postgresql.org/docs/17/ddl-rowsecurity.html",
-      "observation": "Superuser/BYPASSRLS обходят RLS; FORCE не отменяет superuser bypass."
+      "observation": "Superusers/BYPASSRLS bypass row security; FORCE RLS does not remove superuser bypass."
     }
   ]
 }

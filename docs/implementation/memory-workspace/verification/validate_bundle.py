@@ -225,7 +225,9 @@ def main(root: Path) -> dict:
     for f in root.rglob('*.py'):
         try:ast.parse(f.read_text(encoding='utf-8'))
         except SyntaxError as e:errors.append(f'Python syntax {f}: {e}')
-    manifest=root/'verification/file-manifest.json'; checked=0
+    manifest=root/'verification/english-file-manifest.json'
+    if not manifest.exists(): manifest=root/'verification/file-manifest.json'
+    checked=0
     if manifest.exists():
         for item in load(manifest)['files']:
             p=root/item['path']

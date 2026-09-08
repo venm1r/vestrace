@@ -1,34 +1,27 @@
-# Проект подключения внешнего агента
+# External-agent integration boundaries
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed functional design for F203.
 
-**Статус:** Предлагаемая функциональная спецификация F203.
+## Integration modes
 
-## Режимы
+**Memory client:** The external runtime owns its session and calls permitted memory tools. Vestrace governs only its own data/operations. An MCP connection does not make the other runtime's tools governed by Vestrace.
 
-**Memory-client:** внешний runtime управляет своей сессией и вызывает разрешённые memory read/write tools. Vestrace отвечает только за свои данные и операции. Наличие MCP подключения не делает остальные tools runtime governed Vestrace.
+**Governed action:** One external action runs entirely through Vestrace's Run/effect authority under a separate contract. Two runtimes must not independently retry the same action. The first memory plugin does not automatically include this mode.
 
-**Governed action:** конкретное внешнее действие целиком проходит через Run/effect authority Vestrace. Требуется отдельный contract; два runtime не могут независимо retry одну операцию. Этот режим не входит автоматически в первый memory plugin.
+## First client
 
-## Первый совместимый клиент
+Choose DSH or another actual client at an identified version. Start read-only, add explicit user writes, then separately opt-in source-attributed capture. A third-party plugin catalog does not establish compatibility.
 
-Выбрать DSH либо другой фактический клиент по доступной версии и потребителю. Сначала read-only, затем explicit user writes; automatic capture только opt-in и с источником. Не использовать внешний memory plugin catalogue как свидетельство нашей совместимости.
+Verify transport, authentication, schemas, error taxonomy, reconnect, cancellation, and client privacy/storage behavior. Publish configuration examples only after reproducible interoperability, with safe placeholders instead of working credentials.
 
-Проверить transport, auth, schema, error taxonomy, reconnect, cancellation и privacy хранения клиентом. Config examples публикуются только после воспроизводимого interop, с безопасными placeholders, не реальными credentials.
+## Context and writes
 
-## Context injection
+Source context is data, not privileged instruction. The client must preserve that authority level. The application chooses required-context versus optional-memory behavior: missing required knowledge blocks the task; optional memory allows continuation with an explicit limitation. A network error does not choose that policy for the plugin.
 
-Контекст источников — данные, не privileged instruction. Выбранный client pipeline должен сохранять этот уровень authority. Required-context и optional-memory режим задаётся приложением: при отсутствии обязательных сведений задача отказывается, при optional запросе продолжается с явной границей. Плагин не выбирает этот смысл по наличию сетевой ошибки.
-
-## Запись
-
-Любое capture получает client/source identity, content type и immutable event/provenance. Повтор завершённого turn не создаёт вторую запись. Модельный текст не маркируется пользовательским подтверждением. Private/project/team scopes не назначаются свободным аргументом LLM.
+Capture records client/source identity, content type, and immutable provenance. Replaying a completed turn must not duplicate memory. Model text is not user confirmation. Private/project/team scope cannot be a freely chosen LLM argument.
 
 ## Acceptance
 
-Две сессии на одной разрешённой identity видят принятое исправление. Другая identity не видит эту память. Restart клиента не повторяет mutation. При недоступности сервиса поведение соответствует приложенной policy. Публичная документация объясняет, что уже переданные bytes могут сохраняться в чужих logs и не отзываются локальным delete.
+Two sessions under the same permitted identity see an accepted correction; another identity cannot read it. Client restart does not repeat a mutation. Unavailability follows documented application policy. Explain that already delivered bytes may remain in external logs and cannot be recalled by local deletion.
 
----
-**Основание:** [R17: crates/vestrace-mcp/src/server.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-mcp/src/server.rs), [R01: crates/vestrace-http/src/auth.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [MCP](../../crates/vestrace-mcp/src/server.rs), [authentication](../../crates/vestrace-http/src/auth.rs), [Architecture Contract](../specs/en/vestrace-architecture-contract-v0.2.md).

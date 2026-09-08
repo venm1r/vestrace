@@ -1,42 +1,44 @@
-# Риски, trade-offs и проектные решения
+# Risks, trade-offs, and decisions
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed scope and risk policy. Editorial changes are distinguished from product decisions.
 
-**Статус:** Предлагаемая политика scope и риска.
-
-| Риск | Ранний признак | Контроль |
+| Risk | Early signal | Control |
 | --- | --- | --- |
-| Scope бесконечно растёт | Новый capability добавляется без пользовательского сценария | Один milestone, owner decision и explicit non-goals |
-| Проект красив в specs, но не работает целиком | Fixtures создают недостижимые production states | Composition E2E с реальным binary/roles |
-| Неполная атомарность | Memory committed, receipt/outbox отсутствует | Один UoW и fault/replay tests |
-| Обход доступа новым UI/export | Content защищён в GET, но доступен из trace | Единый disclosure gate и negative matrix |
-| Импорт затирает автора | mtime wins или полный overwrite | B/I/M conflict и preconditions |
-| Источник перепутан с истиной | LLM extract получает Active/Trusted без принятия | Provenance и отдельная mutation authority |
-| Консолидация скрывает ошибки | Ранняя сводка не инвалидируется | Source revision set, stale watermark, обратные зависимости |
-| Ресурсная стоимость разработки | CI падает на disk, developer cycle растёт | Измерение profiles/targets без отключения классов тестов |
-| Конкурент удобнее | Пользователь не доходит до полезного результата | Один SDK, эталонный сценарий, наблюдение внешней установки |
-| История docs стала второй правдой | Три копии endpoints с разными полями | Canonical sources, generated views, status labels |
+| Unbounded scope | Capabilities added without a user task. | One milestone, explicit owner decision, non-goals. |
+| Specifications without a complete product path | Fixtures create unreachable production states. | Real binary/role composition tests. |
+| Partial atomicity | Memory commits without receipt/outbox. | Shared UoW and fault/replay tests. |
+| New disclosure bypass | GET is protected, debug/export reveals the same content. | Shared disclosure gate and negative matrix. |
+| Import destroys editorial work | mtime-wins or unconditional overwrite. | B/I/M conflicts and preconditions. |
+| Sources become presumed truth | Extraction auto-assigns Active/Trusted. | Provenance and separate mutation authority. |
+| Consolidation hides corrections | Summaries remain current after source changes. | Exact input revisions, freshness, invalidation. |
+| Development becomes too expensive | Disk exhaustion and long local cycles. | Measure profiles/targets without removing risk classes. |
+| Onboarding loses users | No useful result without author intervention. | One client, reference scenario, observed external setup. |
+| Documentation becomes competing truth | Endpoint copies disagree. | Canonical registers, generated views, source/status labels. |
 
-## Принятые в этой редакции именно редакционные решения
+## Editorial decisions in this edition
 
-Документальный baseline — 07e2977; runtime ancestor — 6f610253. Старый MW source-manifest и frozen specs остаются без переписывания. Новая структура помещает roadmap отдельно от current API. Архив — overlay, не полная копия репозитория.
+Use the supplied archive as the exact editing baseline; retain original source-observation
+pins. Translate and refactor active guides. Provide complete English reading editions of
+frozen specifications without changing their original bytes. Preserve historical evidence
+and record fresh documentation results separately. Do not change code, migration SQL, CI,
+lockfiles, or root PLAN.md.
 
-## Предлагаемые продуктовые решения
+Correct the current P04 description to recognize recorded Task 14E approval while preserving
+its deferral and the incomplete P04/G0/v1.0 boundaries. Flag the occupied 0196 candidate
+without assigning a new migration number.
 
-1. Memory-first остаётся центром; основной P1 — выбранные пользователем API/Console/import+portability.
-2. MW располагается отдельным feature milestone до явного решения о release placement.
-3. Первый importer bounded и не требует LLM; источник и редакторская revision не смешиваются.
-4. Первый внешний client один; дополнительные SDK требуют задачи и поддержки.
-5. P2 summaries являются derived state, а не самоизменением канонической правды.
-6. P3 frozen-v1 scope не отменяется приоритетом. Hosted/team/Harness как продукт — P4.
+## Proposed product decisions
 
-Эти предложения не помечаются Accepted ADR автоматически. Для каждого необходимого изменения утверждённых laws создаётся точный amendment с последствиями, тестами и migration impact.
+Memory-first remains central, with API/Console/import/portability as P1. Keep MW an independent
+milestone until release placement is accepted. The first importer is bounded and needs no
+LLM; source and editorial revisions remain separate. Qualify one external client before
+expanding SDKs. Summaries are derived state, not automatic canonical truth. P3 obligations
+remain required for full v1.0; hosting, teams, and a standalone harness are P4 proposals.
 
-## Что сознательно не выбирается
+These choices do not become Accepted ADRs automatically. Any change to an accepted law
+needs an explicit amendment, consequences, tests, and migration analysis.
 
-Собственная модель, собственная vector database, новый IDE/coding agent, no-code конструктор, десятки adapters ради числа и отдельный generic importer runtime. Они могут быть отдельными будущими решениями, но не скрытыми задачами выбранного milestone.
+Do not implicitly add a custom model/vector database, IDE/coding agent, no-code builder,
+a large unsupported adapter catalog, or generic importer runtime.
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R10: docs/adr/0001-memory-first-persistent-cognition.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/adr/0001-memory-first-persistent-cognition.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [S01: docs/development-evidence/v1-g0-04-embedding-transition-foundation.md](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Roadmap](README.md) · [Program mapping](program-mapping.md)

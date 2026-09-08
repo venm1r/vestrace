@@ -1,35 +1,32 @@
-# История, baseline и сохранённые доказательства
+# Historical records and baselines
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+Normative originals, Accepted ADRs, frozen plans, development evidence, and applied migrations
+remain at their original paths with unchanged bytes. Historical observations keep their
+original source pins and verdicts. Translation must not make a past observation look like
+a new test run.
 
-**Статус:** Исторический навигатор; оригиналы не переписаны.
-
-## Что сохранено
-
-Нормативные specs, Accepted ADR, frozen plans, historical gap-deltas и development evidence остаются по прежним путям репозитория. Эта редакция не перемещает их и не меняет hashes. Такой подход сохраняет совместимость scope/protocol manifests и исторических ссылок.
-
-Старые вводные руководства могут содержать смешанные текущие/целевые описания. Их прежние bytes доступны по baseline `07e2977a20b05c5b16953a206a6d68bdbff3a052` через Git history; новые вступительные документы заменяют навигацию, а не прошлое наблюдение.
-
-## Точки отсчёта
-
-| Срез | Значение |
+| Snapshot | Meaning |
 | --- | --- |
-| `729d456f…` | Старый inspected implementation snapshot, на который ссылается часть v0.2 документов |
-| `58e7dac3…` | Исходный handbook и предыдущее обсуждение P04 |
-| `6f610253…` | Кодовый baseline MW с продолжением embedding lifecycle до принятого 14D |
-| `07e2977a` | Документационная интеграция MW; сравнение не показало изменения runtime-кода |
+| `729d456f…` | Earlier inspected implementation snapshot used by v0.2 guides. |
+| `58e7dac3…` | Earlier handbook/P04 discussion. |
+| `6f610253…` | Original MW source review through recorded Task 14D acceptance. |
+| `07e2977a…` | MW documentation integration, not runtime implementation. |
+| `3e05dfbd…` | Supplied archive and this English editing baseline; includes recorded Task 14E approval. |
 
-Не следует переписывать source-manifest MW с новым SHA ради внешней видимости актуальности: он описывает выполненный тогда review. Для нового понимания добавляется source delta.
+The later evidence closes **Task 14E only**, retains the rotation-before-adoption deferral,
+and explicitly leaves P04, G0, and v1.0 incomplete. Historical PASS is not transferable
+across source/configuration/environment changes. See [current status](../status.md).
 
-## Ссылки на оригиналы
+## Original records
 
-- [Исторический implementation snapshot](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/current-implementation.md).
-- [v0.2 documentation status](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/documentation-status-v0.2.md).
-- [Frozen P01–P12](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
-- [P04 evidence](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md).
-- [Планы перехода 36 PR](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/plans/v0.2-to-v1.0-pr-specification-index.md).
+- [v0.2 documentation status](../documentation-status-v0.2.md)
+- [Frozen P01–P12 program](../superpowers/plans/2026-08-26-vestrace-v1-gate-program.md)
+- [P04 development evidence](../development-evidence/v1-g0-04-embedding-transition-foundation.md)
+- [36-PR transition](../plans/v0.2-to-v1.0-pr-specification-index.md)
 
-Опубликованное approval 14D относится к delivery ResultPrepared, не ко всему embedding system. Ранее записанный PASS не переносится на более новую комбинацию source/config/environment автоматически.
+The English [normative reading editions](../specs/en/README.md) are translations, not new
+competing contracts. Historical maintenance/MW verification records are identified as such;
+this edition's executed documentation checks belong in the
+[English validation report](../maintenance/english-validation-report.md).
 
----
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Sources](../maintenance/sources.md) · [Documentation](../README.md)

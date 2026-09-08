@@ -1,40 +1,57 @@
-# Vestrace — Memory Workspace: пакет для реализации
+# Memory Workspace implementation design
 
-**Редакция:** 0.1.1 / integrated proposed implementation design.  
-**Дата:** 2026-09-07.  
-**Кодовая база:** `6f6102536e9a535b7086db14573bf45fe750ad71`.  
-**Выбранный объём:** простой Memory/Context API; управление памятью в Console; импорт, синхронизация и переносимость.  
-**Статус:** документация встроена в общую навигацию как предлагаемый implementation design; принятие размещения не означает принятия всех проектных решений, реализации функций или изменения v1.0.
+**Status:** Proposed extension, integrated into documentation but not implemented or accepted
+for release by this package. **Original edition:** 0.1.1, 2026-09-07.
+**Original source review:** `6f6102536e9a535b7086db14573bf45fe750ad71`.
+**English editorial edition:** 2026-09-08, from supplied archive `3e05dfbd`.
 
-## Что реализовать
+## Goal
 
-Один пользовательский цикл: загрузить документ → найти и прочитать → увидеть происхождение → исправить → получить контекст → синхронизировать новый источник без потери ручной правки → экспортировать разрешённые знания.
+Deliver one coherent workflow: import a document → find/read it → inspect provenance →
+correct it → retrieve useful context → synchronize an updated source without losing manual
+changes → export authorized knowledge.
 
-Console и импортер используют одну каноническую модель памяти и одну границу mutation/audit/outbox. Ни UI, ни CLI, ни фоновый обработчик не получают отдельного пути изменения таблиц. История документа не подменяет историю редакторских исправлений.
+Console and importer share one canonical memory model and one mutation/audit/outbox boundary.
+Neither UI, CLI, nor worker obtains an independent table-writing path. Source-document
+history remains distinct from editorial history.
 
-## Читать в таком порядке
+## Reading order
 
-1. [Срез кода и расхождения](00-baseline.md) и [решения/границы](01-design.md).
-2. [Модель данных и транзакции](02-data-and-transactions.md), [API](03-api.md), [контракт JSON](contracts/contracts.schema.json).
-3. [Console](04-console.md), [импорт/синхронизация](05-import-sync.md), [переносимость](06-portability.md).
-4. [Безопасность/эксплуатация](07-security-operations.md), [программа работ](08-program.md), планы в `plans/`.
-5. [Приёмка](09-acceptance.md), [миграции](10-migrations.md), [handoff](11-handoff.md).
-6. [Интеграция и иерархия](12-integration.md): общие authority, release boundaries и связь с прежними документами.
+| Purpose | Documents |
+| --- | --- |
+| Establish dependencies and design choices | [Baseline/gaps](00-baseline.md), [decisions](01-design.md). |
+| Implement storage and API contracts | [Data/transactions](02-data-and-transactions.md), [API](03-api.md), [JSON Schema](contracts/contracts.schema.json). |
+| Build user workflows | [Console](04-console.md), [import/sync](05-import-sync.md), [portability](06-portability.md). |
+| Enforce boundaries and sequence work | [Security/operations](07-security-operations.md), [program](08-program.md), [plans](plans/README.md). |
+| Verify and hand off | [Acceptance](09-acceptance.md), [migrations](10-migrations.md), [handoff](11-handoff.md). |
+| Resolve documentation authority | [Integration contract](12-integration.md). |
 
-[Требования и тесты в JSON](traceability.json), [карта файлов](file-plan.json), [источники](sources.md), [результат проверки пакета](verification/report.md).
+The [traceability register](traceability.json) contains 45 requirements, 23 tasks, and 54 cases.
+The [file plan](file-plan.json) distinguishes proposed paths from earlier inspected sources;
+[sources](sources.md) explains the original source manifest.
 
-## Документ vs реализация
+## Documentation is not implementation
 
-Все новые имена DTO, routes, таблиц, команд и тестов здесь **предложены**. Перечень доступных сегодня символов находится только в baseline. Утверждение spec — не runtime evidence. Настоящие прогоны Rust/PostgreSQL/Console/CLI должны появиться при выполнении планов.
+New DTOs, routes, tables, commands, and tests are proposed. Accepting a specification does not
+execute Rust, PostgreSQL, Console, or CLI tests. Original review statements apply to their
+pinned sources—not automatically to the date of translation.
 
-Пакет не копирует старый вывод «P04 целиком отсутствует»: в новом commit принят 14D до ResultPrepared, но 14E — следующий предложенный этап. Это учитывается как зависимость готовности индексации, не как повод повторить их реализацию.
+The original review observed 14D acceptance through ResultPrepared. The supplied archive
+now records **Task 14E approval**, but its verdict still leaves P04/G0/v1.0 incomplete.
+Read [current status](../../status.md) before planning. Reuse accepted implementation rather
+than repeating it. Candidate migration 0196 is occupied and requires MW-00 reconciliation.
 
-## Место в документации репозитория
+## Repository integration and exclusions
 
-[Общее оглавление](../../README.md) → [расширения реализации](../README.md) → этот пакет. Связи с [архитектурой](../../architecture.md), [нормативным индексом](../../specs/README.md) и [планированием](../../plans/README.md) зарегистрированы без копирования спецификаций и изменения frozen authorities.
+[Documentation](../../README.md) → [implementation packages](../README.md) → this package.
+Architecture, normative, and planning indexes link here rather than keeping independent
+copies. MW-D01–MW-D12 and exact implementation scope require separate acceptance. This
+package does not silently extend the frozen P01–P12 release program.
 
-Подробные правила — в [контракте интеграции](12-integration.md). Корневой README дополнен навигацией, а не заменён README из ZIP. `PLAN.md`, P04 scope/preflight, frozen leaf specs и исторические evidence остаются вне документационного изменения. До кода требуется отдельно принять проектные решения MW-D01–MW-D12 и точную область первого пакета.
+No new generic runtime, LLM extractor, automatic consolidation, autonomous agent, vault,
+arbitrary server-path reader, cloud connector, deletion inferred from missing files,
+imported authority, or classification bypass belongs to the first version.
 
-## Не входит
-
-Новый generic runtime, LLM extractor, автоматическая консолидация знаний, автономные агенты, новый vault, произвольные файловые пути сервера, cloud-коннекторы, автоматическое удаление при исчезновении файла, перенос полномочий из экспортного пакета, правка classification существующей памяти в обход действующего governance.
+Original verification records concern their original editions. New editorial checks are
+recorded in [maintenance](../../maintenance/english-validation-report.md), not converted into
+product qualification. Unicode fixtures retain their original input bytes deliberately.

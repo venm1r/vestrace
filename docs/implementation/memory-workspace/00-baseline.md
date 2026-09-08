@@ -1,43 +1,64 @@
-# 00. Актуальный срез кода и карта разрывов
+# 00. Original source review and current delta
 
-**Baseline:** `6f6102536e9a535b7086db14573bf45fe750ad71`; parent `58e7dac3cef7cc106d59f7ba3560bdbd37de76c0`. Commit от 2026-09-07: `feat(p04): advance reopened embedding lifecycle`. Прочитаны выбранные исходники и документы через GitHub; локальная рабочая копия автора и runtime не проверялись.
+**Original baseline:** `6f6102536e9a535b7086db14573bf45fe750ad71`;
+parent `58e7dac3cef7cc106d59f7ba3560bdbd37de76c0`. The 2026-09-07 commit was
+`feat(p04): advance reopened embedding lifecycle`. The original review read selected
+GitHub files; it did not inspect the author's local checkout or execute the runtime.
 
-## 0.1 Что изменилось относительно предыдущего обсуждения
+## 0.1 Historical observation and editorial update
 
-[S01](sources.md#s01) содержит принятый `worker --once` (0 — выполнена работа, 3 — idle, 1 — ошибка), завершённый блок 14B пред-dispatch termination и финальное принятие 14D. 14D доводит delivery до durable ResultPrepared; он не объявляет Live-публикацию, Succeeded, завершение rebuild/retrieval-query или composition worker. В конце прочитанного участка 14E описан как proposal.
+[S01](sources.md#s01) originally recorded accepted `worker --once` outcomes (0: work, 3: idle,
+1: error), 14B pre-dispatch termination, and final 14D acceptance through durable ResultPrepared.
+That verdict did not include Live publication, Succeeded, complete rebuild/retrieval-query
+paths, or worker composition. At the end of that historical section, 14E was proposed.
 
-Следовательно, этот пакет **не предлагает повторно делать 14B–14D**, не занимает номер 0195, названный 14E, и не объявляет векторный pipeline законченным. Функции чтения/редактора могут разрабатываться отдельно; доступность поискового контекста проверяется через реальный RetrievalService, без обхода generation/policy guards.
+**The supplied `3e05dfbd` archive is newer.** Its evidence ends with final Task 14E approval,
+not merely a proposal. The approval remains task-scoped, retains a rotation-before-adoption
+deferral, and explicitly leaves P04/G0/v1.0 incomplete. This edition read the record but
+ran none of its runtime tests. See [current status](../../status.md).
 
-## 0.2 Наблюдения
+Do not reimplement accepted 14B–14E slices. Read/editor work can be developed separately;
+context availability still depends on real RetrievalService generation/policy readiness.
+The original proposed MW-M01 filename uses 0196, which is now occupied by
+`0196_retired_credential_erasure.sql`. Reconcile all candidate references in MW-00 before SQL.
 
-| ID | Подтверждено статическим чтением | Следствие для реализации |
-|---|---|---|
-| GAP-01 | `MemoryResponse` — id/kind/status/classification/dates; content и current revision отсутствуют [S10] | Добавить отдельный безопасный detail DTO, не менять молча старый ответ |
-| GAP-02 | `ContextPackDto` возвращает счётчики, но не секции [S11] | Экспонировать реально построенные разрешённые секции новым endpoint |
-| GAP-03 | `MemoryUseCases` имеет record/remember/revise/find, но не list/history [S03] | Добавить query port; не собирать библиотеку серией N запросов из UI |
-| GAP-04 | Repository атомарно сохраняет память/ревизию/источник/поисковую проекцию, service затем отдельно пишет outbox и idempotency [S04–S06] | Новый editor/import обязан включать всё в caller-owned UoW |
-| GAP-05 | В новом baseline есть `GovernedMutationRepository::commit_in` [S07] | Переиспользовать существующую transaction authority, не оборачивать commits во вторую транзакцию |
-| GAP-06 | Fingerprint памяти уже исключает случайно выделяемые ID [S05] | Не записывать старый исправленный дефект как новый; проверить race/replay на сервере |
-| GAP-07 | У idempotency есть save_in, запись scoped по workspace [S09] | Добавить operation/principal ownership результата, совместимость старых keys требует явного адаптера |
-| GAP-08 | `OutboxHandler` at-least-once, повтор возможен после commit до ack [S08] | Item application must converge; atomic receipt является обязательной частью обработки |
-| GAP-09 | `MemorySource` записывается с memory_id, event_id, evidence_ref; INSERT не содержит revision_id [S06] | Для новых изменений записывать точную связь revision ↔ source; старые связи не угадывать |
-| GAP-10 | `resolve_revision_classification` отклоняет смену/очистку label [S05] | Editor label readonly; sync с другим label блокируется, не считается обычной правкой |
-| GAP-11 | `MemoryConsole.tsx` есть, но в `main.tsx` нет маршрута памяти [S13–S14] | Подключить screen и SDK, а не создавать вторую Console |
-| GAP-12 | В `package.json` нет общего `test`, есть typecheck/build/test:protocol [S16] | В планах вводятся новые test scripts; до этого `npm test` не использовать |
-| GAP-13 | `conservative_token_count` считает ceil(UTF8 bytes / 4) [S12] | Это оценка, не доказательство строгого token cap для любого tokenizer |
-| GAP-14 | Context builder может подменить пустой content строкой explanation [S12] | Новый API не должен выдавать техническое explanation за исходное знание |
-| GAP-15 | MaterialIntentCommands предоставляет общую content lifecycle [S17] | Защищённый staging — новый consumer существующего механизма, не embedding-output shortcut |
+## 0.2 Source gap map
 
-## 0.3 Что не установлено
+| ID | Original static observation | Consequence |
+| --- | --- | --- |
+| GAP-01 | MemoryResponse has id/kind/status/classification/dates but no content/current revision [S10]. | Add a separate authorized detail DTO; preserve legacy shape. |
+| GAP-02 | ContextPackDto exposes counters, not sections [S11]. | Return actual permitted sections through an additive endpoint. |
+| GAP-03 | MemoryUseCases provides record/remember/revise/find but no list/history [S03]. | Add a query port, not N browser requests to assemble a library. |
+| GAP-04 | Repository commits memory/revision/source/search; service writes outbox/idempotency later [S04–S06]. | Include all durable command facts in a caller-owned UoW. |
+| GAP-05 | GovernedMutationRepository::commit_in exists [S07]. | Reuse transaction authority, without nested independently committing operations. |
+| GAP-06 | Memory fingerprints already exclude newly allocated IDs [S05]. | Do not report that fixed problem as new; test server races/replay. |
+| GAP-07 | Idempotency supports save_in and workspace-scoped records [S09]. | Define operation/principal result ownership and explicit legacy-key compatibility. |
+| GAP-08 | OutboxHandler is at-least-once; replay can occur after commit/before acknowledgement [S08]. | Atomic item receipts and convergent application are required. |
+| GAP-09 | MemorySource INSERT lacks revision_id [S06]. | Add exact links for new revisions; never infer historical attribution. |
+| GAP-10 | resolve_revision_classification rejects label changes/clearing [S05]. | Keep the editor read-only for classification; changed-label sync is blocked. |
+| GAP-11 | MemoryConsole.tsx exists but main.tsx lacks a full memory route [S13–S14]. | Wire the screen and SDK into the existing Console. |
+| GAP-12 | package.json has typecheck/build/test:protocol, not a general test script [S16]. | Implement the named new scripts before using them. |
+| GAP-13 | conservative_token_count estimates ceil(UTF-8 bytes / 4) [S12]. | Not a strict bound for arbitrary tokenizers. |
+| GAP-14 | The context builder can substitute explanation for empty content [S12]. | New output cannot present technical explanation as source knowledge. |
+| GAP-15 | MaterialIntentCommands supplies shared content lifecycle [S17]. | Staging consumes ordinary materials, not an embedding-output shortcut. |
 
-Не утверждается отсутствие любого возможного import/export кода во всём дереве: перечитаны релевантные surfaces, а не каждый файл. MW-00 обязан проверить дубли символов и pending branches до первого изменения. Не установлены времена сборки, объём RAM, текущее прохождение CI, пригодность конкретной установки к production и фактическое качество поиска.
+The earlier S03–S17 blob hashes match the supplied archive; that byte comparison preserves
+applicability of those selected source observations, not runtime qualification. Evidence S01
+has changed. Full details are in the [source delta](../../maintenance/source-delta.json).
 
-Метод `save_memory_with_revision` содержит database CAS. Нельзя описывать его как полностью незащищённый от конкуренции. Проблема выбранного нового сценария — объединение всех его durable фактов и replay, а не отрицание существующего CAS.
+## 0.3 Unestablished claims
 
-## 0.4 Зависимости и стоп-условия
+The review does not prove absence of every import/export implementation anywhere in the
+repository. MW-00 must check names and pending branches. Build time, RAM consumption, current
+CI success, actual retrieval quality, and production readiness are not established here.
 
-- Перед новым расширением утвердить связь с frozen архитектурой [S02]; пакет MW не является P05 и не закрывает P04.
-- При отсутствии lawful material read/staging конкретной classification импорт блокируется. Не писать plaintext в новую временную папку/таблицу как fallback.
-- Если индекс-generation не Ready, возвращать документированную недоступность через существующий runtime. Наличие source record не означает поисковую готовность.
-- Прямой read/detail исторической ревизии должен проходить те же disclosure проверки, что и соответствующий retrieval. Проверять это до расширения полезной выдачи содержимого.
-- Перед выполнением фиксировать новый baseline; diff относительно этого SHA должен быть рассмотрен, если main успел измениться.
+The existing memory repository has database CAS. The gap is the larger atomic/replay
+boundary, not complete absence of concurrency protection.
+
+## 0.4 Stop conditions
+
+Confirm compatibility with frozen architecture before extending it; MW neither replaces
+P05 nor closes P04. Block import when lawful material read/staging cannot support a label;
+a new plaintext directory/table is not a fallback. A source record does not mean its index
+is Ready. Historical detail reads require the same appropriate disclosure checks as retrieval.
+Pin the actual implementation checkout and review its delta before writing.

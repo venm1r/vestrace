@@ -1,0 +1,272 @@
+{
+  "format": "vestrace-editorial-source-delta/1",
+  "supplied_commit": "3e05dfbdce063aa44a3a9e5a7a84c274597e8188",
+  "method": "Git blob SHA-1 comparison of the supplied unmodified archive with the earlier selected-source register; not full code review or runtime execution",
+  "records": [
+    {
+      "id": "S01",
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "original_git_blob_sha1": "bb3d98e94996db212b20efdf3041498670c0e0ae",
+      "supplied_git_blob_sha1": "3b9ab7d9013037b19475fcc22435f51251e47c96",
+      "comparison": "CHANGED_BYTES"
+    },
+    {
+      "id": "S02",
+      "path": "docs/specs/README.md",
+      "original_git_blob_sha1": "42763e39781db072c8455a68e4e6fd4f2bc326f0",
+      "supplied_git_blob_sha1": "aab0fb461a55ef109b58490fd1edb4d3e3ffd9c1",
+      "comparison": "CHANGED_BYTES"
+    },
+    {
+      "id": "S03",
+      "path": "crates/vestrace-application/src/memory/mod.rs",
+      "original_git_blob_sha1": "49445e4b5565495ddfbae6a6646f1bbc08dcf1d0",
+      "supplied_git_blob_sha1": "49445e4b5565495ddfbae6a6646f1bbc08dcf1d0",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S04",
+      "path": "crates/vestrace-application/src/memory/ports.rs",
+      "original_git_blob_sha1": "9e0a7ed8f3fd68833541b397002bbc007ff8f414",
+      "supplied_git_blob_sha1": "9e0a7ed8f3fd68833541b397002bbc007ff8f414",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S05",
+      "path": "crates/vestrace-application/src/memory/services.rs",
+      "original_git_blob_sha1": "848c3b7e111f5adef16673f881716ea7a48ae994",
+      "supplied_git_blob_sha1": "848c3b7e111f5adef16673f881716ea7a48ae994",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S06",
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
+      "original_git_blob_sha1": "06e0ec25a7ad0fbbe00ebc854208c9acd01192c8",
+      "supplied_git_blob_sha1": "06e0ec25a7ad0fbbe00ebc854208c9acd01192c8",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S07",
+      "path": "crates/vestrace-application/src/governed_mutation.rs",
+      "original_git_blob_sha1": "dbd786347b67ab8c69ecfa5f11d7f9735c6b0520",
+      "supplied_git_blob_sha1": "dbd786347b67ab8c69ecfa5f11d7f9735c6b0520",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S08",
+      "path": "crates/vestrace-application/src/outbox.rs",
+      "original_git_blob_sha1": "adf48a8e3bc972ec1b9ba1f29e22f253974adb22",
+      "supplied_git_blob_sha1": "adf48a8e3bc972ec1b9ba1f29e22f253974adb22",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S09",
+      "path": "crates/vestrace-application/src/idempotency.rs",
+      "original_git_blob_sha1": "1409c9ce0c14e92cb3ada3bf60c857ae4b0aa679",
+      "supplied_git_blob_sha1": "1409c9ce0c14e92cb3ada3bf60c857ae4b0aa679",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S10",
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "original_git_blob_sha1": "29ffea2255f425cd72c4ebc650847cfc5f46157f",
+      "supplied_git_blob_sha1": "29ffea2255f425cd72c4ebc650847cfc5f46157f",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S11",
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "original_git_blob_sha1": "16ef10c2e0b3ec73480ea68b299f23db3e7e2eea",
+      "supplied_git_blob_sha1": "16ef10c2e0b3ec73480ea68b299f23db3e7e2eea",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S12",
+      "path": "crates/vestrace-application/src/retrieval/context_builder.rs",
+      "original_git_blob_sha1": "9e2c8ab1b6de1ea2cc4838f13057b2ed41e5395d",
+      "supplied_git_blob_sha1": "9e2c8ab1b6de1ea2cc4838f13057b2ed41e5395d",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S13",
+      "path": "apps/console/src/memory/MemoryConsole.tsx",
+      "original_git_blob_sha1": "ffe3c19e344f25ad222e418829c47804700916e4",
+      "supplied_git_blob_sha1": "ffe3c19e344f25ad222e418829c47804700916e4",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S14",
+      "path": "apps/console/src/main.tsx",
+      "original_git_blob_sha1": "b5f55a8132f59f739d676844a9aa8c78ee503c4f",
+      "supplied_git_blob_sha1": "b5f55a8132f59f739d676844a9aa8c78ee503c4f",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S15",
+      "path": "apps/console/src/sdk/client.ts",
+      "original_git_blob_sha1": "7e7d672bb192810bf4b6ab9e04d179d23135ae32",
+      "supplied_git_blob_sha1": "7e7d672bb192810bf4b6ab9e04d179d23135ae32",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S16",
+      "path": "apps/console/package.json",
+      "original_git_blob_sha1": "9fdacac2cf0ba97f67b3e4a1f1d35ded99968a0f",
+      "supplied_git_blob_sha1": "9fdacac2cf0ba97f67b3e4a1f1d35ded99968a0f",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S17",
+      "path": "crates/vestrace-application/src/material/commands.rs",
+      "original_git_blob_sha1": "c05df77bcc0e7129edcbc388893b79b170ce2d84",
+      "supplied_git_blob_sha1": "c05df77bcc0e7129edcbc388893b79b170ce2d84",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "S18",
+      "path": "apps/console/src/routes",
+      "original_git_blob_sha1": null,
+      "comparison": "DIRECTORY_METADATA_NOT_BLOB_COMPARED"
+    },
+    {
+      "id": "S19",
+      "path": "apps/console/src/sdk",
+      "original_git_blob_sha1": null,
+      "comparison": "DIRECTORY_METADATA_NOT_BLOB_COMPARED"
+    },
+    {
+      "id": "R01",
+      "path": "crates/vestrace-http/src/auth.rs",
+      "original_git_blob_sha1": "1bd4a1a1bbdbdeb1aa891638d3edf6851b618fb3",
+      "supplied_git_blob_sha1": "1bd4a1a1bbdbdeb1aa891638d3edf6851b618fb3",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R02",
+      "path": "crates/vestrace-http/src/route_inventory.rs",
+      "original_git_blob_sha1": "b5202747b1d17d312147e7679c64591ba42f1d31",
+      "supplied_git_blob_sha1": "b5202747b1d17d312147e7679c64591ba42f1d31",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R03",
+      "path": "crates/vestrace-cli/src/main.rs",
+      "original_git_blob_sha1": "bb191dfbaac5d5ec73b7ec828b3114480b74cf1f",
+      "supplied_git_blob_sha1": "bb191dfbaac5d5ec73b7ec828b3114480b74cf1f",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R04",
+      "path": "docker-compose.yml",
+      "original_git_blob_sha1": "3de054dc5182ab4521c5e3d861b803b961ecf27f",
+      "supplied_git_blob_sha1": "3de054dc5182ab4521c5e3d861b803b961ecf27f",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R05",
+      "path": "docs/getting-started.md",
+      "original_git_blob_sha1": "b8b3f41a5439a51039327ffe21d74a1f654f2ea3",
+      "supplied_git_blob_sha1": "0d11dbc612673b4c1892efbac10c2ff13296e87e",
+      "comparison": "CHANGED_BYTES"
+    },
+    {
+      "id": "R06",
+      "path": "docs/domain-model.md",
+      "original_git_blob_sha1": "50e9aa25d0fdabb906937d7c41116ef3c2687dcf",
+      "supplied_git_blob_sha1": "ec775efb09905d054860a85f57448d1cfe648a46",
+      "comparison": "CHANGED_BYTES"
+    },
+    {
+      "id": "R07",
+      "path": "docs/database-schema.md",
+      "original_git_blob_sha1": "f52bf59c90f18fcebf854f59d43b2f9a5b74a8ea",
+      "comparison": "ABSENT_IN_SUPPLIED_ARCHIVE"
+    },
+    {
+      "id": "R08",
+      "path": "docs/security-and-rls.md",
+      "original_git_blob_sha1": "c781ceec59295ae1f6a197815ca1f2409b3109c4",
+      "comparison": "ABSENT_IN_SUPPLIED_ARCHIVE"
+    },
+    {
+      "id": "R09",
+      "path": "docs/specs/vestrace-architecture-contract-v0.2.md",
+      "original_git_blob_sha1": "fdc765367a3ca030e453d8eff3bf7bc6b737f016",
+      "supplied_git_blob_sha1": "fdc765367a3ca030e453d8eff3bf7bc6b737f016",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R10",
+      "path": "docs/adr/0001-memory-first-persistent-cognition.md",
+      "original_git_blob_sha1": "c9ef57b7aef48c497f27786949c647059db82d33",
+      "supplied_git_blob_sha1": "c9ef57b7aef48c497f27786949c647059db82d33",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R11",
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "original_git_blob_sha1": "9a95a395d9f9b14db92c9cfe6caf2cd932c840c7",
+      "supplied_git_blob_sha1": "9a95a395d9f9b14db92c9cfe6caf2cd932c840c7",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R12",
+      "path": ".github/workflows/ci.yml",
+      "original_git_blob_sha1": "5fc0cd7dcb5184f30396b2363cfd87806187258a",
+      "supplied_git_blob_sha1": "5fc0cd7dcb5184f30396b2363cfd87806187258a",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R13",
+      "path": "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
+      "original_git_blob_sha1": "9fbb1fd053848d14d3c7d859f367bfc4a6fbd6c8",
+      "supplied_git_blob_sha1": "9fbb1fd053848d14d3c7d859f367bfc4a6fbd6c8",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R14",
+      "path": "scripts/p04-scope.mjs",
+      "original_git_blob_sha1": "8dfa02b30c894eb48bc61d1ec4ec59b86d5a04b2",
+      "supplied_git_blob_sha1": "03eeb7d390019e3350aa9d55fefb4d4b0721bfc2",
+      "comparison": "CHANGED_BYTES"
+    },
+    {
+      "id": "R15",
+      "path": "apps/console/vite.config.ts",
+      "original_git_blob_sha1": "96f33e2b8242afd57fb82a79a9c5ca2e9b401870",
+      "supplied_git_blob_sha1": "96f33e2b8242afd57fb82a79a9c5ca2e9b401870",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R16",
+      "path": "apps/console/nginx.conf.template",
+      "original_git_blob_sha1": "d59745be51127dfd2a5a677b4f54520d7e236951",
+      "supplied_git_blob_sha1": "d59745be51127dfd2a5a677b4f54520d7e236951",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R17",
+      "path": "crates/vestrace-mcp/src/server.rs",
+      "original_git_blob_sha1": "b7435b95bdbe8f2bd652af946ebdd4e51811b67d",
+      "supplied_git_blob_sha1": "b7435b95bdbe8f2bd652af946ebdd4e51811b67d",
+      "comparison": "IDENTICAL_BYTES"
+    },
+    {
+      "id": "R18",
+      "path": "docs/implementation/memory-workspace/README.md",
+      "original_git_blob_sha1": "8779a1270c463b020aab753a9a29c13d66f3a59b",
+      "supplied_git_blob_sha1": "8779a1270c463b020aab753a9a29c13d66f3a59b",
+      "comparison": "IDENTICAL_BYTES"
+    }
+  ],
+  "current_observations": [
+    {
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "observation": "Final Task 14E lead acceptance APPROVED is present; only Task 14E closes, rotation-before-adoption deferral remains, and P04/G0/v1.0 remain incomplete. No tests rerun here."
+    },
+    {
+      "path": "migrations/0196_retired_credential_erasure.sql",
+      "observation": "The supplied archive occupies migration number 0196. Candidate MW-M01 must be reconciled before implementation."
+    }
+  ]
+}

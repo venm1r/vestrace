@@ -1,38 +1,35 @@
-# Память, происхождение и время
+# Memory, provenance, and time
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Identity and revisions
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+Stable Memory identity names a unit of knowledge; revision identity names the content actually used. A correction creates another revision. Moving the active pointer does not erase history.
 
-## Identity и revision
+An exact historical read must load the requested revision. The reviewed PgRevisionHydrator has no latest-version fallback and checks the memory/revision pair after loading. This is a static code observation, not qualification of every historical query.
 
-Стабильная Memory identity позволяет ссылаться на предмет знания, а revision identity — на то содержимое, которое действительно использовалось. При исправлении появляется новая ревизия; предыдущая не исчезает из истории только из-за изменения active pointer.
+## Attribute the right object
 
-Точный historical read должен загрузить именно указанную ревизию. В прочитанном PgRevisionHydrator нет fallback на последнюю версию; после выборки дополнительно проверяется соответствие пары memory/revision. Это статическое свойство кода, не квалификация всех исторических запросов.
+Knowing a memory once had a source is insufficient to establish which source supports a particular revision. The current memory_sources INSERT has no explicit revision_id. MW must record exact revision/source links where it promises precise explanations. Old links must not be guessed from timestamp proximity.
 
-## Происхождение на уровне правильного объекта
+Show unresolved attribution as a limitation. This matters when combining authors or reimporting documents.
 
-Знать, что у Memory когда-то был источник, недостаточно для уверенного утверждения, какой источник обосновывает конкретную ревизию. В текущем INSERT memory_sources нет явного revision_id. План MW должен сохранять точные revision-level связи там, где он обещает такие объяснения. Старые связи нельзя задним числом реконструировать догадкой по близости timestamp.
+## Three time questions
 
-Неразрешимая историческая привязка показывается как ограничение, а не заполняется вымышленным source. Это особенно важно при объединении данных разных авторов и повторном импорте.
+| Question | Meaning |
+| --- | --- |
+| What applies now? | Current selection |
+| What applied on September 1? | Validity at that time |
+| What did the system know on September 1? | Records available to the system then |
 
-## Три вопроса о времени
+These may yield the same text but are not interchangeable. HTTP accepts `current`, `as_of`, `timeline`, and `all_history`; enum presence alone does not prove full bitemporal behavior. Examples must not transfer a target temporal capability to a current endpoint without verification.
 
-«Что действует сейчас?» — current selection. «Что относилось к 1 сентября?» — применимость факта к этому времени. «Что система знала 1 сентября?» — доступность записи на тот момент. Это разные запросы, даже если они иногда дают один текст.
+## Correction, supersession, and deletion
 
-Текущий HTTP принимает `current`, `as_of`, `timeline`, `all_history`, но само наличие enum не доказывает полноценную бивременную семантику. Примеры клиента должны выбирать только проверенный смысл. Не переносить возможности целевого temporal model на текущий endpoint без теста.
+An error correction, a newly adopted decision, and physical deletion are different operations. Corrections preserve history; supersession changes currency; deletion follows separate retention and permission rules. Revoked source access does not leave previous answers unconditionally readable.
 
-## Исправление, supersession и deletion
+Reproducibility is bounded by lawfully retained data and current read policy. Do not promise both permanent reproduction of every text and irreversible erasure of those texts.
 
-Исправление ошибки, принятие нового решения и физическое удаление — не синонимы. Исправление сохраняет историю; supersession меняет актуальность; удаление подчиняется отдельным правилам удержания и прав. Утрата права читать источник не делает ранее сформированный ответ автоматически доступным.
+## Verification
 
-Воспроизводимость ограничивается законно сохранёнными данными и текущей политикой чтения. Нельзя одновременно обещать безусловно вечное воспроизведение всех текстов и их необратимое стирание.
+Test late-arriving records, competing revisions, missing sources, exact historical references, deletion, and revocation. Compare IDs and content, not merely search-result counts. See [MW acceptance](../implementation/memory-workspace/09-acceptance.md).
 
-## Проверка
-
-Нужны случаи поздней записи о прошлом, конкурирующих ревизий, отсутствующего источника, точной исторической ссылки, удаления и отзыва доступа. Сравниваются идентификаторы и содержание, а не только число результатов поиска. Полный каталог будущего пользовательского цикла — в MW acceptance.
-
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R13: crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs), [S06: crates/vestrace-infrastructure/src/postgres/memory_repository.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [temporal contract](../specs/en/vestrace-data-temporal-model-v0.2.md), [hydrator](../../crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs), [memory repository](../../crates/vestrace-infrastructure/src/postgres/memory_repository.rs), [retrieval](../../crates/vestrace-http/src/api/retrieval.rs).

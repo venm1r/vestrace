@@ -1,31 +1,45 @@
-# 11. Передача исполнителю и решения о начале
+# 11. Implementation handoff and start decisions
 
-## Статус поставки
+## Delivery status
 
-Это проект implementation documentation на commit `6f6102536e9a535b7086db14573bf45fe750ad71`. Автор этой поставки прочитал выбранные sources; **не запускал Vestrace, PostgreSQL, Rust suites, browser E2E, migration upgrade или actual import/export**. Документы/JSON-примеры могут быть проверены отдельно, и только этот результат находится в verification/report.md.
+The original proposal reviewed selected sources at `6f610253`; it did not run Vestrace,
+PostgreSQL, Rust suites, browser E2E, upgrades, or import/export. Original verification reports
+cover their own documentation editions. This English edition uses supplied archive `3e05dfbd`
+and records documentation-only checks separately under [maintenance](../../maintenance/README.md).
 
-Каталог интегрирован в документационные входы репозитория как proposed feature design; расположение и иерархия описаны в [12-integration.md](12-integration.md). Документационный commit/PR не реализует продукт и не принимает новые требования v1.0. Первым рассматривается MW-00; при занятом scope/P04 baseline выполнение откладывается или документы явно пересматриваются.
+Integration as a proposed package is not implementation or v1.0 acceptance. Begin with MW-00;
+resolve occupied scope and source drift before code. A documentation commit cannot remove
+that prerequisite.
 
-## Зафиксированные проектные решения для принятия
+## Decisions to accept
 
-Предлагаются 12 решений MW-D01–MW-D12 из 01-design: аддитивный API, один writer, immutable source vs manual revision, bounded whole-document importer, exact preview, atomic item и partial batch, same outbox, Missing не Delete, ordinary material staging, portable export без authority, feature-scoped acceptance.
+Explicitly accept or amend MW-D01–MW-D12: additive API, one writer, source/manual revision
+separation, bounded whole-document import, exact preview, atomic items/partial batch, existing
+outbox, Missing rather than Delete, ordinary materials, portability without authority, and
+feature-scoped qualification. Separately decide release placement: named independent milestone
+or an authorized amendment. MW cannot silently join or weaken P01–P12.
 
-Принятие документации должно отдельно определить её место в release program: новый самостоятельный milestone или явно согласованное amendment существующего. По умолчанию этот пакет **не** включён молча в frozen P01–P12 и не может ослабить их gates.
+## Implementation sequence
 
-## Порядок действий исполнителя
+1. Pin fresh HEAD and review the delta from the original baseline, including latest P04/14E
+   evidence and the occupied 0196 candidate.
+2. Complete MW-00 with exact paths, source references, supported test environment, and collision
+   checks for modules/tables/routes.
+3. Resolve ordinary-material owner/read, content policy, idempotency compatibility, shared lock
+   order, and qualified-tokenizer dependencies. Do not substitute mocks for missing authority.
+4. After scope approval, implement MW-01/02 with valid behavioral RED; classify setup failure separately.
+5. Record observations/limitations after every task. Independent review checks the actual final
+   diff and requirements; advisory plan review is not final code review.
+6. Do not claim feature-complete until the whole selected gate passes, including rendered output,
+   synchronization, and preserved editorial changes.
 
-1. Получить fresh HEAD и проверить изменения относительно `6f6102536e9a535b7086db14573bf45fe750ad71`. Прочитать 00-baseline, source-manifest, состояние 14E и последующих работ.
-2. Для MW-00 заполнить новый preflight с exact files/refs, выбрать доступный supported local test environment и проверить отсутствие одноимённых modules/tables/routes.
-3. Принять/уточнить contract gaps: ordinary material source owner/read, memory content policy, idempotency namespace compatibility, shared lock order и qualified tokenizer mode. Это конкретные dependency checks, не право заменить их mocks.
-4. После разрешения scope перейти к MW-01/02 по планам. Тесты сначала отличаются на реальном поведении; setup failures записываются отдельно.
-5. После каждого task записывать evidence и known limitations. Independent reviewer проверяет конечный diff и соответствие требованиям; advisory plan review не засчитывается final code review.
-6. Не публиковать «feature complete», пока выбранный end-to-end gate не выполнен, включая final rendering, source synchronisation и сохранность manual edits.
+## Prohibited shortcuts
 
-## Непереговорные отказы
+No second vault/event store/scheduler; disabled generation/label/role checks for demos; fake
+success receipts; silent loss of edits; imported trust as local authority; direct client SQL;
+byte-only output sold as hard-token qualification; or inherited gates across unvalidated commits.
 
-Нельзя добавлять новый vault, parallel event store или scheduler; отключать generation/label/role checks ради demonstration; сеять success receipts как администратор; silently overwrite human edits; превращать imported trust/actor в local authority; использовать прямой SQL клиента; называть readonly byte-limit режим доказанным hard-token ContextPack; переносить gates между разными commits без revalidation.
-
-## Формат evidence на один task
+## Per-task evidence template
 
 ```text
 Task / requirements / exact input baseline
@@ -39,8 +53,12 @@ Independent review status and reviewed revision
 Remaining blockers; what was not run
 ```
 
-Шаблон предназначен для будущего заполнения фактическими наблюдениями, не содержит фиктивного PASS. Generated UUIDs примеров — синтетические. Предложенный порт/тест не является существующим symbol. OpenAPI proposed subset не заменяет `vestrace schema http`.
+Fill this with observations, not invented PASS. Fixture UUIDs are synthetic. Proposed symbols
+and test targets are not assumed existing. The proposed OpenAPI subset does not replace
+vestrace schema http.
 
-## Definition of delivered documentation
+## Definition of documentation delivery
 
-Документы считаются согласованным проектом, когда ссылки/schema/examples/traceability не противоречат друг другу и scope/dependencies обозначены. **Готовность реализации** проверяется отдельным MW-07 на фактической установленной системе. Регистрация этого пакета в документации означает только первую границу.
+Links, schema, examples, traceability, scope, and dependencies must agree. Implementation readiness
+is a separate MW-07 gate on a real installation. Documentation integration establishes only the
+first boundary.

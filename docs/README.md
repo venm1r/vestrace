@@ -1,47 +1,40 @@
-# Документация Vestrace
+# Documentation
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+Use the reading path that matches your task. Guides explain the repository; [normative contracts and Accepted ADRs](specs/README.md) define its requirements.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## Reading paths
 
-## Дорожная карта и приоритеты
+**Users and integrators:** [Product overview](product/overview.md) → [status](status.md) → [setup](getting-started.md) → [Memory API walkthrough](guides/memory-api-exercise.md) → [HTTP](reference/http.md) or [MCP](reference/mcp.md).
 
-[Дорожная карта развития](roadmap/README.md) разделяет 34 инициативы на P0–P4 и связывает их с существующими P01–P12/MW-00–MW-07. [Milestones](roadmap/milestones.md) и [ближайшие задачи](roadmap/next-actions.md) задают проверяемые результаты вместо обещанных дат. [Корпус качества](evaluation/README.md) и [сверка входных документов](maintenance/input-reconciliation.md) дополняют план.
+**Developers:** [Architecture](architecture.md) → [domain model](domain-model.md) → [transactions](design/transactions.md) → [development](development/README.md) → [testing](development/testing.md) → [implementation programs](plans/README.md).
 
-## Выберите маршрут чтения
+**Operators:** [Deployment](operations/deployment.md) → [runbook](operations/runbook.md) → [backup and recovery](operations/backup-restore.md) → [troubleshooting](operations/troubleshooting.md).
 
-**Пользователь или интегратор:** [обзор](product/overview.md) → [состояние](status.md) → [подготовка среды](getting-started.md) → [текущий Memory API](guides/memory-api-exercise.md) → [HTTP](reference/http.md) или [MCP](reference/mcp.md).
+**Memory Workspace implementers:** [Product scope](product/memory-workspace.md) → [implementation package](implementation/memory-workspace/README.md) → [MW-00](implementation/memory-workspace/plans/00-preflight.md). Read the shared contracts before implementing an isolated task.
 
-**Разработчик:** [архитектура](architecture.md) → [домен](domain-model.md) → [границы записи](design/transactions.md) → [разработка](development/README.md) → [тестирование](development/testing.md) → [планирование](plans/README.md).
+## Map
 
-**Оператор:** [развёртывание и роли](operations/deployment.md) → [повседневные операции](operations/runbook.md) → [обновление и восстановление](operations/backup-restore.md) → [диагностика](operations/troubleshooting.md).
-
-**Исполнитель Memory Workspace:** [одна страница о направлении](product/memory-workspace.md) → [пакет реализации](implementation/memory-workspace/README.md) → [MW-00 preflight](implementation/memory-workspace/plans/00-preflight.md). Не начинать с отдельной схемы или случайной задачи без требований пакета.
-
-## Детализация следующих функций
-
-[Temporal/conflicts](design/temporal-conflicts.md) · [консолидация](design/consolidation.md) · [инспектор контекста](design/context-observability.md) · [внешний агент](design/integration-boundaries.md). Эти документы — proposals после соответствующих priority/dependency gates.
-
-## Полная карта
-
-| Раздел | Документы |
+| Section | Pages |
 | --- | --- |
-| Продукт | [Обзор](product/overview.md), [сценарии](product/scenarios.md), [Memory Workspace](product/memory-workspace.md) |
-| Текущее состояние | [Реестр возможностей](status.md), [пробелы](status/open-gaps.md) |
-| Начало работы | [Подготовка](getting-started.md), [API-упражнение](guides/memory-api-exercise.md), [Console](guides/console.md) |
-| Архитектура | [Карта](architecture.md), [домен](domain-model.md), [память и время](design/memory-time.md), [retrieval](design/retrieval-context.md), [исполнение](design/execution.md), [транзакции](design/transactions.md), [материалы](design/materials.md), [обучение и health](design/learning-health.md) |
-| Справка | [HTTP](reference/http.md), [маршруты](reference/route-catalog.md), [Memory](reference/memory.md), [retrieval](reference/retrieval.md), [MCP](reference/mcp.md), [CLI](reference/cli.md), [конфигурация](reference/configuration.md), [словарь](reference/glossary.md) |
-| Эксплуатация | [Развёртывание и роли](operations/deployment.md), [runbook](operations/runbook.md), [обновление/restore](operations/backup-restore.md), [ошибки](operations/troubleshooting.md), [конфигурация БД](reference/configuration.md) |
-| Разработка | [Старт](development/README.md), [тесты](development/testing.md), [workflow агентов](development/agent-workflow.md), [приёмка релиза](development/release.md) |
-| Решения и планы | [Нормативный индекс](specs/README.md), [карта программ](plans/README.md), [расширения реализации](implementation/README.md) |
-| Сопровождение документов | [Правила](maintenance/README.md), [источники](maintenance/sources.md), [карта перехода](maintenance/migration-map.md), [отчёт проверки](maintenance/validation-report.md) |
-| История | [Архив и сохранённые основания](history/README.md) |
+| Product | [Overview](product/overview.md), [scenarios](product/scenarios.md), [Memory Workspace](product/memory-workspace.md) |
+| Status | [Capabilities](status.md), [open gaps](status/open-gaps.md) |
+| Tutorials | [Getting started](getting-started.md), [Memory API](guides/memory-api-exercise.md), [Console](guides/console.md) |
+| Architecture | [Overview](architecture.md), [domain model](domain-model.md), [memory/time](design/memory-time.md), [retrieval](design/retrieval-context.md), [transactions](design/transactions.md), [execution](design/execution.md), [materials](design/materials.md), [learning/health](design/learning-health.md) |
+| Reference | [HTTP](reference/http.md), [route catalog](reference/route-catalog.md), [memory](reference/memory.md), [retrieval](reference/retrieval.md), [MCP](reference/mcp.md), [CLI](reference/cli.md), [configuration](reference/configuration.md), [glossary](reference/glossary.md), [database](database-schema.md), [security](security-and-rls.md) |
+| Operations | [Deployment](operations/deployment.md), [runbook](operations/runbook.md), [restore](operations/backup-restore.md), [troubleshooting](operations/troubleshooting.md) |
+| Development | [Guide](development/README.md), [testing](development/testing.md), [agent workflow](development/agent-workflow.md), [releases](development/release.md) |
+| Requirements | [Normative index](specs/README.md), [English contracts](specs/en/README.md), [Accepted ADRs](adr/README.md) |
+| Implementation and planning | [Programs](plans/README.md), [packages](implementation/README.md), [roadmap](roadmap/README.md), [milestones](roadmap/milestones.md), [next actions](roadmap/next-actions.md) |
+| Evaluation | [Method and synthetic corpus](evaluation/README.md) |
+| Maintenance | [Rules](maintenance/README.md), [sources](maintenance/sources.md), [change map](maintenance/migration-map.md), [validation](maintenance/english-validation-report.md) |
+| History | [Preserved baselines and evidence](history/README.md) |
 
-## Как читать статусы
+## Proposed designs
 
-«Найдено в исходниках» — статическое наблюдение, а не успешный запуск. «Зафиксировано в evidence» — результат указанного исполнителя на указанном срезе, а не новый независимый прогон. «Нормативный контракт» — требование. «Предлагаемый проект» — решение для review. «Не проверено» — ограничение знания, а не автоматически отсутствие функции.
+[Temporal conflicts](design/temporal-conflicts.md), [consolidation](design/consolidation.md), [context inspection](design/context-observability.md), and [external-agent integration](design/integration-boundaries.md) describe proposed extensions. Their dependencies and acceptance gates still apply.
 
-Текущий реестр — [status.md](status.md). Исторические baseline и evidence доступны через [архив](history/README.md).
+## Read status labels literally
 
----
-[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)
+A **source observation** is not a successful runtime test. **Recorded evidence** reports a result on its identified snapshot; it is not a new independent execution. **Normative** means required, not implemented. **Proposed** means the design still requires acceptance. **Not audited** does not mean absent.
+
+[Current status](status.md) is the implementation entry point. Historical records keep their own baselines and verdicts. [Maintenance](maintenance/README.md) explains translation coverage, generated views, and the preserved originals.

@@ -1,17 +1,13 @@
-# Начало работы: проверка среды и первый запрос
+# Getting started
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Scope:** A prepared, isolated local development environment. These runtime commands were not executed in this documentation refactor. Run them from a complete repository checkout, not a documentation-only archive.
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+## 1. Inspect the checkout
 
-## До запуска
-
-Это руководство для изолированной среды разработки на baseline `07e2977`. Продукт не запускался при подготовке этой редакции. Команды ниже следует выполнять в checkout проекта, а не внутри архива документации. Для эксплуатационных данных сначала требуется проверенная процедура восстановления.
-
-Установите toolchain, указанный в `rust-toolchain.toml` и `Cargo.toml`, Docker Compose и необходимые системные зависимости. Проверенная программа среза называет Rust 1.85/edition 2024, Node 22, PostgreSQL 17 с pgvector. Это не разрешение незаметно обновить lockfiles.
+Use the versions declared in rust-toolchain.toml, Cargo.toml, Console package files, and Compose. This snapshot pins Rust 1.85.0 and declares Node 22 and PostgreSQL 17/pgvector. Do not update lockfiles as an implicit setup step.
 
 ```bash
-# Read-only discovery; эти команды не создают сервисы или ключи.
+# Read-only discovery: no services or credentials are created.
 git rev-parse HEAD
 cargo --version
 node --version
@@ -19,49 +15,43 @@ docker compose version
 docker compose config --quiet
 ```
 
-Не публикуйте полный вывод `docker compose config`: развёрнутая конфигурация может содержать credentials. `--quiet` проверяет структуру без печати конфигурации.
+A ZIP checkout has no `.git`; initialize or clone a working Git repository before using Git commands. Do not publish full expanded `docker compose config` output because it can contain credentials. Use `--quiet` for validation without printing values.
 
-## Необходимые постоянные ресурсы
+## 2. Prepare persistent resources and authority
 
-Compose использует PostgreSQL data, installation fingerprint vault, provider material vault и внешний read-only bootstrap secret volume. Bootstrap-ключ НЕ генерируется образом или Compose. Пустой volume, даже правильно названный, не выполняет prerequisite. Точный layout ключа берётся из mounted-secret-store контракта конкретной сборки и подтверждается оператором.
+Compose uses PostgreSQL data, an installation-fingerprint vault, a provider-material vault, and an external read-only bootstrap-secret volume. Neither the image nor Compose generates the bootstrap credential. An empty correctly named volume does not satisfy the prerequisite. Verify the mounted-store layout required by the selected build.
 
-Provisioner назначает DB-роли; отдельный migration service выполняет миграции; dev-seed создаёт локальные identity. Не подменяйте ограниченную runtime DB-роль bootstrap-администратором ради устранения ошибки. Не копируйте development-пароли в внешнюю установку.
+The provisioner establishes roles; the migration service applies migrations; development initialization creates local identities. Do not substitute a bootstrap administrator for the restricted runtime identity to bypass errors. Development passwords are not deployment credentials.
 
-**Стоп-условие:** пока bootstrap/layout/политика disclosure не подготовлены, полного проверенного zero-to-running пути этот документ не обещает. Задача его доведения — [F004](roadmap/p0-foundation.md#f004).
+**Stop until the bootstrap layout and disclosure policy are prepared.** A verified clean-machine installer is [F004](roadmap/p0-foundation.md#f004), not an assumption of this guide. For valuable data, establish and test recovery before use.
 
-## Запуск уже подготовленной среды
+## 3. Start the prepared environment
 
-Следующие команды меняют локальную среду и допустимы только после перечисленных prerequisites:
+These commands change the local environment:
 
 ```bash
-# Сохраните это имя проекта для последующих команд.
 docker compose -p vestrace up --build --detach
 curl --fail --silent --show-error http://127.0.0.1:8080/health/live
 curl --fail --silent --show-error http://127.0.0.1:8080/health/ready
 ```
 
-`live` означает доступность процесса; `ready` не квалифицирует полный embedding/import workflow. При ошибке сначала прочитайте [диагностику](operations/troubleshooting.md), а не удаляйте volumes.
+Keep the same Compose project name throughout. Liveness means process availability. Readiness is not qualification of a complete embedding or import workflow. On failure, use [troubleshooting](operations/troubleshooting.md), not volume deletion.
 
-## Авторизация и первый безопасный запрос
+## 4. Authenticate
 
-Health probes публичны в ограниченном смысле. Для `/v1/*` нужен действующий Bearer-токен с необходимыми capabilities. Его выдачу и custody выполняет разрешённая процедура установки. Не используйте `x-workspace-id`/`x-principal-id` как средство самоидентификации: middleware заменяет их результатом token authentication.
+Health endpoints are bounded public probes. `/v1/*` requires a valid Bearer token and the relevant capabilities, issued through the installation's authorized procedure. `x-workspace-id` and `x-principal-id` do not provide client-controlled identity; middleware replaces them with token-derived values.
 
-Для проверки чтения используйте доступный вам Run/list или [упражнение с Memory API](guides/memory-api-exercise.md). Примеры не содержат рабочего токена; во время выполнения не включайте shell tracing и не публикуйте terminal history с secrets.
+Use an authorized read or the [Memory walkthrough](guides/memory-api-exercise.md). Do not enable shell tracing around credentials or publish sensitive command history. No working credential is supplied in the documentation.
 
-## Остановка
+## 5. Stop without erasing data
 
 ```bash
-# Останавливает текущую dev-среду; named volumes сохраняются.
+# Keep named volumes.
 docker compose -p vestrace down --remove-orphans
 ```
 
-`--volumes` не является обычным способом устранения ошибки. Удаление БД/vault может сделать знание невосстановимым. Остановка без удаления данных всё равно не является backup.
+Do not routinely add `--volumes`. Removing a database/vault may make knowledge unrecoverable. Retained volumes are not a backup.
 
-## Дальнейшее чтение
+Read [Console](guides/console.md), [HTTP](reference/http.md), and [Memory](reference/memory.md). MW folder-import commands remain proposed, not current CLI instructions.
 
-[Console](guides/console.md) → [HTTP-правила](reference/http.md) → [Memory](reference/memory.md) → [состояние возможностей](status.md). Будущий folder import описан в MW, а не представлен работающей CLI-командой.
-
----
-**Основание:** [R03: crates/vestrace-cli/src/main.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-cli/src/main.rs), [R04: docker-compose.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docker-compose.yml), [R05: docs/getting-started.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/getting-started.md), [R01: crates/vestrace-http/src/auth.rs](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/crates/vestrace-http/src/auth.rs), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
-
-[Карта документации](README.md) · [Состояние и ограничения](status.md) · [Реестр источников](maintenance/sources.md)
+**Sources:** [Compose](../docker-compose.yml), [toolchain](../rust-toolchain.toml), [authentication](../crates/vestrace-http/src/auth.rs).

@@ -1,6 +1,6 @@
-# Чистый контракт B/I/M: пример теста для реализации
+# Pure B/I/M decision contract: illustrative test
 
-Это proposed Rust fragment для `crates/vestrace-domain/tests/source_sync.rs`, не уже существующий API. `SyncFacts` создаёт только trusted comparison service после чтения exact source/memory revisions; HTTP не может передать эти flags. Тест проверяет чистое правило, не полномочия/долговечность/сравнение bytes.
+This proposed Rust fragment targets crates/vestrace-domain/tests/source_sync.rs; it is not an existing public API. Only a trusted comparison service creates SyncFacts after authorized reads of exact source/memory revisions. HTTP cannot supply these flags. This example tests a pure rule, not authorization, durability, or byte equality.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,4 +40,4 @@ fn incomplete_scan_does_not_mark_unseen_sources_missing() {
 }
 ```
 
-В продукте `SyncFacts.manual_override` выводится из durable binding и проверки текущей memory revision относительно последней импортной. Клиентский boolean не является доказательством. Данный пример намеренно не выполняет automatic semantic merge: ветка Conflict требует exact B/I/M resolution отдельной mutation. До записи результат чистого сравнения revalidated против pinned base versions под lock.
+In production, manual_override derives from the durable binding and current-memory comparison with the last imported revision. A client boolean is not evidence. Conflict requires an exact B/I/M resolution through a separate mutation, never automatic semantic merging. Revalidate the comparison against pinned base versions under locks before writing.

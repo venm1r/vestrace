@@ -1,36 +1,31 @@
-# Исполнение, внешние эффекты и восстановление
+# Execution, external effects, and recovery
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Run is not a process
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+Run is domain execution; a worker is a process handling available work. Process exit 0 does not prove every Run succeeded, and an idle worker does not establish a failed Run.
 
-## Run и процесс — разные вещи
+HTTP lifecycle commands and protocol adapters describe transitions in one canonical history. AG-UI/A2A projections and client task cards cannot independently assign an external-effect outcome.
 
-Run является предметным выполнением. Worker — процесс, который исполняет доступную работу. Завершение процесса с кодом 0 не является доказательством успеха всех Run. И наоборот: idle worker не означает ошибку сохранённого Run.
+## Uncertain outcomes
 
-HTTP lifecycle-команды и протокольные адаптеры должны выражать переходы одной канонической истории. Проекция AG-UI/A2A или клиентская карточка задачи не может самостоятельно назначить результат внешнему эффекту.
+Persist intent and check authority before dispatch. Record the result against that operation. A crash between sending and retaining the receipt leaves an outcome to reconcile: no response does not prove the provider did nothing.
 
-## Точки неопределённости
-
-Перед вызовом сохраняется намерение и проверяются полномочия. После вызова должен появиться относящийся к нему результат. Сбой между отправкой и сохранением receipt оставляет отдельную задачу установления исхода. Отсутствие ответа не доказывает, что провайдер ничего не сделал.
-
-Для повтора нужны свойства конкретной операции и внешнего сервиса. Подтверждение риска повторного списания является отдельным авторизованным действием, а не автоматической веткой retry. Компенсация оформляется новым эффектом; она не стирает прошлое и не является SQL rollback внешнего мира.
+Retry depends on the operation and provider contract. Acknowledging possible duplicate charges is a separate authorized decision, not a default retry branch. Compensation is a new effect; it neither erases history nor rolls back the external world like SQL.
 
 ## Provider identity
 
-В целевом и частично реализованном governed path запрос связан с ревизиями connection/model, policy и ModelRequestEvidence. Замена процесса не должна незаметно выбирать другого провайдера по текущим environment variables, если выполнение уже приняло immutable binding.
+The governed path binds requests to connection/model revisions, policy, and ModelRequestEvidence. After immutable binding, restarting a process must not silently choose another provider from current environment variables.
 
-Точная доступность каждого пути определяется пакетом и его evidence. Документация текущего endpoint не утверждает production-ready поведение всех состояний из domain enum.
+Availability follows the relevant package and evidence. A domain enum does not establish production-ready behavior for all its states.
 
-## Граница P04/14D
+## P04: distinguish historical preparation from later publication
 
-Опубликованный финальный verdict принимает delivery-only ResultPrepared. Binding provisional keys, Live publication, продвижение corpus/generation, job success и worker closure из него не следуют. 14E описан как следующий предложенный контракт. Это не косметическое переименование статуса.
+The historical 14D verdict stopped at delivery-only ResultPrepared. It did not accept Live publication, corpus/generation changes, successful jobs, or all worker composition.
 
-## Практическая диагностика
+The supplied `3e05dfbd` snapshot contains the later finalization/publication implementation and a final lead verdict accepting **Task 14E only**. The accepted rotation-before-adoption deferral remains binding, and the record explicitly leaves P04, G0, and v1.0 incomplete. This refactor reads that record; it does not rerun its tests or broaden its scope.
 
-Вначале выяснить, что уже записано: намерение, dispatch, acknowledged response, preparation или publication. Не очищать историю и не пересоздавать job только потому, что интерфейс показывает ожидание. Если допустимое действие нельзя вывести из durable evidence, остановить автоматическое исправление и сохранить наблюдения для review.
+## Diagnose before repair
 
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md), [S01: docs/development-evidence/v1-g0-04-embedding-transition-foundation.md](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/docs/development-evidence/v1-g0-04-embedding-transition-foundation.md).
+Identify durable intent, dispatch, response acknowledgement, preparation, and publication. Do not delete history or recreate jobs merely because a UI shows pending. When durable evidence does not justify an action, stop automatic repair and preserve safe observations for review.
 
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [effect contract](../specs/en/vestrace-execution-external-effects-contract-v0.2.md), [finalization](../../crates/vestrace-application/src/embedding/finalization.rs), [recorded P04 evidence](../development-evidence/v1-g0-04-embedding-transition-foundation.md).

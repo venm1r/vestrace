@@ -1,24 +1,18 @@
-# Тестирование: уровни, чувствительность и ресурсы
+# Testing: layers, sensitivity, and resources
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
-
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
-
-## Уровни
-
-| Уровень | Что доказывает | Что не заменяет |
+| Layer | Establishes | Does not replace |
 | --- | --- | --- |
-| Domain/unit | Локальную логику и допустимые transitions | Runtime wiring, БД, права |
-| Contract/schema | Формат и compatibility | Реальное выполнение |
-| PostgreSQL | Constraints, UoW, grants, races на данной БД | Provider/browser interop |
-| Composition/E2E | Штатные entrypoints и полный путь | Другие непроверенные топологии |
-| Fault/restart | Выбранные границы смерти процесса | Произвольный power-loss или все сбои |
-| Product quality | Полезность контекста на corpus | Security/qualification |
-| Release | Замыкание всех declared gates на target | Стабильность другого target |
+| Domain/unit | Local logic and permitted transitions | Runtime wiring, database behavior, authorization |
+| Contract/schema | Format and compatibility | Execution of the operation |
+| PostgreSQL | Constraints, unit of work, grants, and races on the tested database | Provider/browser interoperability |
+| Composition/end-to-end | Real entry points and the selected complete path | Untested topologies |
+| Fault/restart | Selected process-death boundaries | Every failure or arbitrary power loss |
+| Product quality | Context usefulness on a defined corpus | Security/qualification |
+| Release | All declared gates on an exact target | Another target's stability |
 
-## Команды текущего toolchain
+## Commands
 
-Ниже — команды для выполнения в кодовом checkout с подготовленной test DB, не результаты этого документационного задания:
+Run these in a code checkout with the necessary database and environment. They are instructions, not results of this documentation task.
 
 ```bash
 cargo fmt --all -- --check
@@ -30,25 +24,24 @@ npm --prefix apps/console run typecheck
 npm --prefix apps/console run build
 ```
 
-Doctests выделены явно: `--all-targets` не является их заменой. В проверенном CI это отдельный рекомендуемый delta, а не якобы уже работающий шаг. Точные test targets MW становятся запускаемыми после их реализации.
+Doctests are explicit: `--all-targets` does not replace `--doc`. The supplied CI defines an all-targets test job but no separate doctest job; adding one remains a proposed CI change, not part of this refactor. MW-specific targets become runnable only after their implementation.
 
-## RED и mutation
+## RED and mutation sensitivity
 
-Сначала получить корректный fixture setup, затем поведенческое падение утверждения. Отсутствующий DATABASE_URL, несуществующий test target или compilation error — не доказательство чувствительности business test. Для критичного guard временное ослабление должно сделать неизменённую проверку красной; после восстановления exact bytes — снова зелёной. Записывать оба наблюдения.
+Establish a valid fixture first, then observe the intended failing assertion. A missing database URL, nonexistent target, or compilation failure is not behavioral RED.
 
-## Runtime роль
+For a critical guard, weakening it should make the unchanged test fail. Restore exact implementation bytes and observe GREEN. Record both. A test that passes with the implementation removed is not adequate evidence.
 
-Отдельная admin identity может подготовить одноразовую БД и grants по deployment rules. Runtime часть проверяется ограниченным пользователем. Иначе успешная запись может скрывать production permission gap, а отсутствие отказа — оказаться полномочиями администратора.
+## Runtime role
 
-## Ресурсная стоимость
+An administrator may prepare a disposable database and exact grants under deployment rules. Run the product portion as the restricted runtime user. Otherwise administrator privileges can hide missing grants or missing denials.
 
-Измерять холодную сборку, цикл правки, peak RAM/disk и размеры test binaries. Не запускать два Cargo build одновременно по умолчанию. Изменение debug/incremental profiles и объединение test targets проводить как измеряемый эксперимент, не отключая негативные классы проверок.
+## Resource cost
 
-## Документационные проверки отдельно
+Measure cold builds, edit/test cycles, peak RAM/disk, and test-binary sizes. Do not run two Cargo builds concurrently by default. Treat profile changes or test-target consolidation as measured experiments without silently removing negative-test classes.
 
-В этом комплекте валидируются ссылки, JSON, граф зависимостей, scope diff и сохранность MW. Такие проверки не дают evidence о Rust/SQL/browser поведении. Их результаты хранятся в maintenance, а не в production qualification bundle.
+## Documentation validation
 
----
-**Основание:** [R12: .github/workflows/ci.yml](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/.github/workflows/ci.yml), [S16: apps/console/package.json](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/apps/console/package.json), [R11: docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md).
+[Documentation checks](../maintenance/README.md) verify links, JSON, dependencies, scope, examples, and edition manifests. They do not produce Rust/SQL/browser/provider qualification. Store their results under maintenance, not product evidence.
 
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [CI](../../.github/workflows/ci.yml), [Console scripts](../../apps/console/package.json), [qualification contract](../specs/en/vestrace-qualification-conformance-spec-v0.2.md).

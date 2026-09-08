@@ -1,38 +1,31 @@
-# Retrieval и формирование контекста
+# Retrieval and context construction
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+## Pipeline and disclosure
 
-**Статус:** Руководство по срезу исходников; не свидетельство испытания.
+Retrieval takes a task and constraints, chooses permitted candidates, combines channels, applies temporal semantics, and builds a bounded view. Its goal is sufficient, current, explainable context rather than the longest possible prompt.
 
-## Конвейер
+Workspace, capability, classification, and destination checks must happen before protected text reaches a reranker or model. A policy port's existence does not prove every production path invokes it.
 
-Retrieval получает задачу и ограничения, выбирает разрешённые кандидаты, нормализует результаты нескольких каналов, учитывает время и формирует ограниченное представление. Архитектурная цель — не самый длинный контекст, а достаточное количество актуальных данных с объяснимыми основаниями.
+## Current representation
 
-Capability, workspace, classification и destination policy нельзя применять только после передачи закрытого текста reranker или модели. Запрет должен действовать до соответствующего раскрытия. Сам факт существования policy-порта не доказывает, что он подключён во всех путях.
+HTTP candidates expose memory/revision identity, status, revision number, temporal fields, generation, score, channel, and explanation. ContextPackDto exposes budget, counts, withheld results, degraded channels, and policy version, but not section text.
 
-## Текущая поверхность
+The internal ContextPackBuilder groups constraints, facts, decisions, and tasks and uses `Full → Summary → Atomic → Reference`. Current Summary/Atomic forms are deterministic string shortening, not independently verified LLM summaries.
 
-HTTP-кандидат содержит memory/revision identity, статус, номер, временные поля, generation, score, channel и explanation. ContextPackDto содержит бюджет, число кандидатов/секций, withheld, degraded channels и версию политики. Тексты секций DTO не выдаёт.
+## Budget is part of the contract
 
-Внутренний ContextPackBuilder секционирует constraint/fact/decision/task и использует лестницу Full → Summary → Atomic → Reference. При этом нынешние Summary/Atomic — детерминированное сокращение строки, а не отдельное проверенное LLM-обобщение.
+`conservative_token_count` computes ceil(text.len() / 4), with len measured in UTF-8 bytes. Its name is not proof of a universal tokenizer upper bound. Wrappers, separators, and citations also consume space.
 
-## Бюджет — часть контракта
+Distinguish bytes, approximate tokens, and a qualified model-specific bound. A hard-token request must not silently become a byte heuristic. MW documents that compatibility decision; this refactor does not implement a new counter.
 
-Helper `conservative_token_count` вычисляет `ceil(text.len()/4)`, где len — UTF-8 bytes. Имя и комментарий не превращают эту эвристику в верхнюю границу для любого tokenizer. Обёртки, разделители и ссылки тоже занимают место.
+## History and compression
 
-До квалифицированного пути счётчика корректно различать ограничение bytes, приблизительную оценку tokens и реальный model-specific bound. Если клиенту нужен жёсткий token budget, нельзя без предупреждения заменить его byte-heuristic. MW фиксирует эту развилку; текущие исходники здесь не изменены.
+The reviewed builder deduplicates by memory_id. A timeline needing several revisions of the same memory requires separate verification. Current-state deduplication is not automatically correct for history.
 
-## Исторические выдачи и сжатие
+Compression must preserve negation, corrections, and conflict. A truncated identifier is not a valid provenance reference. When no acceptable representation fits, prefer an explicit, safely explained omission.
 
-В просмотренном builder дедупликация ведётся по memory_id. Это нужно отдельно проверить для сценария, который хочет одновременно несколько ревизий одной памяти. Удаление дубликатов в current retrieval не автоматически корректно для timeline.
+## Cache reuse
 
-Сжатие не должно скрывать отрицание, позднее исправление или конфликт. Для Reference важна сохранность идентичности; обрезанная строка не считается полноценной provenance-ссылкой. Если представление не укладывается, предпочтительнее явное исключение с допустимой диагностикой.
+Context is derived. Permissions, policy, revisions, and generations may change after construction. Recording an issued result and authorizing redisclosure are different decisions. A cached client copy cannot become a policy bypass.
 
-## Cache и повторное использование
-
-ContextPack — производный результат. Права, текущая политика, ревизии и поколения могут измениться после его создания. Исторический журнал выданного текста и разрешение повторно раскрыть этот текст — разные решения. Клиентская копия не может служить обходом актуальной policy.
-
----
-**Основание:** [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs), [S12: crates/vestrace-application/src/retrieval/context_builder.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-application/src/retrieval/context_builder.rs), [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+**Sources:** [HTTP](../../crates/vestrace-http/src/api/retrieval.rs), [builder](../../crates/vestrace-application/src/retrieval/context_builder.rs), [Architecture Contract](../specs/en/vestrace-architecture-contract-v0.2.md).

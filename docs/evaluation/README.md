@@ -1,32 +1,38 @@
-# Оценка полезности памяти
+# Evaluating memory usefulness
 
-**Редакция:** 2026-09-07 · **Baseline репозитория:** `07e2977a`.
+**Status:** Proposed methodology and synthetic fixtures—not experiment results.
 
-**Статус:** Предлагаемая методика и синтетические fixtures.
+The [corpus](corpus.json) contains **8 synthetic sources and 12 control questions**. They
+are expectations, not facts about Vestrace or results of execution. Every result remains
+`NOT_RUN`. Advanced recorded-as-known cases target F201; report unsupported semantics when
+the current product cannot answer that question rather than substitute current-state retrieval.
 
-## Что входит
+This English edition preserves source/case IDs, scopes, times, supersession links, and expected/
+forbidden evidence. Its text bytes and dataset digest differ from the Russian edition. Pin
+the actual corpus digest in any comparison; do not reuse earlier measurements as if unchanged.
 
-[Синтетический корпус](corpus.json) содержит 8 учебных sources и 12 контрольных вопросов. Это тестовые ожидания, не результаты запуска и не факт о настоящем проекте. Все результаты `NOT_RUN`. Advanced historical-as-known случаи проверяют будущую цель F201; если текущий продукт не поддерживает её, следует сообщить unsupported, а не подменить смысл запросом current.
+## Separate retrieval and answer quality
 
-## Два слоя оценки
+First inspect permitted exact evidence, forbidden disclosure, currency, and warnings. Then
+assess whether the answer is grounded and interprets time correctly without inventing facts.
+Issued context is distinct from an independently observed final model request.
 
-Сначала retrieval: разрешённые exact evidence refs, отсутствие denied bytes, актуальность и warnings. Затем answer: ответ по данным, отсутствие неподтверждённых утверждений и правильное понимание времени. Контекст, выданный сервисом, отделяется от реально наблюдаемого model request.
+Compare simple full-text search with the full Vestrace configuration using the same corpus,
+permissions, model revision, and budget. Without matching conditions, improvements cannot
+be assigned to a specific memory mechanism.
 
-## Базовое сравнение
+Security cases are deterministic restrictions, not model-judge scores. Content quality may
+use labeled expectations and independent review. Match counts alone prove neither source
+quality nor safety.
 
-Один и тот же corpus snapshot, scopes, model revision и budget. Базовый вариант — простой FTS на том же разрешённом наборе. Затем полная конфигурация Vestrace. Без matching conditions нельзя приписывать улучшение конкретному memory механизму.
+## Record experiments without rewriting history
 
-Security cases — детерминированные запреты, не шкала model judge. Для содержательных ответов можно использовать размеченные expected behaviors и независимый review. Число совпадений само по себе не доказывает качество источника или safety.
+Record dataset digest, code/config/model/tokenizer identities, hardware, repetitions, safe
+observations, and exclusions. Changing the corpus creates a new experiment. For a small sample,
+report the numerator/denominator and failures rather than unsupported high-precision accuracy.
 
-## Запись эксперимента
+A scope leak, silent overwrite, or false certainty after a crash blocks acceptance even when
+average helpfulness improves. Choose the relevant P0/P1/P2 fix rather than automatically
+adding retrieval channels.
 
-Указать dataset digest, code/config/model/tokenizer identities, hardware, repetitions, raw safe observations и exclusions. Не переписывать предыдущий run после изменения corpus. Для малого числа случаев сообщать числитель/знаменатель и сами ошибки, а не убедительную «точность 99%».
-
-## Gate
-
-Новая конфигурация не может пройти при утечке scope, silent overwrite или ложной certainty после crash, даже если средняя helpfulness выросла. По регрессии выбирается задача P0/P1/P2; автоматически добавлять новые retrieval channels не нужно.
-
----
-**Основание:** [R09: docs/specs/vestrace-architecture-contract-v0.2.md](https://github.com/venm1r/vestrace/blob/07e2977a20b05c5b16953a206a6d68bdbff3a052/docs/specs/vestrace-architecture-contract-v0.2.md), [S11: crates/vestrace-http/src/api/retrieval.rs](https://github.com/venm1r/vestrace/blob/6f6102536e9a535b7086db14573bf45fe750ad71/crates/vestrace-http/src/api/retrieval.rs).
-
-[Карта документации](../README.md) · [Состояние и ограничения](../status.md) · [Реестр источников](../maintenance/sources.md)
+[Knowledge-quality roadmap](../roadmap/p2-knowledge-quality.md) · [Adoption](../roadmap/adoption.md)
