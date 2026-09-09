@@ -2104,4 +2104,486 @@ BEGIN
     END IF;
 END $credential_erasure_bootstrap$;
 
+-- 0197 executes a closed table-DDL inventory without lending table ownership.
+DO $canonical_generation_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=197 AND success)' INTO applied;
+    END IF;
+    IF applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_canonical_generation_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_canonical_generation_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_canonical_generation_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=197 AND success) THEN
+                RAISE EXCEPTION 'canonical generation upgrade already closed' USING ERRCODE='42501';
+            END IF;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_register_embedding_space(uuid,uuid,uuid,text,text,integer)'::regprocedure) IS DISTINCT FROM 'vestrace_guarded_owner'
+               OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_validate_embedding_corpus_generation_member()'::regprocedure) IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                RAISE EXCEPTION 'canonical generation exact function ownership unavailable' USING ERRCODE='42501';
+            END IF;
+ALTER TABLE embedding_space_registrations
+    ALTER COLUMN space_id DROP NOT NULL,
+    DROP CONSTRAINT embedding_space_registrations_tuple_key,
+    ADD COLUMN registration_kind TEXT NOT NULL DEFAULT 'legacy_upgrade'
+        CHECK(registration_kind IN ('legacy_upgrade','canonical')),
+    ADD COLUMN model_revision_id UUID,
+    ADD COLUMN model_qualification_revision_id UUID,
+    ADD COLUMN request_shape_revision_id UUID,
+    ADD COLUMN adapter_profile_revision TEXT,
+    ADD COLUMN returned_model TEXT,
+    ADD COLUMN encoding_format TEXT,
+    ADD CONSTRAINT embedding_space_registration_representation CHECK (
+        (registration_kind='legacy_upgrade' AND space_id IS NOT NULL
+         AND model_revision_id IS NULL AND model_qualification_revision_id IS NULL
+         AND request_shape_revision_id IS NULL AND adapter_profile_revision IS NULL
+         AND returned_model IS NULL AND encoding_format IS NULL)
+        OR (registration_kind='canonical' AND space_id IS NULL
+         AND model_revision_id IS NOT NULL AND model_qualification_revision_id IS NOT NULL
+         AND request_shape_revision_id IS NOT NULL AND adapter_profile_revision IS NOT NULL
+         AND btrim(adapter_profile_revision)<>'' AND returned_model IS NOT NULL
+         AND returned_model=model AND encoding_format IS NOT NULL AND encoding_format='float'));
+CREATE UNIQUE INDEX embedding_space_registrations_legacy_tuple_key
+    ON embedding_space_registrations(workspace_id,name,model,dimensions)
+    WHERE registration_kind='legacy_upgrade';
+CREATE UNIQUE INDEX embedding_space_registrations_canonical_tuple_key
+    ON embedding_space_registrations(workspace_id,name,model_revision_id,
+        model_qualification_revision_id,adapter_profile_revision,request_shape_revision_id,
+        returned_model,encoding_format,dimensions) WHERE registration_kind='canonical';
+ALTER TABLE model_qualification_heads ADD COLUMN active_space_registration_id UUID;
+ALTER TABLE embedding_index_generation_guards
+    ADD COLUMN guard_version BIGINT NOT NULL DEFAULT 1 CHECK(guard_version>0),
+    ADD COLUMN current_generation_id UUID;
+ALTER TABLE embedding_corpus_generations
+    DROP CONSTRAINT embedding_corpus_generations_state_check,
+    ADD CONSTRAINT embedding_corpus_generations_state_check CHECK(state IN ('building','ready','stale','revoked')),
+    ADD COLUMN member_representation TEXT NOT NULL DEFAULT 'legacy_upgrade'
+        CHECK(member_representation IN ('legacy_upgrade','encrypted_projection')),
+    ADD COLUMN generation_epoch BIGINT,
+    ADD COLUMN captured_guard_version BIGINT,
+    ADD COLUMN corpus_revision BIGINT,
+    ADD COLUMN built_through_projection_ordinal BIGINT,
+    ADD CONSTRAINT embedding_generation_capture_complete CHECK (
+        (member_representation='legacy_upgrade' AND generation_epoch IS NULL
+            AND captured_guard_version IS NULL AND corpus_revision IS NULL
+            AND built_through_projection_ordinal IS NULL)
+        OR (member_representation='encrypted_projection' AND generation_epoch IS NOT NULL
+            AND generation_epoch>0 AND captured_guard_version IS NOT NULL AND captured_guard_version>0
+            AND corpus_revision IS NOT NULL AND corpus_revision>=0
+            AND built_through_projection_ordinal IS NOT NULL AND built_through_projection_ordinal>=0));
+ALTER TABLE embedding_corpus_generations
+    ALTER COLUMN published_at DROP NOT NULL,
+    ALTER COLUMN published_at DROP DEFAULT,
+    ADD COLUMN created_at TIMESTAMPTZ,
+    ADD COLUMN state_changed_at TIMESTAMPTZ,
+    ADD COLUMN lifecycle_reason TEXT NOT NULL DEFAULT 'legacy_upgrade'
+        CHECK(lifecycle_reason IN ('legacy_upgrade','captured','published','invalidated','revoked'));
+ALTER TABLE embedding_corpus_generations DISABLE TRIGGER embedding_corpus_generations_guarded;
+UPDATE embedding_corpus_generations SET created_at=published_at,state_changed_at=published_at;
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;
+ALTER TABLE embedding_corpus_generations ENABLE TRIGGER embedding_corpus_generations_guarded;
+ALTER TABLE embedding_corpus_generations
+    ALTER COLUMN created_at SET NOT NULL,
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN state_changed_at SET NOT NULL,
+    ALTER COLUMN state_changed_at SET DEFAULT NOW();
+ALTER TABLE embedding_corpus_generation_members
+    DROP CONSTRAINT embedding_corpus_generation_members_pkey,
+    ALTER COLUMN memory_embedding_id DROP NOT NULL,
+    ADD COLUMN member_ordinal BIGINT,
+    ADD COLUMN legacy_embedding_id UUID,
+    ADD COLUMN embedding_projection_entry_id UUID;
+ALTER TABLE embedding_corpus_generation_members DISABLE TRIGGER embedding_corpus_generation_members_guarded;
+WITH ordered AS (
+    SELECT workspace_id,corpus_generation_id,memory_embedding_id,
+        row_number() OVER(PARTITION BY workspace_id,corpus_generation_id ORDER BY memory_embedding_id) AS ordinal
+    FROM embedding_corpus_generation_members
+)
+UPDATE embedding_corpus_generation_members m SET legacy_embedding_id=m.memory_embedding_id,member_ordinal=o.ordinal
+FROM ordered o WHERE o.workspace_id=m.workspace_id AND o.corpus_generation_id=m.corpus_generation_id
+    AND o.memory_embedding_id=m.memory_embedding_id;
+ALTER TABLE embedding_corpus_generation_members ENABLE TRIGGER embedding_corpus_generation_members_guarded;
+ALTER TABLE embedding_corpus_generation_members
+    ALTER COLUMN member_ordinal SET NOT NULL,
+    ADD PRIMARY KEY(workspace_id,corpus_generation_id,member_ordinal),
+    ADD CHECK(member_ordinal>0),
+    ADD CONSTRAINT embedding_generation_member_xor CHECK (
+        (legacy_embedding_id IS NOT NULL AND embedding_projection_entry_id IS NULL
+          AND memory_embedding_id IS NOT DISTINCT FROM legacy_embedding_id)
+        OR (legacy_embedding_id IS NULL AND embedding_projection_entry_id IS NOT NULL AND memory_embedding_id IS NULL));
+CREATE UNIQUE INDEX embedding_generation_members_legacy_unique
+    ON embedding_corpus_generation_members(workspace_id,corpus_generation_id,legacy_embedding_id)
+    WHERE legacy_embedding_id IS NOT NULL;
+CREATE UNIQUE INDEX embedding_generation_members_projection_unique
+    ON embedding_corpus_generation_members(workspace_id,corpus_generation_id,embedding_projection_entry_id)
+    WHERE embedding_projection_entry_id IS NOT NULL;
+DROP TRIGGER embedding_corpus_generation_members_consistent ON embedding_corpus_generation_members;
+ALTER TABLE model_qualification_heads ADD FOREIGN KEY(workspace_id,active_space_registration_id)
+    REFERENCES embedding_space_registrations(workspace_id,id) ON DELETE RESTRICT;
+ALTER TABLE embedding_index_generation_guards ADD FOREIGN KEY(workspace_id,current_generation_id)
+    REFERENCES embedding_corpus_generations(workspace_id,id) ON DELETE RESTRICT;
+ALTER TABLE embedding_corpus_generation_members ADD FOREIGN KEY(workspace_id,embedding_projection_entry_id)
+    REFERENCES embedding_projection_entries(workspace_id,id) ON DELETE RESTRICT;
+ALTER TABLE embedding_space_registrations
+    ADD FOREIGN KEY(workspace_id,model_revision_id) REFERENCES model_revisions(workspace_id,id) ON DELETE RESTRICT,
+    ADD FOREIGN KEY(workspace_id,model_qualification_revision_id) REFERENCES model_qualification_revisions(workspace_id,id) ON DELETE RESTRICT,
+    ADD FOREIGN KEY(workspace_id,request_shape_revision_id) REFERENCES model_request_shape_revisions(workspace_id,id) ON DELETE RESTRICT;
+
+ALTER FUNCTION public.vestrace_register_embedding_space(uuid,uuid,uuid,text,text,integer) OWNER TO vestrace;
+ALTER FUNCTION public.vestrace_validate_embedding_corpus_generation_member() OWNER TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_canonical_generation_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_canonical_generation_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_canonical_generation_upgrade() TO vestrace;
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_canonical_generation_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGPROCEDURE;
+            allowed_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_register_canonical_embedding_space(uuid,uuid,text,uuid,uuid,uuid,text,text,integer)'),
+                to_regprocedure('public.vestrace_set_initial_embedding_active_space(uuid,uuid,bigint,uuid)'),
+                to_regprocedure('public.vestrace_capture_embedding_generation(uuid,uuid,uuid,bigint)'),
+                to_regprocedure('public.vestrace_publish_embedding_generation(uuid,uuid,uuid,bigint)'),
+                to_regprocedure('public.vestrace_register_embedding_space(uuid,uuid,uuid,text,text,integer)'),
+                to_regprocedure('public.vestrace_assert_canonical_embedding_space(uuid,uuid)'),
+                to_regprocedure('public.vestrace_validate_embedding_active_space()'),
+                to_regprocedure('public.vestrace_invalidate_canonical_generation_guard()'),
+                to_regprocedure('public.vestrace_set_canonical_generation_lifecycle()'),
+                to_regprocedure('public.vestrace_normalize_legacy_generation_member()'),
+                to_regprocedure('public.vestrace_validate_embedding_corpus_generation_member()'),
+                to_regprocedure('public.vestrace_validate_canonical_generation()'),
+                to_regprocedure('public.vestrace_validate_canonical_generation_guard()'),
+                to_regprocedure('public.vestrace_validate_canonical_space_registration()'),
+                to_regprocedure('public.vestrace_validate_canonical_member_liveness()')
+            ];
+            runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_register_canonical_embedding_space(uuid,uuid,text,uuid,uuid,uuid,text,text,integer)'),
+                to_regprocedure('public.vestrace_set_initial_embedding_active_space(uuid,uuid,bigint,uuid)'),
+                to_regprocedure('public.vestrace_capture_embedding_generation(uuid,uuid,uuid,bigint)'),
+                to_regprocedure('public.vestrace_publish_embedding_generation(uuid,uuid,uuid,bigint)'),
+                to_regprocedure('public.vestrace_register_embedding_space(uuid,uuid,uuid,text,text,integer)')
+            ];
+        BEGIN
+            IF to_regclass('public._sqlx_migrations') IS NOT NULL AND EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=197 AND success) THEN
+                RAISE EXCEPTION 'canonical generation upgrade already closed' USING ERRCODE='42501';
+            END IF;
+CREATE CONSTRAINT TRIGGER model_qualification_heads_active_space_consistent
+    AFTER INSERT OR UPDATE ON model_qualification_heads DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_embedding_active_space();
+CREATE TRIGGER embedding_index_generation_guards_corpus_invalidation
+    BEFORE UPDATE ON embedding_index_generation_guards FOR EACH ROW
+    EXECUTE FUNCTION vestrace_invalidate_canonical_generation_guard();
+CREATE TRIGGER embedding_corpus_generations_lifecycle
+    BEFORE INSERT OR UPDATE ON embedding_corpus_generations FOR EACH ROW
+    EXECUTE FUNCTION vestrace_set_canonical_generation_lifecycle();
+CREATE TRIGGER embedding_corpus_generation_members_legacy_alias
+    BEFORE INSERT ON embedding_corpus_generation_members FOR EACH ROW
+    EXECUTE FUNCTION vestrace_normalize_legacy_generation_member();
+CREATE CONSTRAINT TRIGGER embedding_corpus_generation_members_consistent
+    AFTER INSERT OR UPDATE OR DELETE ON embedding_corpus_generation_members DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_embedding_corpus_generation_member();
+CREATE CONSTRAINT TRIGGER embedding_corpus_generations_canonical_consistent
+    AFTER INSERT OR UPDATE OR DELETE ON embedding_corpus_generations DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_canonical_generation();
+CREATE CONSTRAINT TRIGGER embedding_index_generation_guards_current_consistent
+    AFTER INSERT OR UPDATE OR DELETE ON embedding_index_generation_guards DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_canonical_generation_guard();
+CREATE CONSTRAINT TRIGGER embedding_space_registrations_canonical_consistent
+    AFTER INSERT OR UPDATE ON embedding_space_registrations DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_canonical_space_registration();
+CREATE CONSTRAINT TRIGGER content_materials_canonical_generation_live
+    AFTER UPDATE ON content_materials DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_canonical_member_liveness();
+CREATE CONSTRAINT TRIGGER embedding_projections_canonical_generation_live
+    AFTER UPDATE ON embedding_projection_entries DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION vestrace_validate_canonical_member_liveness();
+ALTER TABLE public.memory_embeddings OWNER TO vestrace_guarded_owner;
+ALTER TABLE public.memory_embeddings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.memory_embeddings FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.memory_embeddings FROM PUBLIC,vestrace;
+            FOREACH target IN ARRAY allowed_targets LOOP
+                IF target IS NULL OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target) IS DISTINCT FROM 'vestrace' THEN
+                    RAISE EXCEPTION 'canonical generation function handback unavailable' USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target);
+                IF target=ANY(runtime_executable_targets) THEN
+                    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target);
+                END IF;
+            END LOOP;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_canonical_generation_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_canonical_generation_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_canonical_generation_upgrade() TO vestrace;
+    END IF;
+END $canonical_generation_bootstrap$;
+
+-- Closed Task 4 DDL bridge; no runtime REFERENCES or table-ownership lending.
+DO $embedding_index_bootstrap$
+DECLARE applied BOOLEAN:=false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=198 AND success)' INTO applied;
+    END IF;
+    IF applied THEN
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_index_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_index_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_index_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=197 AND success)
+              OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=198 AND success)
+              OR (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.embedding_index_rebuild_events'::regclass) IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                RAISE EXCEPTION 'index upgrade requires exact accepted predecessor' USING ERRCODE='42501';
+            END IF;
+ALTER TABLE embedding_index_rebuild_events
+    ALTER COLUMN publication_id DROP NOT NULL,
+    ADD COLUMN cause TEXT NOT NULL DEFAULT 'result_publication'
+        CHECK(cause IN ('result_publication','material_erasure','transition_publication','legacy_cutover','operator_rebuild')),
+    ADD COLUMN material_erasure_preparation_id UUID,
+    ADD COLUMN transition_activation_receipt_id UUID,
+    ADD COLUMN legacy_cutover_receipt_id UUID,
+    ADD COLUMN operator_rebuild_request_id UUID,
+    ADD UNIQUE(workspace_id,id),
+    ADD CONSTRAINT embedding_index_change_cause_xor CHECK(
+        num_nonnulls(publication_id,material_erasure_preparation_id,transition_activation_receipt_id,legacy_cutover_receipt_id,operator_rebuild_request_id)=1
+        AND ((cause='result_publication' AND publication_id IS NOT NULL)
+          OR (cause='material_erasure' AND material_erasure_preparation_id IS NOT NULL)
+          OR (cause='transition_publication' AND transition_activation_receipt_id IS NOT NULL)
+          OR (cause='legacy_cutover' AND legacy_cutover_receipt_id IS NOT NULL)
+          OR (cause='operator_rebuild' AND operator_rebuild_request_id IS NOT NULL)));
+CREATE TABLE embedding_index_build_attempts (
+    id UUID PRIMARY KEY,workspace_id UUID NOT NULL,space_registration_id UUID NOT NULL,
+    generation_id UUID NOT NULL,event_id UUID,
+    cause TEXT NOT NULL CHECK(cause IN ('corpus_change','startup','lazy_load')),
+    claim_owner TEXT NOT NULL CHECK(length(claim_owner) BETWEEN 1 AND 128),
+    claim_deadline TIMESTAMPTZ NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('claimed','building','published','loaded','discarded','failed')),
+    safe_reason TEXT CHECK(safe_reason IN ('invalid_vector','memory_limit','material_unavailable','generation_changed','storage_unavailable','claim_expired')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),terminal_at TIMESTAMPTZ,
+    UNIQUE(workspace_id,id),
+    FOREIGN KEY(workspace_id,space_registration_id) REFERENCES embedding_space_registrations(workspace_id,id) ON DELETE RESTRICT,
+    FOREIGN KEY(workspace_id,generation_id) REFERENCES embedding_corpus_generations(workspace_id,id) ON DELETE RESTRICT,
+    FOREIGN KEY(workspace_id,event_id) REFERENCES embedding_index_rebuild_events(workspace_id,id) ON DELETE RESTRICT,
+    CHECK((cause='corpus_change' AND event_id IS NOT NULL) OR (cause IN ('startup','lazy_load') AND event_id IS NULL)),
+    CHECK(claim_deadline>created_at),
+    CHECK((state IN ('claimed','building') AND terminal_at IS NULL AND safe_reason IS NULL)
+       OR (state IN ('published','loaded') AND terminal_at IS NOT NULL AND safe_reason IS NULL)
+       OR (state IN ('discarded','failed') AND terminal_at IS NOT NULL AND safe_reason IS NOT NULL))
+);
+CREATE INDEX embedding_index_attempt_claims ON embedding_index_build_attempts(workspace_id,space_registration_id,claim_deadline) WHERE state IN ('claimed','building');
+CREATE UNIQUE INDEX embedding_index_attempt_active_owner ON embedding_index_build_attempts(workspace_id,generation_id,cause,claim_owner) WHERE state IN ('claimed','building');
+CREATE TABLE embedding_index_build_observations (
+    id UUID PRIMARY KEY,workspace_id UUID NOT NULL,attempt_id UUID NOT NULL,
+    safe_reason TEXT NOT NULL CHECK(safe_reason IN ('invalid_vector','memory_limit','material_unavailable','generation_changed','storage_unavailable','claim_expired')),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(workspace_id,attempt_id,safe_reason),
+    FOREIGN KEY(workspace_id,attempt_id) REFERENCES embedding_index_build_attempts(workspace_id,id) ON DELETE RESTRICT
+);
+
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_index_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_index_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_index_upgrade() TO vestrace;
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_index_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGPROCEDURE;allowed_targets REGPROCEDURE[]:=ARRAY[
+                to_regprocedure('public.vestrace_validate_embedding_index_event_cause()'),
+                to_regprocedure('public.vestrace_embedding_index_snapshot(uuid,uuid)'),
+                to_regprocedure('public.vestrace_embedding_index_attempt_plan(uuid,uuid)'),
+                to_regprocedure('public.vestrace_validate_embedding_index_attempt()'),
+                to_regprocedure('public.vestrace_claim_embedding_index_build(uuid,text,integer)'),
+                to_regprocedure('public.vestrace_validate_local_embedding_generation(uuid,uuid,bigint,bigint,bigint,bigint,bigint)'),
+                to_regprocedure('public.vestrace_claim_embedding_index_load(uuid,uuid,bigint,bigint,bigint,bigint,bigint,text)'),
+                to_regprocedure('public.vestrace_lock_embedding_index_attempt(uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_load_embedding_index_chunk(uuid,uuid,text,bigint,integer)'),
+                to_regprocedure('public.vestrace_publish_embedding_index_build(uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_finish_embedding_index_attempt(uuid,uuid,text,text,text)'),
+                to_regprocedure('public.vestrace_observe_embedding_index_attempt(uuid,uuid,text,text)')];runtime_executable_targets REGPROCEDURE[]:=ARRAY[
+                to_regprocedure('public.vestrace_claim_embedding_index_build(uuid,text,integer)'),
+                to_regprocedure('public.vestrace_validate_local_embedding_generation(uuid,uuid,bigint,bigint,bigint,bigint,bigint)'),
+                to_regprocedure('public.vestrace_claim_embedding_index_load(uuid,uuid,bigint,bigint,bigint,bigint,bigint,text)'),
+                to_regprocedure('public.vestrace_load_embedding_index_chunk(uuid,uuid,text,bigint,integer)'),
+                to_regprocedure('public.vestrace_publish_embedding_index_build(uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_finish_embedding_index_attempt(uuid,uuid,text,text,text)'),
+                to_regprocedure('public.vestrace_observe_embedding_index_attempt(uuid,uuid,text,text)')];
+        BEGIN
+            FOREACH target IN ARRAY allowed_targets LOOP
+                IF target IS NULL OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target)<>'vestrace' THEN
+                    RAISE EXCEPTION 'index finish requires exact runtime-created functions' USING ERRCODE='42501';
+                END IF;
+            END LOOP;
+CREATE CONSTRAINT TRIGGER embedding_index_rebuild_event_cause_consistent AFTER INSERT OR UPDATE ON embedding_index_rebuild_events
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION vestrace_validate_embedding_index_event_cause();
+CREATE CONSTRAINT TRIGGER embedding_index_attempt_consistent AFTER INSERT OR UPDATE OR DELETE ON embedding_index_build_attempts
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION vestrace_validate_embedding_index_attempt();
+ALTER TABLE public.embedding_index_build_attempts OWNER TO vestrace_guarded_owner;
+ALTER TABLE public.embedding_index_build_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.embedding_index_build_attempts FORCE ROW LEVEL SECURITY;
+CREATE POLICY embedding_index_build_attempts_workspace_policy ON public.embedding_index_build_attempts
+    USING(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID)
+    WITH CHECK(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID);
+REVOKE ALL ON TABLE public.embedding_index_build_attempts FROM PUBLIC,vestrace;
+GRANT SELECT ON TABLE public.embedding_index_build_attempts TO vestrace;
+CREATE TRIGGER embedding_index_build_attempts_guarded BEFORE INSERT OR UPDATE OR DELETE ON public.embedding_index_build_attempts
+    FOR EACH ROW EXECUTE FUNCTION vestrace_reject_raw_p03_mutation();
+ALTER TABLE public.embedding_index_build_observations OWNER TO vestrace_guarded_owner;
+ALTER TABLE public.embedding_index_build_observations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.embedding_index_build_observations FORCE ROW LEVEL SECURITY;
+CREATE POLICY embedding_index_build_observations_workspace_policy ON public.embedding_index_build_observations
+    USING(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID)
+    WITH CHECK(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID);
+REVOKE ALL ON TABLE public.embedding_index_build_observations FROM PUBLIC,vestrace;
+GRANT SELECT ON TABLE public.embedding_index_build_observations TO vestrace;
+CREATE TRIGGER embedding_index_build_observations_guarded BEFORE INSERT OR UPDATE OR DELETE ON public.embedding_index_build_observations
+    FOR EACH ROW EXECUTE FUNCTION vestrace_reject_raw_p03_mutation();
+CREATE TRIGGER embedding_index_build_observations_immutable BEFORE UPDATE OR DELETE ON embedding_index_build_observations
+    FOR EACH ROW EXECUTE FUNCTION vestrace_reject_p03_immutable_mutation();
+            FOREACH target IN ARRAY allowed_targets LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target);
+                IF target=ANY(runtime_executable_targets) THEN EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target); END IF;
+            END LOOP;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_index_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_index_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_index_upgrade() TO vestrace;
+    END IF;
+END $embedding_index_bootstrap$;
+
+-- Task 5 needs to forward-replace guarded delivery-only validators.  The
+-- prepare/finish pair grants the migration process only the temporary
+-- ownership necessary for that exact DDL, then restores guarded ownership.
+DO $embedding_executor_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=199 AND success)' INTO applied;
+    END IF;
+    IF applied THEN
+        IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.embedding_job_work_claims'::regclass) IS DISTINCT FROM 'vestrace_guarded_owner'
+           OR NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid='public.embedding_job_work_claims'::regclass)
+           OR NOT has_function_privilege('vestrace','public.vestrace_claim_embedding_work(uuid,text,text,integer)'::regprocedure,'EXECUTE')
+           OR NOT has_function_privilege('vestrace','public.vestrace_finish_embedding_work(uuid,uuid,text,text,text)'::regprocedure,'EXECUTE')
+           OR NOT has_function_privilege('vestrace','public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)'::regprocedure,'EXECUTE')
+           OR has_function_privilege('public','public.vestrace_claim_embedding_work(uuid,text,text,integer)'::regprocedure,'EXECUTE')
+           OR has_function_privilege('public','public.vestrace_finish_embedding_work(uuid,uuid,text,text,text)'::regprocedure,'EXECUTE') THEN
+            RAISE EXCEPTION 'embedding executor owner or runtime ACL posture is unavailable' USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_executor_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_executor_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_executor_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGPROCEDURE;
+        BEGIN
+            IF EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=199 AND success) THEN
+                RAISE EXCEPTION 'embedding executor upgrade already closed' USING ERRCODE='42501';
+            END IF;
+            ALTER TABLE public.embedding_delivery_acceptance_receipts OWNER TO vestrace;
+            FOR target IN
+                SELECT procedure.oid::regprocedure FROM pg_proc AS procedure
+                JOIN pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
+                WHERE namespace.nspname='public' AND procedure.proname=ANY(ARRAY[
+                    'vestrace_begin_delivery_embedding_outputs',
+                    'vestrace_finalize_delivery_embedding_outputs',
+                    'vestrace_validate_embedding_credential_completion_owner',
+                    'vestrace_ensure_embedding_credential_completion_blocker',
+                    'vestrace_adopt_embedding_result_credential_blocker',
+                    'vestrace_assert_embedding_result_phase',
+                    'vestrace_lock_embedding_result_finalization',
+                    'vestrace_load_embedding_result_finalization',
+                    'vestrace_record_embedding_result_key_binding',
+                    'vestrace_publish_embedding_job_result',
+                    'vestrace_load_embedding_result_eligibility',
+                    'vestrace_lock_embedding_result_completion_authority',
+                    'vestrace_commit_embedding_result_preparation',
+                    'vestrace_lock_embedding_job_recovery_authority',
+                    'vestrace_validate_embedding_projection_dependency',
+                    'vestrace_validate_embedding_result_preparation',
+                    'vestrace_claim_embedding_work',
+                    'vestrace_finish_embedding_work'
+                ])
+            LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace',target);
+            END LOOP;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_executor_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_executor_upgrade() TO vestrace;
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_executor_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGPROCEDURE;
+        BEGIN
+            ALTER TABLE public.embedding_delivery_acceptance_receipts OWNER TO vestrace_guarded_owner;
+            ALTER TABLE public.embedding_job_work_claims ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.embedding_job_work_claims FORCE ROW LEVEL SECURITY;
+            CREATE POLICY embedding_job_work_claims_workspace_policy ON public.embedding_job_work_claims
+                USING(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID)
+                WITH CHECK(workspace_id=NULLIF(current_setting('vestrace.workspace_id',true),'')::UUID);
+            REVOKE ALL ON TABLE public.embedding_job_work_claims FROM PUBLIC,vestrace;
+            CREATE TRIGGER embedding_job_work_claims_guarded
+                BEFORE INSERT OR UPDATE OR DELETE ON public.embedding_job_work_claims
+                FOR EACH ROW EXECUTE FUNCTION vestrace_reject_raw_p03_mutation();
+            ALTER TABLE public.embedding_job_work_claims OWNER TO vestrace_guarded_owner;
+            FOR target IN
+                SELECT procedure.oid::regprocedure FROM pg_proc AS procedure
+                JOIN pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
+                WHERE namespace.nspname='public' AND procedure.proname=ANY(ARRAY[
+                    'vestrace_begin_delivery_embedding_outputs',
+                    'vestrace_finalize_delivery_embedding_outputs',
+                    'vestrace_validate_embedding_credential_completion_owner',
+                    'vestrace_ensure_embedding_credential_completion_blocker',
+                    'vestrace_adopt_embedding_result_credential_blocker',
+                    'vestrace_assert_embedding_result_phase',
+                    'vestrace_lock_embedding_result_finalization',
+                    'vestrace_load_embedding_result_finalization',
+                    'vestrace_record_embedding_result_key_binding',
+                    'vestrace_publish_embedding_job_result',
+                    'vestrace_load_embedding_result_eligibility',
+                    'vestrace_lock_embedding_result_completion_authority',
+                    'vestrace_commit_embedding_result_preparation',
+                    'vestrace_lock_embedding_job_recovery_authority',
+                    'vestrace_validate_embedding_projection_dependency',
+                    'vestrace_validate_embedding_result_preparation'
+                ])
+            LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
+            END LOOP;
+            REVOKE ALL ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_work(uuid,uuid,text,text,text) FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_work(uuid,uuid,text,text,text) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_finalize_delivery_embedding_outputs(uuid,uuid,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_load_embedding_result_finalization(uuid,uuid,uuid,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_record_embedding_result_key_binding(uuid,uuid,uuid,uuid,bigint,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_publish_embedding_job_result(uuid,uuid,uuid,uuid,uuid,uuid,uuid[],bigint[],bytea[]) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_load_embedding_result_eligibility(uuid,uuid,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_lock_embedding_result_completion_authority(uuid,uuid,uuid,uuid,uuid,uuid,uuid) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_commit_embedding_result_preparation(uuid,uuid,uuid,uuid,uuid,bigint,text,uuid[],bytea[],integer[]) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_lock_embedding_job_recovery_authority(uuid,uuid) TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_executor_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_executor_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_executor_upgrade() TO vestrace;
+    END IF;
+END $embedding_executor_bootstrap$;
+
 SQL

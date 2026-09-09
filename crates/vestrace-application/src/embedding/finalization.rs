@@ -66,6 +66,20 @@ pub enum EmbeddingResultFinalizationProgress {
 }
 #[async_trait]
 pub trait EmbeddingResultFinalizationRepository: Send + Sync {
+    /// Reads the durable ResultPrepared identity for recovery.  An executor may
+    /// resume finalization, but it must not invent a preparation id from the
+    /// job or effect identity.
+    async fn load_preparation_id(
+        &self,
+        _context: &RequestContext,
+        _job_id: EmbeddingJobId,
+        _effect_id: ExternalEffectId,
+    ) -> Result<EmbeddingResultPreparationId, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "embedding result finalization recovery is not configured".into(),
+        ))
+    }
+
     async fn load_progress(
         &self,
         context: &RequestContext,
@@ -178,7 +192,8 @@ impl<R: EmbeddingResultFinalizationRepository, V: MaterialKeyVault, C: Embedding
         authority: &EmbeddingResultFinalizationAuthority,
     ) -> Result<EmbeddingResultPublication, ApplicationError> {
         loop {
-            match self.repository.load_progress(context, authority).await? {
+            let progress = self.repository.load_progress(context, authority).await?;
+            match progress {
                 EmbeddingResultFinalizationProgress::Published(publication) => {
                     validate_publication(&publication, authority)?;
                     return Ok(publication);
@@ -261,6 +276,27 @@ impl<R: EmbeddingResultFinalizationRepository, V: MaterialKeyVault, C: Embedding
                 }
             }
         }
+    }
+
+    pub async fn finalize_recovered(
+        &self,
+        context: &RequestContext,
+        job_id: EmbeddingJobId,
+        effect_id: ExternalEffectId,
+    ) -> Result<EmbeddingResultPublication, ApplicationError> {
+        let preparation_id = self
+            .repository
+            .load_preparation_id(context, job_id, effect_id)
+            .await?;
+        self.finalize(
+            context,
+            &EmbeddingResultFinalizationAuthority {
+                preparation_id,
+                job_id,
+                effect_id,
+            },
+        )
+        .await
     }
 }
 

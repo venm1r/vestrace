@@ -5,14 +5,23 @@
 //! a later migration cannot introduce a state that no Rust match site knows
 //! about.
 
+mod adoption;
 mod generation;
+mod index;
 mod job;
+mod retrieval;
 mod space;
 
+pub use adoption::LegacyAdoptionState;
 pub use generation::{CorpusGeneration, CorpusGenerationState};
+pub use index::{
+    CanonicalGenerationSnapshot, CorpusChangeCause, EmbeddingGenerationError,
+    GenerationMemberRepresentation, IndexBuildAttemptState,
+};
 pub use job::{
     BarrierState, CarryHeaderState, CarryMappingState, EmbeddingJobKind, EmbeddingJobState,
     EmbeddingSpaceTransitionState, TransitionInputOrdinal, TransitionRecipeOrdinal,
     TransitionVersion, UnknownEmbeddingJobKind,
 };
-pub use space::{EmbeddingSpaceKey, EmbeddingSpaceKeyError};
+pub use retrieval::{RetrievalGenerationChangedReason, RetrievalGenerationFence};
+pub use space::{CanonicalEmbeddingSpace, EmbeddingSpaceKey, EmbeddingSpaceKeyError};

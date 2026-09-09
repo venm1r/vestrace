@@ -18,6 +18,7 @@ pub mod embedding_result_finalization_repository;
 pub mod embedding_result_repository;
 pub mod embedding_store;
 pub mod embedding_transition_repository;
+pub mod embedding_work_repository;
 pub mod erasure;
 pub mod event_repository;
 pub mod execution_history_repository;
@@ -95,6 +96,7 @@ pub use embedding_result_finalization_repository::{
 pub use embedding_result_repository::PgEmbeddingResultRepository;
 pub use embedding_store::PgEmbeddingStore;
 pub use embedding_transition_repository::PgEmbeddingTransitionRepository;
+pub use embedding_work_repository::PgEmbeddingWorkRepository;
 pub use erasure::PgMaterialErasureRepository;
 pub use event_repository::PgEventRepository;
 pub use execution_history_repository::PgExecutionHistoryRepository;
@@ -313,3 +315,6 @@ impl GovernedProviderRuntime {
         )
     }
 }
+
+mod embedding_index_repository;
+pub use embedding_index_repository::PgEmbeddingIndexRepository;

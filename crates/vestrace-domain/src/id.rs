@@ -69,6 +69,9 @@ domain_id!(OutboxId);
 domain_id!(EmbeddingSpaceId);
 domain_id!(EmbeddingJobId);
 domain_id!(CorpusGenerationId);
+domain_id!(IndexBuildAttemptId);
+domain_id!(CorpusChangeEventId);
+domain_id!(LegacyAdoptionId);
 domain_id!(TransitionBatchId);
 // Spec line 205: this is "an identity, never a content hash, fingerprint,
 // or digest", which is why it is a v7 UUID like every other identity here

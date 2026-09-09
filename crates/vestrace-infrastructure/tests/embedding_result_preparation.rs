@@ -1263,6 +1263,14 @@ async fn result_preparation_loader_refuses_projection_with_mismatched_policy_lab
     .await
     .unwrap();
     assert_eq!(updated.rows_affected(), 1);
+    owner.commit().await.unwrap();
+
+    let mut owner = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+    scoped(&mut owner, fixture.accepted.context.workspace_id.as_uuid()).await;
     sqlx::query(
         "ALTER TABLE embedding_projection_entries \
          ENABLE TRIGGER embedding_projection_entries_immutable",

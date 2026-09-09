@@ -207,6 +207,71 @@ where
             }
         }
     }
+
+    /// Prepares a fresh provider response using the immutable output-intent
+    /// identities loaded from the accepted result plan.
+    pub async fn prepare_with_generated_identities(
+        &self,
+        context: RequestContext,
+        authority: EmbeddingResultDispatchAuthority,
+        response: GovernedEmbeddingsResponse,
+    ) -> Result<EmbeddingResultPreparationOutcome, ApplicationError> {
+        let eligibility = self
+            .repository
+            .load_eligibility(&context, &authority)
+            .await?;
+        let (preparation_id, plan) = match eligibility {
+            EmbeddingResultEligibility::Existing {
+                preparation_id,
+                plan,
+            } => {
+                let identities = generated_identities(&plan);
+                validate_plan(&authority, &identities, &plan, &response)?;
+                return Ok(EmbeddingResultPreparationOutcome::ConvergedExisting { preparation_id });
+            }
+            EmbeddingResultEligibility::Eligible(plan) => {
+                (EmbeddingResultPreparationId::new(), plan)
+            }
+        };
+        let identities = EmbeddingResultPreparationIdentities {
+            preparation_id,
+            receipt_id: ExternalEffectReceiptId::new(),
+            attachments: plan
+                .outputs
+                .iter()
+                .enumerate()
+                .map(|(ordinal, output)| EmbeddingResultPreparedAttachment {
+                    output_ordinal: ordinal as u64,
+                    intent_id: output.binding.intent_id,
+                    attachment_id: PreparedMaterialAttachmentId::new(),
+                })
+                .collect(),
+        };
+        validate_plan(&authority, &identities, &plan, &response)?;
+        let outputs = seal_outputs(&*self.vault, &*self.sealer, &plan, &identities, response)?;
+        self.repository
+            .commit_prepared(&context, &authority, identities, &plan, outputs)
+            .await
+    }
+}
+
+fn generated_identities(
+    plan: &EmbeddingResultEligibilityPlan,
+) -> EmbeddingResultPreparationIdentities {
+    EmbeddingResultPreparationIdentities {
+        preparation_id: EmbeddingResultPreparationId::new(),
+        receipt_id: ExternalEffectReceiptId::new(),
+        attachments: plan
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(ordinal, output)| EmbeddingResultPreparedAttachment {
+                output_ordinal: ordinal as u64,
+                intent_id: output.binding.intent_id,
+                attachment_id: PreparedMaterialAttachmentId::new(),
+            })
+            .collect(),
+    }
 }
 
 fn validate_plan(

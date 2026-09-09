@@ -289,6 +289,27 @@ async fn load(
 }
 #[async_trait]
 impl EmbeddingResultFinalizationRepository for PgEmbeddingResultFinalizationRepository {
+    async fn load_preparation_id(
+        &self,
+        context: &RequestContext,
+        job_id: vestrace_domain::EmbeddingJobId,
+        effect_id: vestrace_domain::ExternalEffectId,
+    ) -> Result<EmbeddingResultPreparationId, ApplicationError> {
+        let mut permit = self.permit.acquire(PermitMode::Shared, context).await?;
+        let preparation_id: uuid::Uuid = sqlx::query_scalar(
+            "SELECT id FROM embedding_job_result_preparations \
+             WHERE workspace_id=$1 AND job_id=$2 AND external_effect_id=$3",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(job_id.as_uuid())
+        .bind(effect_id.as_uuid())
+        .fetch_one(transaction(permit.unit_of_work_mut())?.connection())
+        .await
+        .map_err(storage)?;
+        permit.commit().await?;
+        Ok(EmbeddingResultPreparationId::from_uuid(preparation_id))
+    }
+
     async fn load_progress(
         &self,
         context: &RequestContext,

@@ -1,29 +1,36 @@
 use crate::CorpusGenerationId;
 
-use super::EmbeddingSpaceKey;
+use super::{EmbeddingGenerationError, EmbeddingSpaceKey};
 
-/// A corpus generation's two states, taken from the spec rather than designed.
-///
-/// Line 207: the builder "CAS-publishes a new-space `Ready` generation only
-/// after the exact bijection holds". Line 219: the finalizer "marks any current
-/// Ready generation for that space `Stale`/not-current". Those are the two
-/// states those lines name, and there is no third.
-///
-/// The edge is one-way. A generation that could return to `Ready` after being
-/// superseded would let a retrieval fenced to it read a corpus the activation
-/// transaction had already replaced.
+/// Durable generation lifecycle; only Ready may be current.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CorpusGenerationState {
     Building,
     Ready,
     Stale,
+    Revoked,
 }
 
 impl CorpusGenerationState {
+    pub const ALL: [Self; 4] = [Self::Building, Self::Ready, Self::Stale, Self::Revoked];
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Building => "building",
+            Self::Ready => "ready",
+            Self::Stale => "stale",
+            Self::Revoked => "revoked",
+        }
+    }
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Revoked)
+    }
+
     pub const fn may_advance_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Building, Self::Ready) | (Self::Ready, Self::Stale)
+            (Self::Building, Self::Ready | Self::Stale | Self::Revoked)
+                | (Self::Ready, Self::Stale | Self::Revoked)
+                | (Self::Stale, Self::Revoked)
         )
     }
 
@@ -32,7 +39,7 @@ impl CorpusGenerationState {
     }
 }
 
-/// One published generation of one space's corpus.
+/// One canonical generation of a space corpus, initially Building.
 ///
 /// `member_count` is the count the activation transaction matched against the
 /// recipe set (line 207): "The target corpus revision, projection/member count,
@@ -48,30 +55,37 @@ pub struct CorpusGeneration {
 }
 
 impl CorpusGeneration {
-    /// A generation is born `Ready` or not at all: line 207 publishes it only
-    /// after the bijection holds, so there is no earlier state to represent.
-    pub const fn publish_ready(
+    /// Construct structural metadata only; durable publication still requires its guard.
+    pub fn building(
         id: CorpusGenerationId,
         space: EmbeddingSpaceKey,
         member_count: u64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, EmbeddingGenerationError> {
+        if !space.is_canonical() {
+            return Err(EmbeddingGenerationError::LegacySpace);
+        }
+        if id.as_uuid().is_nil() {
+            return Err(EmbeddingGenerationError::NilGeneration);
+        }
+        Ok(Self {
             id,
             space,
             member_count,
-            state: CorpusGenerationState::Ready,
-        }
+            state: CorpusGenerationState::Building,
+        })
     }
 
-    /// Supersession is the only mutation, and it is refused rather than ignored
-    /// when the generation is already stale.
-    pub fn mark_stale(&mut self) -> Result<(), CorpusGenerationState> {
-        if self.state.may_advance_to(CorpusGenerationState::Stale) {
-            self.state = CorpusGenerationState::Stale;
-            Ok(())
-        } else {
-            Err(self.state)
+    /// Apply exactly one allowed lifecycle edge, preserving state on refusal.
+    pub fn advance_to(&mut self, next: CorpusGenerationState) -> Result<(), CorpusGenerationState> {
+        if !self.state.may_advance_to(next) {
+            return Err(self.state);
         }
+        self.state = next;
+        Ok(())
+    }
+
+    pub fn mark_stale(&mut self) -> Result<(), CorpusGenerationState> {
+        self.advance_to(CorpusGenerationState::Stale)
     }
 
     pub const fn id(&self) -> CorpusGenerationId {

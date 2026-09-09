@@ -256,3 +256,32 @@ async fn runtime_cannot_execute_embedding_pre_dispatch_gate_directly(pool: PgPoo
     );
     runtime.close().await;
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn canonical_authority_fields_refuse_every_runtime_write(pool: PgPool) {
+    let runtime = runtime_pool(&pool).await;
+    for statement in [
+        "INSERT INTO embedding_index_generation_guards(workspace_id,space_registration_id,current_generation_id,guard_version) VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),1)",
+        "UPDATE embedding_index_generation_guards SET current_generation_id=gen_random_uuid(),guard_version=guard_version+1",
+        "DELETE FROM embedding_index_generation_guards",
+        "INSERT INTO model_qualification_heads(workspace_id,model_revision_id,current_qualification_revision_id,active_space_registration_id,version) VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),1)",
+        "UPDATE model_qualification_heads SET active_space_registration_id=gen_random_uuid()",
+        "DELETE FROM model_qualification_heads",
+        "INSERT INTO embedding_corpus_generation_members(workspace_id,corpus_generation_id,legacy_embedding_id) VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid())",
+        "INSERT INTO embedding_corpus_generation_members(workspace_id,corpus_generation_id,embedding_projection_entry_id) VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid())",
+        "UPDATE embedding_corpus_generation_members SET embedding_projection_entry_id=gen_random_uuid(),legacy_embedding_id=NULL,memory_embedding_id=NULL",
+        "DELETE FROM embedding_corpus_generation_members",
+        "INSERT INTO memory_embeddings(id,memory_id,workspace_id,space_id) VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid())",
+        "UPDATE memory_embeddings SET embedding='[0,1]'::vector",
+        "DELETE FROM memory_embeddings",
+    ] {
+        let mut tx = runtime.begin().await.unwrap();
+        let error = sqlx::query(statement).execute(&mut *tx).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("42501"),
+            "{statement}: {error}"
+        );
+        tx.rollback().await.unwrap();
+    }
+}

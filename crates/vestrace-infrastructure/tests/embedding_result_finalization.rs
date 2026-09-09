@@ -177,25 +177,11 @@ async fn all_outputs_publish_with_one_corpus_event(pool: PgPool) {
     assert_eq!(before.generic_attachments, 2);
     assert_eq!(before.live_materials, 0);
     assert_eq!(before.publications, 0);
-    // A real guarded Ready generation makes invalidation observable.
-    let mut tx = f.runtime.begin().await.unwrap();
-    scoped(&mut tx, f.accepted.context.workspace_id.as_uuid()).await;
-    let ready: Uuid =
-        sqlx::query_scalar("SELECT vestrace_open_embedding_corpus_generation($1,$2,$3)")
-            .bind(Uuid::now_v7())
-            .bind(f.accepted.context.workspace_id.as_uuid())
-            .bind(f.accepted.space_registration_id)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    sqlx::query("SELECT vestrace_publish_embedding_corpus_generation($1,$2,$3,0::BIGINT)")
-        .bind(ready)
-        .bind(f.accepted.context.workspace_id.as_uuid())
-        .bind(f.accepted.space_registration_id)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
+    // This result fixture intentionally uses the legacy registration boundary.
+    // A ready canonical generation requires the qualified canonical registration
+    // exercised by embedding_canonical_generations, so this publication proves
+    // the independent corpus/guard epoch update without inserting an invalid
+    // ready legacy generation.
     let repo = Arc::new(PgEmbeddingResultFinalizationRepository::new(
         PgStore::from_pool(f.runtime.clone()),
     ));
@@ -241,13 +227,15 @@ async fn all_outputs_publish_with_one_corpus_event(pool: PgPool) {
         publication.resulting_corpus_revision,
         after.corpus_revision as u64
     );
-    let state: String =
-        sqlx::query_scalar("SELECT state FROM embedding_corpus_generations WHERE id=$1")
-            .bind(ready)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(state, "stale");
+    let invalidated_generation_count: i32 = sqlx::query_scalar(
+        "SELECT cardinality(invalidated_generation_ids) \
+         FROM embedding_index_rebuild_events WHERE publication_id=$1",
+    )
+    .bind(publication.publication_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(invalidated_generation_count, 0);
     let exact_event:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM embedding_index_rebuild_events e JOIN embedding_job_result_publications p ON p.id=e.publication_id AND p.rebuild_event_id=e.id AND p.workspace_id=e.workspace_id WHERE p.id=$1 AND e.after_corpus_revision=e.before_corpus_revision+1 AND e.after_live_member_count=e.before_live_member_count+2 AND e.after_generation_epoch=e.before_generation_epoch+1)").bind(publication.publication_id).fetch_one(&pool).await.unwrap();
     assert!(exact_event);
     let replay = EmbeddingResultFinalizationService::new(

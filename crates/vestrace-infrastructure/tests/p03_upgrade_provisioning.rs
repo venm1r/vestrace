@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 97] = [
+const EXPECTED_GUARDED_TABLES: [&str; 100] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -83,6 +83,7 @@ const EXPECTED_GUARDED_TABLES: [&str; 97] = [
     "embedding_space_registrations",
     "embedding_corpus_generations",
     "embedding_corpus_generation_members",
+    "memory_embeddings",
     "embedding_jobs",
     "embedding_job_material_intents",
     "embedding_job_termination_receipts",
@@ -103,6 +104,8 @@ const EXPECTED_GUARDED_TABLES: [&str; 97] = [
     "embedding_result_key_binding_receipts",
     "embedding_job_result_publications",
     "embedding_index_rebuild_events",
+    "embedding_index_build_attempts",
+    "embedding_index_build_observations",
     "embedding_transition_plan_recipes",
     "embedding_transition_plans",
     "embedding_transitions",
@@ -262,6 +265,26 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
     .await
     .unwrap();
     let mut expected_guarded: BTreeSet<String> = EXPECTED_GUARDED_TABLES.map(str::to_owned).into();
+    let canonical_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=197 AND success)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if !canonical_applied {
+        expected_guarded.remove("memory_embeddings");
+    }
+    let index_builds_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=198 AND success)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if !index_builds_applied {
+        expected_guarded.remove("embedding_index_build_attempts");
+        expected_guarded.remove("embedding_index_build_observations");
+    }
+
     if !output_key_migration_applied {
         for table in [
             "embedding_delivery_acceptance_receipts",
@@ -1791,7 +1814,19 @@ async fn existing_0195_runtime_erasure_upgrade_changes_only_two_function_owners(
         .fetch_all(&pool)
         .await
         .unwrap();
-    MIGRATOR.run(&runtime).await.unwrap();
+    Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 196)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    }
+    .run(&runtime)
+    .await
+    .unwrap();
     let after: Vec<(String, String, String, bool, bool)> = sqlx::query_as(inventory_query)
         .fetch_all(&pool)
         .await
@@ -1813,7 +1848,19 @@ async fn existing_0195_runtime_erasure_upgrade_changes_only_two_function_owners(
                 .unwrap();
         assert!(!executable, "one-shot bridge must close: {name}");
     }
-    MIGRATOR.run(&runtime).await.unwrap();
+    Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 196)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    }
+    .run(&runtime)
+    .await
+    .unwrap();
     sqlx::raw_sql(provisioner_sql_from(
         "-- P02 migrations run as the runtime role",
     ))

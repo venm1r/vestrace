@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -88,7 +88,7 @@ test('P04 dispatch verifies its own scope and still rejects a protected mutation
   verifierFixture({
     changePaths: changeScopePaths,
     label: 'P04',
-    preflightPath: 'docs/development-evidence/v1-g0-04-preflight.json',
+    preflightPath: 'docs/development-evidence/v1-g0-04c-preflight.json',
     protectedPaths: protectedAuthorityPaths,
     scope: 'p04-scope.mjs',
   });
@@ -102,7 +102,7 @@ test('P04 refuses a mutation of the baseline verifier itself', () => {
     changePaths: changeScopePaths,
     label: 'P04-verifier',
     mutate: 'scripts/verify-dirty-baseline.mjs',
-    preflightPath: 'docs/development-evidence/v1-g0-04-preflight.json',
+    preflightPath: 'docs/development-evidence/v1-g0-04c-preflight.json',
     protectedPaths: protectedAuthorityPaths,
     scope: 'p04-scope.mjs',
   });
@@ -123,16 +123,10 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
-  // 52 frozen by Task 1, plus six recorded amendments: id.rs (1), the
-  // cross-package coupling Task 3 exposed (32), the admission publisher (4),
-  // the two files that publisher's route mechanically requires (2), the one
-  // file the shared dispatch trait can be implemented in (1), and the shared
-  // test fixture two suites would otherwise duplicate (1). A literal is the
-  // point: scope that grows without an amendment fails here.
-  // Task 14B adds only the explicitly authorized forward migration 0192.
-  // Task 14C adds the six explicitly authorized output-key preparation paths.
-  // Task 14E adds the five explicitly approved finalization paths (2026-09-08).
-  assert.equal(changeScopePaths.length, 127);
+  // Completion contract: exactly 113 task paths; no historical write permissions.
+  // 111 frozen by Task 1, plus the two-path Task 5 amendment that lets the
+  // shared output-key authority accept rebuild as well as delivery.
+  assert.equal(changeScopePaths.length, 113);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -156,26 +150,161 @@ test('P04 protects the baseline verifier and every accepted predecessor authorit
   }
 });
 
-test('P04 declares every path its plan names as a task file', () => {
-  for (const path of [
+test('P04 completion scope is exactly the approved literal task paths', () => {
+  assert.deepEqual(changeScopePaths, [
+    'crates/vestrace-application/src/connections.rs',
+    'crates/vestrace-application/src/embedding/adoption.rs',
     'crates/vestrace-application/src/embedding/barrier.rs',
     'crates/vestrace-application/src/embedding/carry.rs',
+    'crates/vestrace-application/src/embedding/erasure.rs',
+    'crates/vestrace-application/src/embedding/executor.rs',
+    'crates/vestrace-application/src/embedding/finalization.rs',
+    'crates/vestrace-application/src/embedding/index.rs',
+    'crates/vestrace-application/src/embedding/job.rs',
     'crates/vestrace-application/src/embedding/keys.rs',
-    'crates/vestrace-application/src/material/vault.rs',
+    'crates/vestrace-application/src/embedding/mod.rs',
+    'crates/vestrace-application/src/embedding/result.rs',
+    'crates/vestrace-application/src/embedding/retrieval.rs',
     'crates/vestrace-application/src/embedding/transition.rs',
+    'crates/vestrace-application/src/embedding/transition_coordinator.rs',
+    'crates/vestrace-application/src/embedding/work.rs',
+    'crates/vestrace-application/src/material/erasure.rs',
     'crates/vestrace-application/src/retrieval/ports.rs',
+    'crates/vestrace-application/src/retrieval/request.rs',
+    'crates/vestrace-application/src/retrieval/service.rs',
+    'crates/vestrace-cli/src/commands/mcp.rs',
+    'crates/vestrace-cli/src/commands/rebuild.rs',
+    'crates/vestrace-cli/src/commands/schema.rs',
+    'crates/vestrace-cli/src/commands/server.rs',
+    'crates/vestrace-cli/src/commands/worker.rs',
+    'crates/vestrace-cli/src/main.rs',
+    'crates/vestrace-cli/tests/embedding_worker_once.rs',
+    'crates/vestrace-cli/tests/provider_openapi_contract.rs',
+    'crates/vestrace-cli/tests/provider_runtime_wiring.rs',
+    'crates/vestrace-cli/tests/worker_once_cli.rs',
+    'crates/vestrace-domain/src/embedding/adoption.rs',
+    'crates/vestrace-domain/src/embedding/generation.rs',
+    'crates/vestrace-domain/src/embedding/index.rs',
+    'crates/vestrace-domain/src/embedding/job.rs',
+    'crates/vestrace-domain/src/embedding/mod.rs',
+    'crates/vestrace-domain/src/embedding/retrieval.rs',
     'crates/vestrace-domain/src/embedding/space.rs',
-    'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
-    'crates/vestrace-infrastructure/src/crypto/material_vault.rs',
+    'crates/vestrace-domain/src/id.rs',
+    'crates/vestrace-domain/tests/embedding_contract.rs',
+    'crates/vestrace-fault-scenario/src/child.rs',
+    'crates/vestrace-fault-scenario/src/main.rs',
+    'crates/vestrace-fault-scenario/src/report.rs',
+    'crates/vestrace-fault-scenario/src/scenarios/embedding_worker_completion_crash.rs',
+    'crates/vestrace-fault-scenario/src/settings.rs',
+    'crates/vestrace-http/src/api/embedding_jobs.rs',
+    'crates/vestrace-http/src/api/mod.rs',
+    'crates/vestrace-http/src/api/models.rs',
+    'crates/vestrace-http/src/health.rs',
+    'crates/vestrace-http/src/route_inventory.rs',
+    'crates/vestrace-http/src/router.rs',
+    'crates/vestrace-http/tests/embedding_retrieval_routes.rs',
+    'crates/vestrace-http/tests/route_inventory_is_exhaustive.rs',
+    'crates/vestrace-infrastructure/src/config.rs',
+    'crates/vestrace-infrastructure/src/embedding_index/flat.rs',
+    'crates/vestrace-infrastructure/src/embedding_index/mod.rs',
+    'crates/vestrace-infrastructure/src/embedding_index/registry.rs',
+    'crates/vestrace-infrastructure/src/lib.rs',
+    'crates/vestrace-infrastructure/src/postgres/credential_activation.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_adoption_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_erasure_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_index_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs',
-    'crates/vestrace-infrastructure/tests/embedding_output_keys.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_result_finalization_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_result_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_retrieval_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_store.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_work_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/erasure.rs',
+    'crates/vestrace-infrastructure/src/postgres/mod.rs',
+    'crates/vestrace-infrastructure/src/postgres/model_binding_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/vector_retriever.rs',
+    'crates/vestrace-infrastructure/tests/credential_activation.rs',
+    'crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs',
+    'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
+    'crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs',
+    'crates/vestrace-infrastructure/tests/embedding_erasure_propagation.rs',
+    'crates/vestrace-infrastructure/tests/embedding_executor.rs',
+    'crates/vestrace-infrastructure/tests/embedding_index_builds.rs',
+    'crates/vestrace-infrastructure/tests/embedding_legacy_adoption.rs',
+    'crates/vestrace-infrastructure/tests/embedding_result_finalization.rs',
+    'crates/vestrace-infrastructure/tests/embedding_result_preparation.rs',
+    'crates/vestrace-infrastructure/tests/embedding_retrieval_results.rs',
+    'crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs',
+    'crates/vestrace-infrastructure/tests/embedding_schema_contract.rs',
+    'crates/vestrace-infrastructure/tests/embedding_transition_activation.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs',
+    'crates/vestrace-infrastructure/tests/embedding_transition_planning.rs',
+    'crates/vestrace-infrastructure/tests/embedding_worker_restart.rs',
+    'crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs',
     'crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs',
-    'migrations/0187_embedding_jobs_and_corpus_generations.sql',
-    'migrations/0190_embedding_transition_barriers.sql',
-    'migrations/0193_embedding_output_key_preparation.sql',
+    'crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs',
+    'crates/vestrace-mcp/src/server.rs',
+    'crates/vestrace-mcp/tests/embedding_retrieval.rs',
+    'docker/postgres/init-runtime-role.sh',
+    'docs/development-evidence/v1-g0-04-embedding-transition-foundation.md',
+    'docs/development-evidence/v1-g0-04c-preflight.json',
+    'docs/superpowers/plans/2026-09-08-vestrace-v1-g0-04-completion.md',
+    'docs/superpowers/specs/2026-09-08-vestrace-v1-g0-04-completion-design.md',
+    'migrations/0197_embedding_canonical_generations.sql',
+    'migrations/0198_embedding_index_builds.sql',
+    'migrations/0199_embedding_executor_work.sql',
+    'migrations/0200_embedding_transition_execution.sql',
+    'migrations/0201_embedding_transition_activation.sql',
+    'migrations/0202_embedding_retrieval_results.sql',
+    'migrations/0203_embedding_erasure_propagation.sql',
+    'migrations/0204_embedding_legacy_adoption.sql',
+    'scripts/p04-scope.mjs',
     'tests/embedding_fault_scenario_e2e.rs',
-  ]) {
-    assert.ok(changeScopePaths.includes(path), `expected in change scope: ${path}`);
+    'tests/p04_scope.test.mjs',
+  ]);
+  assert.deepEqual(protectedAuthorityPaths, [
+    'crates/vestrace-http/src/api/memory.rs',
+    'crates/vestrace-http/src/api/retrieval.rs',
+    'docs/development-evidence/v1-g0-01-preflight.json',
+    'docs/development-evidence/v1-g0-01-protocol-lock.md',
+    'docs/development-evidence/v1-g0-02-preflight.json',
+    'docs/development-evidence/v1-g0-02-security-material-foundation.md',
+    'docs/development-evidence/v1-g0-03-preflight.json',
+    'docs/development-evidence/v1-g0-03-provider-execution-foundation.md',
+    'docs/external-corpus/vestrace-docss-2026-08-19.manifest.json',
+    'docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md',
+    'docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md',
+    'docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md',
+    'docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md',
+    'docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md',
+    'docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md',
+    'schemas/openai-compatible/openai-chat-completions-v1-q1.json',
+    'schemas/protocol-lock.json',
+    'scripts/p03-scope.mjs',
+    'scripts/protocol-lock.mjs',
+    'scripts/protocol-provenance.mjs',
+    'scripts/verify-dirty-baseline.mjs',
+    'tests/fixtures/openai-q1/marker.png',
+    'tests/p03_scope.test.mjs',
+  ]);
+});
+
+test('P04 completion preserves all 126 historical migrations through 0196', () => {
+  const preflight = JSON.parse(readFileSync('docs/development-evidence/v1-g0-04c-preflight.json', 'utf8'));
+  const migrations = readdirSync('migrations').filter((name) => /^\d{4}_.*\.sql$/.test(name) && Number(name.slice(0, 4)) <= 196).sort();
+  assert.equal(migrations.length, 126);
+  assert.equal(migrations.at(-1), '0196_retired_credential_erasure.sql');
+  for (const name of migrations) {
+    const path = `migrations/${name}`;
+    assert.equal(changeScopePaths.includes(path), false, `historical migration writable: ${path}`);
+    const digest = preflight.protected_authority_digests.find((entry) => entry.path === path);
+    assert.ok(digest, `missing historical digest: ${path}`);
+    const bytes = readFileSync(path);
+    assert.equal(bytes.length, digest.bytes, path);
+    assert.equal(sha256(bytes), digest.sha256, path);
   }
 });

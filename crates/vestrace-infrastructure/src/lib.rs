@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod crypto;
+pub mod embedding_index;
 mod error;
 mod http_read_back;
 pub mod openai_q1;

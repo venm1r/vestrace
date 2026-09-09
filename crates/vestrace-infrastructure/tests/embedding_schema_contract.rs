@@ -510,8 +510,10 @@ async fn the_job_kind_check_matches_the_declared_enum(pool: PgPool) {
 /// Spec line 219: the finalizer marks any current Ready generation stale as it
 /// publishes the next. The schema, not the finalizer, is what makes two Ready
 /// generations impossible.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrations = false)]
 async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
+    common::result_preparation_fixture::provision_result_behavior_database_through(&pool, 196)
+        .await;
     let (workspace_id, principal_id) = workspace(&pool).await;
     let registration = Uuid::now_v7();
     let space_id = Uuid::now_v7();
@@ -757,6 +759,7 @@ async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
 async fn embedding_output_membership_reservation_is_exact_and_replayable(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    restore_canonical_legacy_quarantine(&pool).await;
     let workspace_id = fixture.context.workspace_id.as_uuid();
     let job_id = fixture.job_id.as_uuid();
     let intent_id = Uuid::now_v7();
@@ -919,6 +922,7 @@ async fn embedding_output_membership_deferred_validator_rejects_orphans_and_mism
 ) {
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    restore_canonical_legacy_quarantine(&pool).await;
     let workspace_id = fixture.context.workspace_id.as_uuid();
     let principal_id = fixture.context.principal_id.as_uuid();
     let job_id = fixture.job_id.as_uuid();
@@ -1003,6 +1007,7 @@ async fn embedding_output_membership_deferred_validator_rejects_orphans_and_mism
 async fn only_a_witnessed_abandoned_output_member_allows_pre_dispatch_termination(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    restore_canonical_legacy_quarantine(&pool).await;
     let workspace_id = fixture.context.workspace_id.as_uuid();
     let principal_id = fixture.context.principal_id.as_uuid();
     let job_id = fixture.job_id.as_uuid();
@@ -1159,6 +1164,7 @@ async fn enrollment_and_termination_serialize_on_the_embedding_job_lock_chain(po
     // wait, then inspect the committed active member and refuse.
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    restore_canonical_legacy_quarantine(&pool).await;
     let workspace_id = fixture.context.workspace_id.as_uuid();
     let principal_id = fixture.context.principal_id.as_uuid();
     let job_id = fixture.job_id.as_uuid();
@@ -1248,6 +1254,7 @@ async fn enrollment_and_termination_serialize_on_the_embedding_job_lock_chain(po
     // waits, then sees a persisted terminal job and leaves no output facts.
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
+    restore_canonical_legacy_quarantine(&pool).await;
     let workspace_id = fixture.context.workspace_id.as_uuid();
     let principal_id = fixture.context.principal_id.as_uuid();
     let job_id = fixture.job_id.as_uuid();
@@ -1409,4 +1416,14 @@ async fn result_finalization_runtime_inventory_preserves_prior_acl_and_closes_ne
                 .unwrap();
         assert!(previous, "preexisting REFERENCES must survive0195: {table}");
     }
+}
+
+// The shared historical fixture still mirrors the pre-0197 ownership. Restore
+// the exact production quarantine locally; no runtime authority is introduced.
+async fn restore_canonical_legacy_quarantine(pool: &PgPool) {
+    sqlx::raw_sql("ALTER TABLE public.memory_embeddings OWNER TO vestrace_guarded_owner; ALTER TABLE public.memory_embeddings ENABLE ROW LEVEL SECURITY; ALTER TABLE public.memory_embeddings FORCE ROW LEVEL SECURITY; REVOKE ALL ON TABLE public.memory_embeddings FROM PUBLIC,vestrace;")
+        .execute(pool).await.unwrap();
+    let can_write: bool=sqlx::query_scalar("SELECT has_table_privilege('vestrace','memory_embeddings','INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')")
+        .fetch_one(pool).await.unwrap();
+    assert!(!can_write);
 }

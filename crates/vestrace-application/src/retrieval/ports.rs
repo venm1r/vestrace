@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use vestrace_domain::embedding::EmbeddingSpaceKey;
+use vestrace_domain::embedding::{CanonicalGenerationSnapshot, EmbeddingSpaceKey};
 use vestrace_domain::retrieval::{HydratedRevision, RevisionRef};
 use vestrace_domain::{CorpusGenerationId, RetrievalCandidate, WorkspaceId, id::RetrievalRunId};
 
@@ -15,6 +15,17 @@ pub struct ResolvedCorpusGeneration {
 
 #[async_trait]
 pub trait CorpusGenerationResolver: Send + Sync {
+    async fn resolve_canonical(
+        &self,
+        _context: &RequestContext,
+        _space_name: &str,
+        _model: &str,
+    ) -> Result<CanonicalGenerationSnapshot, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "embedding-canonical-generation-required".into(),
+        ))
+    }
+
     async fn resolve(
         &self,
         context: &RequestContext,

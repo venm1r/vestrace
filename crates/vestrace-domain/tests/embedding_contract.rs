@@ -313,7 +313,7 @@ fn a_requested_job_may_fail_definitely_before_dispatch() {
 
 /// Spec line 207: a Ready generation is CAS-published, and line 219: the
 /// finalizer "marks any current Ready generation for that space Stale/not
-/// current". Ready and Stale are the two states those lines name.
+/// current". Completion adds Building and terminal Revoked without reopening Stale.
 #[test]
 fn a_generation_goes_ready_then_stale_and_never_back() {
     use CorpusGenerationState::*;
@@ -337,4 +337,368 @@ fn the_space_key_exposes_its_tuple_without_being_constructible_from_input() {
     assert!(!key.model().is_empty());
     assert!(!key.name().is_empty());
     assert_eq!(key.dimensions(), 768);
+}
+
+use vestrace_domain::embedding::{
+    CanonicalEmbeddingSpace, CanonicalGenerationSnapshot, CorpusChangeCause,
+    GenerationMemberRepresentation, IndexBuildAttemptState, LegacyAdoptionState,
+    RetrievalGenerationChangedReason, RetrievalGenerationFence,
+};
+use vestrace_domain::{
+    CorpusChangeEventId, CorpusGenerationId, EmbeddingJobId, IndexBuildAttemptId, LegacyAdoptionId,
+    ModelQualificationRevisionId, ModelRevisionId, RetrievalRunId,
+};
+
+fn canonical_tuple() -> CanonicalEmbeddingSpace {
+    CanonicalEmbeddingSpace {
+        model_revision_id: ModelRevisionId::new(),
+        model_qualification_revision_id: ModelQualificationRevisionId::new(),
+        adapter_profile_revision: "openai-embeddings-v1".into(),
+        request_shape_revision_id: uuid::Uuid::now_v7(),
+        returned_model: "model-a".into(),
+        encoding_format: "float".into(),
+        dimensions: 3,
+    }
+}
+
+fn canonical_snapshot() -> CanonicalGenerationSnapshot {
+    let key =
+        EmbeddingSpaceKey::canonical(WorkspaceId::new(), "canonical", canonical_tuple()).unwrap();
+    CanonicalGenerationSnapshot::new(key, CorpusGenerationId::new(), 2, 7, 4, 8, 2).unwrap()
+}
+
+#[test]
+fn completion_sql_vocabularies_are_exact_and_closed() {
+    assert_eq!(
+        GenerationMemberRepresentation::ALL.map(GenerationMemberRepresentation::as_str),
+        ["legacy_upgrade", "encrypted_projection"]
+    );
+    assert_eq!(
+        CorpusGenerationState::ALL.map(CorpusGenerationState::as_str),
+        ["building", "ready", "stale", "revoked"]
+    );
+    assert_eq!(
+        IndexBuildAttemptState::ALL.map(IndexBuildAttemptState::as_str),
+        [
+            "claimed",
+            "building",
+            "published",
+            "loaded",
+            "discarded",
+            "failed"
+        ]
+    );
+    assert_eq!(
+        CorpusChangeCause::ALL.map(CorpusChangeCause::as_str),
+        [
+            "result_publication",
+            "material_erasure",
+            "transition_publication",
+            "legacy_cutover",
+            "operator_rebuild"
+        ]
+    );
+    assert_eq!(
+        LegacyAdoptionState::ALL.map(LegacyAdoptionState::as_str),
+        [
+            "planned",
+            "rebuilding",
+            "ready_to_cutover",
+            "completed",
+            "failed"
+        ]
+    );
+    assert_eq!(
+        RetrievalGenerationChangedReason::ALL.map(RetrievalGenerationChangedReason::as_str),
+        [
+            "stale",
+            "revoked",
+            "replaced",
+            "corpus_changed",
+            "member_unavailable"
+        ]
+    );
+}
+
+#[test]
+fn revoked_generation_is_terminal_and_not_current() {
+    use CorpusGenerationState::*;
+    let edges = [
+        (Building, Ready),
+        (Building, Stale),
+        (Building, Revoked),
+        (Ready, Stale),
+        (Ready, Revoked),
+        (Stale, Revoked),
+    ];
+    for from in CorpusGenerationState::ALL {
+        for to in CorpusGenerationState::ALL {
+            assert_eq!(from.may_advance_to(to), edges.contains(&(from, to)));
+        }
+    }
+    assert!(Revoked.is_terminal());
+    assert!(!Revoked.is_current());
+}
+
+#[test]
+fn build_and_adoption_lifecycles_never_reopen_terminal_outcomes() {
+    use IndexBuildAttemptState::*;
+    let edges = [
+        (Claimed, Building),
+        (Claimed, Failed),
+        (Claimed, Discarded),
+        (Building, Published),
+        (Building, Loaded),
+        (Building, Failed),
+        (Building, Discarded),
+    ];
+    for from in IndexBuildAttemptState::ALL {
+        assert_eq!(
+            from.is_terminal(),
+            matches!(from, Published | Loaded | Discarded | Failed)
+        );
+        for to in IndexBuildAttemptState::ALL {
+            assert_eq!(from.may_advance_to(to), edges.contains(&(from, to)));
+        }
+    }
+    use LegacyAdoptionState as A;
+    let edges = [
+        (A::Planned, A::Rebuilding),
+        (A::Planned, A::Failed),
+        (A::Rebuilding, A::ReadyToCutover),
+        (A::Rebuilding, A::Failed),
+        (A::ReadyToCutover, A::Completed),
+        (A::ReadyToCutover, A::Failed),
+    ];
+    for from in A::ALL {
+        assert_eq!(from.is_terminal(), matches!(from, A::Completed | A::Failed));
+        for to in A::ALL {
+            assert_eq!(from.may_advance_to(to), edges.contains(&(from, to)));
+        }
+    }
+}
+
+#[test]
+fn legacy_compatibility_keys_cannot_become_canonical_snapshots() {
+    let workspace = WorkspaceId::new();
+    let legacy = EmbeddingSpaceKey::legacy_upgrade(workspace, "legacy", "model", 3).unwrap();
+    assert_eq!(
+        legacy,
+        EmbeddingSpaceKey::new(workspace, "legacy", "model", 3).unwrap()
+    );
+    assert!(!legacy.is_canonical());
+    assert!(
+        CanonicalGenerationSnapshot::new(legacy, CorpusGenerationId::new(), 1, 1, 0, 0, 0).is_err()
+    );
+}
+
+#[test]
+fn canonical_identity_compares_every_structural_pin() {
+    let workspace = WorkspaceId::new();
+    let tuple = canonical_tuple();
+    let base = EmbeddingSpaceKey::canonical(workspace, "space", tuple.clone()).unwrap();
+    assert!(base.is_canonical());
+    assert_eq!(base.canonical_identity(), Some(&tuple));
+    let mut variants = Vec::new();
+    let mut t = tuple.clone();
+    t.model_revision_id = ModelRevisionId::new();
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.model_qualification_revision_id = ModelQualificationRevisionId::new();
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.adapter_profile_revision.push('2');
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.request_shape_revision_id = uuid::Uuid::now_v7();
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.returned_model.push('2');
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.encoding_format = "base64".into();
+    variants.push(t);
+    let mut t = tuple.clone();
+    t.dimensions = 4;
+    variants.push(t);
+    for variant in variants {
+        assert_ne!(
+            base,
+            EmbeddingSpaceKey::canonical(workspace, "space", variant).unwrap()
+        );
+    }
+    assert_ne!(
+        base,
+        EmbeddingSpaceKey::canonical(WorkspaceId::new(), "space", tuple.clone()).unwrap()
+    );
+    assert_ne!(
+        base,
+        EmbeddingSpaceKey::canonical(workspace, "other", tuple).unwrap()
+    );
+    assert!(base.validate_dimensions(4).is_err());
+    assert!(base.validate_dimensions(3).is_ok());
+}
+
+#[test]
+fn incomplete_canonical_pins_are_refused() {
+    let tuple = canonical_tuple();
+    let mut invalid = Vec::new();
+    let mut t = tuple.clone();
+    t.model_revision_id = ModelRevisionId::from_uuid(uuid::Uuid::nil());
+    invalid.push(t);
+    let mut t = tuple.clone();
+    t.model_qualification_revision_id = ModelQualificationRevisionId::from_uuid(uuid::Uuid::nil());
+    invalid.push(t);
+    let mut t = tuple.clone();
+    t.request_shape_revision_id = uuid::Uuid::nil();
+    invalid.push(t);
+    let mut t = tuple.clone();
+    t.adapter_profile_revision = " ".into();
+    invalid.push(t);
+    let mut t = tuple.clone();
+    t.returned_model = " ".into();
+    invalid.push(t);
+    let mut t = tuple.clone();
+    t.encoding_format = " ".into();
+    invalid.push(t);
+    let mut t = tuple;
+    t.dimensions = 0;
+    invalid.push(t);
+    for tuple in invalid {
+        assert!(EmbeddingSpaceKey::canonical(WorkspaceId::new(), "space", tuple).is_err());
+    }
+}
+
+#[test]
+fn canonical_snapshots_validate_even_after_public_field_mutation() {
+    let snapshot = canonical_snapshot();
+    assert!(snapshot.validate().is_ok());
+    let mut invalid = snapshot.clone();
+    invalid.generation_epoch = 0;
+    assert!(invalid.validate().is_err());
+    let mut invalid = snapshot.clone();
+    invalid.guard_version = 0;
+    assert!(invalid.validate().is_err());
+    let mut invalid = snapshot.clone();
+    invalid.workspace_id = WorkspaceId::new();
+    assert!(invalid.validate().is_err());
+    let mut invalid = snapshot.clone();
+    invalid.generation_id = CorpusGenerationId::from_uuid(uuid::Uuid::nil());
+    assert!(invalid.validate().is_err());
+    let mut invalid = snapshot.clone();
+    invalid.space = space();
+    assert!(invalid.validate().is_err());
+    assert!(
+        CanonicalGenerationSnapshot::new(
+            snapshot.space.clone(),
+            snapshot.generation_id,
+            0,
+            7,
+            4,
+            8,
+            2
+        )
+        .is_err()
+    );
+    assert!(
+        CanonicalGenerationSnapshot::new(
+            snapshot.space.clone(),
+            snapshot.generation_id,
+            2,
+            0,
+            4,
+            8,
+            2
+        )
+        .is_err()
+    );
+    assert!(
+        CanonicalGenerationSnapshot::new(snapshot.space, snapshot.generation_id, 1, 1, 0, 0, 0)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_retrieval_fence_carries_the_complete_generation_snapshot() {
+    let snapshot = canonical_snapshot();
+    let job = EmbeddingJobId::new();
+    let request = RetrievalRunId::new();
+    let fence = RetrievalGenerationFence::new(job, request, snapshot.clone()).unwrap();
+    assert_eq!(fence.snapshot, snapshot);
+    assert_eq!(fence.job_id, job);
+    assert_eq!(fence.request_id, request);
+    assert_eq!(fence.snapshot.member_count, 2);
+    assert_eq!(fence.snapshot.guard_version, 7);
+    assert!(
+        RetrievalGenerationFence::new(
+            EmbeddingJobId::from_uuid(uuid::Uuid::nil()),
+            request,
+            snapshot.clone()
+        )
+        .is_err()
+    );
+    let mut invalid = snapshot;
+    invalid.guard_version = 0;
+    assert!(RetrievalGenerationFence::new(job, request, invalid).is_err());
+}
+
+#[test]
+fn completion_ids_use_existing_uuid_identity_conventions() {
+    let build = IndexBuildAttemptId::new();
+    let event = CorpusChangeEventId::new();
+    let adoption = LegacyAdoptionId::new();
+    assert_eq!(
+        build.to_string().parse::<IndexBuildAttemptId>().unwrap(),
+        build
+    );
+    assert_eq!(
+        event.to_string().parse::<CorpusChangeEventId>().unwrap(),
+        event
+    );
+    assert_eq!(
+        adoption.to_string().parse::<LegacyAdoptionId>().unwrap(),
+        adoption
+    );
+    assert_ne!(build.as_uuid(), event.as_uuid());
+    assert_ne!(event.as_uuid(), adoption.as_uuid());
+}
+
+#[test]
+fn corpus_generation_is_canonical_and_follows_the_checked_lifecycle() {
+    use CorpusGenerationState::*;
+    use vestrace_domain::embedding::{CorpusGeneration, EmbeddingGenerationError};
+    let key = canonical_snapshot().space;
+    assert_eq!(
+        CorpusGeneration::building(CorpusGenerationId::new(), space(), 2),
+        Err(EmbeddingGenerationError::LegacySpace)
+    );
+    assert_eq!(
+        CorpusGeneration::building(
+            CorpusGenerationId::from_uuid(uuid::Uuid::nil()),
+            key.clone(),
+            2
+        ),
+        Err(EmbeddingGenerationError::NilGeneration)
+    );
+    let id = CorpusGenerationId::new();
+    let mut generation = CorpusGeneration::building(id, key.clone(), 2).unwrap();
+    assert_eq!(generation.id(), id);
+    assert_eq!(generation.space(), &key);
+    assert_eq!(generation.member_count(), 2);
+    assert_eq!(generation.state(), Building);
+    for state in [Building, Ready, Stale, Revoked] {
+        assert_eq!(generation.state(), state);
+        for next in CorpusGenerationState::ALL {
+            let mut candidate = generation.clone();
+            let result = candidate.advance_to(next);
+            assert_eq!(result.is_ok(), state.may_advance_to(next));
+            assert_eq!(candidate.state(), if result.is_ok() { next } else { state });
+        }
+        match state {
+            Building => generation.advance_to(Ready).unwrap(),
+            Ready => generation.mark_stale().unwrap(),
+            Stale => generation.advance_to(Revoked).unwrap(),
+            Revoked => {}
+        }
+    }
 }

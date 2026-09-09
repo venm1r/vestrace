@@ -28,7 +28,7 @@ pub struct DeliveryOutputIdentity {
 pub struct AcceptDeliveryOutputs {
     pub receipt_id: uuid::Uuid,
     pub idempotency_key: String,
-    /// The complete existing embedding acceptance authority.  Keeping this
+    /// The complete existing delivery/rebuild embedding acceptance authority. Keeping this
     /// value intact prevents the output path from inventing a second job or
     /// external-effect lifecycle.
     pub acceptance: AcceptEmbeddingJob,
@@ -66,7 +66,7 @@ pub trait EmbeddingOutputKeyRepository: Send + Sync {
         _: AcceptDeliveryOutputs,
     ) -> Result<DeliveryOutputAcceptanceReceipt, ApplicationError> {
         Err(ApplicationError::Unavailable(
-            "embedding delivery output acceptance is not configured".into(),
+            "embedding delivery/rebuild output acceptance is not configured".into(),
         ))
     }
     async fn claim_next(

@@ -49,7 +49,11 @@ impl EmbeddingOutputKeyRepository for PgEmbeddingOutputKeyRepository {
     ) -> Result<DeliveryOutputAcceptanceReceipt, ApplicationError> {
         if command.idempotency_key.trim().is_empty()
             || command.outputs.is_empty()
-            || command.acceptance.kind != vestrace_domain::embedding::EmbeddingJobKind::Delivery
+            || !matches!(
+                command.acceptance.kind,
+                vestrace_domain::embedding::EmbeddingJobKind::Delivery
+                    | vestrace_domain::embedding::EmbeddingJobKind::Rebuild
+            )
             || command.acceptance.intent.workspace_id() != context.workspace_id
             || command.acceptance.intent.actor_id() != context.principal_id
             || command.acceptance.audit.workspace_id != context.workspace_id
@@ -438,11 +442,19 @@ fn assert_context(
 }
 
 fn storage(error: sqlx::Error) -> ApplicationError {
-    match error
+    let code = error
         .as_database_error()
         .and_then(|database| database.code())
-        .as_deref()
+        .map(|code| code.into_owned());
+    if code.as_deref() == Some("23514")
+        && error.as_database_error().is_some_and(|database| {
+            database.message()
+                == "an existing embedding job cannot be backfilled with guessed outputs"
+        })
     {
+        return ApplicationError::Policy("EMBEDDING_JOB_ACCEPTANCE_REFUSED".into());
+    }
+    match code.as_deref() {
         Some("22023") | Some("23514") | Some("42501") => {
             ApplicationError::Policy("EMBEDDING_OUTPUT_KEY_REFUSED".into())
         }
