@@ -17,7 +17,11 @@
 --
 -- Nothing here deletes ciphertext or touches a vault. That is phase two, which
 -- the existing authority already owns; this migration only makes phase one
--- lawful for a source an embedding corpus depends on.
+-- lawful for a source an embedding corpus depends on -- and for every vector
+-- computed from it, because a vector of erased content is that content in
+-- another representation. Each dependent projection is retired and its own
+-- ciphertext prepared for erasure, so the caller that finishes phase one for
+-- the source finishes it for the vectors too.
 
 DO $upgrade$
 BEGIN
@@ -69,6 +73,11 @@ CREATE TABLE embedding_erasure_revoked_members (
     -- decided by dependence on the erased source, not by whether a generation
     -- happened to hold it first.
     corpus_generation_id UUID,
+    -- The projection's own ciphertext. A vector computed from erased content is
+    -- that content in another representation, so erasing the source and keeping
+    -- the embedding would destroy nothing that mattered. Recorded because after
+    -- the projection is retired this row is the only way back to the material.
+    vector_material_id UUID NOT NULL,
     PRIMARY KEY (workspace_id, propagation_id, projection_entry_id),
     -- Deferred because the two rows are one fact written in one transaction:
     -- what left the corpus is discovered while the propagation is being
@@ -78,6 +87,83 @@ CREATE TABLE embedding_erasure_revoked_members (
         REFERENCES embedding_erasure_propagations(workspace_id, id)
         ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 );
+
+-- A projection may now leave the corpus.
+--
+-- 0195 gave the entry two phases and no third: finalizing, then live. There was
+-- no way to say "this vector is gone", which is why erasing a source could
+-- decrement a corpus counter and leave the projections it counted still
+-- drawable -- a space in that state can never capture another generation,
+-- because capture refuses unless the counter equals what it can draw.
+--
+-- The retired phase keeps the output commitment. What the projection was is
+-- history and history is not erased; what stops existing is the ciphertext it
+-- pointed at.
+ALTER TABLE embedding_projection_entries
+    DROP CONSTRAINT embedding_projection_publication_phase,
+    ADD CONSTRAINT embedding_projection_publication_phase CHECK(
+      (state='result_finalizing' AND retention_eligibility_state='blocked_result_finalizing'
+        AND output_commitment IS NULL)
+      OR (state='live' AND retention_eligibility_state='blocked_pending_erasure_propagation'
+        AND octet_length(output_commitment)=32 AND output_commitment IS NOT NULL)
+      OR (state='erased' AND retention_eligibility_state='erasure_propagated'
+        AND octet_length(output_commitment)=32 AND output_commitment IS NOT NULL));
+
+-- Forward-replace 0195's projection guard to admit exactly that transition.
+--
+-- The guard permits one update and refuses every other: the publication
+-- promotion. It has to keep refusing every other, so the retirement is added as
+-- a second exact branch rather than by loosening the first, and it is admitted
+-- against its authority: the row must already be recorded as revoked by a
+-- propagation in this workspace, for this space. Setting the state alone
+-- enables nothing.
+DO $forward_replace_projection_guard$
+DECLARE
+    original TEXT;
+    replaced TEXT;
+    needle CONSTANT TEXT := E'BEGIN\n IF TG_OP<>''UPDATE'' OR OLD.state<>''result_finalizing''';
+    replacement CONSTANT TEXT := E'BEGIN\n'
+        ' IF TG_OP=''UPDATE'' AND OLD.state=''live'' AND NEW.state=''erased'' THEN\n'
+        '  IF NEW.retention_eligibility_state<>''erasure_propagated''\n'
+        '    OR (to_jsonb(OLD)-''state''-''retention_eligibility_state'')'
+        ' IS DISTINCT FROM (to_jsonb(NEW)-''state''-''retention_eligibility_state'')\n'
+        '    OR NOT EXISTS(SELECT 1 FROM embedding_erasure_revoked_members revoked\n'
+        '                   WHERE revoked.workspace_id=OLD.workspace_id\n'
+        '                     AND revoked.projection_entry_id=OLD.id\n'
+        '                     AND revoked.space_registration_id=OLD.space_registration_id) THEN\n'
+        '   RAISE EXCEPTION ''embedding projection retirement requires its exact erasure propagation'''
+        ' USING ERRCODE=''23514'';\n'
+        '  END IF;\n'
+        '  RETURN NEW;\n'
+        ' END IF;\n'
+        ' IF TG_OP<>''UPDATE'' OR OLD.state<>''result_finalizing''';
+BEGIN
+    original := pg_get_functiondef(
+        'public.vestrace_guard_embedding_projection_publication()'::REGPROCEDURE);
+    IF position(needle IN original) = 0 THEN
+        RAISE EXCEPTION
+            'the 0195 projection publication guard was not found; erasure propagation could not '
+            'retire a projection'
+            USING ERRCODE='23514';
+    END IF;
+    replaced := replace(original, needle, replacement);
+    IF replaced = original THEN
+        RAISE EXCEPTION 'the 0195 projection publication guard was not replaced'
+            USING ERRCODE='23514';
+    END IF;
+    EXECUTE replaced;
+    IF position('erasure_propagated' IN pg_get_functiondef(
+        'public.vestrace_guard_embedding_projection_publication()'::REGPROCEDURE)) = 0
+       OR position('result_finalizing' IN pg_get_functiondef(
+        'public.vestrace_guard_embedding_projection_publication()'::REGPROCEDURE)) = 0
+    THEN
+        RAISE EXCEPTION
+            'the installed projection guard must carry both the publication promotion and the '
+            'retirement branch'
+            USING ERRCODE='23514';
+    END IF;
+END
+$forward_replace_projection_guard$;
 
 -- Phase one for a source an embedding corpus depends on.
 --
@@ -166,6 +252,8 @@ BEGIN
         -- revocation so a later reader can still see what left the corpus.
         FOR dependent IN
             SELECT entry.id AS projection_id,
+                   entry.material_id AS vector_material_id,
+                   entry.state AS projection_state,
                    (SELECT member.corpus_generation_id
                       FROM embedding_corpus_generation_members AS member
                       JOIN embedding_corpus_generations AS held
@@ -183,15 +271,25 @@ BEGIN
              WHERE entry.workspace_id = target_workspace
                AND entry.space_registration_id = space.registration
                AND dependency.source_material_id = target_material
-             GROUP BY entry.id, entry.workspace_id
+             GROUP BY entry.id, entry.workspace_id, entry.material_id, entry.state
+             ORDER BY entry.id
         LOOP
             INSERT INTO embedding_erasure_revoked_members(
                 workspace_id, propagation_id, projection_entry_id,
-                space_registration_id, corpus_generation_id
+                space_registration_id, corpus_generation_id,
+                vector_material_id
             ) VALUES (
                 target_workspace, target_id, dependent.projection_id,
-                space.registration, dependent.generation_id
+                space.registration, dependent.generation_id,
+                dependent.vector_material_id
             ) ON CONFLICT DO NOTHING;
+            -- Recorded first, because the guard admitting this retirement reads
+            -- that record as its authority.
+            IF dependent.projection_state = 'live' THEN
+                UPDATE embedding_projection_entries
+                   SET state='erased', retention_eligibility_state='erasure_propagated'
+                 WHERE workspace_id=target_workspace AND id=dependent.projection_id;
+            END IF;
             dependent_count := dependent_count + 1;
         END LOOP;
         affected_spaces := affected_spaces || space.registration;
@@ -231,18 +329,22 @@ BEGIN
         -- The corpus revision advances once per affected space, and its live
         -- member count drops by what this source contributed. A later build
         -- may only draw from what remains.
+        --
+        -- Counted with the predicate `vestrace_capture_embedding_generation`
+        -- selects members by, not with one of this migration's own devising.
+        -- Capture refuses unless the counter equals what it can draw, so a
+        -- counter computed any other way would silently make the space unable
+        -- to build another generation ever again.
         SELECT count(*) INTO remaining
           FROM embedding_projection_entries AS entry
+          JOIN content_materials AS vector
+            ON vector.workspace_id=entry.workspace_id AND vector.id=entry.material_id
          WHERE entry.workspace_id=target_workspace
            AND entry.space_registration_id=space.registration
-           AND NOT EXISTS (
-               SELECT 1 FROM embedding_projection_source_dependencies AS dependency
-                WHERE dependency.workspace_id=entry.workspace_id
-                  AND dependency.projection_id=entry.id
-                  AND dependency.source_material_id=target_material);
+           AND entry.state='live' AND vector.state='live';
         UPDATE embedding_space_corpus_states
            SET corpus_revision=corpus_revision+1,
-               live_member_count=LEAST(live_member_count, remaining)
+               live_member_count=remaining
          WHERE workspace_id=target_workspace AND space_registration_id=space.registration;
         -- The epoch advances once per affected space, whether or not a
         -- generation was current. Every corpus-change event on this stream
@@ -345,6 +447,176 @@ BEGIN
     RETURN preparation;
 END
 $$;
+
+-- Forward-replace the 0174 content erasure primitive for retired vectors.
+--
+-- The primitive refuses any material with no ordinary reference. That rule is
+-- right for ordinary content -- an unreferenced Live material is a bookkeeping
+-- fault, not an erasure target -- but an embedding projection's ciphertext
+-- never had one. It is referenced by the projection entry, which is why nothing
+-- in the product could erase a vector: the primitive refused every one of them
+-- by construction, so erasing a source destroyed the plaintext and left every
+-- embedding computed from it intact.
+--
+-- The reference test is therefore widened by exactly one alternative: a
+-- projection entry that has already been retired names it. Already retired, not
+-- merely existing -- a live projection is a member of a live corpus, and
+-- admitting those would let any caller erase a vector out from under a
+-- generation still answering from it. Retirement happens only inside the
+-- propagation above, under the locks that revoke the generation first.
+--
+-- This only widens. No material that could be prepared before can be refused
+-- now, because the added disjunct can only make the refusal condition false.
+-- Both halves are widened, never one. A prepare that admits a vector while the
+-- finalizer still refuses it would strand the material in erasure_prepared with
+-- no lawful way forward, which is worse than refusing it outright.
+DO $forward_replace_erasure_primitive$
+DECLARE
+    original TEXT;
+    replaced TEXT;
+    target REGPROCEDURE;
+    needle CONSTANT TEXT :=
+        'SELECT 1 FROM content_material_ordinary_references WHERE material_id = material_row.id';
+    replacement CONSTANT TEXT :=
+        'SELECT 1 FROM content_material_ordinary_references WHERE material_id = material_row.id'
+        ' UNION ALL SELECT 1 FROM embedding_projection_entries retired'
+        ' WHERE retired.workspace_id = material_row.workspace_id'
+        '   AND retired.material_id = material_row.id'
+        '   AND retired.state = ''erased''';
+BEGIN
+    FOREACH target IN ARRAY ARRAY[
+        'public.vestrace_prepare_content_material_erasure(uuid)'::REGPROCEDURE,
+        'public.vestrace_finalize_content_material_erasure(uuid,uuid)'::REGPROCEDURE
+    ] LOOP
+        original := pg_get_functiondef(target);
+        IF position(needle IN original) = 0 THEN
+            RAISE EXCEPTION
+                'the 0174 ordinary reference test was not found in %; no embedding vector could '
+                'ever be erased', target
+                USING ERRCODE='23514';
+        END IF;
+        replaced := replace(original, needle, replacement);
+        IF replaced = original OR position(replacement IN replaced) = 0 THEN
+            RAISE EXCEPTION 'the 0174 ordinary reference test was not replaced in %', target
+                USING ERRCODE='23514';
+        END IF;
+        EXECUTE replaced;
+        IF position(replacement IN pg_get_functiondef(target)) = 0 THEN
+            RAISE EXCEPTION 'the installed % does not admit a retired vector', target
+                USING ERRCODE='23514';
+        END IF;
+    END LOOP;
+END
+$forward_replace_erasure_primitive$;
+
+-- Forward-replace 0194's projection dependency validator for a retired
+-- projection.
+--
+-- The validator asserts an invariant this migration depends on: a projection
+-- may not stand while a source it was computed from has left Live. That is
+-- exactly why the propagation retires it -- but the validator never learned
+-- there is such a thing as a retired projection, so it refuses the retirement
+-- as well as the thing the retirement prevents.
+--
+-- The source-liveness test is therefore scoped to a live projection. A retired
+-- one is the invariant being satisfied, not violated. Every other conjunct --
+-- the exact ordered dependency set, one per delivery source -- still applies to
+-- a retired projection, because history is not what erasure removes.
+DO $forward_replace_dependency_validator$
+DECLARE
+    original TEXT;
+    replaced TEXT;
+    needle CONSTANT TEXT :=
+        'AND (material.state<>''live'' OR source_intent.state<>''live'')';
+    replacement CONSTANT TEXT :=
+        'AND (material.state<>''live'' OR source_intent.state<>''live'')'
+        ' AND projection.state=''live''';
+BEGIN
+    original := pg_get_functiondef(
+        'public.vestrace_validate_embedding_projection_dependency()'::REGPROCEDURE);
+    IF position(needle IN original) = 0 THEN
+        RAISE EXCEPTION
+            'the 0194 projection source-liveness test was not found; retiring a projection would '
+            'be refused by the invariant it satisfies'
+            USING ERRCODE='23514';
+    END IF;
+    replaced := replace(original, needle, replacement);
+    IF replaced = original OR position(replacement IN replaced) = 0 THEN
+        RAISE EXCEPTION 'the 0194 projection source-liveness test was not replaced'
+            USING ERRCODE='23514';
+    END IF;
+    EXECUTE replaced;
+    IF position(replacement IN pg_get_functiondef(
+        'public.vestrace_validate_embedding_projection_dependency()'::REGPROCEDURE)) = 0
+    THEN
+        RAISE EXCEPTION 'the installed dependency validator does not scope liveness to a live '
+            'projection'
+            USING ERRCODE='23514';
+    END IF;
+END
+$forward_replace_dependency_validator$;
+
+-- Forward-replace 0195's published-output phase for a retired projection.
+--
+-- The validator requires every published output to still be exactly live: live
+-- material, live intent, live projection, retention blocked pending erasure
+-- propagation. That is the phase a published output stays in until this
+-- propagation runs, and the retention state names what it is waiting for.
+--
+-- Once the propagation runs, that phase is over for the outputs it retired, and
+-- the validator has to say so rather than refuse them. It is not loosened: the
+-- retired phase is admitted only when it is exactly the retired phase and only
+-- for a projection this workspace recorded as revoked. Every output the
+-- propagation did not touch is judged exactly as before.
+DO $forward_replace_published_phase$
+DECLARE
+    original TEXT;
+    replaced TEXT;
+    retired CONSTANT TEXT :=
+        '(EXISTS(SELECT 1 FROM embedding_erasure_revoked_members revoked'
+        ' WHERE revoked.workspace_id=target_workspace'
+        '   AND revoked.projection_entry_id=output.projection_id)'
+        ' AND output.projection_state=''erased'''
+        ' AND output.retention_eligibility_state=''erasure_propagated'')';
+    live_needle CONSTANT TEXT :=
+        'output.attachments<>0 OR output.material_state<>''live'' OR output.intent_state<>''live'' OR output.projection_state<>''live''';
+    retention_needle CONSTANT TEXT :=
+        'output.retention_eligibility_state<>''blocked_pending_erasure_propagation'' THEN';
+    -- Phase two deletes the output's ciphertext, and the identity check
+    -- requires it to be there. That requirement is about a published output
+    -- that still exists; for a retired one the bytes being gone is the point.
+    bytes_needle CONSTANT TEXT :=
+        'NOT EXISTS(SELECT 1 FROM content_material_bytes WHERE workspace_id=target_workspace AND intent_id=output.intent_id)';
+BEGIN
+    original := pg_get_functiondef(
+        'public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)'::REGPROCEDURE);
+    IF position(live_needle IN original) = 0 OR position(retention_needle IN original) = 0
+       OR position(bytes_needle IN original) = 0 THEN
+        RAISE EXCEPTION
+            'the 0195 published output phase was not found; a retired projection would refuse '
+            'every later publication check'
+            USING ERRCODE='23514';
+    END IF;
+    replaced := replace(original, live_needle,
+        '((' || live_needle || ') AND NOT ' || retired || ')');
+    replaced := replace(replaced, retention_needle,
+        '(output.retention_eligibility_state<>''blocked_pending_erasure_propagation'''
+        ' AND NOT ' || retired || ') THEN');
+    replaced := replace(replaced, bytes_needle,
+        '(' || bytes_needle || ' AND NOT ' || retired || ')');
+    IF replaced = original OR position(retired IN replaced) = 0 THEN
+        RAISE EXCEPTION 'the 0195 published output phase was not replaced'
+            USING ERRCODE='23514';
+    END IF;
+    EXECUTE replaced;
+    IF position(retired IN pg_get_functiondef(
+        'public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)'::REGPROCEDURE)) = 0
+    THEN
+        RAISE EXCEPTION 'the installed publication validator does not admit a retired projection'
+            USING ERRCODE='23514';
+    END IF;
+END
+$forward_replace_published_phase$;
 
 -- Forward-replace the 0195 publication validator for the post-erasure branch.
 --

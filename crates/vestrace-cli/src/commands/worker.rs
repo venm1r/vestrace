@@ -358,6 +358,21 @@ async fn poll_embedding_work(
         return outcome;
     };
     for context in contexts {
+        // Before building anything: drop the local indexes an erasure has
+        // already invalidated. Running it first means a build in this same pass
+        // cannot install into a registry the sweep is about to walk, and a
+        // retained index never outlives the pass that learned about it.
+        //
+        // A failure here is not a failed pass. The sweep is a cache drop, and
+        // query still validates the database guard, so missing it retains an
+        // index rather than serving an erased one.
+        if let Err(error) = runtime.reconcile_erasure_invalidations(context).await {
+            tracing::warn!(
+                workspace = %context.workspace_id,
+                %error,
+                "embedding erasure invalidation sweep failed; local indexes retained"
+            );
+        }
         for kind in [
             EmbeddingWorkKind::Dispatch,
             EmbeddingWorkKind::ReconcileKeys,

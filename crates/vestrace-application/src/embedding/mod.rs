@@ -8,6 +8,7 @@
 pub mod adoption;
 pub mod barrier;
 pub mod carry;
+pub mod erasure;
 pub mod executor;
 pub mod finalization;
 pub mod index;
@@ -27,6 +28,10 @@ pub use adoption::{
 };
 pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
 pub use carry::{AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping};
+pub use erasure::{
+    CommittedEmbeddingInvalidation, DEFAULT_ERASURE_RECONCILE_LIMIT, EmbeddingErasurePropagation,
+    EmbeddingErasureRepository, EmbeddingErasureService, SharedEmbeddingErasureRepository,
+};
 pub use executor::{EMBEDDING_DISPATCH_TTL_SECONDS, EmbeddingExecutionOutcome, EmbeddingExecutor};
 pub use finalization::{
     EmbeddingOutputCommitment, EmbeddingResultBoundOutput, EmbeddingResultCommitter,

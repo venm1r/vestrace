@@ -350,6 +350,7 @@ pub struct EmbeddingWorkerRuntime {
     work: vestrace_application::embedding::SharedEmbeddingWorkRepository,
     executor: std::sync::Arc<ProductionEmbeddingExecutor>,
     index: std::sync::Arc<ProductionEmbeddingIndexService>,
+    erasure: std::sync::Arc<ProductionEmbeddingErasureService>,
     claim_batch: u32,
     owner: String,
 }
@@ -363,6 +364,16 @@ pub type ProductionEmbeddingExecutor = vestrace_application::embedding::Embeddin
     embedding_result_finalization_repository::PgEmbeddingResultFinalizationRepository,
     EmbeddingOutputHmacCommitter,
 >;
+
+/// Erasure propagation and the local-index invalidation that follows it. It
+/// shares the one registry the index service installs into: dropping from a
+/// second registry would drop nothing anything ever reads.
+pub type ProductionEmbeddingErasureService =
+    vestrace_application::embedding::EmbeddingErasureService<
+        embedding_erasure_repository::PgEmbeddingErasureRepository,
+        crate::embedding_index::EmbeddingIndexRegistry,
+        crate::embedding_index::FlatEmbeddingIndex,
+    >;
 
 pub type ProductionEmbeddingIndexService =
     vestrace_application::embedding::index::EmbeddingIndexService<
@@ -440,6 +451,10 @@ impl EmbeddingWorkerRuntime {
                 )
             })?,
         );
+        // One registry for the process. The index service installs into it and
+        // erasure propagation drops from it; two instances would let a corpus
+        // keep answering from vectors the erasure believed it had dropped.
+        let registry = Arc::new(crate::embedding_index::EmbeddingIndexRegistry::new());
         let index = Arc::new(
             vestrace_application::embedding::index::EmbeddingIndexService::new(
                 Arc::new(embedding_index_repository::PgEmbeddingIndexRepository::new(
@@ -452,12 +467,21 @@ impl EmbeddingWorkerRuntime {
                 Arc::new(crate::embedding_index::FlatEmbeddingIndexFactory::new(
                     budget,
                 )),
-                Arc::new(crate::embedding_index::EmbeddingIndexRegistry::new()),
+                registry.clone(),
                 crate::embedding_index::IndexLimits {
                     max_members: limits.max_index_members as usize,
                     max_bytes: usize::try_from(limits.max_index_bytes).unwrap_or(usize::MAX),
                 },
                 limits.build_chunk_size,
+            ),
+        );
+
+        let erasure = Arc::new(
+            vestrace_application::embedding::EmbeddingErasureService::new(
+                Arc::new(
+                    embedding_erasure_repository::PgEmbeddingErasureRepository::new(store.clone()),
+                ),
+                registry,
             ),
         );
 
@@ -467,9 +491,28 @@ impl EmbeddingWorkerRuntime {
             )),
             executor,
             index,
+            erasure,
             claim_batch: limits.claim_batch,
             owner: owner.into(),
         })
+    }
+
+    pub fn erasure(&self) -> std::sync::Arc<ProductionEmbeddingErasureService> {
+        self.erasure.clone()
+    }
+
+    /// One bounded pass dropping local indexes an erasure has invalidated.
+    ///
+    /// Not a claimed work kind, and deliberately not driven through
+    /// `run_cycle`: a claim in `embedding_job_work_claims` names an embedding
+    /// job, and an erasure is not one. The pass is idempotent, so a worker that
+    /// misses it loses nothing durable -- query still validates the database
+    /// guard and a retained index fails closed there.
+    pub async fn reconcile_erasure_invalidations(
+        &self,
+        context: &vestrace_application::RequestContext,
+    ) -> Result<usize, vestrace_application::ApplicationError> {
+        self.erasure.reconcile_one(context).await
     }
 
     pub fn index(&self) -> std::sync::Arc<ProductionEmbeddingIndexService> {
@@ -562,6 +605,9 @@ impl EmbeddingWorkerRuntime {
             // completeness, activate -- and choosing which command a given
             // transition needs is logic no service holds. Erasure propagation
             // has no service at all.
+            // Erasure propagation has a service, but not one a claim can
+            // reach: every claim names an embedding job and an erasure names a
+            // material. It is driven by `reconcile_erasure_invalidations`.
             EmbeddingWorkKind::CoordinateTransition | EmbeddingWorkKind::PropagateErasure => Err(
                 vestrace_application::ApplicationError::Unavailable(format!(
                     "embedding work kind {} has no cycle driver in this build",
@@ -573,9 +619,11 @@ impl EmbeddingWorkerRuntime {
 }
 
 mod embedding_adoption_repository;
+mod embedding_erasure_repository;
 mod embedding_index_repository;
 pub use embedding_adoption_repository::{
     PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
     PgLegacyAdoptionSourceMaterializer,
 };
+pub use embedding_erasure_repository::PgEmbeddingErasureRepository;
 pub use embedding_index_repository::PgEmbeddingIndexRepository;

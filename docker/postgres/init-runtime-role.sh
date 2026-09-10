@@ -3034,7 +3034,29 @@ BEGIN
                 OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
                 OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
                 OR has_function_privilege('public',required.target,'EXECUTE')
-        ) THEN
+        ) OR (SELECT pg_get_userbyid(relowner) FROM pg_class
+               WHERE oid='public.embedding_projection_entries'::REGCLASS)<>'vestrace_guarded_owner'
+          OR NOT has_table_privilege('vestrace','public.embedding_projection_entries','SELECT')
+          OR has_table_privilege('vestrace','public.embedding_projection_entries','INSERT,UPDATE,DELETE')
+          OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+               WHERE oid=to_regprocedure(
+                   'public.vestrace_guard_embedding_projection_publication()'))<>'vestrace_guarded_owner'
+          OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+               WHERE oid=to_regprocedure(
+                   'public.vestrace_prepare_content_material_erasure(uuid)'))<>'vestrace_guarded_owner'
+          OR NOT has_function_privilege('vestrace',
+               'public.vestrace_prepare_content_material_erasure(uuid)','EXECUTE')
+          OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+               WHERE oid=to_regprocedure(
+                   'public.vestrace_validate_embedding_projection_dependency()'))
+              <>'vestrace_guarded_owner'
+          OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+               WHERE oid=to_regprocedure(
+                   'public.vestrace_finalize_content_material_erasure(uuid,uuid)'))
+              <>'vestrace_guarded_owner'
+          OR NOT has_function_privilege('vestrace',
+               'public.vestrace_finalize_content_material_erasure(uuid,uuid)','EXECUTE')
+        THEN
             RAISE EXCEPTION 'embedding erasure propagation owner or runtime ACL posture is unavailable'
                 USING ERRCODE='42501';
         END IF;
@@ -3062,6 +3084,25 @@ BEGIN
             -- And the cause guard 0198 left refusing every cause but result
             -- publication, which this migration teaches to admit erasure.
             ALTER FUNCTION public.vestrace_validate_embedding_index_event_cause()
+                OWNER TO vestrace;
+            -- 0203 gives a projection a retired phase and teaches 0195's
+            -- projection guard to admit exactly that one further transition.
+            -- Both need ownership; both are handed straight back below, with
+            -- the table's standing SELECT restored rather than assumed.
+            ALTER TABLE public.embedding_projection_entries OWNER TO vestrace;
+            ALTER FUNCTION public.vestrace_guard_embedding_projection_publication()
+                OWNER TO vestrace;
+            -- And 0174's content erasure primitive, whose ordinary-reference
+            -- test refused every embedding vector by construction. 0203 widens
+            -- it by one alternative so a retired projection's ciphertext can be
+            -- erased at all.
+            ALTER FUNCTION public.vestrace_prepare_content_material_erasure(uuid)
+                OWNER TO vestrace;
+            ALTER FUNCTION public.vestrace_finalize_content_material_erasure(uuid,uuid)
+                OWNER TO vestrace;
+            -- And 0194's dependency validator, which refuses a projection whose
+            -- source has left Live -- the invariant the retirement satisfies.
+            ALTER FUNCTION public.vestrace_validate_embedding_projection_dependency()
                 OWNER TO vestrace;
             REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_erasure_upgrade()
                 FROM vestrace;
@@ -3134,6 +3175,66 @@ BEGIN
                 OWNER TO vestrace_guarded_owner;
             REVOKE ALL ON TABLE public.embedding_index_rebuild_events FROM PUBLIC,vestrace;
             GRANT SELECT, REFERENCES ON TABLE public.embedding_index_rebuild_events TO vestrace;
+            IF (SELECT pg_get_userbyid(relowner) FROM pg_class
+                 WHERE oid='public.embedding_projection_entries'::REGCLASS)<>'vestrace'
+               OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                    WHERE oid=to_regprocedure(
+                        'public.vestrace_guard_embedding_projection_publication()'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'projection retirement hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_guard_embedding_projection_publication()
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_guard_embedding_projection_publication()
+                FROM PUBLIC,vestrace;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_prepare_content_material_erasure(uuid)'))<>'vestrace' THEN
+                RAISE EXCEPTION 'content erasure primitive hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_validate_embedding_projection_dependency()'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'projection dependency validator hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_validate_embedding_projection_dependency()
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_validate_embedding_projection_dependency()
+                FROM PUBLIC,vestrace;
+            ALTER FUNCTION public.vestrace_prepare_content_material_erasure(uuid)
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_prepare_content_material_erasure(uuid)
+                FROM PUBLIC;
+            -- Standing since 0174: the runtime role calls this on the ordinary
+            -- erasure path, so the hand-back restores EXECUTE rather than
+            -- leaving the primitive unreachable.
+            GRANT EXECUTE ON FUNCTION public.vestrace_prepare_content_material_erasure(uuid)
+                TO vestrace;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_finalize_content_material_erasure(uuid,uuid)'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'content erasure finalizer hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_finalize_content_material_erasure(uuid,uuid)
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_finalize_content_material_erasure(uuid,uuid)
+                FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION public.vestrace_finalize_content_material_erasure(uuid,uuid)
+                TO vestrace;
+            ALTER TABLE public.embedding_projection_entries OWNER TO vestrace_guarded_owner;
+            GRANT ALL ON TABLE public.embedding_projection_entries TO vestrace_guarded_owner;
+            -- 0195's exact posture, restored rather than a blanket revoke: this
+            -- table carries a standing SELECT and no REFERENCES, and stripping
+            -- the read would break every path that hydrates a projection.
+            REVOKE INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES
+                ON TABLE public.embedding_projection_entries FROM PUBLIC,vestrace;
+            GRANT SELECT ON TABLE public.embedding_projection_entries TO vestrace;
             REVOKE REFERENCES ON TABLE public.workspaces FROM vestrace;
             REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_erasure_upgrade()
                 FROM vestrace;

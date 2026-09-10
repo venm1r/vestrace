@@ -457,3 +457,591 @@ async fn the_runtime_role_cannot_write_propagation_records_directly(pool: PgPool
     }
     runtime.close().await;
 }
+
+// --- The Rust half: the path a product actually takes to reach the authority
+// above. Every test to this point drove the SQL function directly, which proves
+// the transaction and nothing about whether anything calls it.
+
+/// A vault that records what it was asked to do and refuses everything the
+/// erasure sequence does not need. Erasure is the only thing under test here.
+#[derive(Default)]
+struct ErasureVaultCounters {
+    prepare_calls: AtomicUsize,
+    erase_calls: AtomicUsize,
+}
+
+struct CountingErasureVault {
+    counters: Arc<ErasureVaultCounters>,
+}
+
+impl vestrace_application::MaterialKeyVault for CountingErasureVault {
+    fn create_if_absent(
+        &self,
+        _key_id: vestrace_domain::MaterialKeyId,
+        _nonce: vestrace_domain::IntentNonce,
+    ) -> Result<vestrace_domain::VaultReceipt, vestrace_application::VaultError> {
+        Err(vestrace_application::VaultError::Unavailable)
+    }
+
+    fn unwrap(
+        &self,
+        _key_id: vestrace_domain::MaterialKeyId,
+        _use_dek: &mut dyn FnMut(&vestrace_domain::ZeroizingDek),
+    ) -> Result<(), vestrace_application::VaultError> {
+        Err(vestrace_application::VaultError::Unavailable)
+    }
+
+    fn prepare_erasure(
+        &self,
+        _key_id: vestrace_domain::MaterialKeyId,
+    ) -> Result<vestrace_application::FenceReceipt, vestrace_application::VaultError> {
+        self.counters.prepare_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vestrace_application::FenceReceipt::from_uuid(Uuid::now_v7()))
+    }
+
+    fn erase(
+        &self,
+        _key_id: vestrace_domain::MaterialKeyId,
+    ) -> Result<vestrace_domain::ErasureReceipt, vestrace_application::VaultError> {
+        self.counters.erase_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vestrace_domain::ErasureReceipt::from_uuid(Uuid::now_v7()))
+    }
+}
+
+type TestErasureService = vestrace_application::embedding::EmbeddingErasureService<
+    vestrace_infrastructure::postgres::PgEmbeddingErasureRepository,
+    vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry,
+    vestrace_infrastructure::embedding_index::FlatEmbeddingIndex,
+>;
+
+fn erasure_service(
+    runtime: &PgPool,
+    registry: Arc<vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry>,
+) -> TestErasureService {
+    vestrace_application::embedding::EmbeddingErasureService::new(
+        Arc::new(
+            vestrace_infrastructure::postgres::PgEmbeddingErasureRepository::new(
+                PgStore::from_pool(runtime.clone()),
+            ),
+        ),
+        registry,
+    )
+}
+
+/// Builds one local index for a space, at a chosen epoch, and installs it.
+///
+/// The snapshot is deliberately synthetic: the registry is a cache keyed by
+/// workspace and registration, and what this test needs from it is an entry at
+/// a known epoch, not a faithful generation.
+fn install_index_at_epoch(
+    registry: &vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry,
+    workspace: vestrace_domain::WorkspaceId,
+    registration: Uuid,
+    epoch: u64,
+) -> vestrace_domain::embedding::CanonicalGenerationSnapshot {
+    use vestrace_application::embedding::index::{EmbeddingIndexBuilder, EmbeddingIndexFactory};
+    use vestrace_infrastructure::embedding_index::{
+        FlatEmbeddingIndexFactory, IndexLimits, IndexMemoryBudget, IndexVector,
+    };
+
+    let space = vestrace_domain::embedding::EmbeddingSpaceKey::canonical(
+        workspace,
+        "erasure",
+        vestrace_domain::embedding::CanonicalEmbeddingSpace {
+            model_revision_id: vestrace_domain::ModelRevisionId::new(),
+            model_qualification_revision_id: vestrace_domain::ModelQualificationRevisionId::new(),
+            adapter_profile_revision: "q1".into(),
+            request_shape_revision_id: Uuid::now_v7(),
+            returned_model: "model".into(),
+            encoding_format: "float".into(),
+            dimensions: 2,
+        },
+    )
+    .expect("a canonical space key");
+    let snapshot = vestrace_domain::embedding::CanonicalGenerationSnapshot::new(
+        space,
+        vestrace_domain::CorpusGenerationId::new(),
+        epoch,
+        1,
+        1,
+        10,
+        1,
+    )
+    .expect("a canonical generation snapshot");
+
+    let factory = FlatEmbeddingIndexFactory::new(IndexMemoryBudget::new(1 << 20));
+    let mut builder = factory
+        .begin(
+            snapshot.clone(),
+            registration,
+            IndexLimits {
+                max_members: 8,
+                max_bytes: 1 << 20,
+            },
+        )
+        .expect("a builder");
+    builder
+        .push(IndexVector {
+            projection_id: Uuid::now_v7(),
+            projection_ordinal: 1,
+            material_id: vestrace_domain::ContentMaterialId::new(),
+            values: zeroize::Zeroizing::new(vec![1.0_f32, 0.0]),
+        })
+        .expect("one vector");
+    let index = builder.finish().expect("a finished index");
+    vestrace_application::embedding::index::EmbeddingIndexRegistryPort::install(
+        registry,
+        Arc::new(index),
+    )
+    .expect("install");
+    snapshot
+}
+
+/// The product path reaches the same authority the tests above drove by hand,
+/// and carries back the preparation the two-phase erasure continues from.
+#[sqlx::test(migrations = false)]
+async fn the_service_propagates_and_returns_the_preparation(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let job = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &job).await;
+    let workspace = job.accepted.context.workspace_id.as_uuid();
+    let material = a_source_of(&pool, &job.accepted).await;
+
+    let registry =
+        Arc::new(vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry::new());
+    let service = erasure_service(&runtime, registry);
+    let propagated = service
+        .prepare_source(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::from_uuid(material),
+        )
+        .await
+        .expect("the service must propagate a source a corpus was computed from")
+        .expect("a source with dependents is not left to the ordinary path");
+
+    let recorded: (Uuid, Uuid, i64) = sqlx::query_as(
+        "SELECT id, material_erasure_preparation_id, dependent_projection_count \
+           FROM embedding_erasure_propagations WHERE workspace_id=$1 AND source_material_id=$2",
+    )
+    .bind(workspace)
+    .bind(material)
+    .fetch_one(&pool)
+    .await
+    .expect("the propagation the service made must be recorded");
+    assert_eq!(propagated.propagation_id(), recorded.0);
+    assert_eq!(propagated.preparation().id(), recorded.1);
+    assert_eq!(
+        propagated.retired_vector_materials().len(),
+        usize::try_from(recorded.2).unwrap(),
+        "one ciphertext per retired projection"
+    );
+    assert_eq!(
+        i64::try_from(propagated.dependent_projection_count()).unwrap(),
+        recorded.2
+    );
+    assert!(
+        propagated.dependent_projection_count() > 0,
+        "an executed job's source has dependents"
+    );
+
+    // The preparation must be usable by the ordinary two-phase authority: it
+    // names the same key that authority would have fenced.
+    let key: Uuid = sqlx::query_scalar(
+        "SELECT material_key_id FROM material_erasure_preparations WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace)
+    .bind(recorded.1)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(propagated.preparation().material_key_id().as_uuid(), key);
+    runtime.close().await;
+}
+
+/// A material no corpus was computed from is left to the ordinary authority.
+/// Interposing on it would record an embedding propagation for an erasure that
+/// has nothing to do with embeddings, and refuse a material whose state the
+/// ordinary path is entitled to judge.
+#[sqlx::test(migrations = false)]
+async fn a_material_with_no_dependents_is_left_to_the_ordinary_path(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let job = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &job).await;
+    let workspace = job.accepted.context.workspace_id.as_uuid();
+
+    let unrelated = live_source(&pool, &job.accepted).await;
+    let registry =
+        Arc::new(vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry::new());
+    let service = erasure_service(&runtime, registry);
+    let propagated = service
+        .prepare_source(&job.accepted.context, unrelated)
+        .await
+        .expect("a material with no dependents is not a refusal");
+    assert!(
+        propagated.is_none(),
+        "nothing embedded depends on it, so the ordinary path owns it"
+    );
+
+    let propagations: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_erasure_propagations \
+          WHERE workspace_id=$1 AND source_material_id=$2",
+    )
+    .bind(workspace)
+    .bind(unrelated.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(propagations, 0, "and it recorded no propagation");
+
+    // A material that is not in this workspace at all is also not this
+    // module's refusal to make.
+    let absent = service
+        .prepare_source(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::new(),
+        )
+        .await
+        .expect("an absent material is deferred, not refused here");
+    assert!(absent.is_none());
+    runtime.close().await;
+}
+
+/// Step 4: the local index of an invalidated space is dropped after the
+/// invalidation committed, and an index at or past the committed epoch is not.
+#[sqlx::test(migrations = false)]
+async fn reconciliation_drops_only_the_indexes_the_erasure_invalidated(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let job = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &job).await;
+    let workspace = job.accepted.context.workspace_id;
+    let material = a_source_of(&pool, &job.accepted).await;
+    let registration = job.accepted.space_registration_id;
+
+    // The epoch the guard stands at now. The propagation advances it, which is
+    // what makes an index installed here stale rather than any assumption about
+    // where the epoch started.
+    let epoch_before: i64 = sqlx::query_scalar(
+        "SELECT generation_epoch FROM embedding_index_generation_guards           WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(registration)
+    .fetch_one(&pool)
+    .await
+    .expect("the executed job must have a generation guard");
+    let epoch_before = u64::try_from(epoch_before).unwrap().max(1);
+
+    let registry =
+        Arc::new(vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry::new());
+    let stale = install_index_at_epoch(&registry, workspace, registration, epoch_before);
+    // An unrelated space keeps its index: the sweep is per-space, not a flush.
+    let untouched_registration = Uuid::now_v7();
+    let untouched =
+        install_index_at_epoch(&registry, workspace, untouched_registration, epoch_before);
+
+    let service = erasure_service(&runtime, registry.clone());
+    service
+        .prepare_source(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::from_uuid(material),
+        )
+        .await
+        .expect("propagation")
+        .expect("a source with dependents");
+
+    use vestrace_application::embedding::index::EmbeddingIndexRegistryPort;
+    assert!(
+        EmbeddingIndexRegistryPort::get(registry.as_ref(), &stale, registration).is_none(),
+        "the invalidated space must not keep answering from its old index"
+    );
+    assert!(
+        EmbeddingIndexRegistryPort::get(registry.as_ref(), &untouched, untouched_registration)
+            .is_some(),
+        "a space this erasure did not touch keeps its index"
+    );
+
+    // The pass is idempotent: replaying it removes nothing further and reports
+    // the same spaces.
+    let first = service
+        .reconcile_one(&job.accepted.context)
+        .await
+        .expect("a replayed pass");
+    let second = service
+        .reconcile_one(&job.accepted.context)
+        .await
+        .expect("a replayed pass");
+    assert_eq!(first, second);
+    assert!(first >= 1, "the erased space carries a committed epoch");
+    assert!(
+        EmbeddingIndexRegistryPort::get(registry.as_ref(), &untouched, untouched_registration)
+            .is_some(),
+        "replaying the pass still does not touch an unaffected space"
+    );
+
+    // A newly built index at the committed epoch survives the next pass, which
+    // is why no cursor is needed.
+    let committed_epoch: i64 = sqlx::query_scalar(
+        "SELECT generation_epoch FROM embedding_index_generation_guards \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(registration)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let fresh = install_index_at_epoch(
+        &registry,
+        workspace,
+        registration,
+        u64::try_from(committed_epoch).unwrap(),
+    );
+    service
+        .reconcile_one(&job.accepted.context)
+        .await
+        .expect("a pass after a rebuild");
+    assert!(
+        EmbeddingIndexRegistryPort::get(registry.as_ref(), &fresh, registration).is_some(),
+        "an index at the committed epoch is not older than the invalidation"
+    );
+    runtime.close().await;
+}
+
+/// Wired into the two-phase authority, erasing such a source takes the
+/// propagating path and still finishes through the ordinary vault sequence.
+#[sqlx::test(migrations = false)]
+async fn wired_material_erasure_propagates_before_it_destroys(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let job = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &job).await;
+    let workspace = job.accepted.context.workspace_id.as_uuid();
+    let material = a_source_of(&pool, &job.accepted).await;
+
+    let registry =
+        Arc::new(vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry::new());
+    let counters = Arc::new(ErasureVaultCounters::default());
+    let service = vestrace_application::MaterialErasureService::new(
+        vestrace_infrastructure::postgres::PgMaterialErasureRepository::new(PgStore::from_pool(
+            runtime.clone(),
+        )),
+        CountingErasureVault {
+            counters: Arc::clone(&counters),
+        },
+    )
+    .with_embedding_propagation(Arc::new(erasure_service(&runtime, registry)));
+
+    let vectors: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_projection_entries AS entry            JOIN embedding_projection_source_dependencies AS dependency              ON dependency.workspace_id=entry.workspace_id             AND dependency.projection_id=entry.id           WHERE entry.workspace_id=$1 AND dependency.source_material_id=$2",
+    )
+    .bind(workspace)
+    .bind(material)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(vectors > 0, "the source must have vectors computed from it");
+
+    let receipt = service
+        .erase_content(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::from_uuid(material),
+        )
+        .await
+        .expect("a wired erasure of an embedded source must complete");
+
+    // One vault sequence per vector, then one for the source. Erasing the
+    // source and leaving its embeddings would be the failure this path exists
+    // to prevent, so the count is the claim.
+    let expected = usize::try_from(vectors).unwrap() + 1;
+    assert_eq!(counters.prepare_calls.load(Ordering::SeqCst), expected);
+    assert_eq!(counters.erase_calls.load(Ordering::SeqCst), expected);
+
+    let (recorded_receipt, propagations): (Option<Uuid>, i64) = sqlx::query_as(
+        "SELECT (SELECT erasure_receipt FROM material_erasure_preparations \
+                  WHERE workspace_id=$1 AND content_material_id=$2), \
+                (SELECT count(*) FROM embedding_erasure_propagations \
+                  WHERE workspace_id=$1 AND source_material_id=$2)",
+    )
+    .bind(workspace)
+    .bind(material)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded_receipt, Some(receipt.as_uuid()));
+    assert_eq!(
+        propagations, 1,
+        "the erasure went through propagation rather than around it"
+    );
+
+    // The blocker that made this erasure unlawful is terminal, and it went
+    // terminal as part of the propagation rather than by being ignored.
+    let nonterminal: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM material_erasure_blockers \
+          WHERE workspace_id=$1 AND content_material_id=$2 AND state='nonterminal'",
+    )
+    .bind(workspace)
+    .bind(material)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(nonterminal, 0);
+
+    // A replay is the same erasure, not a second one: the vault is not called
+    // again and the propagation is still one.
+    let replay = service
+        .erase_content(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::from_uuid(material),
+        )
+        .await
+        .expect("a replay");
+    assert_eq!(replay, receipt);
+    assert_eq!(counters.prepare_calls.load(Ordering::SeqCst), expected);
+    assert_eq!(counters.erase_calls.load(Ordering::SeqCst), expected);
+    runtime.close().await;
+}
+
+/// Phase two, end to end: the ciphertext is destroyed, and what a later build
+/// would draw from this corpus is exactly what the erasure left behind.
+///
+/// The membership claim is asserted through the predicate
+/// `vestrace_capture_embedding_generation` selects members with -- a live
+/// projection over a live material -- rather than by calling that function.
+/// It cannot be called here: it refuses any space that is not canonically
+/// evidenced, and this fixture's world registers a legacy space. Driving it
+/// would need a world that both executed a real delivery job and carries q1
+/// structural evidence for that same registration, which no fixture builds
+/// today. So this proves the corpus a capture would see, and not the capture.
+#[sqlx::test(migrations = false)]
+async fn after_erasure_the_corpus_a_build_would_draw_holds_only_what_remains(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let job = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &job).await;
+    let workspace = job.accepted.context.workspace_id.as_uuid();
+    let material = a_source_of(&pool, &job.accepted).await;
+    let registration = job.accepted.space_registration_id;
+
+    let registry =
+        Arc::new(vestrace_infrastructure::embedding_index::EmbeddingIndexRegistry::new());
+    let counters = Arc::new(ErasureVaultCounters::default());
+    let service = vestrace_application::MaterialErasureService::new(
+        vestrace_infrastructure::postgres::PgMaterialErasureRepository::new(PgStore::from_pool(
+            runtime.clone(),
+        )),
+        CountingErasureVault {
+            counters: Arc::clone(&counters),
+        },
+    )
+    .with_embedding_propagation(Arc::new(erasure_service(&runtime, registry)));
+    service
+        .erase_content(
+            &job.accepted.context,
+            vestrace_domain::ContentMaterialId::from_uuid(material),
+        )
+        .await
+        .expect("the full two-phase erasure");
+
+    // The ciphertext is gone, not merely marked: the material has left Live and
+    // the vault was asked to destroy its key exactly once.
+    let material_state: String =
+        sqlx::query_scalar("SELECT state FROM content_materials WHERE workspace_id=$1 AND id=$2")
+            .bind(workspace)
+            .bind(material)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_ne!(material_state, "live", "phase two must leave Live behind");
+    // And so has every vector computed from it: a retired projection's
+    // ciphertext is content of the erased source in another representation.
+    let live_vectors: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_erasure_revoked_members AS revoked            JOIN content_materials AS vector              ON vector.workspace_id=revoked.workspace_id             AND vector.id=revoked.vector_material_id           WHERE revoked.workspace_id=$1 AND vector.state='live'",
+    )
+    .bind(workspace)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live_vectors, 0,
+        "no vector of an erased source may still be Live"
+    );
+    assert!(
+        counters.erase_calls.load(Ordering::SeqCst) > 1,
+        "the source and each of its vectors reached the vault"
+    );
+
+    // Not one projection the erasure revoked is still a member a build could
+    // draw. This is the capture's own selection, run against the world the
+    // erasure left.
+    let revoked_still_drawable: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_projection_entries AS p \
+           JOIN content_materials AS m ON m.workspace_id=p.workspace_id AND m.id=p.material_id \
+           JOIN embedding_erasure_revoked_members AS revoked \
+             ON revoked.workspace_id=p.workspace_id AND revoked.projection_entry_id=p.id \
+          WHERE p.workspace_id=$1 AND p.space_registration_id=$2 \
+            AND p.state='live' AND m.state='live'",
+    )
+    .bind(workspace)
+    .bind(registration)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        revoked_still_drawable, 0,
+        "a projection of an erased source may not remain drawable"
+    );
+
+    // And the corpus counter agrees with that selection exactly, which is the
+    // equality the capture refuses to proceed without. A capture here would
+    // therefore succeed and would hold only the remaining members.
+    let (drawable, live_member_count): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM embedding_projection_entries AS p \
+                   JOIN content_materials AS m \
+                     ON m.workspace_id=p.workspace_id AND m.id=p.material_id \
+                  WHERE p.workspace_id=$1 AND p.space_registration_id=$2 \
+                    AND p.state='live' AND m.state='live'), \
+                (SELECT live_member_count FROM embedding_space_corpus_states \
+                  WHERE workspace_id=$1 AND space_registration_id=$2)",
+    )
+    .bind(workspace)
+    .bind(registration)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        drawable, live_member_count,
+        "the corpus counter must equal what a build would draw, or no capture can proceed"
+    );
+    runtime.close().await;
+}
