@@ -4,8 +4,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use vestrace_domain::{
-    TransitionBatchId,
-    embedding::{TransitionInputOrdinal, TransitionRecipeOrdinal, TransitionVersion},
+    EmbeddingJobId, TransitionBatchId,
+    embedding::{
+        EmbeddingSpaceTransitionState, TransitionInputOrdinal, TransitionRecipeOrdinal,
+        TransitionVersion,
+    },
 };
 
 use super::carry::AcknowledgeCarriedTransitionBatchAfterUnknown;
@@ -38,6 +41,48 @@ pub struct PlanEmbeddingTransitionVersion {
     pub batch_id: TransitionBatchId,
     pub snapshot_id: uuid::Uuid,
     pub recipes: Vec<TransitionPlanRecipe>,
+}
+
+/// Binds one immutable transition recipe to one fresh physical embedding job.
+/// The SQL authority derives the eventual satisfaction kind from terminal
+/// facts; callers provide no kind selector.
+#[derive(Clone, Debug)]
+pub struct CreateEmbeddingTransitionBatchAttempt {
+    pub plan_id: uuid::Uuid,
+    pub batch_id: TransitionBatchId,
+    pub attempt_id: uuid::Uuid,
+    pub job_id: EmbeddingJobId,
+    pub recipe_ordinal: TransitionRecipeOrdinal,
+    pub old_projection_id: uuid::Uuid,
+    pub target_input_ordinal: TransitionInputOrdinal,
+    pub expected_job_version: u64,
+}
+
+/// Asks SQL to derive the single satisfier for one exactly bound recipe.
+/// `None` selects only the Existing branch; a present attempt selects only the
+/// terminal-result branch after its own version fence has been checked.
+#[derive(Clone, Debug)]
+pub struct ObserveEmbeddingTransitionAttempt {
+    pub plan_id: uuid::Uuid,
+    pub batch_id: TransitionBatchId,
+    pub recipe_ordinal: TransitionRecipeOrdinal,
+    pub attempt_id: Option<uuid::Uuid>,
+    pub expected_job_version: Option<u64>,
+}
+
+/// The single authority that may expose an exact, fully satisfied batch as
+/// ready for activation.
+#[derive(Clone, Debug)]
+pub struct ProveEmbeddingTransitionCompleteness {
+    pub transition_id: uuid::Uuid,
+    pub plan_id: uuid::Uuid,
+    pub batch_id: TransitionBatchId,
+    pub expected_transition_version: TransitionVersion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmbeddingTransitionProgress {
+    pub state: EmbeddingSpaceTransitionState,
 }
 
 /// The auth-binding XOR carried by both source and target plan tuples.
@@ -73,6 +118,36 @@ pub trait EmbeddingTransitionRepository: Send + Sync {
     ) -> Result<uuid::Uuid, ApplicationError> {
         Err(ApplicationError::Unavailable(
             "governed embedding transition carry acknowledgement is not configured".to_owned(),
+        ))
+    }
+
+    async fn create_batch_attempt(
+        &self,
+        _context: RequestContext,
+        _command: CreateEmbeddingTransitionBatchAttempt,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding transition execution is not configured".to_owned(),
+        ))
+    }
+
+    async fn observe_attempt(
+        &self,
+        _context: RequestContext,
+        _command: ObserveEmbeddingTransitionAttempt,
+    ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding transition execution is not configured".to_owned(),
+        ))
+    }
+
+    async fn prove_completeness(
+        &self,
+        _context: RequestContext,
+        _command: ProveEmbeddingTransitionCompleteness,
+    ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding transition execution is not configured".to_owned(),
         ))
     }
 }

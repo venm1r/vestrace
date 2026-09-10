@@ -14,6 +14,7 @@ pub mod job;
 pub mod keys;
 pub mod result;
 pub mod transition;
+pub mod transition_coordinator;
 pub mod work;
 
 pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
@@ -44,9 +45,12 @@ pub use result::{
     EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
 };
 pub use transition::{
-    EmbeddingTransitionRepository, PlanEmbeddingTransitionVersion,
+    CreateEmbeddingTransitionBatchAttempt, EmbeddingTransitionProgress,
+    EmbeddingTransitionRepository, ObserveEmbeddingTransitionAttempt,
+    PlanEmbeddingTransitionVersion, ProveEmbeddingTransitionCompleteness,
     SharedEmbeddingTransitionRepository, TransitionAuthBinding, TransitionPlanRecipe,
 };
+pub use transition_coordinator::EmbeddingTransitionCoordinator;
 pub use work::{
     EmbeddingWorkClaim, EmbeddingWorkKind, EmbeddingWorkOutcome, EmbeddingWorkRepository,
     SharedEmbeddingWorkRepository,

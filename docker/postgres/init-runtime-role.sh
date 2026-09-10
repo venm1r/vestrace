@@ -2586,4 +2586,167 @@ BEGIN
     END IF;
 END $embedding_executor_bootstrap$;
 
+-- Task 6 temporarily lends the runtime migrator only the guarded transition
+-- tables whose schema changes in 0200.  The finish bridge checks every new
+-- table/function before returning it to the guarded owner, so fresh and
+-- 0199-to-0200 upgrades end with identical ownership and ACL posture.
+DO $transition_execution_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=200 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                'embedding_transitions',
+                'embedding_transition_plans',
+                'embedding_transition_plan_recipes',
+                'embedding_transition_ambiguity_carry_recipes',
+                'embedding_transition_barrier_recipes',
+                'embedding_transition_batches',
+                'embedding_transition_batch_recipes',
+                'embedding_transition_recipe_dependencies',
+                'embedding_transition_job_attempts',
+                'embedding_transition_recipe_satisfactions',
+                'embedding_transition_observations'
+              ]::TEXT[]) AS required(relname)
+             WHERE to_regclass('public.'||required.relname) IS NULL
+                OR (SELECT pg_get_userbyid(relowner) FROM pg_class
+                     WHERE oid=to_regclass('public.'||required.relname))<>'vestrace_guarded_owner'
+                OR NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+                         WHERE oid=to_regclass('public.'||required.relname))
+                OR NOT has_table_privilege('vestrace','public.'||required.relname,'SELECT,REFERENCES')
+        ) OR EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
+                to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
+                to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
+              ]::REGPROCEDURE[]) AS required(target)
+             WHERE required.target IS NULL
+                OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
+                OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
+                OR has_function_privilege('public',required.target,'EXECUTE')
+        ) THEN
+            RAISE EXCEPTION 'embedding transition execution owner or runtime ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_transition_execution_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_transition_execution_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_transition_execution_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGCLASS;
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=199 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=200 AND success) THEN
+                RAISE EXCEPTION 'transition execution upgrade requires exact accepted 0199 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            FOREACH target IN ARRAY ARRAY[
+                'embedding_transitions'::REGCLASS,
+                'embedding_transition_plans'::REGCLASS,
+                'embedding_transition_plan_recipes'::REGCLASS,
+                'embedding_transition_ambiguity_carry_recipes'::REGCLASS,
+                'embedding_transition_barrier_recipes'::REGCLASS
+            ] LOOP
+                IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid=target)
+                   IS DISTINCT FROM 'vestrace_guarded_owner' THEN
+                    RAISE EXCEPTION 'transition execution upgrade table owner is unavailable'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER TABLE %s OWNER TO vestrace',target);
+            END LOOP;
+            GRANT SELECT, REFERENCES ON TABLE public.embedding_transition_plans,
+                public.embedding_projection_entries, public.material_erasure_blockers TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_transition_execution_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_transition_execution_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_transition_execution_upgrade() TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_transition_execution_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGCLASS; target_function REGPROCEDURE;
+        BEGIN
+            FOREACH target_function IN ARRAY ARRAY[
+                to_regprocedure('public.vestrace_derive_embedding_transition_carry_recipe_identity()'),
+                to_regprocedure('public.vestrace_derive_embedding_transition_barrier_recipe_identity()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection_trigger()'),
+                to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
+                to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
+                to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
+            ]::REGPROCEDURE[] LOOP
+                IF target_function IS NULL
+                   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
+                    RAISE EXCEPTION 'transition execution function hand-back is unavailable'
+                        USING ERRCODE='42501';
+                END IF;
+            END LOOP;
+            FOREACH target IN ARRAY ARRAY[
+                'embedding_transitions'::REGCLASS,
+                'embedding_transition_plans'::REGCLASS,
+                'embedding_transition_plan_recipes'::REGCLASS,
+                'embedding_transition_ambiguity_carry_recipes'::REGCLASS,
+                'embedding_transition_barrier_recipes'::REGCLASS,
+                'embedding_transition_batches'::REGCLASS,
+                'embedding_transition_batch_recipes'::REGCLASS,
+                'embedding_transition_recipe_dependencies'::REGCLASS,
+                'embedding_transition_job_attempts'::REGCLASS,
+                'embedding_transition_recipe_satisfactions'::REGCLASS,
+                'embedding_transition_observations'::REGCLASS
+            ] LOOP
+                IF to_regclass(format('public.%s',target::TEXT)) IS NULL THEN
+                    RAISE EXCEPTION 'transition execution guarded relation is absent'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER TABLE %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('GRANT ALL ON TABLE %s TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
+                EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
+            END LOOP;
+            FOREACH target_function IN ARRAY ARRAY[
+                to_regprocedure('public.vestrace_derive_embedding_transition_carry_recipe_identity()'),
+                to_regprocedure('public.vestrace_derive_embedding_transition_barrier_recipe_identity()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection_trigger()'),
+                to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
+                to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
+                to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
+            ]::REGPROCEDURE[] LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
+            END LOOP;
+            REVOKE REFERENCES ON TABLE public.embedding_transition_plans,
+                public.embedding_projection_entries, public.material_erasure_blockers FROM vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint) TO vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint) TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_transition_execution_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_transition_execution_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_transition_execution_upgrade() TO vestrace;
+    END IF;
+END $transition_execution_bootstrap$;
+
 SQL

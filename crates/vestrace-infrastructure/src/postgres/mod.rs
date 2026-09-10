@@ -173,6 +173,8 @@ pub struct GovernedProviderRuntime {
     embedding_jobs: vestrace_application::SharedEmbeddingJobRepository,
     embedding_termination: std::sync::Arc<vestrace_application::EmbeddingJobTerminationService>,
     embedding_transitions: vestrace_application::SharedEmbeddingTransitionRepository,
+    embedding_transition_coordinator:
+        std::sync::Arc<vestrace_application::embedding::EmbeddingTransitionCoordinator>,
 }
 
 impl GovernedProviderRuntime {
@@ -238,6 +240,11 @@ impl GovernedProviderRuntime {
                     store.clone(),
                 ),
             );
+        let embedding_transition_coordinator = std::sync::Arc::new(
+            vestrace_application::embedding::EmbeddingTransitionCoordinator::new(
+                embedding_transitions.clone(),
+            ),
+        );
         let results = Arc::new(
             provider_result_repository::PgProviderResultRepository::new(
                 Arc::new(installation_permit::PgInstallationMutationPermit::new(
@@ -258,6 +265,7 @@ impl GovernedProviderRuntime {
             embedding_jobs,
             embedding_termination,
             embedding_transitions,
+            embedding_transition_coordinator,
         }
     }
 
@@ -291,6 +299,14 @@ impl GovernedProviderRuntime {
         &self,
     ) -> vestrace_application::SharedEmbeddingTransitionRepository {
         self.embedding_transitions.clone()
+    }
+
+    /// The sole coordinator that can bind transition attempts, derive their
+    /// satisfactions, and prove a batch complete.
+    pub fn embedding_transition_coordinator(
+        &self,
+    ) -> std::sync::Arc<vestrace_application::embedding::EmbeddingTransitionCoordinator> {
+        self.embedding_transition_coordinator.clone()
     }
 
     /// The one production route from a Run-step work item to a provider.

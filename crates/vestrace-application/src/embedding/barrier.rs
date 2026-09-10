@@ -5,7 +5,9 @@ use vestrace_domain::embedding::BarrierState;
 
 use crate::{ApplicationError, RequestContext};
 
-/// A caller that is about to create work for a dedicated barrier batch.
+/// A caller that is about to create work for a dedicated barrier batch. Exact
+/// batch/recipe identities are derived by the guarded SQL mapping resolver,
+/// not asserted at this application boundary.
 #[derive(Clone, Copy, Debug)]
 pub struct BarrierBatchDispatch {
     pub state: BarrierState,

@@ -5,6 +5,10 @@ use vestrace_domain::embedding::{
     TransitionInputOrdinal, TransitionRecipeOrdinal, TransitionVersion,
 };
 
+/// The ordinal correspondence observed before Task 6's guarded SQL resolver
+/// attaches both sides to their immutable batch and recipe identities.  These
+/// fields intentionally remain ordinal-only: callers cannot nominate the
+/// identity that satisfies a transition recipe.
 #[derive(Clone, Debug)]
 pub struct CarryRecipeMapping {
     pub old_recipe: TransitionRecipeOrdinal,

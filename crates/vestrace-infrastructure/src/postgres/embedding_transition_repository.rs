@@ -2,10 +2,16 @@
 
 use async_trait::async_trait;
 use vestrace_application::{
-    AcknowledgeCarriedTransitionBatchAfterUnknown, ApplicationError,
-    EmbeddingTransitionBarrierRepository, EmbeddingTransitionRepository,
-    PlanEmbeddingTransitionVersion, RequestContext, TransitionAuthBinding,
+    ApplicationError, RequestContext,
+    embedding::{
+        AcknowledgeCarriedTransitionBatchAfterUnknown, CreateEmbeddingTransitionBatchAttempt,
+        EmbeddingTransitionBarrierRepository, EmbeddingTransitionProgress,
+        EmbeddingTransitionRepository, ObserveEmbeddingTransitionAttempt,
+        PlanEmbeddingTransitionVersion, ProveEmbeddingTransitionCompleteness,
+        TransitionAuthBinding,
+    },
 };
+use vestrace_domain::{EmbeddingJobId, embedding::EmbeddingSpaceTransitionState};
 
 use super::PgStore;
 
@@ -169,6 +175,98 @@ impl EmbeddingTransitionRepository for PgEmbeddingTransitionRepository {
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         Ok(accepted)
     }
+
+    async fn create_batch_attempt(
+        &self,
+        context: RequestContext,
+        command: CreateEmbeddingTransitionBatchAttempt,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(&context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let created: uuid::Uuid = sqlx::query_scalar(
+            "SELECT vestrace_create_embedding_transition_batch_attempt(\
+             $1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(command.plan_id)
+        .bind(command.batch_id.as_uuid())
+        .bind(command.attempt_id)
+        .bind(command.job_id.as_uuid())
+        .bind(command.recipe_ordinal.value() as i64)
+        .bind(command.old_projection_id)
+        .bind(command.target_input_ordinal.value() as i64)
+        .bind(command.expected_job_version as i64)
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_transition_execution_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        Ok(EmbeddingJobId::from_uuid(created))
+    }
+
+    async fn observe_attempt(
+        &self,
+        context: RequestContext,
+        command: ObserveEmbeddingTransitionAttempt,
+    ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(&context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let state: String = sqlx::query_scalar(
+            "SELECT vestrace_observe_embedding_transition_attempt(\
+             $1,$2,$3,$4,$5,$6)",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(command.plan_id)
+        .bind(command.batch_id.as_uuid())
+        .bind(command.recipe_ordinal.value() as i64)
+        .bind(command.attempt_id)
+        .bind(command.expected_job_version.map(|version| version as i64))
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_transition_execution_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        transition_progress(state)
+    }
+
+    async fn prove_completeness(
+        &self,
+        context: RequestContext,
+        command: ProveEmbeddingTransitionCompleteness,
+    ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(&context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let state: String = sqlx::query_scalar(
+            "SELECT vestrace_prove_embedding_transition_completeness(\
+             $1,$2,$3,$4,$5)",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(command.transition_id)
+        .bind(command.plan_id)
+        .bind(command.batch_id.as_uuid())
+        .bind(command.expected_transition_version.value() as i64)
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_transition_execution_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        transition_progress(state)
+    }
 }
 
 #[async_trait]
@@ -188,4 +286,33 @@ fn map_planning_error(error: sqlx::Error) -> ApplicationError {
         }
         _ => ApplicationError::Storage(error.to_string()),
     }
+}
+
+fn map_transition_execution_error(error: sqlx::Error) -> ApplicationError {
+    match error
+        .as_database_error()
+        .and_then(|database| database.code())
+        .as_deref()
+    {
+        Some("40001") => ApplicationError::Conflict(
+            "EMBEDDING_TRANSITION_EXECUTION_IDENTITY_CONFLICT".to_owned(),
+        ),
+        Some("22023") | Some("23514") => {
+            ApplicationError::Policy("EMBEDDING_TRANSITION_EXECUTION_REFUSED".to_owned())
+        }
+        _ => ApplicationError::Storage(error.to_string()),
+    }
+}
+
+fn transition_progress(state: String) -> Result<EmbeddingTransitionProgress, ApplicationError> {
+    let state = match state.as_str() {
+        "rebuilding" => EmbeddingSpaceTransitionState::Rebuilding,
+        "ready_to_activate" => EmbeddingSpaceTransitionState::ReadyToActivate,
+        _ => {
+            return Err(ApplicationError::Storage(
+                "embedding transition execution returned an unknown state".to_owned(),
+            ));
+        }
+    };
+    Ok(EmbeddingTransitionProgress { state })
 }
