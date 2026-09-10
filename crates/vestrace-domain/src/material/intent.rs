@@ -1,6 +1,7 @@
 //! Fixed-identity lifecycle records for provisional material keys.
 
-use crate::{PrincipalId, WorkspaceId};
+use crate::WorkspaceId;
+use uuid::Uuid;
 
 use super::{
     ContentMaterialId, IntentNonce, MaterialKeyCreationIntentId, MaterialKeyCreationIntentState,
@@ -17,7 +18,14 @@ pub struct MaterialKeyCreationIntent {
     material_key_id: MaterialKeyId,
     nonce: IntentNonce,
     owner_kind: String,
-    owner_id: PrincipalId,
+    /// Who the material belongs to, in the namespace `owner_kind` names.
+    ///
+    /// Deliberately untyped beyond a UUID: the pair is the reference, and the
+    /// kinds do not share one identifier type. `provider_result` names a
+    /// principal, `memory_revision` names a revision, and a later kind will
+    /// name something else again. Typing this as any one of them would put a
+    /// value in the domain that is not what its type says it is.
+    owner_id: Uuid,
     output_ordinal: u64,
     state: MaterialKeyCreationIntentState,
 }
@@ -31,7 +39,7 @@ impl MaterialKeyCreationIntent {
         material_key_id: MaterialKeyId,
         nonce: IntentNonce,
         owner_kind: impl Into<String>,
-        owner_id: PrincipalId,
+        owner_id: Uuid,
         output_ordinal: u64,
     ) -> Self {
         Self {
@@ -71,7 +79,7 @@ impl MaterialKeyCreationIntent {
         &self.owner_kind
     }
 
-    pub const fn owner_id(&self) -> PrincipalId {
+    pub const fn owner_id(&self) -> Uuid {
         self.owner_id
     }
 

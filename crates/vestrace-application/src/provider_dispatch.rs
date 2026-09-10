@@ -14,8 +14,8 @@ use vestrace_domain::{
     ExternalEffectId, ExternalEffectIntent, ExternalEffectLifecycleTransitionId,
     ExternalEffectReceipt, IntentNonce, MaterialKeyCreationIntentId, MaterialKeyId,
     ModelRequestEvidenceId, PolicyDecision, PolicyDecisionId, PolicyDecisionReason,
-    PolicyDecisionResult, PreparedMaterialAttachmentId, PrincipalId, QualificationJobId, RunStepId,
-    WorkerId, WorkspaceId,
+    PolicyDecisionResult, PreparedMaterialAttachmentId, QualificationJobId, RunStepId, WorkerId,
+    WorkspaceId,
     embedding::EmbeddingJobKind,
     run::{RunActorRef, RunVersion},
     trust::{DataClassification, evaluate_model_boundary},
@@ -628,7 +628,9 @@ where
             command.identities.input_material_key_id,
             command.identities.input_intent_nonce,
             "model_request_input",
-            PrincipalId::from_uuid(command.step_id.as_uuid()),
+            // The owner is the run step, and always was: this used to be
+            // wrapped in a PrincipalId, which is not what a step id is.
+            command.step_id.as_uuid(),
             0,
         );
         let mut unit_of_work = self.transactions.begin(context).await?;
@@ -1175,6 +1177,7 @@ impl GovernedMutationApply for ProviderDispatchGovernedApply {
 #[cfg(test)]
 mod run_step_attempt_lookup {
     use super::*;
+    use vestrace_domain::PrincipalId;
 
     /// Acceptance must resolve an already-reserved attempt before it authors
     /// anything. `ExternalEffectIntent::new` allocates a fresh effect id on

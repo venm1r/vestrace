@@ -5,19 +5,26 @@
 //! the installation gate may commit: the database refuses, and this adapter
 //! translates the refusal.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use uuid::Uuid;
 use vestrace_application::{
-    ApplicationError, RequestContext,
+    ApplicationError, GovernedInputSealer, MaterialIntentCommands, MaterialKeyVault,
+    RequestContext,
     embedding::{
         EmbeddingLegacyAdoptionRepository, LegacyAdoptionBlocker, LegacyAdoptionBlockerRecord,
         LegacyAdoptionMember, LegacyAdoptionMemberState, LegacyAdoptionProgress,
-        MaterializedSource, StartLegacyAdoption,
+        LegacyAdoptionSourceMaterializer, MaterializedSource, StartLegacyAdoption,
     },
 };
-use vestrace_domain::{EmbeddingJobId, embedding::LegacyAdoptionState, id::LegacyAdoptionId};
+use vestrace_domain::{
+    ContentMaterialId, EmbeddingJobId, IntentNonce, MaterialKeyBindingReceipt,
+    MaterialKeyCreationIntent, MaterialKeyCreationIntentId, MaterialKeyId,
+    PreparedMaterialAttachmentId, embedding::LegacyAdoptionState, id::LegacyAdoptionId,
+};
 
-use super::PgStore;
+use super::{PgStore, material_intent::PgMaterialIntentRepository};
 
 #[derive(Clone, Debug)]
 pub struct PgEmbeddingLegacyAdoptionRepository {
@@ -448,5 +455,155 @@ impl PgEmbeddingLegacyAdoptionRepository {
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         Ok(())
+    }
+}
+
+/// Turns one memory revision's current content into a Live governed content
+/// material owned by that revision.
+///
+/// This is the join the canonical corpus was missing. A canonical generation
+/// member points at a projection, whose source is a content material; memory
+/// content lived only in `memory_revisions.content`, so nothing connected a
+/// member back to a memory. The `content_material_ordinary_references` row this
+/// produces, with `owner_kind` `memory_revision`, is that connection.
+///
+/// The lifecycle is the ordinary one -- reserve, provisional key, seal,
+/// prepare, bind, finalize -- and deliberately not a shortcut of it: a material
+/// adoption produced by a different path would not be erasable, hydratable or
+/// revocable by the machinery every other material already answers to.
+pub struct PgLegacyAdoptionSourceMaterializer<V, C> {
+    store: PgStore,
+    materials: MaterialIntentCommands<PgMaterialIntentRepository>,
+    vault: Arc<V>,
+    sealer: Arc<C>,
+}
+
+impl<V, C> PgLegacyAdoptionSourceMaterializer<V, C> {
+    pub fn new(store: PgStore, vault: Arc<V>, sealer: Arc<C>) -> Self {
+        Self {
+            materials: MaterialIntentCommands::new(PgMaterialIntentRepository::new(store.clone())),
+            store,
+            vault,
+            sealer,
+        }
+    }
+}
+
+#[async_trait]
+impl<V, C> LegacyAdoptionSourceMaterializer for PgLegacyAdoptionSourceMaterializer<V, C>
+where
+    V: MaterialKeyVault + Send + Sync + 'static,
+    C: GovernedInputSealer + Send + Sync + 'static,
+{
+    async fn materialize(
+        &self,
+        context: &RequestContext,
+        member: &LegacyAdoptionMember,
+    ) -> Result<Result<MaterializedSource, LegacyAdoptionBlocker>, ApplicationError> {
+        // Read the content and the memory's state together, so a memory that
+        // was deleted between planning and this call is a blocker rather than
+        // a material nobody should have made.
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT revision.content, memory.status \
+               FROM memory_revisions AS revision \
+               JOIN memories AS memory \
+                 ON memory.workspace_id = revision.workspace_id \
+                AND memory.id = revision.memory_id \
+              WHERE revision.workspace_id = $1 AND revision.id = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(member.memory_revision_id)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+        let Some((content, status)) = row else {
+            return Ok(Err(LegacyAdoptionBlocker::SourceRevisionAbsent));
+        };
+        if status == "deleted" {
+            return Ok(Err(LegacyAdoptionBlocker::SourceContentErased));
+        }
+        if content.is_empty() {
+            // Nothing to embed. Visible as a blocker rather than silently
+            // producing a vector of an empty string.
+            return Ok(Err(LegacyAdoptionBlocker::SourceContentErased));
+        }
+
+        let intent_id = MaterialKeyCreationIntentId::new();
+        let material_id = ContentMaterialId::new();
+        let key_id = MaterialKeyId::new();
+        let nonce = IntentNonce::new();
+        let attachment_id = PreparedMaterialAttachmentId::new();
+        let intent = MaterialKeyCreationIntent::reserve(
+            intent_id,
+            context.workspace_id,
+            material_id,
+            key_id,
+            nonce,
+            "memory_revision",
+            member.memory_revision_id,
+            0,
+        );
+        self.materials.reserve(context, &intent).await?;
+
+        let receipt = self
+            .vault
+            .create_if_absent(key_id, nonce)
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        self.materials
+            .record_provisional_created(context, intent_id)
+            .await?;
+        self.materials
+            .record_provisional_receipt(context, intent_id, receipt)
+            .await?;
+
+        // The plaintext is borrowed for exactly this callback; the DEK never
+        // leaves it and `sealed` receives ciphertext only.
+        let mut sealed: Option<Result<Vec<u8>, ApplicationError>> = None;
+        self.vault
+            .unwrap(key_id, &mut |dek| {
+                sealed = Some(self.sealer.seal(
+                    context.workspace_id,
+                    material_id,
+                    key_id,
+                    dek,
+                    content.as_bytes(),
+                ));
+            })
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let ciphertext = sealed.ok_or_else(|| {
+            ApplicationError::Internal(
+                "the material vault returned without sealing the adoption source".to_owned(),
+            )
+        })??;
+        drop(content);
+
+        self.materials
+            .prepare_content(
+                context,
+                intent_id,
+                attachment_id,
+                &ciphertext,
+                vestrace_domain::size_class_for(ciphertext.len()),
+            )
+            .await?;
+        self.materials
+            .bind(context, intent_id, MaterialKeyBindingReceipt::new())
+            .await?;
+        self.materials.finalize_bound(context, intent_id).await?;
+
+        Ok(Ok(MaterializedSource {
+            material_id: material_id.as_uuid(),
+            intent_id: intent_id.as_uuid(),
+        }))
     }
 }

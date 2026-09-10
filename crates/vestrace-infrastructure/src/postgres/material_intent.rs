@@ -68,7 +68,7 @@ impl MaterialIntentRepository for PgMaterialIntentRepository {
         .bind(intent.material_key_id().as_uuid())
         .bind(intent.nonce().as_uuid())
         .bind(intent.owner_kind())
-        .bind(intent.owner_id().as_uuid())
+        .bind(intent.owner_id())
         .bind(intent.output_ordinal() as i64)
         .execute(postgres_transaction(unit_of_work)?.connection())
         .await
@@ -93,7 +93,7 @@ impl MaterialIntentRepository for PgMaterialIntentRepository {
             .bind(intent.material_key_id().as_uuid())
             .bind(intent.nonce().as_uuid())
             .bind(intent.owner_kind())
-            .bind(intent.owner_id().as_uuid())
+            .bind(intent.owner_id())
             .bind(intent.output_ordinal() as i64),
         )
         .await

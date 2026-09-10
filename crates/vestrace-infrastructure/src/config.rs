@@ -719,6 +719,7 @@ struct FileEmbeddingConfig {
     model_name: Option<String>,
     space_name: Option<String>,
     secret_name: Option<String>,
+    limits: Option<EmbeddingWorkerLimits>,
 }
 
 /// The model an agent-assigned run step invokes.
@@ -742,6 +743,116 @@ pub struct ModelConfig {
     pub max_tokens: Option<u32>,
 }
 
+/// Every bound the embedding worker runs inside.
+///
+/// All of them are finite by construction. A worker whose claim batch, lease,
+/// index size or wait budget could be zero or unbounded is one that either does
+/// nothing or holds a generation open indefinitely, and neither failure is
+/// visible from outside: the process keeps running and the queue keeps growing.
+///
+/// The ceilings are not arbitrary. `max_index_members` times `max_dimensions`
+/// times four bytes is the largest flat index this process could be asked to
+/// allocate, and `validate` refuses a combination whose product does not fit
+/// the declared byte budget — a check that has to happen here, because the
+/// index builder discovers it one allocation at a time.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default)]
+pub struct EmbeddingWorkerLimits {
+    /// How many units of work one cycle claims.
+    pub claim_batch: u32,
+    /// How long a claim is held before another worker may take it.
+    pub claim_lease_seconds: u32,
+    /// The largest number of vectors one local index may hold.
+    pub max_index_members: u32,
+    /// The largest number of bytes one local index may allocate.
+    pub max_index_bytes: u64,
+    /// The widest vector this deployment will accept from a provider.
+    pub max_dimensions: u32,
+    /// How many projections one load reads at a time.
+    pub build_chunk_size: u32,
+    /// How many index builds may run at once.
+    pub concurrent_builders: u32,
+    /// How long a governed retrieval query may wait for its answer.
+    pub retrieval_wait_seconds: u32,
+}
+
+/// Four bytes per `f32` component. Named because the overflow check below is
+/// unreadable without it.
+const EMBEDDING_COMPONENT_BYTES: u64 = 4;
+
+impl Default for EmbeddingWorkerLimits {
+    fn default() -> Self {
+        Self {
+            claim_batch: 16,
+            claim_lease_seconds: 300,
+            // The three index bounds are one decision, not three: 32,768
+            // vectors at the widest accepted width is exactly the 512 MiB
+            // budget below. Raising members or dimensions without raising the
+            // budget is refused at load rather than discovered by the
+            // allocator, which is what `validate` is for.
+            max_index_members: 32_768,
+            max_index_bytes: 512 * 1024 * 1024,
+            max_dimensions: 4096,
+            build_chunk_size: 256,
+            concurrent_builders: 1,
+            retrieval_wait_seconds: 30,
+        }
+    }
+}
+
+impl EmbeddingWorkerLimits {
+    /// The largest allocation the declared shape could demand, or `None` when
+    /// the multiplication itself overflows.
+    pub fn worst_case_index_bytes(&self) -> Option<u64> {
+        u64::from(self.max_index_members)
+            .checked_mul(u64::from(self.max_dimensions))?
+            .checked_mul(EMBEDDING_COMPONENT_BYTES)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("claim_batch", u64::from(self.claim_batch)),
+            ("claim_lease_seconds", u64::from(self.claim_lease_seconds)),
+            ("max_index_members", u64::from(self.max_index_members)),
+            ("max_index_bytes", self.max_index_bytes),
+            ("max_dimensions", u64::from(self.max_dimensions)),
+            ("build_chunk_size", u64::from(self.build_chunk_size)),
+            ("concurrent_builders", u64::from(self.concurrent_builders)),
+            (
+                "retrieval_wait_seconds",
+                u64::from(self.retrieval_wait_seconds),
+            ),
+        ] {
+            if value == 0 {
+                return Err(format!("embedding.limits.{name} must be positive"));
+            }
+        }
+        if self.build_chunk_size > self.max_index_members {
+            return Err(
+                "embedding.limits.build_chunk_size must not exceed max_index_members".to_owned(),
+            );
+        }
+        // The byte budget has to be reachable on this machine, not merely
+        // expressible: a 64-bit budget on a 32-bit target is a limit the
+        // allocator would never enforce.
+        if usize::try_from(self.max_index_bytes).is_err() {
+            return Err(
+                "embedding.limits.max_index_bytes exceeds what this process can address".to_owned(),
+            );
+        }
+        match self.worst_case_index_bytes() {
+            None => {
+                Err("embedding.limits.max_index_members times max_dimensions overflows".to_owned())
+            }
+            Some(worst_case) if worst_case > self.max_index_bytes => Err(format!(
+                "embedding.limits allow an index of {worst_case} bytes, above max_index_bytes {}",
+                self.max_index_bytes
+            )),
+            Some(_) => Ok(()),
+        }
+    }
+}
+
 /// The embedding model that gives retrieval a vector channel.
 ///
 /// Separate from [`ModelConfig`] on purpose: embedding and completion are
@@ -759,6 +870,10 @@ pub struct EmbeddingConfig {
     /// Optional workspace secret holding the provider key. A local endpoint
     /// usually needs none.
     pub secret_name: Option<String>,
+    /// Every bound the worker runs inside. Defaulted rather than optional: a
+    /// deployment that names none still gets finite ones.
+    #[serde(default)]
+    pub limits: EmbeddingWorkerLimits,
 }
 
 /// One configured external effect adapter.
@@ -810,6 +925,7 @@ impl Default for EmbeddingConfig {
             model_name: String::new(),
             space_name: "default".to_string(),
             secret_name: None,
+            limits: EmbeddingWorkerLimits::default(),
         }
     }
 }
@@ -1036,6 +1152,11 @@ impl AppConfig {
                 }
             }
         }
+        config
+            .embedding
+            .limits
+            .validate()
+            .map_err(config::ConfigError::Message)?;
         if config.auth.is_enabled() {
             // A short shared secret is guessable, and an authenticated identity
             // that is not configured cannot be attributed to anyone.
@@ -1195,7 +1316,7 @@ mod tests {
     use vestrace_application::RestorationStage;
     use vestrace_domain::{DataDestination, Sensitivity};
 
-    use super::{AppConfig, DataPolicyMode, ProviderExecutionStorageConfig};
+    use super::{AppConfig, DataPolicyMode, EmbeddingWorkerLimits, ProviderExecutionStorageConfig};
 
     #[test]
     fn provider_execution_storage_roots_are_explicit_separate_and_writable() {
@@ -2055,5 +2176,103 @@ max_connections = 10
             },
         );
         let _ = fs::remove_file(path);
+    }
+
+    /// Every bound is finite out of the box, and the default shape is one this
+    /// process could actually allocate.
+    #[test]
+    fn the_default_embedding_limits_are_finite_and_consistent() {
+        let limits = EmbeddingWorkerLimits::default();
+        assert_eq!(limits.validate(), Ok(()));
+        let worst_case = limits
+            .worst_case_index_bytes()
+            .expect("the default shape must not overflow");
+        assert!(worst_case <= limits.max_index_bytes);
+        assert!(limits.build_chunk_size <= limits.max_index_members);
+    }
+
+    /// Zero is the value that turns a bound into a silent stall: a worker that
+    /// claims nothing, a lease that expires instantly, an index that holds
+    /// nothing, a query that waits no time at all.
+    #[test]
+    fn a_zero_bound_is_refused_wherever_it_appears() {
+        /// One named bound and the mutation that zeroes it.
+        type ZeroOneBound = (&'static str, fn(&mut EmbeddingWorkerLimits));
+
+        let mutations: [ZeroOneBound; 8] = [
+            ("claim_batch", |limits| limits.claim_batch = 0),
+            ("claim_lease_seconds", |limits| {
+                limits.claim_lease_seconds = 0
+            }),
+            ("max_index_members", |limits| limits.max_index_members = 0),
+            ("max_index_bytes", |limits| limits.max_index_bytes = 0),
+            ("max_dimensions", |limits| limits.max_dimensions = 0),
+            ("build_chunk_size", |limits| limits.build_chunk_size = 0),
+            ("concurrent_builders", |limits| {
+                limits.concurrent_builders = 0
+            }),
+            ("retrieval_wait_seconds", |limits| {
+                limits.retrieval_wait_seconds = 0
+            }),
+        ];
+        for (name, mutate) in mutations {
+            let mut limits = EmbeddingWorkerLimits::default();
+            mutate(&mut limits);
+            let error = limits
+                .validate()
+                .expect_err("a zero bound must be refused at load");
+            assert!(
+                error.contains(name),
+                "the refusal must name {name}, said {error}"
+            );
+        }
+    }
+
+    /// The declared shape has to fit the declared budget. Discovering it does
+    /// not, one allocation at a time inside the index builder, is the failure
+    /// this check exists to move forward to startup.
+    #[test]
+    fn a_shape_larger_than_its_byte_budget_is_refused() {
+        let mut limits = EmbeddingWorkerLimits {
+            max_index_members: 1_000_000,
+            max_dimensions: 4096,
+            max_index_bytes: 1024,
+            ..EmbeddingWorkerLimits::default()
+        };
+        let error = limits.validate().expect_err("the shape exceeds its budget");
+        assert!(error.contains("max_index_bytes"), "{error}");
+
+        // Raised to exactly the worst case, the same shape is accepted.
+        limits.max_index_bytes = limits.worst_case_index_bytes().unwrap();
+        assert_eq!(limits.validate(), Ok(()));
+    }
+
+    /// The multiplication itself must not overflow before the budget comparison
+    /// can mean anything.
+    #[test]
+    fn a_shape_whose_product_overflows_is_refused_before_it_is_compared() {
+        let limits = EmbeddingWorkerLimits {
+            max_index_members: u32::MAX,
+            max_dimensions: u32::MAX,
+            max_index_bytes: u64::MAX,
+            build_chunk_size: 1,
+            ..EmbeddingWorkerLimits::default()
+        };
+        assert_eq!(limits.worst_case_index_bytes(), None);
+        let error = limits.validate().expect_err("the product overflows");
+        assert!(error.contains("overflows"), "{error}");
+    }
+
+    /// A chunk larger than the whole index would read past what the index can
+    /// ever hold.
+    #[test]
+    fn a_chunk_larger_than_the_index_is_refused() {
+        let limits = EmbeddingWorkerLimits {
+            max_index_members: 10,
+            build_chunk_size: 11,
+            ..EmbeddingWorkerLimits::default()
+        };
+        let error = limits.validate().expect_err("the chunk exceeds the index");
+        assert!(error.contains("build_chunk_size"), "{error}");
     }
 }
