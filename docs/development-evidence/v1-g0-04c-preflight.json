@@ -74,6 +74,7 @@
     "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_work_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs",
     "crates/vestrace-infrastructure/src/postgres/erasure.rs",
     "crates/vestrace-infrastructure/src/postgres/material_intent.rs",
     "crates/vestrace-infrastructure/src/postgres/mod.rs",
@@ -1096,6 +1097,17 @@
       "new_change_scope_size": 119,
       "authorized_by": "User-confirmed lead decision for completion Task 11.",
       "reason": "No production path can accept a governed embedding job. vestrace_begin_delivery_embedding_outputs requires an evidence root whose cause_kind is 'embedding_job'; ModelRequestCauseKind carries only RunStep and QualificationProbe, and CreateModelRequestEvidence::new explicitly refuses every other pairing, so the only code that writes that cause is the fault-scenario harness and the test fixtures, both in raw SQL. The whole P04 embedding pipeline -- executor, result preparation and finalization, index builds, transitions, activation, retrieval fences, adoption -- therefore sits behind a door production code cannot open, and Task 11 steps 4 and 5 cannot be built without it. The durable contract already exists and is unchanged by this: model_request_evidence_roots already accepts 'embedding_job' and already requires exactly a binding snapshot with no qualification target for it, and the 'embeddings' request-kind node shape is already validated. What is missing is only the typed vocabulary above it -- a third cause variant, its constructor, and the read-back arm that mirrors the constraint. No schema, migration or guarded authority changes."
+    },
+    {
+      "amended_at_utc": "2026-09-10T21:27:49.746Z",
+      "added_paths": [
+        "crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 119,
+      "new_change_scope_size": 120,
+      "authorized_by": "User-confirmed lead decision for completion Task 11.",
+      "reason": "Task 11 removes the retired on-write embedding route from the worker. The route it replaces called PgEmbeddingStore::upsert, which the canonical transition closed, so every memory.created and memory.revised message failed; it stayed registered only because command_contract requires every produced topic to have a handler. The replacement calls no provider: it materializes the written revision content as a governed content material and accepts an ordinary delivery job, which the worker embedding cycles already carry. That is a new outbox handler and it needs a file. Task 1-14 mapped the composition change to crates/vestrace-cli/src/commands/worker.rs alone, which is where the handler is registered but not where an adapter may live: the worker is a composition root and the handler holds SQL. Adds only crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

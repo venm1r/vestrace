@@ -2,20 +2,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::signal;
-use vestrace_application::retrieval::EmbedMemoryHandler;
 use vestrace_application::run::{
     AdvanceRunHandler, ExecuteStepHandler, ResumeRunHandler, RunWorkHandlerRegistry, RunWorker,
     RunWorkerConfig, SystemClock,
 };
 use vestrace_application::{
-    ExternalEffectRepository, OutboxDispatcher, QualificationRuntime, RequestContext,
-    WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
+    EffectiveRequestLimits, ExternalEffectRepository, OutboxDispatcher, QualificationRuntime,
+    RequestContext, WORKER_PRESENCE_HEARTBEAT_INTERVAL, WORKER_PRESENCE_LAPSE_AFTER,
 };
 use vestrace_domain::external_effects::ExternalEffectAdapter;
 use vestrace_domain::id::{PrincipalId, WorkerId, WorkspaceId};
+use vestrace_infrastructure::crypto::ContentMaterialCodec;
+use vestrace_infrastructure::postgres::{
+    PgEmbeddingJobRepository, PgGovernedContentMaterializer, PgGovernedEmbeddingJobFactory,
+    PgGovernedMemoryEmbeddingHandler, PgModelRequestEvidenceRepository,
+};
 use vestrace_infrastructure::{
-    AppConfig, PgEmbeddingStore, PgExternalEffectRepository, PgMemoryTextSource,
-    PgOutboxRepository, PgRunLeasePort, PgStore, PgWorkQueuePort, PostgresRunStore,
+    AppConfig, PgExternalEffectRepository, PgOutboxRepository, PgRunLeasePort, PgStore,
+    PgWorkQueuePort, PostgresRunStore,
 };
 
 /// How many messages one drain pass claims per workspace.
@@ -80,7 +84,7 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
         crate::commands::recovery::run_startup_recovery(&config.workspaces, &store).await?;
     }
 
-    let outbox = build_outbox_dispatcher(config, &store)?;
+    let outbox = build_outbox_dispatcher(config, &store, &storage_roots)?;
     let reconciliation = build_effect_reconciliation(config, &store)?;
     // Built unconditionally, unlike the sweep: a debt can be owed by a
     // reconciliation recorded before this worker started, or by one an adapter
@@ -549,39 +553,50 @@ async fn poll_run_work(worker: &Arc<RunWorker>, contexts: &[RequestContext]) -> 
 fn build_outbox_dispatcher(
     config: &AppConfig,
     store: &PgStore,
+    storage_roots: &vestrace_infrastructure::config::ProviderExecutionStorageRoots,
 ) -> anyhow::Result<Arc<OutboxDispatcher>> {
     let repository = Arc::new(PgOutboxRepository::new(store.clone()));
     let mut dispatcher = OutboxDispatcher::new(repository);
 
-    // This route is retired in everything but name: it calls
-    // `PgEmbeddingStore::upsert`, which the canonical transition retired, so
-    // every message it handles fails with `embedding-legacy-write-retired`.
+    // The governed on-write route. It embeds nothing itself: it materializes
+    // the written revision's content as a governed content material and accepts
+    // an ordinary delivery job, which the worker's embedding cycles then carry
+    // through the same provider path a rebuild uses.
     //
-    // It is still registered, deliberately. `command_contract` requires every
-    // produced topic to have a handler, and it is right to: an unhandled
-    // message sits undelivered forever, while a failing one stays retriable and
-    // visible in the backlog. Removing this must therefore land together with
-    // the governed on-write route that replaces it -- materialize the written
-    // memory's content and accept a delivery job -- which is not built.
+    // The route this replaces called `PgEmbeddingStore::upsert`, which the
+    // canonical transition retired, so every message it handled failed. It
+    // stayed registered because `command_contract` requires every produced
+    // topic to have a handler -- an unhandled message sits undelivered forever,
+    // while a failing one stays retriable and visible. That requirement is now
+    // met by a route that works.
     match super::server::build_embedding_provider(config, store)? {
-        Some(provider) => {
-            let embeddings = Arc::new(PgEmbeddingStore::new(store.clone()));
-            let memories = Arc::new(PgMemoryTextSource::new(store.clone()));
+        Some(_) => {
+            let vault = super::server::build_material_vault(config, storage_roots)?;
+            let materializer = Arc::new(PgGovernedContentMaterializer::new(
+                store.clone(),
+                vault.clone(),
+                Arc::new(ContentMaterialCodec::new()),
+            ));
+            let jobs = Arc::new(PgGovernedEmbeddingJobFactory::new(
+                store.clone(),
+                Arc::new(PgEmbeddingJobRepository::new(store.clone())),
+                Arc::new(PgModelRequestEvidenceRepository::new(vault)),
+                EffectiveRequestLimits::new(256, 4, 32_768).map_err(|error| {
+                    anyhow::anyhow!("on-write embedding request limits are invalid: {error}")
+                })?,
+            ));
             // Two topics, one behaviour: a revision changes the text a memory
             // means, so an index that only followed creation would answer with
             // the superseded meaning and look perfectly healthy doing it.
             for topic in ["memory.created", "memory.revised"] {
-                dispatcher = dispatcher.with_handler(Arc::new(EmbedMemoryHandler::new(
-                    provider.clone(),
-                    embeddings.clone(),
-                    memories.clone(),
-                    config.embedding.space_name.clone(),
-                    topic,
-                )));
+                dispatcher =
+                    dispatcher.with_handler(Arc::new(PgGovernedMemoryEmbeddingHandler::new(
+                        store.clone(),
+                        materializer.clone(),
+                        jobs.clone(),
+                        topic,
+                    )));
             }
-            tracing::warn!(
-                "the on-write embedding route is the retired legacy one; every message on it fails                  until the governed replacement is composed"
-            );
         }
         None => {
             // Said out loud, because the consequence is a vector channel that

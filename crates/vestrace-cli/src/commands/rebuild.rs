@@ -11,8 +11,8 @@ use vestrace_application::{
 use vestrace_domain::{PrincipalId, WorkspaceId, id::LegacyAdoptionId};
 use vestrace_infrastructure::crypto::ContentMaterialCodec;
 use vestrace_infrastructure::postgres::{
-    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
-    PgLegacyAdoptionSourceMaterializer, PgModelRequestEvidenceRepository,
+    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgGovernedContentMaterializer,
+    PgGovernedEmbeddingJobFactory, PgModelRequestEvidenceRepository,
 };
 use vestrace_infrastructure::{AppConfig, PgInvariantObserver, PgStore};
 
@@ -224,12 +224,12 @@ async fn rebuild_embeddings(
     let repository = Arc::new(PgEmbeddingLegacyAdoptionRepository::new(store.clone()));
     let service = EmbeddingLegacyAdoptionService::new(
         repository.clone(),
-        Arc::new(PgLegacyAdoptionSourceMaterializer::new(
+        Arc::new(PgGovernedContentMaterializer::new(
             store.clone(),
             vault.clone(),
             Arc::new(ContentMaterialCodec::new()),
         )),
-        Arc::new(PgLegacyAdoptionRebuildFactory::new(
+        Arc::new(PgGovernedEmbeddingJobFactory::new(
             store.clone(),
             Arc::new(PgEmbeddingJobRepository::new(store.clone())),
             Arc::new(PgModelRequestEvidenceRepository::new(vault)),

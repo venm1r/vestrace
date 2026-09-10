@@ -80,6 +80,7 @@ export const changeScopePaths = [
   'crates/vestrace-infrastructure/src/postgres/embedding_store.rs',
   'crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs',
   'crates/vestrace-infrastructure/src/postgres/embedding_work_repository.rs',
+  'crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs',
   'crates/vestrace-infrastructure/src/postgres/erasure.rs',
   'crates/vestrace-infrastructure/src/postgres/material_intent.rs',
   'crates/vestrace-infrastructure/src/postgres/mod.rs',

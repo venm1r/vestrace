@@ -482,14 +482,14 @@ impl PgEmbeddingLegacyAdoptionRepository {
 /// prepare, bind, finalize -- and deliberately not a shortcut of it: a material
 /// adoption produced by a different path would not be erasable, hydratable or
 /// revocable by the machinery every other material already answers to.
-pub struct PgLegacyAdoptionSourceMaterializer<V, C> {
+pub struct PgGovernedContentMaterializer<V, C> {
     store: PgStore,
     materials: MaterialIntentCommands<PgMaterialIntentRepository>,
     vault: Arc<V>,
     sealer: Arc<C>,
 }
 
-impl<V, C> PgLegacyAdoptionSourceMaterializer<V, C> {
+impl<V, C> PgGovernedContentMaterializer<V, C> {
     pub fn new(store: PgStore, vault: Arc<V>, sealer: Arc<C>) -> Self {
         Self {
             materials: MaterialIntentCommands::new(PgMaterialIntentRepository::new(store.clone())),
@@ -501,7 +501,7 @@ impl<V, C> PgLegacyAdoptionSourceMaterializer<V, C> {
 }
 
 #[async_trait]
-impl<V, C> LegacyAdoptionSourceMaterializer for PgLegacyAdoptionSourceMaterializer<V, C>
+impl<V, C> LegacyAdoptionSourceMaterializer for PgGovernedContentMaterializer<V, C>
 where
     V: MaterialKeyVault + Send + Sync + 'static,
     C: GovernedInputSealer + Send + Sync + 'static,
@@ -510,6 +510,28 @@ where
         &self,
         context: &RequestContext,
         member: &LegacyAdoptionMember,
+    ) -> Result<Result<MaterializedSource, LegacyAdoptionBlocker>, ApplicationError> {
+        self.materialize_revision(context, member.memory_revision_id)
+            .await
+    }
+}
+
+impl<V, C> PgGovernedContentMaterializer<V, C>
+where
+    V: MaterialKeyVault + Send + Sync + 'static,
+    C: GovernedInputSealer + Send + Sync + 'static,
+{
+    /// One memory revision's current content as a Live governed content
+    /// material, owned by that revision.
+    ///
+    /// Adoption is not the only caller: the on-write route materializes exactly
+    /// the same thing for a memory that was just written. The blocker
+    /// vocabulary is adoption's, and it fits both -- an absent revision and
+    /// erased content are the two ways this can lawfully produce nothing.
+    pub async fn materialize_revision(
+        &self,
+        context: &RequestContext,
+        memory_revision_id: Uuid,
     ) -> Result<Result<MaterializedSource, LegacyAdoptionBlocker>, ApplicationError> {
         // Read the content and the memory's state together, so a memory that
         // was deleted between planning and this call is a blocker rather than
@@ -528,7 +550,7 @@ where
               WHERE revision.workspace_id = $1 AND revision.id = $2",
         )
         .bind(context.workspace_id.as_uuid())
-        .bind(member.memory_revision_id)
+        .bind(memory_revision_id)
         .fetch_optional(transaction.connection())
         .await
         .map_err(|error| ApplicationError::Storage(error.to_string()))?;
@@ -561,7 +583,7 @@ where
             key_id,
             nonce,
             "memory_revision",
-            member.memory_revision_id,
+            memory_revision_id,
             0,
         );
         self.materials.reserve(context, &intent).await?;
@@ -632,7 +654,7 @@ where
 /// proves an `embedding_job` cause by finding the job that owns this exact
 /// effect and pinned this exact snapshot, so the job is accepted first and its
 /// evidence written second.
-pub struct PgLegacyAdoptionRebuildFactory {
+pub struct PgGovernedEmbeddingJobFactory {
     store: PgStore,
     jobs: SharedEmbeddingJobRepository,
     evidence: Arc<PgModelRequestEvidenceRepository>,
@@ -651,7 +673,7 @@ struct CanonicalBinding {
     adapter_profile_revision: String,
 }
 
-impl PgLegacyAdoptionRebuildFactory {
+impl PgGovernedEmbeddingJobFactory {
     pub fn new(
         store: PgStore,
         jobs: SharedEmbeddingJobRepository,
@@ -726,14 +748,60 @@ impl PgLegacyAdoptionRebuildFactory {
     }
 }
 
+/// What one governed embedding job is for, in the words its records carry.
+///
+/// Everything structural about such a job -- the binding it pins, the evidence
+/// that reconstructs it, the order the two are written in -- is identical
+/// whichever path asked for it. Only the naming differs, so only the naming is
+/// a parameter.
+pub struct GovernedEmbeddingJobPurpose {
+    pub kind: EmbeddingJobKind,
+    /// Distinguishes one job of this purpose from another, and is the whole of
+    /// its idempotency: two requests naming the same subject are one job.
+    pub subject_id: Uuid,
+    /// A stable slug, e.g. `adoption-rebuild` or `memory-write`.
+    pub cause: &'static str,
+    pub action: &'static str,
+    pub summary: &'static str,
+    pub detail: serde_json::Value,
+}
+
 #[async_trait]
-impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
+impl LegacyAdoptionRebuildFactory for PgGovernedEmbeddingJobFactory {
     async fn create_rebuild(
         &self,
         context: &RequestContext,
         target_space_registration_id: Uuid,
         member: &LegacyAdoptionMember,
         source: MaterializedSource,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
+        self.create_job(
+            context,
+            target_space_registration_id,
+            source,
+            GovernedEmbeddingJobPurpose {
+                kind: EmbeddingJobKind::Rebuild,
+                subject_id: member.legacy_embedding_id,
+                cause: "adoption-rebuild",
+                action: "embedding.job.rebuild_accepted",
+                summary: "recompute one adopted embedding through the governed provider path",
+                detail: serde_json::json!({
+                    "legacy_embedding_id": member.legacy_embedding_id,
+                    "memory_revision_id": member.memory_revision_id,
+                }),
+            },
+        )
+        .await
+    }
+}
+
+impl PgGovernedEmbeddingJobFactory {
+    pub async fn create_job(
+        &self,
+        context: &RequestContext,
+        target_space_registration_id: Uuid,
+        source: MaterializedSource,
+        purpose: GovernedEmbeddingJobPurpose,
     ) -> Result<EmbeddingJobId, ApplicationError> {
         let binding = self
             .canonical_binding(context, target_space_registration_id)
@@ -752,8 +820,8 @@ impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
             binding.adapter_profile_revision.clone(),
             "embeddings",
             binding.runtime_base_url.clone(),
-            format!("sha256:adoption-rebuild:{}", member.legacy_embedding_id),
-            "recompute one adopted embedding through the governed provider path",
+            format!("sha256:{}:{}", purpose.cause, purpose.subject_id),
+            purpose.summary,
             vec![
                 EffectPrecondition::new("model-snapshot", binding.snapshot_id.to_string())
                     .map_err(ApplicationError::Domain)?,
@@ -770,11 +838,11 @@ impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
         )
         .map_err(ApplicationError::Domain)?;
 
-        let idempotency_key = format!("legacy-adoption-rebuild:{}", member.legacy_embedding_id);
+        let idempotency_key = format!("{}:{}", purpose.cause, purpose.subject_id);
         let acceptance = AcceptEmbeddingJob {
             job_id,
             space_registration_id: EmbeddingSpaceId::from_uuid(target_space_registration_id),
-            kind: EmbeddingJobKind::Rebuild,
+            kind: purpose.kind,
             model_binding_snapshot_id: binding.snapshot_id,
             intent,
             model_request_evidence_id: evidence_id,
@@ -783,7 +851,7 @@ impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
             idempotency: Some(IdempotencyRecord {
                 idempotency_key: idempotency_key.clone(),
                 workspace_id: context.workspace_id,
-                request_hash: format!("legacy-adoption-rebuild:{}", member.memory_revision_id),
+                request_hash: idempotency_key.clone(),
                 response_payload: None,
                 status: "completed".to_owned(),
                 created_at: at,
@@ -791,24 +859,18 @@ impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
             }),
             outbox: vec![OutboxMessage::new(
                 context.workspace_id,
-                "embedding.job.rebuild_accepted",
-                serde_json::json!({
-                    "job_id": job_id.as_uuid(),
-                    "legacy_embedding_id": member.legacy_embedding_id,
-                }),
+                purpose.action,
+                serde_json::json!({"job_id": job_id.as_uuid(), "subject_id": purpose.subject_id}),
                 at,
             )],
             audit: AuditEvent::new(
                 AuditEventId::new(),
                 context.workspace_id,
                 context.principal_id,
-                "embedding.job.rebuild_accepted",
+                purpose.action,
                 "embedding_job",
                 job_id.as_uuid(),
-                serde_json::json!({
-                    "legacy_embedding_id": member.legacy_embedding_id,
-                    "memory_revision_id": member.memory_revision_id,
-                }),
+                purpose.detail.clone(),
                 at,
             )
             .map_err(ApplicationError::Domain)?,

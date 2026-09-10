@@ -621,9 +621,11 @@ impl EmbeddingWorkerRuntime {
 mod embedding_adoption_repository;
 mod embedding_erasure_repository;
 mod embedding_index_repository;
+mod embedding_write_route;
 pub use embedding_adoption_repository::{
-    PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
-    PgLegacyAdoptionSourceMaterializer,
+    PgEmbeddingLegacyAdoptionRepository, PgGovernedContentMaterializer,
+    PgGovernedEmbeddingJobFactory,
 };
 pub use embedding_erasure_repository::PgEmbeddingErasureRepository;
 pub use embedding_index_repository::PgEmbeddingIndexRepository;
+pub use embedding_write_route::PgGovernedMemoryEmbeddingHandler;

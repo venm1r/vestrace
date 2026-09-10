@@ -29,9 +29,8 @@ use vestrace_domain::{
 };
 use vestrace_infrastructure::crypto::ContentMaterialCodec;
 use vestrace_infrastructure::postgres::{
-    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
-    PgLegacyAdoptionSourceMaterializer, PgModelRequestEvidenceRepository, PgStore,
-    PgTransactionManager,
+    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgGovernedContentMaterializer,
+    PgGovernedEmbeddingJobFactory, PgModelRequestEvidenceRepository, PgStore, PgTransactionManager,
 };
 
 struct LegacySpace {
@@ -495,7 +494,7 @@ async fn embedding_job_evidence_and_its_materialized_source_are_accepted(pool: P
 
     let vault_fixture = common::result_preparation_fixture::OutputVaultFixture::new();
     let vault = Arc::new(vault_fixture.vault(workspace));
-    let materializer = PgLegacyAdoptionSourceMaterializer::new(
+    let materializer = PgGovernedContentMaterializer::new(
         PgStore::from_pool(runtime.clone()),
         vault.clone(),
         Arc::new(ContentMaterialCodec::new()),
@@ -657,7 +656,7 @@ async fn embedding_job_evidence_and_its_materialized_source_are_accepted(pool: P
 async fn a_target_space_without_a_transition_binding_is_refused(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let runtime = common::runtime_pool(&pool).await;
-    let factory = PgLegacyAdoptionRebuildFactory::new(
+    let factory = PgGovernedEmbeddingJobFactory::new(
         PgStore::from_pool(runtime.clone()),
         Arc::new(PgEmbeddingJobRepository::new(PgStore::from_pool(
             runtime.clone(),

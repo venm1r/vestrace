@@ -130,8 +130,9 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // RetrievalResult literally, plus the three-path Task 11 amendment that lets
   // a content material be owned by a memory revision rather than a principal,
   // plus the two-path amendment that lets production name an embedding job as
-  // the cause of its own model-request evidence.
-  assert.equal(changeScopePaths.length, 119);
+  // the cause of its own model-request evidence, plus the one-path amendment
+  // for the governed on-write route that replaces the retired handler.
+  assert.equal(changeScopePaths.length, 120);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -230,6 +231,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/postgres/embedding_store.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_work_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs',
     'crates/vestrace-infrastructure/src/postgres/erasure.rs',
     'crates/vestrace-infrastructure/src/postgres/material_intent.rs',
   'crates/vestrace-infrastructure/src/postgres/mod.rs',
