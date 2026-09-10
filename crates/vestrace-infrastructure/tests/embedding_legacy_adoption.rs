@@ -14,20 +14,24 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use uuid::Uuid;
 use vestrace_application::{
-    ApplicationError, CreateModelRequestEvidence, EffectiveRequestLimits,
+    ApplicationError, CreateModelRequestEvidence, EffectiveRequestLimits, FenceReceipt,
     ModelRequestEvidenceRepository, RequestContext, TransactionManager,
     embedding::{
         EmbeddingLegacyAdoptionRepository, LegacyAdoptionBlocker, LegacyAdoptionMember,
-        LegacyAdoptionMemberState, LegacyAdoptionSourceMaterializer, StartLegacyAdoption,
+        LegacyAdoptionMemberState, LegacyAdoptionRebuildFactory, LegacyAdoptionSourceMaterializer,
+        MaterializedSource, StartLegacyAdoption,
     },
+    material::{MaterialKeyVault, VaultError},
 };
 use vestrace_domain::{
-    PrincipalId, WorkspaceId, embedding::LegacyAdoptionState, id::LegacyAdoptionId,
+    ErasureReceipt, IntentNonce, MaterialKeyId, PrincipalId, VaultReceipt, WorkspaceId,
+    ZeroizingDek, embedding::LegacyAdoptionState, id::LegacyAdoptionId,
 };
 use vestrace_infrastructure::crypto::ContentMaterialCodec;
 use vestrace_infrastructure::postgres::{
-    PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionSourceMaterializer,
-    PgModelRequestEvidenceRepository, PgStore, PgTransactionManager,
+    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
+    PgLegacyAdoptionSourceMaterializer, PgModelRequestEvidenceRepository, PgStore,
+    PgTransactionManager,
 };
 
 struct LegacySpace {
@@ -640,4 +644,94 @@ async fn embedding_job_evidence_and_its_materialized_source_are_accepted(pool: P
     assert_eq!(sources, vec![("0".to_owned(), source.material_id)]);
 
     runtime.close().await;
+}
+
+/// A canonical space that no transition ever established has no binding the
+/// factory may use, and the factory refuses rather than minting a second one.
+///
+/// This is the property that matters most about the lookup. A factory that
+/// invented a binding would let two jobs claim the same corpus under different
+/// qualification, and nothing downstream would notice: both would be
+/// structurally valid embedding jobs.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_target_space_without_a_transition_binding_is_refused(pool: PgPool) {
+    let fixture = seed_legacy_space(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let factory = PgLegacyAdoptionRebuildFactory::new(
+        PgStore::from_pool(runtime.clone()),
+        Arc::new(PgEmbeddingJobRepository::new(PgStore::from_pool(
+            runtime.clone(),
+        ))),
+        Arc::new(PgModelRequestEvidenceRepository::new(Arc::new(
+            RefusingVault,
+        ))),
+        EffectiveRequestLimits::new(256, 4, 32_768).unwrap(),
+    );
+    let member = LegacyAdoptionMember {
+        ordinal: 1,
+        legacy_embedding_id: Uuid::now_v7(),
+        memory_id: fixture.live_memory,
+        memory_revision_id: Uuid::now_v7(),
+        source_material_id: None,
+        source_intent_id: None,
+        rebuild_job_id: None,
+        state: LegacyAdoptionMemberState::Planned,
+    };
+
+    let error = factory
+        .create_rebuild(
+            &fixture.context,
+            fixture.canonical_registration,
+            &member,
+            MaterializedSource {
+                material_id: Uuid::now_v7(),
+                intent_id: Uuid::now_v7(),
+            },
+        )
+        .await
+        .expect_err("a space with no transition binding cannot take a rebuild");
+    assert!(
+        matches!(&error, ApplicationError::Unavailable(message)
+            if message.contains("transition-issued binding snapshot")),
+        "expected the missing-binding refusal, got {error:?}"
+    );
+
+    // Nothing was accepted on the way to that refusal.
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM embedding_jobs WHERE workspace_id=$1")
+        .bind(fixture.context.workspace_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0, "a refused rebuild must accept no job");
+    runtime.close().await;
+}
+
+/// The vault an evidence repository is handed when the test never expects it to
+/// be asked for a key.
+struct RefusingVault;
+
+impl MaterialKeyVault for RefusingVault {
+    fn create_if_absent(
+        &self,
+        _key_id: MaterialKeyId,
+        _nonce: IntentNonce,
+    ) -> Result<VaultReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
+    fn unwrap(
+        &self,
+        _key_id: MaterialKeyId,
+        _use_dek: &mut dyn FnMut(&ZeroizingDek),
+    ) -> Result<(), VaultError> {
+        panic!("a refused rebuild must not unwrap material")
+    }
+
+    fn prepare_erasure(&self, _key_id: MaterialKeyId) -> Result<FenceReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
+
+    fn erase(&self, _key_id: MaterialKeyId) -> Result<ErasureReceipt, VaultError> {
+        Err(VaultError::Unavailable)
+    }
 }

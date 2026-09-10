@@ -10,21 +10,31 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 use vestrace_application::{
-    ApplicationError, GovernedInputSealer, MaterialIntentCommands, MaterialKeyVault,
-    RequestContext,
+    AcceptEmbeddingJob, ApplicationError, CreateModelRequestEvidence, EffectiveRequestLimits,
+    GovernedInputSealer, IdempotencyRecord, MaterialIntentCommands, MaterialKeyVault,
+    ModelRequestEvidenceRepository, OutboxMessage, RequestContext, SharedEmbeddingJobRepository,
+    TransactionManager,
     embedding::{
         EmbeddingLegacyAdoptionRepository, LegacyAdoptionBlocker, LegacyAdoptionBlockerRecord,
         LegacyAdoptionMember, LegacyAdoptionMemberState, LegacyAdoptionProgress,
-        LegacyAdoptionSourceMaterializer, MaterializedSource, StartLegacyAdoption,
+        LegacyAdoptionRebuildFactory, LegacyAdoptionSourceMaterializer, MaterializedSource,
+        StartLegacyAdoption,
     },
 };
 use vestrace_domain::{
-    ContentMaterialId, EmbeddingJobId, IntentNonce, MaterialKeyBindingReceipt,
-    MaterialKeyCreationIntent, MaterialKeyCreationIntentId, MaterialKeyId,
-    PreparedMaterialAttachmentId, embedding::LegacyAdoptionState, id::LegacyAdoptionId,
+    AuditEvent, Capability, ContentMaterialId, DeliverySemantics, EffectPrecondition,
+    EffectReversibility, EmbeddingJobId, EmbeddingSpaceId, ExternalEffectIntent,
+    IdempotencyProfile, IntentNonce, MaterialKeyBindingReceipt, MaterialKeyCreationIntent,
+    MaterialKeyCreationIntentId, MaterialKeyId, ModelRequestEvidenceId,
+    PreparedMaterialAttachmentId, RiskCategory,
+    embedding::{EmbeddingJobKind, LegacyAdoptionState},
+    id::{AuditEventId, LegacyAdoptionId},
 };
 
-use super::{PgStore, material_intent::PgMaterialIntentRepository};
+use super::{
+    PgModelRequestEvidenceRepository, PgStore, PgTransactionManager,
+    material_intent::PgMaterialIntentRepository,
+};
 
 #[derive(Clone, Debug)]
 pub struct PgEmbeddingLegacyAdoptionRepository {
@@ -82,9 +92,9 @@ impl PgEmbeddingLegacyAdoptionRepository {
         plan_id: LegacyAdoptionId,
         connection: &mut sqlx::PgConnection,
     ) -> Result<LegacyAdoptionProgress, ApplicationError> {
-        let plan: (String, i64) = sqlx::query_as(
-            "SELECT state, version FROM embedding_legacy_adoptions \
-             WHERE workspace_id=$1 AND id=$2",
+        let plan: (String, i64, Uuid) = sqlx::query_as(
+            "SELECT state, version, target_space_registration_id \
+               FROM embedding_legacy_adoptions WHERE workspace_id=$1 AND id=$2",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(plan_id.as_uuid())
@@ -141,6 +151,7 @@ impl PgEmbeddingLegacyAdoptionRepository {
             plan_id,
             state: adoption_state(&plan.0)?,
             version: non_negative(plan.1, "plan version")?,
+            target_space_registration_id: plan.2,
             total_members: non_negative(counts.0, "member count")?,
             satisfied_members: non_negative(counts.1, "satisfied count")?,
             blocked_members: non_negative(counts.2, "blocked count")?,
@@ -606,4 +617,249 @@ where
             intent_id: intent_id.as_uuid(),
         }))
     }
+}
+
+/// Creates the governed `rebuild` job that recomputes one adopted vector.
+///
+/// It mints no binding snapshot. On the embedding side a snapshot is issued
+/// only by `vestrace_plan_embedding_transition_version`, which records it in
+/// `model_binding_snapshot_scopes` against the transition plan that established
+/// the canonical space; this looks that snapshot up rather than inventing a
+/// second binding for the same space, which would let two jobs claim the same
+/// corpus under different qualification.
+///
+/// Order matters and is not a preference. `vestrace_create_model_request_evidence`
+/// proves an `embedding_job` cause by finding the job that owns this exact
+/// effect and pinned this exact snapshot, so the job is accepted first and its
+/// evidence written second.
+pub struct PgLegacyAdoptionRebuildFactory {
+    store: PgStore,
+    jobs: SharedEmbeddingJobRepository,
+    evidence: Arc<PgModelRequestEvidenceRepository>,
+    transactions: PgTransactionManager,
+    limits: EffectiveRequestLimits,
+}
+
+/// The binding a canonical space was established under.
+struct CanonicalBinding {
+    snapshot_id: Uuid,
+    connection_revision_id: Uuid,
+    connection_qualification_revision_id: Uuid,
+    model_revision_id: Uuid,
+    model_qualification_revision_id: Uuid,
+    runtime_base_url: String,
+    adapter_profile_revision: String,
+}
+
+impl PgLegacyAdoptionRebuildFactory {
+    pub fn new(
+        store: PgStore,
+        jobs: SharedEmbeddingJobRepository,
+        evidence: Arc<PgModelRequestEvidenceRepository>,
+        limits: EffectiveRequestLimits,
+    ) -> Self {
+        Self {
+            transactions: PgTransactionManager::new(store.clone()),
+            store,
+            jobs,
+            evidence,
+            limits,
+        }
+    }
+
+    async fn canonical_binding(
+        &self,
+        context: &RequestContext,
+        registration: Uuid,
+    ) -> Result<CanonicalBinding, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        // The newest transition plan for this space names the binding it was
+        // most recently established under; an older plan's snapshot would pin a
+        // qualification the space has since moved off.
+        let row: Option<(Uuid, Uuid, Uuid, Uuid, Uuid, String, String)> = sqlx::query_as(
+            "SELECT snapshot.id, snapshot.connection_revision_id, \
+                    snapshot.connection_qualification_revision_id, \
+                    snapshot.model_revision_id, snapshot.model_qualification_revision_id, \
+                    revision.runtime_base_url, revision.adapter_profile_revision \
+               FROM model_binding_snapshot_scopes AS scope \
+               JOIN embedding_transition_plans AS plan \
+                 ON plan.workspace_id = scope.workspace_id \
+                AND plan.id = scope.transition_plan_id \
+               JOIN model_binding_snapshots AS snapshot \
+                 ON snapshot.workspace_id = scope.workspace_id \
+                AND snapshot.id = scope.snapshot_id \
+               JOIN connection_revisions AS revision \
+                 ON revision.workspace_id = snapshot.workspace_id \
+                AND revision.id = snapshot.connection_revision_id \
+              WHERE scope.workspace_id = $1 AND scope.scope = 'transition' \
+                AND plan.target_space_registration_id = $2 \
+              ORDER BY plan.version DESC LIMIT 1",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(registration)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(map_adoption_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+        let Some(row) = row else {
+            return Err(ApplicationError::Unavailable(
+                "the canonical target space has no transition-issued binding snapshot".to_owned(),
+            ));
+        };
+        Ok(CanonicalBinding {
+            snapshot_id: row.0,
+            connection_revision_id: row.1,
+            connection_qualification_revision_id: row.2,
+            model_revision_id: row.3,
+            model_qualification_revision_id: row.4,
+            runtime_base_url: row.5,
+            adapter_profile_revision: row.6,
+        })
+    }
+}
+
+#[async_trait]
+impl LegacyAdoptionRebuildFactory for PgLegacyAdoptionRebuildFactory {
+    async fn create_rebuild(
+        &self,
+        context: &RequestContext,
+        target_space_registration_id: Uuid,
+        member: &LegacyAdoptionMember,
+        source: MaterializedSource,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
+        let binding = self
+            .canonical_binding(context, target_space_registration_id)
+            .await?;
+        let job_id = EmbeddingJobId::new();
+        let evidence_id = ModelRequestEvidenceId::new();
+        let at = vestrace_domain::now();
+
+        // The effect is scoped to the workspace and names the runtime endpoint
+        // the canonical binding already resolved. Nothing here chooses a target
+        // a caller supplied.
+        let intent = ExternalEffectIntent::new(
+            "workspace://",
+            context.workspace_id,
+            context.principal_id,
+            binding.adapter_profile_revision.clone(),
+            "embeddings",
+            binding.runtime_base_url.clone(),
+            format!("sha256:adoption-rebuild:{}", member.legacy_embedding_id),
+            "recompute one adopted embedding through the governed provider path",
+            vec![
+                EffectPrecondition::new("model-snapshot", binding.snapshot_id.to_string())
+                    .map_err(ApplicationError::Domain)?,
+            ],
+            format!("sha256:adoption-preconditions:{}", binding.snapshot_id),
+            RiskCategory::Medium,
+            EffectReversibility::Unknown,
+            IdempotencyProfile::ProviderKey,
+            DeliverySemantics::AtLeastOnce,
+            Capability::ExportRead,
+            None::<String>,
+            None::<String>,
+            at,
+        )
+        .map_err(ApplicationError::Domain)?;
+
+        let idempotency_key = format!("legacy-adoption-rebuild:{}", member.legacy_embedding_id);
+        let acceptance = AcceptEmbeddingJob {
+            job_id,
+            space_registration_id: EmbeddingSpaceId::from_uuid(target_space_registration_id),
+            kind: EmbeddingJobKind::Rebuild,
+            model_binding_snapshot_id: binding.snapshot_id,
+            intent,
+            model_request_evidence_id: evidence_id,
+            retries_unknown_embedding_job_id: None,
+            expected_predecessor_version: None,
+            idempotency: Some(IdempotencyRecord {
+                idempotency_key: idempotency_key.clone(),
+                workspace_id: context.workspace_id,
+                request_hash: format!("legacy-adoption-rebuild:{}", member.memory_revision_id),
+                response_payload: None,
+                status: "completed".to_owned(),
+                created_at: at,
+                expires_at: at + chrono::Duration::hours(24),
+            }),
+            outbox: vec![OutboxMessage::new(
+                context.workspace_id,
+                "embedding.job.rebuild_accepted",
+                serde_json::json!({
+                    "job_id": job_id.as_uuid(),
+                    "legacy_embedding_id": member.legacy_embedding_id,
+                }),
+                at,
+            )],
+            audit: AuditEvent::new(
+                AuditEventId::new(),
+                context.workspace_id,
+                context.principal_id,
+                "embedding.job.rebuild_accepted",
+                "embedding_job",
+                job_id.as_uuid(),
+                serde_json::json!({
+                    "legacy_embedding_id": member.legacy_embedding_id,
+                    "memory_revision_id": member.memory_revision_id,
+                }),
+                at,
+            )
+            .map_err(ApplicationError::Domain)?,
+        };
+        self.jobs
+            .accept_governed(context.clone(), acceptance)
+            .await?;
+
+        let creation = CreateModelRequestEvidence::for_embedding_job(
+            evidence_id.as_uuid(),
+            context.workspace_id,
+            // The intent allocated the effect identity; read it back from the
+            // acceptance rather than minting a second one.
+            job_external_effect(context, &self.store, job_id).await?,
+            binding.snapshot_id,
+            binding.connection_revision_id,
+            binding.connection_qualification_revision_id,
+            binding.model_revision_id,
+            binding.model_qualification_revision_id,
+            job_id.as_uuid(),
+            &[source.material_id],
+            self.limits,
+        )?;
+        let mut unit = self.transactions.begin(context).await?;
+        self.evidence.create_in(unit.as_mut(), &creation).await?;
+        unit.commit().await?;
+        Ok(job_id)
+    }
+}
+
+/// The effect the accepted job actually owns.
+async fn job_external_effect(
+    context: &RequestContext,
+    store: &PgStore,
+    job_id: EmbeddingJobId,
+) -> Result<Uuid, ApplicationError> {
+    let mut transaction = store
+        .begin_scoped(context)
+        .await
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    let effect: Uuid = sqlx::query_scalar(
+        "SELECT external_effect_id FROM embedding_jobs WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(job_id.as_uuid())
+    .fetch_one(transaction.connection())
+    .await
+    .map_err(map_adoption_error)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+    Ok(effect)
 }

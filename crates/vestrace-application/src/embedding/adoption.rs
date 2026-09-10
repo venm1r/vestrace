@@ -124,6 +124,10 @@ pub struct LegacyAdoptionProgress {
     pub plan_id: LegacyAdoptionId,
     pub state: LegacyAdoptionState,
     pub version: u64,
+    /// The canonical space this plan adopts into. Carried here because every
+    /// rebuild the plan creates has to target it, and a caller that had to look
+    /// it up separately could act on a different space than the plan fixed.
+    pub target_space_registration_id: Uuid,
     pub total_members: u64,
     pub satisfied_members: u64,
     pub blocked_members: u64,
@@ -177,6 +181,7 @@ pub trait LegacyAdoptionRebuildFactory: Send + Sync {
     async fn create_rebuild(
         &self,
         context: &RequestContext,
+        target_space_registration_id: Uuid,
         member: &LegacyAdoptionMember,
         source: MaterializedSource,
     ) -> Result<EmbeddingJobId, ApplicationError>;
@@ -318,6 +323,10 @@ impl EmbeddingLegacyAdoptionService {
         context: &RequestContext,
         plan_id: LegacyAdoptionId,
     ) -> Result<LegacyAdoptionProgress, ApplicationError> {
+        // Read the plan before acting on it: the target is the plan's, not the
+        // caller's, and a pass that inferred it could rebuild into a space this
+        // plan never adopted.
+        let plan = self.repository.progress(context, plan_id).await?;
         let members = self
             .repository
             .unfinished_members(context, plan_id, self.batch)
@@ -330,8 +339,14 @@ impl EmbeddingLegacyAdoptionService {
                             self.repository
                                 .bind_source(context, plan_id, member.ordinal, source)
                                 .await?;
-                            self.create_rebuild(context, plan_id, &member, source)
-                                .await?;
+                            self.create_rebuild(
+                                context,
+                                plan.target_space_registration_id,
+                                plan_id,
+                                &member,
+                                source,
+                            )
+                            .await?;
                         }
                         Err(blocker) => {
                             self.repository
@@ -356,8 +371,14 @@ impl EmbeddingLegacyAdoptionService {
                         material_id,
                         intent_id,
                     };
-                    self.create_rebuild(context, plan_id, &member, source)
-                        .await?;
+                    self.create_rebuild(
+                        context,
+                        plan.target_space_registration_id,
+                        plan_id,
+                        &member,
+                        source,
+                    )
+                    .await?;
                 }
                 // Rebuilding members are satisfied by the result-finalization
                 // path, not by this loop; terminal members need nothing.
@@ -372,13 +393,14 @@ impl EmbeddingLegacyAdoptionService {
     async fn create_rebuild(
         &self,
         context: &RequestContext,
+        target_space_registration_id: Uuid,
         plan_id: LegacyAdoptionId,
         member: &LegacyAdoptionMember,
         source: MaterializedSource,
     ) -> Result<(), ApplicationError> {
         let job = self
             .rebuilds
-            .create_rebuild(context, member, source)
+            .create_rebuild(context, target_space_registration_id, member, source)
             .await?;
         self.repository
             .bind_rebuild(context, plan_id, member.ordinal, job)
@@ -413,6 +435,7 @@ mod tests {
             plan_id: LegacyAdoptionId::new(),
             state: LegacyAdoptionState::Rebuilding,
             version: 1,
+            target_space_registration_id: Uuid::now_v7(),
             total_members: total,
             satisfied_members: satisfied,
             blocked_members: blocked,
