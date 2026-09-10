@@ -137,6 +137,9 @@ struct PlannedBatch {
     recipe_identities: Vec<Uuid>,
     inputs: serde_json::Value,
     target_space_registration_id: Uuid,
+    /// Defaults to the fixture's own qualification; a canonical activation
+    /// target names the revision its canonical space was registered against.
+    target_model_qualification_revision_id: Option<Uuid>,
 }
 
 async fn plan(runtime: &PgPool, fixture: &common::AcceptedJob, command: PlannedBatch) -> Uuid {
@@ -155,7 +158,11 @@ async fn plan(runtime: &PgPool, fixture: &common::AcceptedJob, command: PlannedB
     .bind(fixture.no_auth_binding_id)
     .bind(fixture.connection_qualification_id)
     .bind(fixture.model_revision_id)
-    .bind(fixture.model_qualification_id)
+    .bind(
+        command
+            .target_model_qualification_revision_id
+            .unwrap_or(fixture.model_qualification_id),
+    )
     .bind(command.target_space_registration_id)
     .bind(command.batch_id)
     .bind(Uuid::now_v7())
@@ -447,6 +454,7 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -525,6 +533,7 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -619,6 +628,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -727,6 +737,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: wrong_target_registration,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -768,6 +779,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -815,6 +827,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -899,6 +912,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -929,6 +943,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -1205,6 +1220,7 @@ async fn activation_refuses_an_unproven_transition_and_leaves_the_head(pool: PgP
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
             target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
         },
     )
     .await;
@@ -1284,13 +1300,30 @@ async fn prove_one_transition(
     runtime: &PgPool,
     source: &PreparedJob,
 ) -> ProvenTransition {
-    let candidate = prepare_job(
+    prove_one_transition_onto(
         pool,
         runtime,
-        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
-        false,
+        source,
+        source.accepted.space_registration_id,
+        None,
     )
-    .await;
+    .await
+}
+
+async fn prove_one_transition_onto(
+    pool: &PgPool,
+    runtime: &PgPool,
+    source: &PreparedJob,
+    target_space: Uuid,
+    target_qualification: Option<Uuid>,
+) -> ProvenTransition {
+    // Task 6 requires the physical rebuild job to live in the batch's target
+    // space, so the candidate is accepted into that space rather than the
+    // source's.
+    let mut accepted =
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await;
+    accepted.space_registration_id = target_space;
+    let candidate = prepare_job(pool, runtime, accepted, false).await;
     let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
     let transition_id = Uuid::now_v7();
     let plan_id = Uuid::now_v7();
@@ -1304,7 +1337,8 @@ async fn prove_one_transition(
             batch_id,
             recipe_identities: vec![Uuid::now_v7()],
             inputs: serde_json::json!([[0]]),
-            target_space_registration_id: source.accepted.space_registration_id,
+            target_space_registration_id: target_space,
+            target_model_qualification_revision_id: target_qualification,
         },
     )
     .await;
@@ -1455,5 +1489,237 @@ async fn activation_refuses_a_stale_transition_version(pool: PgPool) {
     let (_, space, version) = head_tuple(&pool, &source.accepted).await;
     assert_eq!((space, version), (None, 1));
     assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}
+
+/// Seeds the exact q1 structural evidence `vestrace_assert_canonical_embedding_space`
+/// demands, for the shared delivery fixture's own world, then registers one
+/// canonical space through the real guarded authority.
+///
+/// The evidence chain is not faked past its own guard: the registration still
+/// goes through `vestrace_register_canonical_embedding_space`, which asserts
+/// every join below.  What is seeded here is the durable evidence a real q1
+/// qualification would have left behind.
+async fn register_canonical_space(
+    pool: &PgPool,
+    runtime: &PgPool,
+    fixture: &common::AcceptedJob,
+) -> (Uuid, Uuid) {
+    let workspace = fixture.context.workspace_id.as_uuid();
+    let qualification_job: Uuid = sqlx::query_scalar(
+        "SELECT qualification_job_id FROM model_qualification_revisions \
+         WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace)
+    .bind(fixture.model_qualification_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let wire_model: String = sqlx::query_scalar(
+        "SELECT wire_model_id FROM model_revisions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace)
+    .bind(fixture.model_revision_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let canonical_qualification = Uuid::now_v7();
+    let probe_effect = Uuid::now_v7();
+    let evidence_root = Uuid::now_v7();
+    let evidence_check = Uuid::now_v7();
+    let target_binding = Uuid::now_v7();
+
+    // external_effect_intents predates the P03 guarded ownership and the
+    // guarded owner holds no privilege on it, so it is written before the role
+    // switch rather than under that role.
+    sqlx::query(
+        "INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) \
+         VALUES($1,$2,'local','{}'::jsonb)",
+    )
+    .bind(probe_effect)
+    .bind(workspace)
+    .execute(pool)
+    .await
+    .expect("one probe external effect intent");
+
+    let mut owner = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+    scoped(&mut owner, fixture).await;
+    // model_qualification_revisions is immutable P03 evidence, so the shared
+    // fixture's 'embedding' capability cannot be widened in place.  A second
+    // qualification revision over the same job and model states the
+    // 'embeddings' request capability the canonical assertion reads, and the
+    // transition targets that revision.
+    sqlx::query(
+        "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,         connection_revision_id,connection_qualification_revision_id,qualification_job_id,         capabilities,valid_until)          SELECT $1,workspace_id,model_revision_id,connection_revision_id,         connection_qualification_revision_id,qualification_job_id,         ARRAY['embedding','embeddings']::TEXT[],NOW()+INTERVAL '1 hour'          FROM model_qualification_revisions WHERE workspace_id=$2 AND id=$3",
+    )
+    .bind(canonical_qualification)
+    .bind(workspace)
+    .bind(fixture.model_qualification_id)
+    .execute(&mut *owner)
+    .await
+    .expect("one further qualification revision stating the embeddings capability");
+    sqlx::query(
+        "INSERT INTO qualification_target_bindings(id,workspace_id,qualification_job_id,\
+         connection_id,connection_revision_id,branch,no_auth_binding_revision_id,\
+         embedding_model_revision_id) VALUES($1,$2,$3,$4,$5,'no_auth',$6,$7)",
+    )
+    .bind(target_binding)
+    .bind(workspace)
+    .bind(qualification_job)
+    .bind(fixture.connection_id)
+    .bind(fixture.connection_revision_id)
+    .bind(fixture.no_auth_binding_id)
+    .bind(fixture.model_revision_id)
+    .execute(&mut *owner)
+    .await
+    .expect("one q1 target binding naming the embedding model revision");
+    sqlx::query(
+        "INSERT INTO model_request_evidence_roots(id,workspace_id,external_effect_id,\
+         request_kind,binding_snapshot_id,qualification_target_binding_id,cause_kind,cause_id) \
+         VALUES($1,$2,$3,'embeddings',NULL,$4,'qualification_probe',$5)",
+    )
+    .bind(evidence_root)
+    .bind(workspace)
+    .bind(probe_effect)
+    .bind(target_binding)
+    .bind(qualification_job)
+    .execute(&mut *owner)
+    .await
+    .expect("one embeddings evidence root rooted at the q1 probe");
+    sqlx::query(
+        "INSERT INTO model_request_evidence_checks(id,workspace_id,evidence_root_id,status) \
+         VALUES($1,$2,$3,'complete')",
+    )
+    .bind(evidence_check)
+    .bind(workspace)
+    .bind(evidence_root)
+    .execute(&mut *owner)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO qualification_probe_results(id,workspace_id,qualification_job_id,\
+         probe_ordinal,result,external_effect_id,model_request_evidence_id) \
+         VALUES($1,$2,$3,'90','pass',$4,$5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace)
+    .bind(qualification_job)
+    .bind(probe_effect)
+    .bind(evidence_root)
+    .execute(&mut *owner)
+    .await
+    .expect("the passing embeddings probe at ordinal 90");
+    sqlx::query(
+        "INSERT INTO provider_dispatch_causes(external_effect_id,workspace_id,\
+         model_request_evidence_id,model_request_evidence_check_id,cause_kind,\
+         qualification_job_id,qualification_target_binding_id,qualification_probe_ordinal) \
+         VALUES($1,$2,$3,$4,'qualification_probe',$5,$6,'90')",
+    )
+    .bind(probe_effect)
+    .bind(workspace)
+    .bind(evidence_root)
+    .bind(evidence_check)
+    .bind(qualification_job)
+    .bind(target_binding)
+    .execute(&mut *owner)
+    .await
+    .expect("the dispatch cause binding the probe to its evidence");
+    sqlx::query(
+        "INSERT INTO qualification_q1_mre_sources(evidence_root_id,workspace_id,probe_ordinal,\
+         message_layout,tool_choice,parallel_tool_calls,response_format,stream,stream_include_usage) \
+         VALUES($1,$2,'90','plain_text','none',false,'none',false,false)",
+    )
+    .bind(evidence_root)
+    .bind(workspace)
+    .execute(&mut *owner)
+    .await
+    .expect("the q1 source describing the embeddings probe shape");
+    owner.commit().await.unwrap();
+
+    let shape = Uuid::now_v7();
+    let registration = Uuid::now_v7();
+    let mut governed = runtime.begin().await.unwrap();
+    scoped(&mut governed, fixture).await;
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_create_model_request_shape_revision($1,$2,1,'embeddings',false,ARRAY[]::TEXT[])",
+    )
+    .bind(shape)
+    .bind(workspace)
+    .fetch_one(&mut *governed)
+    .await
+    .expect("one embeddings request shape revision");
+    let registered: Uuid = sqlx::query_scalar(
+        "SELECT vestrace_register_canonical_embedding_space($1,$2,'activation-canonical',$3,$4,$5,$6,'float',768)",
+    )
+    .bind(registration)
+    .bind(workspace)
+    .bind(fixture.model_revision_id)
+    .bind(canonical_qualification)
+    .bind(shape)
+    .bind(&wire_model)
+    .fetch_one(&mut *governed)
+    .await
+    .expect("the real guarded authority must accept a fully evidenced canonical space");
+    governed.commit().await.unwrap();
+
+    // vestrace_register_canonical_embedding_space writes the registration
+    // alone; the corpus state and generation guard that every result path
+    // reads are seeded here so the canonical space behaves like a real one.
+    let mut owner = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+    scoped(&mut owner, fixture).await;
+    sqlx::query(
+        "INSERT INTO embedding_space_corpus_states(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace)
+    .bind(registered)
+    .execute(&mut *owner)
+    .await
+    .expect("one canonical corpus state");
+    sqlx::query(
+        "INSERT INTO embedding_index_generation_guards(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace)
+    .bind(registered)
+    .execute(&mut *owner)
+    .await
+    .expect("one canonical generation guard");
+    owner.commit().await.unwrap();
+
+    (registered, canonical_qualification)
+}
+
+/// Probe: the seeded q1 evidence chain is complete enough for the real
+/// guarded authority to register a canonical space.
+#[sqlx::test(migrations = false)]
+async fn canonical_registration_probe(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    let (registration, _qualification) =
+        register_canonical_space(&pool, &runtime, &source.accepted).await;
+    let kind: String = sqlx::query_scalar(
+        "SELECT registration_kind FROM embedding_space_registrations WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(source.accepted.context.workspace_id.as_uuid())
+    .bind(registration)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "canonical");
     runtime.close().await;
 }
