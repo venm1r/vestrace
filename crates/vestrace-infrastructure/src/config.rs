@@ -780,6 +780,10 @@ pub struct EmbeddingWorkerLimits {
 /// unreadable without it.
 const EMBEDDING_COMPONENT_BYTES: u64 = 4;
 
+/// The largest chunk `EmbeddingIndexService::build` will accept. Mirrored here
+/// so a deployment learns at startup rather than on its first build.
+const MAXIMUM_INDEX_BUILD_CHUNK: u32 = 64;
+
 impl Default for EmbeddingWorkerLimits {
     fn default() -> Self {
         Self {
@@ -793,7 +797,7 @@ impl Default for EmbeddingWorkerLimits {
             max_index_members: 32_768,
             max_index_bytes: 512 * 1024 * 1024,
             max_dimensions: 4096,
-            build_chunk_size: 256,
+            build_chunk_size: 64,
             concurrent_builders: 1,
             retrieval_wait_seconds: 30,
         }
@@ -831,6 +835,14 @@ impl EmbeddingWorkerLimits {
             return Err(
                 "embedding.limits.build_chunk_size must not exceed max_index_members".to_owned(),
             );
+        }
+        // `EmbeddingIndexService::build` refuses a chunk above this outright, so
+        // a larger one configured here would fail every build rather than
+        // reading more per round trip. Refused at load, where it can be read.
+        if self.build_chunk_size > MAXIMUM_INDEX_BUILD_CHUNK {
+            return Err(format!(
+                "embedding.limits.build_chunk_size must not exceed {MAXIMUM_INDEX_BUILD_CHUNK}"
+            ));
         }
         // The byte budget has to be reachable on this machine, not merely
         // expressible: a 64-bit budget on a 32-bit target is a limit the
@@ -2261,6 +2273,29 @@ max_connections = 10
         assert_eq!(limits.worst_case_index_bytes(), None);
         let error = limits.validate().expect_err("the product overflows");
         assert!(error.contains("overflows"), "{error}");
+    }
+
+    /// The index service refuses a chunk above 64 outright, so a larger one
+    /// configured here would fail every build rather than read more per round
+    /// trip. Startup is where that is legible.
+    #[test]
+    fn a_chunk_above_what_the_index_service_accepts_is_refused_at_load() {
+        let limits = EmbeddingWorkerLimits {
+            build_chunk_size: 65,
+            ..EmbeddingWorkerLimits::default()
+        };
+        let error = limits
+            .validate()
+            .expect_err("65 is above what a build will accept");
+        assert!(error.contains("build_chunk_size"), "{error}");
+        assert_eq!(
+            EmbeddingWorkerLimits {
+                build_chunk_size: 64,
+                ..EmbeddingWorkerLimits::default()
+            }
+            .validate(),
+            Ok(())
+        );
     }
 
     /// A chunk larger than the whole index would read past what the index can

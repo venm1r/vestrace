@@ -146,6 +146,30 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
             .with_model_executor(governed.step_executor(worker_id)),
     ));
 
+    // The embedding worker runs beside the run worker, on the same governed
+    // dispatch graph. It is absent rather than degraded when no embedding
+    // provider is configured: a runtime that claimed embedding work with no
+    // provider behind it would fail every claim it took.
+    let embedding_runtime = match super::server::build_embedding_provider(config, &store)? {
+        Some(_) => Some(Arc::new(
+            vestrace_infrastructure::postgres::EmbeddingWorkerRuntime::new(
+                store.clone(),
+                super::server::build_material_vault(config, &storage_roots)?,
+                governed.dispatch(),
+                &config.embedding.limits,
+                format!("worker:{worker_id}"),
+                worker_id,
+            )
+            .map_err(|error| anyhow::anyhow!("embedding worker composition failed: {error}"))?,
+        )),
+        None => {
+            tracing::warn!(
+                "no embedding provider is configured; no embedding work will be claimed"
+            );
+            None
+        }
+    };
+
     let run_worker = Arc::new(RunWorker::new_with_policy(
         run_worker_config,
         run_store,
@@ -245,6 +269,7 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
         outcome.merge(drain_outbox(&outbox, &run_contexts).await);
         outcome.merge(reconcile_effects(reconciliation.as_ref(), &run_contexts).await);
         outcome.merge(deliver_outcomes(&outcome_delivery, &run_contexts).await);
+        outcome.merge(poll_embedding_work(embedding_runtime.as_deref(), &run_contexts).await);
         outcome
     });
     let once_outcome = match once_outcome {
@@ -270,8 +295,14 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
                         let messages = drain_outbox(&outbox, &run_contexts).await;
                         let reconciled = reconcile_effects(reconciliation.as_ref(), &run_contexts).await;
                         let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
+                        let embedded =
+                            poll_embedding_work(embedding_runtime.as_deref(), &run_contexts).await;
                         Ok::<_, anyhow::Error>(
-                            runs.did_work || messages.did_work || reconciled.did_work || delivered.did_work,
+                            runs.did_work
+                                || messages.did_work
+                                || reconciled.did_work
+                                || delivered.did_work
+                                || embedded.did_work,
                         )
                     } => outcome?,
                 };
@@ -302,6 +333,55 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
 
     tracing::info!("worker stopped gracefully");
     Ok(once_outcome.did_work || !once)
+}
+
+/// Run every drivable embedding cycle once for every configured workspace.
+///
+/// Four kinds, not the six `EmbeddingWorkKind` names: erasure propagation has
+/// no service, and transition coordination has only a command surface with
+/// nothing that decides which command a transition needs. The runtime refuses
+/// those before claiming, so they are not listed here rather than being listed
+/// and swallowed.
+///
+/// One workspace's failure is recorded and does not stop the others, exactly as
+/// the run poller behaves: a worker that abandoned the remaining workspaces on
+/// the first error would make one workspace's outage look like the whole
+/// process being down.
+async fn poll_embedding_work(
+    runtime: Option<&vestrace_infrastructure::postgres::EmbeddingWorkerRuntime>,
+    contexts: &[RequestContext],
+) -> PollOutcome {
+    use vestrace_application::embedding::EmbeddingWorkKind;
+
+    let mut outcome = PollOutcome::default();
+    let Some(runtime) = runtime else {
+        return outcome;
+    };
+    for context in contexts {
+        for kind in [
+            EmbeddingWorkKind::Dispatch,
+            EmbeddingWorkKind::ReconcileKeys,
+            EmbeddingWorkKind::FinalizeResult,
+            EmbeddingWorkKind::BuildIndex,
+        ] {
+            match runtime.run_cycle(context, kind).await {
+                Ok(cycle) => {
+                    outcome.did_work |= cycle.did_work;
+                    outcome.failed |= cycle.failed;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        workspace = %context.workspace_id,
+                        kind = kind.as_str(),
+                        %error,
+                        "embedding cycle failed"
+                    );
+                    outcome.failed = true;
+                }
+            }
+        }
+    }
+    outcome
 }
 
 /// Register every workspace before the worker starts polling.
@@ -458,6 +538,16 @@ fn build_outbox_dispatcher(
     let repository = Arc::new(PgOutboxRepository::new(store.clone()));
     let mut dispatcher = OutboxDispatcher::new(repository);
 
+    // This route is retired in everything but name: it calls
+    // `PgEmbeddingStore::upsert`, which the canonical transition retired, so
+    // every message it handles fails with `embedding-legacy-write-retired`.
+    //
+    // It is still registered, deliberately. `command_contract` requires every
+    // produced topic to have a handler, and it is right to: an unhandled
+    // message sits undelivered forever, while a failing one stays retriable and
+    // visible in the backlog. Removing this must therefore land together with
+    // the governed on-write route that replaces it -- materialize the written
+    // memory's content and accept a delivery job -- which is not built.
     match super::server::build_embedding_provider(config, store)? {
         Some(provider) => {
             let embeddings = Arc::new(PgEmbeddingStore::new(store.clone()));
@@ -474,10 +564,8 @@ fn build_outbox_dispatcher(
                     topic,
                 )));
             }
-            tracing::info!(
-                model = %config.embedding.model_name,
-                space = %config.embedding.space_name,
-                "memories will be embedded as they are written"
+            tracing::warn!(
+                "the on-write embedding route is the retired legacy one; every message on it fails                  until the governed replacement is composed"
             );
         }
         None => {

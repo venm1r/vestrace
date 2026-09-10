@@ -2,13 +2,19 @@ use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use secrecy::ExposeSecret;
-use vestrace_application::retrieval::EmbeddingBackfillService;
 use vestrace_application::{
-    HealthInspectionService, InspectedFinding, InvariantObserver, RequestContext,
+    EffectiveRequestLimits, HealthInspectionService, InspectedFinding, InvariantObserver,
+    RequestContext,
+    embedding::{EmbeddingLegacyAdoptionService, StartLegacyAdoption},
     standard_invariants,
 };
-use vestrace_domain::{PrincipalId, WorkspaceId};
-use vestrace_infrastructure::{AppConfig, PgEmbeddingStore, PgInvariantObserver, PgStore};
+use vestrace_domain::{PrincipalId, WorkspaceId, id::LegacyAdoptionId};
+use vestrace_infrastructure::crypto::ContentMaterialCodec;
+use vestrace_infrastructure::postgres::{
+    PgEmbeddingJobRepository, PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionRebuildFactory,
+    PgLegacyAdoptionSourceMaterializer, PgModelRequestEvidenceRepository,
+};
+use vestrace_infrastructure::{AppConfig, PgInvariantObserver, PgStore};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum RebuildTarget {
@@ -180,7 +186,7 @@ async fn rebuild_embeddings(
     store: &PgStore,
     context: &RequestContext,
 ) -> Result<usize, anyhow::Error> {
-    let Some(provider) = crate::commands::server::build_embedding_provider(config, store)? else {
+    if crate::commands::server::build_embedding_provider(config, store)?.is_none() {
         // Nothing configured is not a failure. It is the deployment saying it
         // has no vector channel, which the retrieval journal also records.
         println!();
@@ -188,34 +194,140 @@ async fn rebuild_embeddings(
             "  no embedding model is configured; set [embedding] enabled, base_url and              model_name to give retrieval a vector channel"
         );
         return Ok(0);
-    };
-
-    let backfill = EmbeddingBackfillService::new(
-        provider,
-        Arc::new(PgEmbeddingStore::new(store.clone())),
-        config.embedding.space_name.clone(),
-    );
-
-    let mut embedded = 0usize;
-    // Batched, because a workspace with a large backlog should make progress
-    // visible rather than hold one transaction open across thousands of network
-    // calls.
-    loop {
-        let report = backfill
-            .run(context, 32)
-            .await
-            .context("embedding backfill failed")?;
-        embedded += report.embedded;
-        if report.embedded == 0 {
-            if report.still_missing > 0 {
-                return Err(anyhow!(
-                    "{} memories still have no embedding and the last batch produced none",
-                    report.still_missing
-                ));
-            }
-            break;
-        }
     }
 
-    Ok(embedded)
+    // Adoption never copies a legacy vector. It creates governed rebuild jobs
+    // that recompute each one through the ordinary provider path, so this
+    // command starts or resumes a durable plan and reports what the plan says
+    // -- it does not embed anything itself, and the worker does the work.
+    let legacy_spaces = legacy_space_registrations(store, context).await?;
+    if legacy_spaces.is_empty() {
+        println!();
+        println!("  no legacy embedding space remains in this workspace");
+        return Ok(0);
+    }
+    let Some(canonical) = active_canonical_registration(store, context).await? else {
+        return Err(anyhow!(
+            "rebuild: this workspace has {} legacy embedding space(s) but no active canonical \
+             space to adopt them into; a governed transition must establish one first",
+            legacy_spaces.len()
+        ));
+    };
+
+    let vault = crate::commands::server::build_material_vault(
+        config,
+        &config
+            .provider_execution
+            .roots()
+            .map_err(|_| anyhow!("provider execution storage roots are unavailable or overlap"))?,
+    )?;
+    let repository = Arc::new(PgEmbeddingLegacyAdoptionRepository::new(store.clone()));
+    let service = EmbeddingLegacyAdoptionService::new(
+        repository.clone(),
+        Arc::new(PgLegacyAdoptionSourceMaterializer::new(
+            store.clone(),
+            vault.clone(),
+            Arc::new(ContentMaterialCodec::new()),
+        )),
+        Arc::new(PgLegacyAdoptionRebuildFactory::new(
+            store.clone(),
+            Arc::new(PgEmbeddingJobRepository::new(store.clone())),
+            Arc::new(PgModelRequestEvidenceRepository::new(vault)),
+            EffectiveRequestLimits::new(256, 4, 32_768)
+                .map_err(|error| anyhow!("adoption request limits are invalid: {error}"))?,
+        )),
+        config.embedding.limits.claim_batch,
+    )
+    .map_err(|error| anyhow!("adoption service composition failed: {error}"))?;
+
+    let mut planned = 0usize;
+    for legacy in legacy_spaces {
+        let progress = service
+            .start_or_resume(
+                context,
+                StartLegacyAdoption {
+                    plan_id: LegacyAdoptionId::new(),
+                    legacy_space_registration_id: legacy,
+                    target_space_registration_id: canonical,
+                    // One plan per legacy space, forever: a second key against
+                    // the same space is refused by the database rather than
+                    // opening a second plan for the same rows.
+                    idempotency_key: format!("rebuild-embeddings:{legacy}"),
+                },
+            )
+            .await
+            .with_context(|| format!("legacy adoption for space {legacy} could not start"))?;
+        println!();
+        println!(
+            "  space {legacy}: plan {} is {}, {} member(s), {} satisfied, {} blocked",
+            progress.plan_id.as_uuid(),
+            progress.state.as_str(),
+            progress.total_members,
+            progress.satisfied_members,
+            progress.blocked_members
+        );
+        for blocker in &progress.blockers {
+            println!(
+                "    blocked: member {} -- {}",
+                blocker.ordinal,
+                blocker.reason.as_str()
+            );
+        }
+        planned += progress.total_members as usize;
+    }
+    println!();
+    println!("  the worker recomputes these vectors; this command created no vector itself");
+    Ok(planned)
+}
+
+/// Every legacy space still registered in this workspace.
+async fn legacy_space_registrations(
+    store: &PgStore,
+    context: &RequestContext,
+) -> anyhow::Result<Vec<uuid::Uuid>> {
+    let mut scoped = store
+        .begin_scoped(context)
+        .await
+        .context("legacy space registrations are unreadable")?;
+    let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM embedding_space_registrations \
+          WHERE workspace_id = $1 AND registration_kind = 'legacy_upgrade' ORDER BY id",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .fetch_all(scoped.connection())
+    .await
+    .context("legacy space registrations are unreadable")?;
+    scoped.commit().await.ok();
+    Ok(rows.into_iter().map(|row| row.0).collect())
+}
+
+/// The canonical space retrieval currently answers from, if any.
+///
+/// Read from the qualification head rather than chosen here: adopting into a
+/// space the head does not name would produce a corpus nothing queries.
+async fn active_canonical_registration(
+    store: &PgStore,
+    context: &RequestContext,
+) -> anyhow::Result<Option<uuid::Uuid>> {
+    let mut scoped = store
+        .begin_scoped(context)
+        .await
+        .context("the qualification head is unreadable")?;
+    let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT head.active_space_registration_id \
+           FROM model_qualification_heads AS head \
+           JOIN embedding_space_registrations AS registration \
+             ON registration.workspace_id = head.workspace_id \
+            AND registration.id = head.active_space_registration_id \
+          WHERE head.workspace_id = $1 \
+            AND head.active_space_registration_id IS NOT NULL \
+            AND registration.registration_kind = 'canonical' \
+          ORDER BY head.version DESC LIMIT 1",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .fetch_optional(scoped.connection())
+    .await
+    .context("the qualification head is unreadable")?;
+    scoped.commit().await.ok();
+    Ok(row.map(|row| row.0))
 }

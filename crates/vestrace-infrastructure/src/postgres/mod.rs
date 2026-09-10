@@ -334,6 +334,244 @@ impl GovernedProviderRuntime {
     }
 }
 
+/// The embedding services one worker process runs, composed once.
+///
+/// Four cycles, not the six `EmbeddingWorkKind` names. Erasure propagation has
+/// no service at all, and transition coordination has only a command surface --
+/// create an attempt, observe one, prove completeness, activate -- with nothing
+/// that decides which command a given transition needs. Both are refused
+/// before a claim is taken rather than stubbed, because a cycle that claimed
+/// work it cannot service would look like progress while the backlog grew.
+///
+/// Nothing here is optional. A missing vault, decoder or repository refuses
+/// construction instead of registering a cycle that would claim work and do
+/// nothing with it.
+pub struct EmbeddingWorkerRuntime {
+    work: vestrace_application::embedding::SharedEmbeddingWorkRepository,
+    executor: std::sync::Arc<ProductionEmbeddingExecutor>,
+    index: std::sync::Arc<ProductionEmbeddingIndexService>,
+    claim_batch: u32,
+    owner: String,
+}
+
+/// The executor a production worker runs, with every port bound to its one
+/// production implementation.
+pub type ProductionEmbeddingExecutor = vestrace_application::embedding::EmbeddingExecutor<
+    embedding_result_repository::PgEmbeddingResultRepository,
+    crate::crypto::HostMaterialKeyVault,
+    crate::crypto::ContentMaterialCodec,
+    embedding_result_finalization_repository::PgEmbeddingResultFinalizationRepository,
+    EmbeddingOutputHmacCommitter,
+>;
+
+pub type ProductionEmbeddingIndexService =
+    vestrace_application::embedding::index::EmbeddingIndexService<
+        embedding_index_repository::PgEmbeddingIndexRepository,
+        crate::crypto::HostMaterialKeyVault,
+        crate::embedding_index::ContentMaterialIndexDecoder,
+        crate::embedding_index::FlatEmbeddingIndexFactory,
+        crate::embedding_index::EmbeddingIndexRegistry,
+    >;
+
+/// What one bounded cycle did.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EmbeddingCycleOutcome {
+    /// At least one claim was taken and carried to a durable outcome.
+    pub did_work: bool,
+    /// At least one claim ended in a failure the worker must report.
+    pub failed: bool,
+}
+
+impl EmbeddingWorkerRuntime {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        store: PgStore,
+        vault: std::sync::Arc<crate::crypto::HostMaterialKeyVault>,
+        dispatch: vestrace_application::SharedProviderDispatchRepository,
+        limits: &crate::config::EmbeddingWorkerLimits,
+        owner: impl Into<String>,
+        worker_id: vestrace_domain::id::WorkerId,
+    ) -> Result<Self, vestrace_application::ApplicationError> {
+        use std::sync::Arc;
+
+        limits
+            .validate()
+            .map_err(vestrace_application::ApplicationError::InvalidConfiguration)?;
+
+        let preparation = Arc::new(
+            vestrace_application::embedding::EmbeddingResultPreparationService::new(
+                Arc::new(
+                    embedding_result_repository::PgEmbeddingResultRepository::new(
+                        store.clone(),
+                        dispatch.clone(),
+                    ),
+                ),
+                vault.clone(),
+                Arc::new(crate::crypto::ContentMaterialCodec::new()),
+            ),
+        );
+        let finalization = Arc::new(
+            vestrace_application::embedding::EmbeddingResultFinalizationService::new(
+                Arc::new(
+                    embedding_result_finalization_repository::PgEmbeddingResultFinalizationRepository::new(
+                        store.clone(),
+                    ),
+                ),
+                vault.clone(),
+                Arc::new(EmbeddingOutputHmacCommitter::new()),
+            ),
+        );
+        let executor = Arc::new(vestrace_application::embedding::EmbeddingExecutor::new(
+            dispatch,
+            preparation,
+            finalization,
+            Arc::new(crate::providers::OpenAiGovernedModelAdapter),
+            worker_id,
+        ));
+
+        // One budget for the whole process: the decoder and the index it builds
+        // draw from the same allowance, so a large decode cannot leave the
+        // builder without room it was promised.
+        let budget = crate::embedding_index::IndexMemoryBudget::new(
+            usize::try_from(limits.max_index_bytes).map_err(|_| {
+                vestrace_application::ApplicationError::InvalidConfiguration(
+                    "embedding.limits.max_index_bytes exceeds what this process can address"
+                        .to_owned(),
+                )
+            })?,
+        );
+        let index = Arc::new(
+            vestrace_application::embedding::index::EmbeddingIndexService::new(
+                Arc::new(embedding_index_repository::PgEmbeddingIndexRepository::new(
+                    store.clone(),
+                )),
+                vault,
+                Arc::new(crate::embedding_index::ContentMaterialIndexDecoder::new(
+                    budget.clone(),
+                )),
+                Arc::new(crate::embedding_index::FlatEmbeddingIndexFactory::new(
+                    budget,
+                )),
+                Arc::new(crate::embedding_index::EmbeddingIndexRegistry::new()),
+                crate::embedding_index::IndexLimits {
+                    max_members: limits.max_index_members as usize,
+                    max_bytes: usize::try_from(limits.max_index_bytes).unwrap_or(usize::MAX),
+                },
+                limits.build_chunk_size,
+            ),
+        );
+
+        Ok(Self {
+            work: std::sync::Arc::new(embedding_work_repository::PgEmbeddingWorkRepository::new(
+                store,
+            )),
+            executor,
+            index,
+            claim_batch: limits.claim_batch,
+            owner: owner.into(),
+        })
+    }
+
+    pub fn index(&self) -> std::sync::Arc<ProductionEmbeddingIndexService> {
+        self.index.clone()
+    }
+
+    /// Runs one bounded cycle of one kind for one workspace.
+    ///
+    /// A claim is always finished, including when the work failed: an
+    /// unfinished claim is one another worker must wait out, and a cycle that
+    /// dropped it on error would turn every transient failure into a lease
+    /// timeout.
+    pub async fn run_cycle(
+        &self,
+        context: &vestrace_application::RequestContext,
+        kind: vestrace_application::embedding::EmbeddingWorkKind,
+    ) -> Result<EmbeddingCycleOutcome, vestrace_application::ApplicationError> {
+        use vestrace_application::embedding::{EmbeddingWorkKind, EmbeddingWorkOutcome};
+
+        if matches!(
+            kind,
+            EmbeddingWorkKind::CoordinateTransition | EmbeddingWorkKind::PropagateErasure
+        ) {
+            // Refused before claiming, not after: a cycle that took a claim it
+            // cannot service would hold work away from nothing and report a
+            // failure it caused itself.
+            return Err(vestrace_application::ApplicationError::Unavailable(
+                format!(
+                    "embedding work kind {} has no cycle driver in this build",
+                    kind.as_str()
+                ),
+            ));
+        }
+        let claims = self
+            .work
+            .claim(context, kind, &self.owner, self.claim_batch)
+            .await?;
+        let mut outcome = EmbeddingCycleOutcome::default();
+        for claim in claims {
+            outcome.did_work = true;
+            let result = self.perform(context, kind, &claim).await;
+            let finish = match &result {
+                Ok(work) => *work,
+                Err(_) => EmbeddingWorkOutcome::RetryableFailure,
+            };
+            if result.is_err() || matches!(finish, EmbeddingWorkOutcome::DefiniteFailure) {
+                outcome.failed = true;
+            }
+            self.work.finish(context, &claim, finish).await?;
+        }
+        Ok(outcome)
+    }
+
+    async fn perform(
+        &self,
+        context: &vestrace_application::RequestContext,
+        kind: vestrace_application::embedding::EmbeddingWorkKind,
+        claim: &vestrace_application::embedding::EmbeddingWorkClaim,
+    ) -> Result<
+        vestrace_application::embedding::EmbeddingWorkOutcome,
+        vestrace_application::ApplicationError,
+    > {
+        use vestrace_application::embedding::{
+            EmbeddingExecutionOutcome, EmbeddingWorkKind, EmbeddingWorkOutcome,
+        };
+
+        match kind {
+            EmbeddingWorkKind::Dispatch
+            | EmbeddingWorkKind::ReconcileKeys
+            | EmbeddingWorkKind::FinalizeResult => {
+                // All three advance one job through the same executor: it reads
+                // where the job actually is and resumes from there, so the kind
+                // decides which queue was drained, not what is done to the job.
+                let executed = self.executor.execute(context, claim.job_id).await?;
+                Ok(match executed {
+                    EmbeddingExecutionOutcome::Succeeded => EmbeddingWorkOutcome::Completed,
+                    EmbeddingExecutionOutcome::Cancelled
+                    | EmbeddingExecutionOutcome::FailedDefinite => {
+                        EmbeddingWorkOutcome::DefiniteFailure
+                    }
+                    _ => EmbeddingWorkOutcome::RetryableFailure,
+                })
+            }
+            EmbeddingWorkKind::BuildIndex => {
+                self.index.reconcile_one(context, &self.owner).await?;
+                Ok(EmbeddingWorkOutcome::Completed)
+            }
+            // Neither has a cycle driver. `EmbeddingTransitionCoordinator` is a
+            // command surface -- create an attempt, observe one, prove
+            // completeness, activate -- and choosing which command a given
+            // transition needs is logic no service holds. Erasure propagation
+            // has no service at all.
+            EmbeddingWorkKind::CoordinateTransition | EmbeddingWorkKind::PropagateErasure => Err(
+                vestrace_application::ApplicationError::Unavailable(format!(
+                    "embedding work kind {} has no cycle driver in this build",
+                    kind.as_str()
+                )),
+            ),
+        }
+    }
+}
+
 mod embedding_adoption_repository;
 mod embedding_index_repository;
 pub use embedding_adoption_repository::{
