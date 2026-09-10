@@ -16,6 +16,7 @@ pub mod embedding_job_repository;
 pub mod embedding_key_repository;
 pub mod embedding_result_finalization_repository;
 pub mod embedding_result_repository;
+pub mod embedding_retrieval_repository;
 pub mod embedding_store;
 pub mod embedding_transition_repository;
 pub mod embedding_work_repository;
@@ -94,6 +95,7 @@ pub use embedding_result_finalization_repository::{
     EmbeddingOutputHmacCommitter, PgEmbeddingResultFinalizationRepository,
 };
 pub use embedding_result_repository::PgEmbeddingResultRepository;
+pub use embedding_retrieval_repository::PgEmbeddingRetrievalRepository;
 pub use embedding_store::PgEmbeddingStore;
 pub use embedding_transition_repository::PgEmbeddingTransitionRepository;
 pub use embedding_work_repository::PgEmbeddingWorkRepository;

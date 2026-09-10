@@ -13,6 +13,7 @@ pub mod index;
 pub mod job;
 pub mod keys;
 pub mod result;
+pub mod retrieval;
 pub mod transition;
 pub mod transition_coordinator;
 pub mod work;
@@ -43,6 +44,13 @@ pub use result::{
     EmbeddingResultPreparationIdentities, EmbeddingResultPreparationOutcome,
     EmbeddingResultPreparationService, EmbeddingResultPreparedAttachment,
     EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
+};
+pub use retrieval::{
+    AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalJobClient,
+    EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository, FinalizeRetrievalResult,
+    ObserveRetrievalGenerationChange, RetrievalAttemptAdmission, RetrievalResultReference,
+    RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
+    SharedEmbeddingRetrievalRepository,
 };
 pub use transition::{
     ActivateEmbeddingTransition, CreateEmbeddingTransitionBatchAttempt,

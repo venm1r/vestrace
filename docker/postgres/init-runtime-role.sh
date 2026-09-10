@@ -2865,4 +2865,122 @@ BEGIN
     END IF;
 END $transition_activation_bootstrap$;
 
+DO $retrieval_results_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=202 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                'embedding_retrieval_fences',
+                'embedding_retrieval_results',
+                'embedding_retrieval_result_references',
+                'embedding_retrieval_generation_changes',
+                'embedding_retrieval_retry_edges'
+              ]) AS required(relname)
+             WHERE to_regclass('public.'||required.relname) IS NULL
+                OR (SELECT pg_get_userbyid(relowner) FROM pg_class
+                     WHERE oid=to_regclass('public.'||required.relname))<>'vestrace_guarded_owner'
+                OR NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+                         WHERE oid=to_regclass('public.'||required.relname))
+                OR NOT has_table_privilege('vestrace','public.'||required.relname,'SELECT,REFERENCES')
+                OR has_table_privilege('vestrace','public.'||required.relname,'INSERT,UPDATE,DELETE')
+        ) OR EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
+                to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
+                to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
+              ]::REGPROCEDURE[]) AS required(target)
+             WHERE required.target IS NULL
+                OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
+                OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
+                OR has_function_privilege('public',required.target,'EXECUTE')
+        ) THEN
+            RAISE EXCEPTION 'embedding retrieval results owner or runtime ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_retrieval_results_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_retrieval_results_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_retrieval_results_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=201 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=202 AND success) THEN
+                RAISE EXCEPTION 'retrieval results upgrade requires exact accepted 0201 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            GRANT REFERENCES ON TABLE public.workspaces, public.embedding_jobs,
+                public.embedding_space_registrations, public.embedding_corpus_generations
+                TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_retrieval_results_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_retrieval_results_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_retrieval_results_upgrade() TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGCLASS; target_function REGPROCEDURE;
+        BEGIN
+            FOREACH target_function IN ARRAY ARRAY[
+                to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
+                to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
+                to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
+            ]::REGPROCEDURE[] LOOP
+                IF target_function IS NULL
+                   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
+                    RAISE EXCEPTION 'retrieval results function hand-back is unavailable'
+                        USING ERRCODE='42501';
+                END IF;
+            END LOOP;
+            FOREACH target IN ARRAY ARRAY[
+                'embedding_retrieval_fences'::REGCLASS,
+                'embedding_retrieval_results'::REGCLASS,
+                'embedding_retrieval_result_references'::REGCLASS,
+                'embedding_retrieval_generation_changes'::REGCLASS,
+                'embedding_retrieval_retry_edges'::REGCLASS
+            ] LOOP
+                IF to_regclass(format('public.%s',target::TEXT)) IS NULL THEN
+                    RAISE EXCEPTION 'retrieval results guarded relation is absent'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER TABLE %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('GRANT ALL ON TABLE %s TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
+                EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
+            END LOOP;
+            FOREACH target_function IN ARRAY ARRAY[
+                to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
+                to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
+                to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
+            ]::REGPROCEDURE[] LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target_function);
+            END LOOP;
+            REVOKE REFERENCES ON TABLE public.workspaces, public.embedding_jobs,
+                public.embedding_space_registrations, public.embedding_corpus_generations
+                FROM vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade() TO vestrace;
+    END IF;
+END $retrieval_results_bootstrap$;
+
 SQL
