@@ -334,5 +334,7 @@ impl GovernedProviderRuntime {
     }
 }
 
+mod embedding_adoption_repository;
 mod embedding_index_repository;
+pub use embedding_adoption_repository::PgEmbeddingLegacyAdoptionRepository;
 pub use embedding_index_repository::PgEmbeddingIndexRepository;

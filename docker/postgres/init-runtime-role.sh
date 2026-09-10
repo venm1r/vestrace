@@ -2528,6 +2528,14 @@ BEGIN
         CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_executor_upgrade()
         RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
         DECLARE target REGPROCEDURE;
+        allowed_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_claim_embedding_work(uuid,text,text,integer)'),
+                to_regprocedure('public.vestrace_finish_embedding_work(uuid,uuid,text,text,text)')
+            ]::REGPROCEDURE[];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_claim_embedding_work(uuid,text,text,integer)'),
+                to_regprocedure('public.vestrace_finish_embedding_work(uuid,uuid,text,text,text)')
+            ]::REGPROCEDURE[];
         BEGIN
             ALTER TABLE public.embedding_delivery_acceptance_receipts OWNER TO vestrace_guarded_owner;
             ALTER TABLE public.embedding_job_work_claims ENABLE ROW LEVEL SECURITY;
@@ -2564,10 +2572,16 @@ BEGIN
             LOOP
                 EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
             END LOOP;
-            REVOKE ALL ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer) FROM PUBLIC;
-            REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_work(uuid,uuid,text,text,text) FROM PUBLIC;
-            GRANT EXECUTE ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer) TO vestrace;
-            GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_work(uuid,uuid,text,text,text) TO vestrace;
+            FOREACH target IN ARRAY allowed_targets LOOP
+                IF target IS NULL THEN
+                    RAISE EXCEPTION 'executor finish requires exact runtime-created functions'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC',target);
+            END LOOP;
+            FOREACH target IN ARRAY runtime_executable_targets LOOP
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target);
+            END LOOP;
             GRANT EXECUTE ON FUNCTION public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb) TO vestrace;
             GRANT EXECUTE ON FUNCTION public.vestrace_finalize_delivery_embedding_outputs(uuid,uuid,uuid) TO vestrace;
             GRANT EXECUTE ON FUNCTION public.vestrace_adopt_embedding_result_credential_blocker(uuid,uuid,uuid,uuid) TO vestrace;
@@ -2675,8 +2689,7 @@ BEGIN
         CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_transition_execution_upgrade()
         RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
         DECLARE target REGCLASS; target_function REGPROCEDURE;
-        BEGIN
-            FOREACH target_function IN ARRAY ARRAY[
+        allowed_targets REGPROCEDURE[] := ARRAY[
                 to_regprocedure('public.vestrace_derive_embedding_transition_carry_recipe_identity()'),
                 to_regprocedure('public.vestrace_derive_embedding_transition_barrier_recipe_identity()'),
                 to_regprocedure('public.vestrace_materialize_embedding_transition_batch()'),
@@ -2689,7 +2702,23 @@ BEGIN
                 to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
                 to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
                 to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
-            ]::REGPROCEDURE[] LOOP
+            ]::REGPROCEDURE[];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_derive_embedding_transition_carry_recipe_identity()'),
+                to_regprocedure('public.vestrace_derive_embedding_transition_barrier_recipe_identity()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch()'),
+                to_regprocedure('public.vestrace_materialize_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_header()'),
+                to_regprocedure('public.vestrace_guard_embedding_transition_batch_recipe()'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)'),
+                to_regprocedure('public.vestrace_validate_embedding_transition_bijection_trigger()'),
+                to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
+                to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
+                to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
+            ]::REGPROCEDURE[];
+        BEGIN
+            FOREACH target_function IN ARRAY allowed_targets LOOP
                 IF target_function IS NULL
                    OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
                     RAISE EXCEPTION 'transition execution function hand-back is unavailable'
@@ -2718,20 +2747,7 @@ BEGIN
                 EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
                 EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
             END LOOP;
-            FOREACH target_function IN ARRAY ARRAY[
-                to_regprocedure('public.vestrace_derive_embedding_transition_carry_recipe_identity()'),
-                to_regprocedure('public.vestrace_derive_embedding_transition_barrier_recipe_identity()'),
-                to_regprocedure('public.vestrace_materialize_embedding_transition_batch()'),
-                to_regprocedure('public.vestrace_materialize_embedding_transition_batch_recipe()'),
-                to_regprocedure('public.vestrace_guard_embedding_transition_header()'),
-                to_regprocedure('public.vestrace_guard_embedding_transition_batch_header()'),
-                to_regprocedure('public.vestrace_guard_embedding_transition_batch_recipe()'),
-                to_regprocedure('public.vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)'),
-                to_regprocedure('public.vestrace_validate_embedding_transition_bijection_trigger()'),
-                to_regprocedure('public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'),
-                to_regprocedure('public.vestrace_observe_embedding_transition_attempt(uuid,uuid,uuid,bigint,uuid,bigint)'),
-                to_regprocedure('public.vestrace_prove_embedding_transition_completeness(uuid,uuid,uuid,uuid,bigint)')
-            ]::REGPROCEDURE[] LOOP
+            FOREACH target_function IN ARRAY runtime_executable_targets LOOP
                 EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
                 EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
             END LOOP;
@@ -2818,12 +2834,18 @@ BEGIN
         CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_transition_activation_upgrade()
         RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
         DECLARE target REGCLASS; target_function REGPROCEDURE;
-        BEGIN
-            FOREACH target_function IN ARRAY ARRAY[
+        allowed_targets REGPROCEDURE[] := ARRAY[
                 to_regprocedure('public.vestrace_guard_embedding_activation_receipt()'),
                 to_regprocedure('public.vestrace_require_embedding_activation_receipt()'),
                 to_regprocedure('public.vestrace_activate_embedding_transition(uuid,uuid,uuid,uuid,bigint,bigint,uuid)')
-            ]::REGPROCEDURE[] LOOP
+            ]::REGPROCEDURE[];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_guard_embedding_activation_receipt()'),
+                to_regprocedure('public.vestrace_require_embedding_activation_receipt()'),
+                to_regprocedure('public.vestrace_activate_embedding_transition(uuid,uuid,uuid,uuid,bigint,bigint,uuid)')
+            ]::REGPROCEDURE[];
+        BEGIN
+            FOREACH target_function IN ARRAY allowed_targets LOOP
                 IF target_function IS NULL
                    OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
                     RAISE EXCEPTION 'transition activation function hand-back is unavailable'
@@ -2844,11 +2866,7 @@ BEGIN
                 EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
                 EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
             END LOOP;
-            FOREACH target_function IN ARRAY ARRAY[
-                to_regprocedure('public.vestrace_guard_embedding_activation_receipt()'),
-                to_regprocedure('public.vestrace_require_embedding_activation_receipt()'),
-                to_regprocedure('public.vestrace_activate_embedding_transition(uuid,uuid,uuid,uuid,bigint,bigint,uuid)')
-            ]::REGPROCEDURE[] LOOP
+            FOREACH target_function IN ARRAY runtime_executable_targets LOOP
                 EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
                 EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
             END LOOP;
@@ -2932,13 +2950,20 @@ BEGIN
         CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade()
         RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
         DECLARE target REGCLASS; target_function REGPROCEDURE;
-        BEGIN
-            FOREACH target_function IN ARRAY ARRAY[
+        allowed_targets REGPROCEDURE[] := ARRAY[
                 to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
                 to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
                 to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
                 to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
-            ]::REGPROCEDURE[] LOOP
+            ]::REGPROCEDURE[];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
+                to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
+                to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
+            ]::REGPROCEDURE[];
+        BEGIN
+            FOREACH target_function IN ARRAY allowed_targets LOOP
                 IF target_function IS NULL
                    OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
                     RAISE EXCEPTION 'retrieval results function hand-back is unavailable'
@@ -2961,12 +2986,7 @@ BEGIN
                 EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
                 EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
             END LOOP;
-            FOREACH target_function IN ARRAY ARRAY[
-                to_regprocedure('public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'),
-                to_regprocedure('public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'),
-                to_regprocedure('public.vestrace_observe_embedding_retrieval_generation_change(uuid,uuid,uuid,text)'),
-                to_regprocedure('public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)')
-            ]::REGPROCEDURE[] LOOP
+            FOREACH target_function IN ARRAY runtime_executable_targets LOOP
                 EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
                 EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
                 EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target_function);
@@ -2982,5 +3002,142 @@ BEGIN
         GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_retrieval_results_upgrade() TO vestrace;
     END IF;
 END $retrieval_results_bootstrap$;
+
+DO $legacy_adoption_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=204 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                'embedding_legacy_adoptions',
+                'embedding_legacy_adoption_members',
+                'embedding_legacy_adoption_blockers',
+                'embedding_legacy_cutover_receipts',
+                'embedding_legacy_identity_tombstones',
+                'embedding_legacy_retirement_gate'
+              ]) AS required(relname)
+             WHERE to_regclass('public.'||required.relname) IS NULL
+                OR (SELECT pg_get_userbyid(relowner) FROM pg_class
+                     WHERE oid=to_regclass('public.'||required.relname))<>'vestrace_guarded_owner'
+                OR NOT has_table_privilege('vestrace','public.'||required.relname,'SELECT,REFERENCES')
+                OR has_table_privilege('vestrace','public.'||required.relname,'INSERT,UPDATE,DELETE')
+        ) OR EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                to_regprocedure('public.vestrace_start_or_resume_legacy_adoption(uuid,uuid,uuid,uuid,text)'),
+                to_regprocedure('public.vestrace_bind_legacy_adoption_source(uuid,uuid,bigint,uuid,uuid)'),
+                to_regprocedure('public.vestrace_bind_legacy_adoption_rebuild(uuid,uuid,bigint,uuid)'),
+                to_regprocedure('public.vestrace_satisfy_legacy_adoption_member(uuid,uuid,bigint,uuid)'),
+                to_regprocedure('public.vestrace_record_legacy_adoption_blocker(uuid,uuid,bigint,text)'),
+                to_regprocedure('public.vestrace_prove_legacy_adoption_ready(uuid,uuid,uuid)'),
+                to_regprocedure('public.vestrace_commit_legacy_adoption_cutover(uuid,uuid,uuid,bigint,uuid)'),
+                to_regprocedure('public.vestrace_commit_legacy_plaintext_retirement()')
+              ]::REGPROCEDURE[]) AS required(target)
+             WHERE required.target IS NULL
+                OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
+                OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
+                OR has_function_privilege('public',required.target,'EXECUTE')
+        ) OR NOT has_table_privilege('vestrace_guarded_owner','public.memories','SELECT') THEN
+            RAISE EXCEPTION 'embedding legacy adoption owner or runtime ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_legacy_adoption_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_legacy_adoption_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_legacy_adoption_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=202 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=204 AND success) THEN
+                RAISE EXCEPTION 'legacy adoption upgrade requires exact accepted 0202 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            GRANT REFERENCES ON TABLE public.workspaces, public.embedding_space_registrations,
+                public.embedding_corpus_generations, public.content_materials,
+                public.embedding_projection_entries
+                TO vestrace;
+            GRANT SELECT ON TABLE public.memories TO vestrace_guarded_owner;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_legacy_adoption_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_legacy_adoption_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_legacy_adoption_upgrade() TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_legacy_adoption_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGCLASS; target_function REGPROCEDURE;
+        allowed_targets REGPROCEDURE[] := ARRAY[
+            to_regprocedure('public.vestrace_start_or_resume_legacy_adoption(uuid,uuid,uuid,uuid,text)'),
+            to_regprocedure('public.vestrace_bind_legacy_adoption_source(uuid,uuid,bigint,uuid,uuid)'),
+            to_regprocedure('public.vestrace_bind_legacy_adoption_rebuild(uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_satisfy_legacy_adoption_member(uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_record_legacy_adoption_blocker(uuid,uuid,bigint,text)'),
+            to_regprocedure('public.vestrace_prove_legacy_adoption_ready(uuid,uuid,uuid)'),
+            to_regprocedure('public.vestrace_commit_legacy_adoption_cutover(uuid,uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_commit_legacy_plaintext_retirement()')];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+            to_regprocedure('public.vestrace_start_or_resume_legacy_adoption(uuid,uuid,uuid,uuid,text)'),
+            to_regprocedure('public.vestrace_bind_legacy_adoption_source(uuid,uuid,bigint,uuid,uuid)'),
+            to_regprocedure('public.vestrace_bind_legacy_adoption_rebuild(uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_satisfy_legacy_adoption_member(uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_record_legacy_adoption_blocker(uuid,uuid,bigint,text)'),
+            to_regprocedure('public.vestrace_prove_legacy_adoption_ready(uuid,uuid,uuid)'),
+            to_regprocedure('public.vestrace_commit_legacy_adoption_cutover(uuid,uuid,uuid,bigint,uuid)'),
+            to_regprocedure('public.vestrace_commit_legacy_plaintext_retirement()')];
+        BEGIN
+            FOREACH target_function IN ARRAY allowed_targets LOOP
+                IF target_function IS NULL
+                   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
+                    RAISE EXCEPTION 'legacy adoption function hand-back is unavailable'
+                        USING ERRCODE='42501';
+                END IF;
+            END LOOP;
+            FOREACH target IN ARRAY ARRAY[
+                'embedding_legacy_adoptions'::REGCLASS,
+                'embedding_legacy_adoption_members'::REGCLASS,
+                'embedding_legacy_adoption_blockers'::REGCLASS,
+                'embedding_legacy_cutover_receipts'::REGCLASS,
+                'embedding_legacy_identity_tombstones'::REGCLASS,
+                'embedding_legacy_retirement_gate'::REGCLASS
+            ] LOOP
+                IF to_regclass(format('public.%s',target::TEXT)) IS NULL THEN
+                    RAISE EXCEPTION 'legacy adoption guarded relation is absent'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER TABLE %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('GRANT ALL ON TABLE %s TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
+                EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
+            END LOOP;
+            FOREACH target_function IN ARRAY runtime_executable_targets LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target_function);
+            END LOOP;
+            -- Only the two grants this upgrade actually added are given back.
+            -- content_materials, embedding_space_registrations and
+            -- embedding_corpus_generations carry a standing REFERENCES grant
+            -- from earlier migrations, and revoking those here would silently
+            -- strip a privilege this migration never owned.
+            REVOKE REFERENCES ON TABLE public.workspaces,
+                public.embedding_projection_entries
+                FROM vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_legacy_adoption_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_legacy_adoption_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_legacy_adoption_upgrade() TO vestrace;
+    END IF;
+END $legacy_adoption_bootstrap$;
 
 SQL

@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 100] = [
+const EXPECTED_GUARDED_TABLES: [&str; 119] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -113,6 +113,30 @@ const EXPECTED_GUARDED_TABLES: [&str; 100] = [
     "embedding_transition_ambiguity_carry_recipes",
     "embedding_transition_barriers",
     "embedding_transition_barrier_recipes",
+    // P04 Task 5, migration 0199.
+    "embedding_job_work_claims",
+    // P04 Task 6, migration 0200.
+    "embedding_transition_batches",
+    "embedding_transition_batch_recipes",
+    "embedding_transition_recipe_dependencies",
+    "embedding_transition_job_attempts",
+    "embedding_transition_recipe_satisfactions",
+    "embedding_transition_observations",
+    // P04 Task 7, migration 0201.
+    "embedding_transition_activation_receipts",
+    // P04 Task 8, migration 0202.
+    "embedding_retrieval_fences",
+    "embedding_retrieval_results",
+    "embedding_retrieval_result_references",
+    "embedding_retrieval_generation_changes",
+    "embedding_retrieval_retry_edges",
+    // P04 Task 10, migration 0204.
+    "embedding_legacy_adoptions",
+    "embedding_legacy_adoption_members",
+    "embedding_legacy_adoption_blockers",
+    "embedding_legacy_cutover_receipts",
+    "embedding_legacy_identity_tombstones",
+    "embedding_legacy_retirement_gate",
     "model_data_policy_decisions",
 ];
 
@@ -254,6 +278,21 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
     .await
     .unwrap();
 
+    // Every later completion migration is read the same way, so a database
+    // built to an earlier point still compares against an exact set rather
+    // than a set that happens to be a superset of what it has.
+    let mut applied_since = std::collections::BTreeMap::new();
+    for version in [199_i64, 200, 201, 202, 204] {
+        let applied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=$1 AND success)",
+        )
+        .bind(version)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        applied_since.insert(version, applied);
+    }
+
     let guarded: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname FROM pg_class AS c \
          JOIN pg_namespace AS n ON n.oid = c.relnamespace \
@@ -318,6 +357,48 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
             "embedding_index_rebuild_events",
         ] {
             expected_guarded.remove(table);
+        }
+    }
+    for (version, tables) in [
+        (199_i64, &["embedding_job_work_claims"][..]),
+        (
+            200,
+            &[
+                "embedding_transition_batches",
+                "embedding_transition_batch_recipes",
+                "embedding_transition_recipe_dependencies",
+                "embedding_transition_job_attempts",
+                "embedding_transition_recipe_satisfactions",
+                "embedding_transition_observations",
+            ][..],
+        ),
+        (201, &["embedding_transition_activation_receipts"][..]),
+        (
+            202,
+            &[
+                "embedding_retrieval_fences",
+                "embedding_retrieval_results",
+                "embedding_retrieval_result_references",
+                "embedding_retrieval_generation_changes",
+                "embedding_retrieval_retry_edges",
+            ][..],
+        ),
+        (
+            204,
+            &[
+                "embedding_legacy_adoptions",
+                "embedding_legacy_adoption_members",
+                "embedding_legacy_adoption_blockers",
+                "embedding_legacy_cutover_receipts",
+                "embedding_legacy_identity_tombstones",
+                "embedding_legacy_retirement_gate",
+            ][..],
+        ),
+    ] {
+        if !applied_since.get(&version).copied().unwrap_or(false) {
+            for table in tables {
+                expected_guarded.remove(*table);
+            }
         }
     }
     assert_eq!(

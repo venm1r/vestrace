@@ -5,6 +5,7 @@
 //! uses, and this module exists only for the step before that — turning a
 //! request to embed something into a durable job with its identities fixed.
 
+pub mod adoption;
 pub mod barrier;
 pub mod carry;
 pub mod executor;
@@ -18,6 +19,12 @@ pub mod transition;
 pub mod transition_coordinator;
 pub mod work;
 
+pub use adoption::{
+    EmbeddingLegacyAdoptionRepository, EmbeddingLegacyAdoptionService, LegacyAdoptionBlocker,
+    LegacyAdoptionBlockerRecord, LegacyAdoptionMember, LegacyAdoptionMemberState,
+    LegacyAdoptionProgress, LegacyAdoptionRebuildFactory, LegacyAdoptionSourceMaterializer,
+    MaterializedSource, SharedEmbeddingLegacyAdoptionRepository, StartLegacyAdoption,
+};
 pub use barrier::{BarrierBatchDispatch, EmbeddingTransitionBarrierRepository};
 pub use carry::{AcknowledgeCarriedTransitionBatchAfterUnknown, CarryRecipeMapping};
 pub use executor::{EMBEDDING_DISPATCH_TTL_SECONDS, EmbeddingExecutionOutcome, EmbeddingExecutor};
