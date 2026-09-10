@@ -10,7 +10,7 @@ use uuid::Uuid;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 const PROVISIONER: &str = include_str!("../../../docker/postgres/init-runtime-role.sh");
 const COMPOSE: &str = include_str!("../../../docker-compose.yml");
-const EXPECTED_GUARDED_TABLES: [&str; 119] = [
+const EXPECTED_GUARDED_TABLES: [&str; 121] = [
     "p02_guarded_operation_probe",
     "governed_mutation_audit_marks",
     "installation_fingerprint_continuity",
@@ -130,6 +130,9 @@ const EXPECTED_GUARDED_TABLES: [&str; 119] = [
     "embedding_retrieval_result_references",
     "embedding_retrieval_generation_changes",
     "embedding_retrieval_retry_edges",
+    // P04 Task 9, migration 0203.
+    "embedding_erasure_propagations",
+    "embedding_erasure_revoked_members",
     // P04 Task 10, migration 0204.
     "embedding_legacy_adoptions",
     "embedding_legacy_adoption_members",
@@ -282,7 +285,7 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
     // built to an earlier point still compares against an exact set rather
     // than a set that happens to be a superset of what it has.
     let mut applied_since = std::collections::BTreeMap::new();
-    for version in [199_i64, 200, 201, 202, 204] {
+    for version in [199_i64, 200, 201, 202, 203, 204] {
         let applied: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=$1 AND success)",
         )
@@ -381,6 +384,13 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
                 "embedding_retrieval_result_references",
                 "embedding_retrieval_generation_changes",
                 "embedding_retrieval_retry_edges",
+            ][..],
+        ),
+        (
+            203,
+            &[
+                "embedding_erasure_propagations",
+                "embedding_erasure_revoked_members",
             ][..],
         ),
         (

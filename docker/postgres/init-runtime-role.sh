@@ -3003,6 +3003,147 @@ BEGIN
     END IF;
 END $retrieval_results_bootstrap$;
 
+DO $erasure_propagation_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=203 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                'embedding_erasure_propagations',
+                'embedding_erasure_revoked_members'
+              ]) AS required(relname)
+             WHERE to_regclass('public.'||required.relname) IS NULL
+                OR (SELECT pg_get_userbyid(relowner) FROM pg_class
+                     WHERE oid=to_regclass('public.'||required.relname))<>'vestrace_guarded_owner'
+                OR NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+                         WHERE oid=to_regclass('public.'||required.relname))
+                OR NOT has_table_privilege('vestrace','public.'||required.relname,'SELECT,REFERENCES')
+                OR has_table_privilege('vestrace','public.'||required.relname,'INSERT,UPDATE,DELETE')
+        ) OR EXISTS(
+            SELECT 1
+              FROM unnest(ARRAY[
+                to_regprocedure('public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)')
+              ]::REGPROCEDURE[]) AS required(target)
+             WHERE required.target IS NULL
+                OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
+                OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
+                OR has_function_privilege('public',required.target,'EXECUTE')
+        ) THEN
+            RAISE EXCEPTION 'embedding erasure propagation owner or runtime ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_erasure_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_erasure_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_erasure_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=202 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=203 AND success) THEN
+                RAISE EXCEPTION 'erasure propagation upgrade requires exact accepted 0202 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            GRANT REFERENCES ON TABLE public.workspaces TO vestrace;
+            -- 0203 forward-replaces the 0195 publication validator for the
+            -- post-erasure branch, and CREATE OR REPLACE requires ownership.
+            -- Lent for the migration and handed straight back below.
+            ALTER FUNCTION public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)
+                OWNER TO vestrace;
+            -- 0203 also replaces the corpus-change stream's blanket growth rule
+            -- with a cause-specific one, and ALTER TABLE needs ownership.
+            ALTER TABLE public.embedding_index_rebuild_events OWNER TO vestrace;
+            -- And the cause guard 0198 left refusing every cause but result
+            -- publication, which this migration teaches to admit erasure.
+            ALTER FUNCTION public.vestrace_validate_embedding_index_event_cause()
+                OWNER TO vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_prepare_embedding_erasure_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_erasure_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_erasure_upgrade() TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_erasure_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        DECLARE target REGCLASS; target_function REGPROCEDURE;
+        allowed_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)')
+            ]::REGPROCEDURE[];
+        runtime_executable_targets REGPROCEDURE[] := ARRAY[
+                to_regprocedure('public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)')
+            ]::REGPROCEDURE[];
+        BEGIN
+            FOREACH target_function IN ARRAY allowed_targets LOOP
+                IF target_function IS NULL
+                   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=target_function)<>'vestrace' THEN
+                    RAISE EXCEPTION 'erasure propagation function hand-back is unavailable'
+                        USING ERRCODE='42501';
+                END IF;
+            END LOOP;
+            FOREACH target IN ARRAY ARRAY[
+                'embedding_erasure_propagations'::REGCLASS,
+                'embedding_erasure_revoked_members'::REGCLASS
+            ] LOOP
+                IF to_regclass(format('public.%s',target::TEXT)) IS NULL THEN
+                    RAISE EXCEPTION 'erasure propagation guarded relation is absent'
+                        USING ERRCODE='42501';
+                END IF;
+                EXECUTE format('ALTER TABLE %s OWNER TO vestrace_guarded_owner',target);
+                EXECUTE format('GRANT ALL ON TABLE %s TO vestrace_guarded_owner',target);
+                EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',target);
+                EXECUTE format('GRANT SELECT, REFERENCES ON TABLE %s TO vestrace',target);
+            END LOOP;
+            FOREACH target_function IN ARRAY runtime_executable_targets LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target_function);
+                EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',target_function);
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',target_function);
+            END LOOP;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)'))
+               <>'vestrace' THEN
+                RAISE EXCEPTION 'publication validator hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_assert_embedding_result_phase(uuid,uuid,uuid,uuid)
+                OWNER TO vestrace_guarded_owner;
+            IF (SELECT pg_get_userbyid(relowner) FROM pg_class
+                 WHERE oid='public.embedding_index_rebuild_events'::REGCLASS)<>'vestrace' THEN
+                RAISE EXCEPTION 'corpus-change stream hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_validate_embedding_index_event_cause()'))<>'vestrace' THEN
+                RAISE EXCEPTION 'corpus-change cause guard hand-back is unavailable'
+                    USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_validate_embedding_index_event_cause()
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_validate_embedding_index_event_cause()
+                FROM PUBLIC,vestrace;
+            ALTER TABLE public.embedding_index_rebuild_events
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON TABLE public.embedding_index_rebuild_events FROM PUBLIC,vestrace;
+            GRANT SELECT, REFERENCES ON TABLE public.embedding_index_rebuild_events TO vestrace;
+            REVOKE REFERENCES ON TABLE public.workspaces FROM vestrace;
+            REVOKE EXECUTE ON FUNCTION public.vestrace_finish_embedding_erasure_upgrade()
+                FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_erasure_upgrade() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_erasure_upgrade() TO vestrace;
+    END IF;
+END $erasure_propagation_bootstrap$;
+
 DO $legacy_adoption_bootstrap$
 DECLARE applied BOOLEAN := false;
 BEGIN
