@@ -249,6 +249,11 @@ impl ModelRequestReconstructionStatus {
 pub enum ModelRequestCauseKind {
     RunStep,
     QualificationProbe,
+    /// A governed embedding job. Like a run step it is bound to an immutable
+    /// binding snapshot and carries no qualification target, which is exactly
+    /// what `model_request_evidence_roots` has always required of this cause;
+    /// only the vocabulary above the column was missing.
+    EmbeddingJob,
 }
 
 impl ModelRequestCauseKind {
@@ -256,6 +261,7 @@ impl ModelRequestCauseKind {
         match self {
             Self::RunStep => "run_step",
             Self::QualificationProbe => "qualification_probe",
+            Self::EmbeddingJob => "embedding_job",
         }
     }
 }
@@ -373,6 +379,7 @@ impl CreateModelRequestEvidence {
             ),
             (ModelRequestCauseKind::RunStep, Some(_), None)
                 | (ModelRequestCauseKind::QualificationProbe, None, Some(_))
+                | (ModelRequestCauseKind::EmbeddingJob, Some(_), None)
         );
         if !cause_is_valid || nodes.is_empty() || !canonical_nodes_are_exact(&canonical, &nodes) {
             return Err(ApplicationError::Policy(
@@ -581,6 +588,103 @@ impl CreateModelRequestEvidence {
                     version: 1,
                     sampling,
                 }),
+                limits: LimitsRevisionInput {
+                    id: limits_id,
+                    version: 1,
+                    limits,
+                },
+                tools: Vec::new(),
+            },
+            nodes,
+        )
+    }
+
+    /// The evidence a governed embedding job is dispatched under.
+    ///
+    /// Shaped by what the durable authority already demands of an `embeddings`
+    /// request: exactly one model revision, at least one governed input
+    /// material, and no sampling or tool-schema revision, because an embedding
+    /// request has no sampling to make and no tools to offer. That is why
+    /// `sampling` is `None` here and present for a chat completion.
+    ///
+    /// The sources are the content materials being embedded, in order. They
+    /// become the delivery source memberships that bind each projection to what
+    /// it was computed from, so an empty list is refused rather than producing a
+    /// job whose output depends on nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_embedding_job(
+        root_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        external_effect_id: uuid::Uuid,
+        binding_snapshot_id: uuid::Uuid,
+        connection_revision_id: uuid::Uuid,
+        connection_qualification_revision_id: uuid::Uuid,
+        model_revision_id: uuid::Uuid,
+        model_qualification_revision_id: uuid::Uuid,
+        embedding_job_id: uuid::Uuid,
+        source_material_ids: &[uuid::Uuid],
+        limits: crate::EffectiveRequestLimits,
+    ) -> Result<Self, ApplicationError> {
+        if source_material_ids.is_empty() {
+            return Err(ApplicationError::Policy(
+                "a governed embedding job requires at least one source material".to_owned(),
+            ));
+        }
+        let request_shape_id = uuid::Uuid::now_v7();
+        let limits_id = uuid::Uuid::now_v7();
+        let mut nodes = vec![
+            node(ModelRequestNodeKind::ExternalEffect, external_effect_id),
+            node(
+                ModelRequestNodeKind::ConnectionRevision,
+                connection_revision_id,
+            ),
+            node(
+                ModelRequestNodeKind::ConnectionQualificationRevision,
+                connection_qualification_revision_id,
+            ),
+            node(ModelRequestNodeKind::BindingSnapshot, binding_snapshot_id),
+            node(ModelRequestNodeKind::ModelRevision, model_revision_id),
+            node(
+                ModelRequestNodeKind::ModelQualificationRevision,
+                model_qualification_revision_id,
+            ),
+            versioned_node(
+                ModelRequestNodeKind::RequestShapeRevision,
+                request_shape_id,
+                1,
+            ),
+            versioned_node(ModelRequestNodeKind::LimitsRevision, limits_id, 1),
+        ];
+        // Migration 0183 requires ordered kinds to carry a contiguous ordinal
+        // from zero, and the delivery authority reads exactly this order back
+        // as the job's source ordinals.
+        for (ordinal, material_id) in source_material_ids.iter().enumerate() {
+            nodes.push(ModelRequestEvidenceNodeInput {
+                kind: ModelRequestNodeKind::GovernedInputMaterial,
+                reference_id: *material_id,
+                reference_version: None,
+                safe_ordinal: Some(ordinal.to_string()),
+            });
+        }
+        Self::new(
+            ModelRequestEvidenceIdentity {
+                root_id,
+                workspace_id,
+                external_effect_id,
+                cause_kind: ModelRequestCauseKind::EmbeddingJob,
+                cause_id: embedding_job_id,
+                binding_snapshot_id: Some(binding_snapshot_id),
+                qualification_target_binding_id: None,
+            },
+            CanonicalRequestRevisions {
+                request_shape: RequestShapeRevisionInput {
+                    id: request_shape_id,
+                    version: 1,
+                    request_kind: crate::EffectiveRequestKind::Embeddings,
+                    stream: false,
+                    input_roles: Vec::new(),
+                },
+                sampling: None,
                 limits: LimitsRevisionInput {
                     id: limits_id,
                     version: 1,
@@ -1177,5 +1281,107 @@ mod governed_run_step_evidence {
         }
 
         let _ = signature_is_input_free;
+    }
+}
+
+#[cfg(test)]
+mod embedding_job_evidence {
+    use super::*;
+    use crate::EffectiveRequestLimits;
+
+    fn limits() -> EffectiveRequestLimits {
+        EffectiveRequestLimits::new(256, 4, 32_768).unwrap()
+    }
+
+    fn build(sources: &[uuid::Uuid]) -> Result<CreateModelRequestEvidence, ApplicationError> {
+        CreateModelRequestEvidence::for_embedding_job(
+            uuid::Uuid::now_v7(),
+            WorkspaceId::new(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            sources,
+            limits(),
+        )
+    }
+
+    fn count(evidence: &CreateModelRequestEvidence, kind: ModelRequestNodeKind) -> usize {
+        evidence
+            .nodes()
+            .iter()
+            .filter(|node| node.kind == kind)
+            .count()
+    }
+
+    /// The shape `model_request_evidence_roots` and the delivery authority have
+    /// always required of an `embeddings` request: one model revision, sources
+    /// present, and no sampling or tool schema, because an embedding request
+    /// makes no sampling choice and offers no tools.
+    #[test]
+    fn the_embedding_shape_is_what_the_durable_authority_requires() {
+        let sources = [uuid::Uuid::now_v7(), uuid::Uuid::now_v7()];
+        let evidence = build(&sources).expect("a two-source embedding job is well formed");
+
+        assert_eq!(evidence.cause_kind(), ModelRequestCauseKind::EmbeddingJob);
+        assert_eq!(evidence.cause_kind().as_str(), "embedding_job");
+        assert!(evidence.binding_snapshot_id().is_some());
+        assert_eq!(count(&evidence, ModelRequestNodeKind::ModelRevision), 1);
+        assert_eq!(count(&evidence, ModelRequestNodeKind::SamplingRevision), 0);
+        assert_eq!(
+            count(&evidence, ModelRequestNodeKind::ToolSchemaRevision),
+            0
+        );
+        assert_eq!(
+            count(&evidence, ModelRequestNodeKind::RequestShapeRevision),
+            1
+        );
+        assert_eq!(count(&evidence, ModelRequestNodeKind::LimitsRevision), 1);
+        assert_eq!(
+            count(&evidence, ModelRequestNodeKind::GovernedInputMaterial),
+            sources.len()
+        );
+    }
+
+    /// The delivery authority reads these back as the job's source ordinals, so
+    /// they must be contiguous from zero and in the order given.
+    #[test]
+    fn source_ordinals_are_contiguous_from_zero_in_the_order_supplied() {
+        let sources = [
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+        ];
+        let evidence = build(&sources).expect("three sources are well formed");
+        let ordered: Vec<(String, uuid::Uuid)> = evidence
+            .nodes()
+            .iter()
+            .filter(|node| node.kind == ModelRequestNodeKind::GovernedInputMaterial)
+            .map(|node| {
+                (
+                    node.safe_ordinal.clone().expect("an ordered kind"),
+                    node.reference_id,
+                )
+            })
+            .collect();
+        assert_eq!(
+            ordered,
+            vec![
+                ("0".to_owned(), sources[0]),
+                ("1".to_owned(), sources[1]),
+                ("2".to_owned(), sources[2]),
+            ]
+        );
+    }
+
+    /// A job whose output depends on nothing is refused here rather than at the
+    /// delivery authority, which would report it as a malformed source tuple.
+    #[test]
+    fn an_embedding_job_without_a_source_is_refused() {
+        let error = build(&[]).expect_err("no source is not a job");
+        assert!(matches!(error, ApplicationError::Policy(_)), "{error:?}");
     }
 }

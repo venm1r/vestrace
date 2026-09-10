@@ -123,13 +123,15 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
-  // Completion contract: exactly 117 task paths; no historical write permissions.
+  // Completion contract: exactly 119 task paths; no historical write permissions.
   // 111 frozen by Task 1, plus the two-path Task 5 amendment that lets the
   // shared output-key authority accept rebuild as well as delivery, plus the
   // one-path Task 8 amendment for the conformance fixture that constructs a
   // RetrievalResult literally, plus the three-path Task 11 amendment that lets
-  // a content material be owned by a memory revision rather than a principal.
-  assert.equal(changeScopePaths.length, 117);
+  // a content material be owned by a memory revision rather than a principal,
+  // plus the two-path amendment that lets production name an embedding job as
+  // the cause of its own model-request evidence.
+  assert.equal(changeScopePaths.length, 119);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -173,7 +175,8 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-application/src/embedding/transition_coordinator.rs',
     'crates/vestrace-application/src/embedding/work.rs',
     'crates/vestrace-application/src/material/erasure.rs',
-    'crates/vestrace-application/src/provider_dispatch.rs',
+    'crates/vestrace-application/src/model_request_evidence.rs',
+  'crates/vestrace-application/src/provider_dispatch.rs',
   'crates/vestrace-application/src/retrieval/ports.rs',
     'crates/vestrace-application/src/retrieval/request.rs',
     'crates/vestrace-application/src/retrieval/service.rs',
@@ -231,6 +234,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/postgres/material_intent.rs',
   'crates/vestrace-infrastructure/src/postgres/mod.rs',
     'crates/vestrace-infrastructure/src/postgres/model_binding_repository.rs',
+  'crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/vector_retriever.rs',

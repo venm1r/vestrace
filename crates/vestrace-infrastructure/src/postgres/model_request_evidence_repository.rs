@@ -1248,6 +1248,21 @@ fn reconstruction_node_matrix_is_valid(root: &RootRow, nodes: &[NodeRow]) -> boo
         _ => return false,
     }
     match root.cause_kind.as_str() {
+        // An embedding job is bound exactly as a run step is -- one binding
+        // snapshot, no qualification target -- and differs only in carrying no
+        // sampling revision, which the request-kind arm above already enforced.
+        "embedding_job" => {
+            let Some(snapshot_id) = root.binding_snapshot_id else {
+                return false;
+            };
+            root.qualification_target_binding_id.is_none()
+                && one_node_with_id(nodes, "binding_snapshot", snapshot_id).is_some()
+                && node_count(nodes, "binding_snapshot") == 1
+                && node_count(nodes, "connection_qualification_revision") == 1
+                && node_count(nodes, "model_qualification_revision") == 1
+                && node_count(nodes, "qualification_target") == 0
+                && node_count(nodes, "qualification_probe") == 0
+        }
         "run_step" => {
             let Some(snapshot_id) = root.binding_snapshot_id else {
                 return false;
