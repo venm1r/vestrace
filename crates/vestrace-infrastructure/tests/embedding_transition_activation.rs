@@ -963,3 +963,497 @@ async fn transition_execution_acl_matches_on_0199_to_0200_upgrade(pool: PgPool) 
     assert_transition_execution_acl(&runtime).await;
     runtime.close().await;
 }
+
+// ---------------------------------------------------------------------------
+// Task 7: activation.
+//
+// The invariant these cover is that an embedding qualification head may only
+// move when this transaction has already written the exact activation receipt
+// that authorizes the move.  The receipt is a durable row, not a session flag,
+// so nothing can assert its way past the guard.
+
+async fn seed_qualification_head(pool: &PgPool, fixture: &common::AcceptedJob) {
+    let mut transaction = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    scoped(&mut transaction, fixture).await;
+    sqlx::query(
+        "INSERT INTO model_qualification_heads(workspace_id,model_revision_id,\
+         current_qualification_revision_id,version) VALUES($1,$2,$3,1)",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.model_revision_id)
+    .bind(fixture.model_qualification_id)
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+}
+
+/// Registers one canonical space bound to the fixture's exact model and
+/// qualification, then points the head at it.  The head's deferred
+/// consistency trigger demands exactly this tuple, so a head that names an
+/// active space can only be built this way.
+async fn audit_event(pool: &PgPool, fixture: &common::AcceptedJob) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO audit_events(id,workspace_id,principal_id,action,resource_type,\
+         resource_id,payload,created_at) \
+         VALUES($1,$2,$3,'embedding.transition.activated','embedding_transition',$1,'{}',NOW())",
+    )
+    .bind(id)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.context.principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn activate(
+    runtime: &PgPool,
+    fixture: &common::AcceptedJob,
+    transition_id: Uuid,
+    plan_id: Uuid,
+    batch_id: Uuid,
+    expected_transition_version: i64,
+    expected_head_version: i64,
+    audit: Uuid,
+) -> Result<Uuid, sqlx::Error> {
+    let mut transaction = runtime.begin().await?;
+    scoped(&mut transaction, fixture).await;
+    let result =
+        sqlx::query_scalar("SELECT vestrace_activate_embedding_transition($1,$2,$3,$4,$5,$6,$7)")
+            .bind(fixture.context.workspace_id.as_uuid())
+            .bind(transition_id)
+            .bind(plan_id)
+            .bind(batch_id)
+            .bind(expected_transition_version)
+            .bind(expected_head_version)
+            .bind(audit)
+            .fetch_one(&mut *transaction)
+            .await;
+    match result {
+        Ok(value) => {
+            transaction.commit().await?;
+            Ok(value)
+        }
+        Err(error) => {
+            transaction.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn head_tuple(pool: &PgPool, fixture: &common::AcceptedJob) -> (Uuid, Option<Uuid>, i64) {
+    sqlx::query_as(
+        "SELECT current_qualification_revision_id,active_space_registration_id,version \
+         FROM model_qualification_heads WHERE workspace_id=$1 AND model_revision_id=$2",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(fixture.model_revision_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+fn assert_refusal(error: sqlx::Error, expected_state: &str, expected_message: &str) {
+    let database = error
+        .as_database_error()
+        .expect("a database refusal was expected");
+    assert_eq!(
+        database.code().as_deref(),
+        Some(expected_state),
+        "unexpected sqlstate; message was {:?}",
+        database.message()
+    );
+    assert!(
+        database.message().contains(expected_message),
+        "expected refusal {expected_message:?}, got {:?}",
+        database.message()
+    );
+}
+
+async fn receipt_count(pool: &PgPool, fixture: &common::AcceptedJob) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_transition_activation_receipts WHERE workspace_id=$1",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// The guard, exercised directly.
+///
+/// A head that names no active space may still move: nothing is live behind
+/// it.  The moment it names one, every further move needs its receipt - and
+/// not even the guarded owner, the role that owns every P03/P04 relation, may
+/// skip that.  Both halves are proven in one transaction, which also lets the
+/// established state exist without satisfying the deferred canonical-space
+/// validator that only runs at commit.
+#[sqlx::test(migrations = false)]
+async fn embedding_head_cannot_advance_without_its_exact_activation_receipt(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    seed_qualification_head(&pool, &source.accepted).await;
+
+    let mut transaction = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    scoped(&mut transaction, &source.accepted).await;
+
+    // No active space yet, so this move is unguarded.
+    sqlx::query(
+        "UPDATE model_qualification_heads SET active_space_registration_id=$3,version=version+1          WHERE workspace_id=$1 AND model_revision_id=$2",
+    )
+    .bind(source.accepted.context.workspace_id.as_uuid())
+    .bind(source.accepted.model_revision_id)
+    .bind(source.accepted.space_registration_id)
+    .execute(&mut *transaction)
+    .await
+    .expect("a head that names no active space may adopt one");
+
+    // The head is now established, so the next move demands its receipt.
+    let error = sqlx::query(
+        "UPDATE model_qualification_heads SET current_qualification_revision_id=$3,         version=version+1 WHERE workspace_id=$1 AND model_revision_id=$2",
+    )
+    .bind(source.accepted.context.workspace_id.as_uuid())
+    .bind(source.accepted.model_revision_id)
+    .bind(Uuid::now_v7())
+    .execute(&mut *transaction)
+    .await
+    .unwrap_err();
+    assert_refusal(
+        error,
+        "23514",
+        "embedding qualification head advance requires its exact activation receipt",
+    );
+    transaction.rollback().await.unwrap();
+
+    // Nothing survived the refused transaction.
+    let (qualification, space, version) = head_tuple(&pool, &source.accepted).await;
+    assert_eq!(
+        (qualification, space, version),
+        (source.accepted.model_qualification_id, None, 1)
+    );
+    assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}
+
+/// A first head is unconstrained: no live corpus precedes it, so no transition
+/// could exist to prove anything about it.
+#[sqlx::test(migrations = false)]
+async fn a_first_embedding_head_needs_no_activation_receipt(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    seed_qualification_head(&pool, &source.accepted).await;
+    let (qualification, space, version) = head_tuple(&pool, &source.accepted).await;
+    assert_eq!(
+        (qualification, space, version),
+        (source.accepted.model_qualification_id, None, 1)
+    );
+    assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}
+
+/// Activation refuses a transition that was never proven complete, and leaves
+/// both the head and the receipt table untouched.
+#[sqlx::test(migrations = false)]
+async fn activation_refuses_an_unproven_transition_and_leaves_the_head(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &source).await;
+    seed_qualification_head(&pool, &source.accepted).await;
+
+    let transition_id = Uuid::now_v7();
+    let plan_id = Uuid::now_v7();
+    let batch_id = Uuid::now_v7();
+    plan(
+        &runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id,
+            plan_id,
+            batch_id,
+            recipe_identities: vec![Uuid::now_v7()],
+            inputs: serde_json::json!([[0]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+        },
+    )
+    .await;
+    let audit = audit_event(&pool, &source.accepted).await;
+    let error = activate(
+        &runtime,
+        &source.accepted,
+        transition_id,
+        plan_id,
+        batch_id,
+        1,
+        1,
+        audit,
+    )
+    .await
+    .unwrap_err();
+    assert_refusal(
+        error,
+        "23514",
+        "embedding transition activation requires a proven ready transition",
+    );
+
+    let (qualification, space, version) = head_tuple(&pool, &source.accepted).await;
+    assert_eq!(
+        (qualification, space, version),
+        (source.accepted.model_qualification_id, None, 1)
+    );
+    assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}
+
+/// Malformed argument tuples are refused before any lock is taken.
+#[sqlx::test(migrations = false)]
+async fn activation_refuses_malformed_arguments(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    let audit = audit_event(&pool, &source.accepted).await;
+    let error = activate(
+        &runtime,
+        &source.accepted,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        0,
+        1,
+        audit,
+    )
+    .await
+    .unwrap_err();
+    assert_refusal(
+        error,
+        "22023",
+        "embedding transition activation arguments are malformed",
+    );
+    runtime.close().await;
+}
+
+/// One transition proven complete over the fixture's legacy space.  The
+/// bijection is real: an exact terminal result satisfies the single recipe.
+struct ProvenTransition {
+    transition_id: uuid::Uuid,
+    plan_id: uuid::Uuid,
+    batch_id: uuid::Uuid,
+    /// The version the transition carries once `prove` has advanced it.
+    proven_version: i64,
+}
+
+async fn prove_one_transition(
+    pool: &PgPool,
+    runtime: &PgPool,
+    source: &PreparedJob,
+) -> ProvenTransition {
+    let candidate = prepare_job(
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
+        false,
+    )
+    .await;
+    let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
+    let transition_id = Uuid::now_v7();
+    let plan_id = Uuid::now_v7();
+    let batch_id = Uuid::now_v7();
+    plan(
+        runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id,
+            plan_id,
+            batch_id,
+            recipe_identities: vec![Uuid::now_v7()],
+            inputs: serde_json::json!([[0]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+        },
+    )
+    .await;
+    let attempt = Uuid::now_v7();
+    create_attempt(
+        runtime,
+        &source.accepted,
+        BatchAttempt {
+            plan_id,
+            batch_id,
+            attempt_id: attempt,
+            job_id: candidate.accepted.job_id,
+            recipe_ordinal: 0,
+            old_projection_id: source_projections[0],
+            target_input_ordinal: 0,
+        },
+    )
+    .await
+    .expect("one fresh physical job may start the exact batch recipe");
+    execute(runtime, &candidate).await;
+    observe(
+        runtime,
+        &source.accepted,
+        plan_id,
+        batch_id,
+        0,
+        Some(attempt),
+        job_version(pool, &source.accepted, candidate.accepted.job_id).await,
+    )
+    .await
+    .expect("the exact terminal result must satisfy its recipe");
+    // Observing the satisfier already advanced the transition, so completeness
+    // must be proven against whatever version the database now holds.
+    let observed_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM embedding_transitions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(source.accepted.context.workspace_id.as_uuid())
+    .bind(transition_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let state = prove(
+        runtime,
+        &source.accepted,
+        transition_id,
+        plan_id,
+        batch_id,
+        observed_version,
+    )
+    .await
+    .expect("an exactly satisfied batch must prove ready to activate");
+    assert_eq!(state, "ready_to_activate");
+    let proven_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM embedding_transitions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(source.accepted.context.workspace_id.as_uuid())
+    .bind(transition_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    ProvenTransition {
+        transition_id,
+        plan_id,
+        batch_id,
+        proven_version,
+    }
+}
+
+/// A proven transition is still not activatable onto a legacy space.  The head
+/// may only ever point at a canonical registration bound to its exact
+/// qualification, and activation says so exactly rather than letting the
+/// deferred head-consistency trigger fail opaquely at commit.
+#[sqlx::test(migrations = false)]
+async fn activation_refuses_a_non_canonical_target_space(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &source).await;
+    seed_qualification_head(&pool, &source.accepted).await;
+    let proven = prove_one_transition(&pool, &runtime, &source).await;
+    let audit = audit_event(&pool, &source.accepted).await;
+
+    let error = activate(
+        &runtime,
+        &source.accepted,
+        proven.transition_id,
+        proven.plan_id,
+        proven.batch_id,
+        proven.proven_version,
+        1,
+        audit,
+    )
+    .await
+    .unwrap_err();
+    assert_refusal(
+        error,
+        "23514",
+        "embedding transition activation requires a canonical target space",
+    );
+
+    let (qualification, space, version) = head_tuple(&pool, &source.accepted).await;
+    assert_eq!(
+        (qualification, space, version),
+        (source.accepted.model_qualification_id, None, 1)
+    );
+    assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}
+
+/// A stale transition version is a conflict, not a policy refusal, and nothing
+/// moves.
+#[sqlx::test(migrations = false)]
+async fn activation_refuses_a_stale_transition_version(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &source).await;
+    seed_qualification_head(&pool, &source.accepted).await;
+    let proven = prove_one_transition(&pool, &runtime, &source).await;
+    let audit = audit_event(&pool, &source.accepted).await;
+
+    let error = activate(
+        &runtime,
+        &source.accepted,
+        proven.transition_id,
+        proven.plan_id,
+        proven.batch_id,
+        proven.proven_version + 1,
+        1,
+        audit,
+    )
+    .await
+    .unwrap_err();
+    assert_refusal(error, "40001", "embedding transition version is stale");
+
+    let (_, space, version) = head_tuple(&pool, &source.accepted).await;
+    assert_eq!((space, version), (None, 1));
+    assert_eq!(receipt_count(&pool, &source.accepted).await, 0);
+    runtime.close().await;
+}

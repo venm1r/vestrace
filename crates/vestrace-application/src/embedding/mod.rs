@@ -45,10 +45,11 @@ pub use result::{
     EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
 };
 pub use transition::{
-    CreateEmbeddingTransitionBatchAttempt, EmbeddingTransitionProgress,
-    EmbeddingTransitionRepository, ObserveEmbeddingTransitionAttempt,
+    ActivateEmbeddingTransition, CreateEmbeddingTransitionBatchAttempt,
+    EmbeddingTransitionProgress, EmbeddingTransitionRepository, ObserveEmbeddingTransitionAttempt,
     PlanEmbeddingTransitionVersion, ProveEmbeddingTransitionCompleteness,
-    SharedEmbeddingTransitionRepository, TransitionAuthBinding, TransitionPlanRecipe,
+    SharedEmbeddingTransitionRepository, TransitionActivationReceipt, TransitionAuthBinding,
+    TransitionPlanRecipe,
 };
 pub use transition_coordinator::EmbeddingTransitionCoordinator;
 pub use work::{

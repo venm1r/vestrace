@@ -85,6 +85,34 @@ pub struct EmbeddingTransitionProgress {
     pub state: EmbeddingSpaceTransitionState,
 }
 
+/// The complete caller-stated tuple that asks SQL to activate one proven
+/// transition.  Callers supply identities and expected versions only: the
+/// allowed guard set, the credential lineage and every retirement event are
+/// derived by the activation authority from durable facts.
+#[derive(Clone, Debug)]
+pub struct ActivateEmbeddingTransition {
+    pub transition_id: uuid::Uuid,
+    pub plan_id: uuid::Uuid,
+    pub batch_id: TransitionBatchId,
+    pub expected_transition_version: TransitionVersion,
+    pub expected_qualification_head_version: u64,
+    pub audit_event_id: uuid::Uuid,
+}
+
+/// The immutable record of one activation.  `source_credential_id` and
+/// `target_credential_id` are absent on the matching no-auth branch, so a
+/// no-auth-to-no-auth activation carries neither.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransitionActivationReceipt {
+    pub receipt_id: uuid::Uuid,
+    pub transition_id: uuid::Uuid,
+    pub target_qualification_id: uuid::Uuid,
+    pub target_space_id: uuid::Uuid,
+    pub source_credential_id: Option<uuid::Uuid>,
+    pub target_credential_id: Option<uuid::Uuid>,
+    pub resulting_qualification_head_version: u64,
+}
+
 /// The auth-binding XOR carried by both source and target plan tuples.
 #[derive(Clone, Debug)]
 pub enum TransitionAuthBinding {
@@ -148,6 +176,16 @@ pub trait EmbeddingTransitionRepository: Send + Sync {
     ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
         Err(ApplicationError::Unavailable(
             "governed embedding transition execution is not configured".to_owned(),
+        ))
+    }
+
+    async fn activate(
+        &self,
+        _context: RequestContext,
+        _command: ActivateEmbeddingTransition,
+    ) -> Result<TransitionActivationReceipt, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding transition activation is not configured".to_owned(),
         ))
     }
 }

@@ -1,9 +1,10 @@
 //! Narrow application boundary for the transition-rebuild bijection.
 
 use super::transition::{
-    CreateEmbeddingTransitionBatchAttempt, EmbeddingTransitionProgress,
-    ObserveEmbeddingTransitionAttempt, ProveEmbeddingTransitionCompleteness,
-    SharedEmbeddingTransitionRepository,
+    ActivateEmbeddingTransition, CreateEmbeddingTransitionBatchAttempt,
+    EmbeddingTransitionProgress, ObserveEmbeddingTransitionAttempt,
+    ProveEmbeddingTransitionCompleteness, SharedEmbeddingTransitionRepository,
+    TransitionActivationReceipt,
 };
 use crate::{ApplicationError, RequestContext};
 use vestrace_domain::EmbeddingJobId;
@@ -42,5 +43,17 @@ impl EmbeddingTransitionCoordinator {
         command: ProveEmbeddingTransitionCompleteness,
     ) -> Result<EmbeddingTransitionProgress, ApplicationError> {
         self.repository.prove_completeness(context, command).await
+    }
+
+    /// Activates one proven transition.  The coordinator contributes
+    /// identities and expected versions only; the allowed guard set, the
+    /// credential lineage and every retirement event are derived by SQL from
+    /// durable facts.  No provider lease is held across this call.
+    pub async fn activate(
+        &self,
+        context: RequestContext,
+        command: ActivateEmbeddingTransition,
+    ) -> Result<TransitionActivationReceipt, ApplicationError> {
+        self.repository.activate(context, command).await
     }
 }

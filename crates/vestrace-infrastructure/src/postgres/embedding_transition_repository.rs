@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use vestrace_application::{
     ApplicationError, RequestContext,
     embedding::{
-        AcknowledgeCarriedTransitionBatchAfterUnknown, CreateEmbeddingTransitionBatchAttempt,
-        EmbeddingTransitionBarrierRepository, EmbeddingTransitionProgress,
-        EmbeddingTransitionRepository, ObserveEmbeddingTransitionAttempt,
-        PlanEmbeddingTransitionVersion, ProveEmbeddingTransitionCompleteness,
-        TransitionAuthBinding,
+        AcknowledgeCarriedTransitionBatchAfterUnknown, ActivateEmbeddingTransition,
+        CreateEmbeddingTransitionBatchAttempt, EmbeddingTransitionBarrierRepository,
+        EmbeddingTransitionProgress, EmbeddingTransitionRepository,
+        ObserveEmbeddingTransitionAttempt, PlanEmbeddingTransitionVersion,
+        ProveEmbeddingTransitionCompleteness, TransitionActivationReceipt, TransitionAuthBinding,
     },
 };
 use vestrace_domain::{EmbeddingJobId, embedding::EmbeddingSpaceTransitionState};
@@ -267,10 +267,91 @@ impl EmbeddingTransitionRepository for PgEmbeddingTransitionRepository {
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         transition_progress(state)
     }
+
+    async fn activate(
+        &self,
+        context: RequestContext,
+        command: ActivateEmbeddingTransition,
+    ) -> Result<TransitionActivationReceipt, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(&context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let receipt_id: uuid::Uuid = sqlx::query_scalar(
+            "SELECT vestrace_activate_embedding_transition($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(command.transition_id)
+        .bind(command.plan_id)
+        .bind(command.batch_id.as_uuid())
+        .bind(command.expected_transition_version.value() as i64)
+        .bind(command.expected_qualification_head_version as i64)
+        .bind(command.audit_event_id)
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_activation_error)?;
+        // Read the durable receipt back inside the same transaction so the
+        // caller never observes a tuple the database did not actually write.
+        let row: (
+            uuid::Uuid,
+            uuid::Uuid,
+            uuid::Uuid,
+            Option<uuid::Uuid>,
+            Option<uuid::Uuid>,
+            i64,
+        ) = sqlx::query_as(
+            "SELECT transition_id, target_model_qualification_revision_id, \
+             target_space_registration_id, source_credential_revision_id, \
+             target_credential_revision_id, resulting_qualification_head_version \
+             FROM embedding_transition_activation_receipts WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(receipt_id)
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_activation_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        Ok(TransitionActivationReceipt {
+            receipt_id,
+            transition_id: row.0,
+            target_qualification_id: row.1,
+            target_space_id: row.2,
+            source_credential_id: row.3,
+            target_credential_id: row.4,
+            resulting_qualification_head_version: u64::try_from(row.5).map_err(|_| {
+                ApplicationError::Internal(
+                    "activation head version must be non-negative".to_owned(),
+                )
+            })?,
+        })
+    }
 }
 
 #[async_trait]
 impl EmbeddingTransitionBarrierRepository for PgEmbeddingTransitionRepository {}
+
+fn map_activation_error(error: sqlx::Error) -> ApplicationError {
+    match error
+        .as_database_error()
+        .and_then(|database| database.code())
+        .as_deref()
+    {
+        Some("40001") => {
+            ApplicationError::Conflict("EMBEDDING_TRANSITION_ACTIVATION_CONFLICT".to_owned())
+        }
+        Some("23514") | Some("22023") => ApplicationError::Policy(
+            error
+                .as_database_error()
+                .map(|database| database.message().to_owned())
+                .unwrap_or_else(|| "embedding transition activation refused".to_owned()),
+        ),
+        _ => ApplicationError::Storage(error.to_string()),
+    }
+}
 
 fn map_planning_error(error: sqlx::Error) -> ApplicationError {
     match error
