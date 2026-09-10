@@ -7,6 +7,7 @@
 // to touch it, and why it can now be frozen.
 
 export const changeScopePaths = [
+  'crates/vestrace-application/src/conformance_cases.rs',
   'crates/vestrace-application/src/connections.rs',
   'crates/vestrace-application/src/embedding/adoption.rs',
   'crates/vestrace-application/src/embedding/barrier.rs',

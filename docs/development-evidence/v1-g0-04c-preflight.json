@@ -1,6 +1,7 @@
 {
   "captured_at_utc": "2026-09-08T13:46:59.853Z",
   "change_scope_paths": [
+    "crates/vestrace-application/src/conformance_cases.rs",
     "crates/vestrace-application/src/connections.rs",
     "crates/vestrace-application/src/embedding/adoption.rs",
     "crates/vestrace-application/src/embedding/barrier.rs",
@@ -1054,6 +1055,17 @@
       "new_change_scope_size": 113,
       "authorized_by": "User-confirmed lead decision for completion Task 5.",
       "reason": "Task 5 requires a closed delivery/rebuild acceptance XOR. The SQL half was in scope through migration 0199_embedding_executor_work.sql, but the Rust half was omitted from the Task 1-14 file map: PgEmbeddingOutputKeyRepository::accept_delivery_outputs refuses any acceptance whose kind is not Delivery, so rebuild jobs could not reach the shared preparation/finalization chain the task mandates. Adds the output-key repository and its application port only. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-10T10:02:31.591Z",
+      "added_paths": [
+        "crates/vestrace-application/src/conformance_cases.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 113,
+      "new_change_scope_size": 114,
+      "authorized_by": "Lead decision for completion Task 8 Step 6.",
+      "reason": "RetrievalResult gains embedding_degradation, the typed closed value a caller needs to tell a retryable generation change from a decline that retrying cannot fix. Adding a field to a public struct forces every literal construction site to name it, and conformance_cases.rs builds one foreign-workspace fixture literally. The edit there is that single field and nothing else. Deliberately NOT amended: text_retriever, vector_retriever_data_policy, embedding_space_isolation and retrieval_classification_boundary hold fourteen tests that have been red since commit 6cff474, because Tasks 1-4 retired the legacy embedding write their fixtures seed through. Task 8 Step 6 names two of those four suites in its own GREEN command, so this task cannot be called fully verified. They are not repaired here because the repair is not a fixture swap: migration 0197's embedding_corpus_generation_members_legacy_alias trigger refuses any member without an embedding_projection_entry_id, so no legacy Ready generation can be built by anyone any more. Each suite has to be rebuilt on the canonical registration and capture/publish path, which needs the full q1 evidence chain. That is the tail of Tasks 1-4 and is recorded as outstanding rather than silently widened into this commit."
     }
   ],
   "previous_captures": []

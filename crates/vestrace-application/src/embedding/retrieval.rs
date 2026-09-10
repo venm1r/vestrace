@@ -14,9 +14,53 @@ use vestrace_domain::{
     EmbeddingJobId, RetrievalCandidate, embedding::RetrievalGenerationChangedReason,
     id::RetrievalRunId,
 };
+use zeroize::Zeroizing;
 
 use super::super::NormalizedRetrievalRequest;
 use crate::{ApplicationError, RequestContext};
+
+/// The embedded query, owned for exactly as long as the search that uses it.
+///
+/// A query embedding is as sensitive as the text it was derived from, and
+/// unlike a stored projection it is never encrypted at rest, because it is
+/// never at rest. So the type carries no `Clone`, no `Debug`, no serialization
+/// and no accessor that yields an owned copy: the components can only be
+/// borrowed inside a callback, and the buffer is zeroized when the value drops
+/// — on the success branch, on every degradation branch, and on unwind alike,
+/// because `Drop` does not care which one it was.
+///
+/// This is what keeps the query vector out of `EmbeddingRetrievalOutcome`,
+/// which carries references, ranks and scores only.
+pub struct QueryEmbedding(Zeroizing<Vec<f32>>);
+
+impl QueryEmbedding {
+    /// Rejects an unusable vector before it can be searched with. A zero-length
+    /// or non-finite query would otherwise reach the local index and be refused
+    /// there, one layer past the point where the components are still known.
+    pub fn new(values: Vec<f32>) -> Result<Self, ApplicationError> {
+        if values.is_empty() {
+            return Err(ApplicationError::Policy(
+                "query embedding must not be empty".to_owned(),
+            ));
+        }
+        if !values.iter().all(|value| value.is_finite()) {
+            return Err(ApplicationError::Policy(
+                "query embedding components must be finite".to_owned(),
+            ));
+        }
+        Ok(Self(Zeroizing::new(values)))
+    }
+
+    pub fn dimensions(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The only way to read the components. Borrowed for the call and no
+    /// longer, so a caller cannot keep them past the search.
+    pub fn with_values<T>(&self, use_values: impl FnOnce(&[f32]) -> T) -> T {
+        use_values(self.0.as_slice())
+    }
+}
 
 /// Why an attempt produced no terminal result.  Closed: every degradation a
 /// caller may observe is one of these, so no adapter invents a new one.
@@ -177,3 +221,42 @@ pub trait EmbeddingRetrievalRepository: Send + Sync {
 }
 
 pub type SharedEmbeddingRetrievalRepository = Arc<dyn EmbeddingRetrievalRepository>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_query_embedding_refuses_an_unusable_vector() {
+        assert!(QueryEmbedding::new(Vec::new()).is_err());
+        assert!(QueryEmbedding::new(vec![0.5, f32::NAN]).is_err());
+        assert!(QueryEmbedding::new(vec![0.5, f32::INFINITY]).is_err());
+        let embedding = QueryEmbedding::new(vec![0.25, -0.5]).expect("a finite vector is usable");
+        assert_eq!(embedding.dimensions(), 2);
+        assert_eq!(embedding.with_values(<[f32]>::to_vec), vec![0.25, -0.5]);
+    }
+
+    /// The degradation vocabulary is closed, and only one member is retryable.
+    #[test]
+    fn exactly_one_degradation_authorizes_a_successor() {
+        let all = [
+            EmbeddingRetrievalDegradation::MissingLocalIndex,
+            EmbeddingRetrievalDegradation::LegacyAdoptionPending,
+            EmbeddingRetrievalDegradation::TransitionNotReady,
+            EmbeddingRetrievalDegradation::GenerationNotReady,
+            EmbeddingRetrievalDegradation::GenerationChanged(
+                RetrievalGenerationChangedReason::Replaced,
+            ),
+        ];
+        assert_eq!(all.iter().filter(|value| value.is_retryable()).count(), 1);
+        let reasons = all.map(|value| value.as_str());
+        assert_eq!(
+            reasons
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            reasons.len(),
+            "each degradation must be distinguishable in a journal"
+        );
+    }
+}

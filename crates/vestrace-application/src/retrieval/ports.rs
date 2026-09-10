@@ -81,8 +81,22 @@ pub trait StructuredRetriever: Send + Sync {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ChannelOutcome {
-    Succeeded { candidates: usize },
-    Failed { reason: String },
+    Succeeded {
+        candidates: usize,
+    },
+    Failed {
+        reason: String,
+    },
+    /// The channel answered, and its answer was "not from the canonical corpus".
+    ///
+    /// Distinct from `Failed` because nothing broke: a missing local index or an
+    /// unactivated transition is a known state of the embedding side, and the
+    /// reason is drawn from `EmbeddingRetrievalDegradation`, a closed set. A
+    /// failure reason is an unbounded error string, so the two cannot share a
+    /// variant without making the closed vocabulary unreadable in the journal.
+    Degraded {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -109,8 +123,24 @@ impl ChannelRecord {
         }
     }
 
+    /// Record a closed degradation. The reason comes from
+    /// `EmbeddingRetrievalDegradation::as_str`, never from an error message.
+    pub fn degraded(channel: impl Into<String>, reason: &'static str) -> Self {
+        Self {
+            channel: channel.into(),
+            outcome: ChannelOutcome::Degraded {
+                reason: reason.to_owned(),
+            },
+        }
+    }
+
+    /// True when the channel contributed no candidates a caller may rely on,
+    /// whether it broke or declined.
     pub fn is_degraded(&self) -> bool {
-        matches!(self.outcome, ChannelOutcome::Failed { .. })
+        matches!(
+            self.outcome,
+            ChannelOutcome::Failed { .. } | ChannelOutcome::Degraded { .. }
+        )
     }
 }
 
@@ -178,7 +208,7 @@ impl RetrievalRunRecord {
         }
     }
 
-    /// The channels that failed, in the order they were attempted.
+    /// The channels that failed or declined, in the order they were attempted.
     pub fn degraded_channels(&self) -> Vec<String> {
         self.channels
             .iter()

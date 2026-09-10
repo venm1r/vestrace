@@ -123,10 +123,12 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
-  // Completion contract: exactly 113 task paths; no historical write permissions.
+  // Completion contract: exactly 114 task paths; no historical write permissions.
   // 111 frozen by Task 1, plus the two-path Task 5 amendment that lets the
-  // shared output-key authority accept rebuild as well as delivery.
-  assert.equal(changeScopePaths.length, 113);
+  // shared output-key authority accept rebuild as well as delivery, plus the
+  // one-path Task 8 amendment for the conformance fixture that constructs a
+  // RetrievalResult literally and so must name its new field.
+  assert.equal(changeScopePaths.length, 114);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -152,7 +154,8 @@ test('P04 protects the baseline verifier and every accepted predecessor authorit
 
 test('P04 completion scope is exactly the approved literal task paths', () => {
   assert.deepEqual(changeScopePaths, [
-    'crates/vestrace-application/src/connections.rs',
+    'crates/vestrace-application/src/conformance_cases.rs',
+  'crates/vestrace-application/src/connections.rs',
     'crates/vestrace-application/src/embedding/adoption.rs',
     'crates/vestrace-application/src/embedding/barrier.rs',
     'crates/vestrace-application/src/embedding/carry.rs',

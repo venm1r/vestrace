@@ -48,8 +48,8 @@ pub use result::{
 pub use retrieval::{
     AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalJobClient,
     EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository, FinalizeRetrievalResult,
-    ObserveRetrievalGenerationChange, RetrievalAttemptAdmission, RetrievalResultReference,
-    RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
+    ObserveRetrievalGenerationChange, QueryEmbedding, RetrievalAttemptAdmission,
+    RetrievalResultReference, RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
     SharedEmbeddingRetrievalRepository,
 };
 pub use transition::{

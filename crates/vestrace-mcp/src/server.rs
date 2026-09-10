@@ -1128,6 +1128,7 @@ mod tests {
             retrieval_policy_version: "policy-v3".to_owned(),
             degraded: false,
             degraded_channels: Vec::new(),
+            embedding_degradation: None,
             warnings: Vec::new(),
             normalized: NormalizedRetrievalRequest::normalize(RetrievalRequest::new(
                 workspace_id,

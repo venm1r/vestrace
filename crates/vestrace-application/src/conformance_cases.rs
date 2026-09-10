@@ -551,6 +551,7 @@ impl ConformanceCase for ContextIsNotBuiltAcrossAWorkspaceBoundary {
             retrieval_policy_version: "policy-v1".to_owned(),
             degraded: false,
             degraded_channels: Vec::new(),
+            embedding_degradation: None,
             warnings: Vec::new(),
             normalized,
         };
