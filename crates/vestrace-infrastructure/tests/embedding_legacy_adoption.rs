@@ -9,16 +9,26 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use sqlx::PgPool;
 use uuid::Uuid;
 use vestrace_application::{
-    ApplicationError, RequestContext,
-    embedding::{EmbeddingLegacyAdoptionRepository, LegacyAdoptionBlocker, StartLegacyAdoption},
+    ApplicationError, CreateModelRequestEvidence, EffectiveRequestLimits,
+    ModelRequestEvidenceRepository, RequestContext, TransactionManager,
+    embedding::{
+        EmbeddingLegacyAdoptionRepository, LegacyAdoptionBlocker, LegacyAdoptionMember,
+        LegacyAdoptionMemberState, LegacyAdoptionSourceMaterializer, StartLegacyAdoption,
+    },
 };
 use vestrace_domain::{
     PrincipalId, WorkspaceId, embedding::LegacyAdoptionState, id::LegacyAdoptionId,
 };
-use vestrace_infrastructure::postgres::{PgEmbeddingLegacyAdoptionRepository, PgStore};
+use vestrace_infrastructure::crypto::ContentMaterialCodec;
+use vestrace_infrastructure::postgres::{
+    PgEmbeddingLegacyAdoptionRepository, PgLegacyAdoptionSourceMaterializer,
+    PgModelRequestEvidenceRepository, PgStore, PgTransactionManager,
+};
 
 struct LegacySpace {
     context: RequestContext,
@@ -433,5 +443,201 @@ async fn the_runtime_role_cannot_write_adoption_tables_directly(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(state, "planned");
+    runtime.close().await;
+}
+
+/// The database accepts model-request evidence built by `for_embedding_job`,
+/// and the materializer produces the source it names.
+///
+/// This is the one proof that matters for the new cause: the shape is agreed by
+/// the application layer and the durable authority, not merely self-consistent.
+/// It exercises the materializer at the same time, because the evidence needs a
+/// real Live content material owned by a memory revision to point at.
+#[sqlx::test(migrations = false)]
+async fn embedding_job_evidence_and_its_materialized_source_are_accepted(pool: PgPool) {
+    common::result_preparation_fixture::provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let accepted = common::prepare_delivery_embedding_job(&pool, &runtime).await;
+    let workspace = accepted.context.workspace_id;
+
+    // One memory revision to embed, in the fixture's own workspace.
+    let memory = Uuid::now_v7();
+    let revision = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO memories(id,workspace_id,kind,status,state_revision) \
+         VALUES($1,$2,'fact','candidate',1)",
+    )
+    .bind(memory)
+    .bind(workspace.as_uuid())
+    .execute(&pool)
+    .await
+    .expect("memory");
+    sqlx::query(
+        "INSERT INTO memory_revisions(id,memory_id,workspace_id,revision_number,content,confidence,importance) \
+         VALUES($1,$2,$3,1,'the text a rebuild would embed',1.0,0.5)",
+    )
+    .bind(revision)
+    .bind(memory)
+    .bind(workspace.as_uuid())
+    .execute(&pool)
+    .await
+    .expect("revision");
+    sqlx::query("UPDATE memories SET active_revision_id=$1 WHERE id=$2")
+        .bind(revision)
+        .bind(memory)
+        .execute(&pool)
+        .await
+        .expect("active revision");
+
+    let vault_fixture = common::result_preparation_fixture::OutputVaultFixture::new();
+    let vault = Arc::new(vault_fixture.vault(workspace));
+    let materializer = PgLegacyAdoptionSourceMaterializer::new(
+        PgStore::from_pool(runtime.clone()),
+        vault.clone(),
+        Arc::new(ContentMaterialCodec::new()),
+    );
+    let member = LegacyAdoptionMember {
+        ordinal: 1,
+        legacy_embedding_id: Uuid::now_v7(),
+        memory_id: memory,
+        memory_revision_id: revision,
+        source_material_id: None,
+        source_intent_id: None,
+        rebuild_job_id: None,
+        state: LegacyAdoptionMemberState::Planned,
+    };
+
+    let source = materializer
+        .materialize(&accepted.context, &member)
+        .await
+        .expect("materialization must not fail")
+        .expect("an intact revision is not a blocker");
+
+    // The material is Live and owned by the revision, which is the join a
+    // canonical member needs to reach a memory at all.
+    let (state, owner_kind, owner_id): (String, String, Uuid) = sqlx::query_as(
+        "SELECT material.state, reference.owner_kind, reference.owner_id \
+           FROM content_materials AS material \
+           JOIN content_material_ordinary_references AS reference \
+             ON reference.workspace_id = material.workspace_id \
+            AND reference.material_id = material.id \
+          WHERE material.workspace_id = $1 AND material.id = $2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(source.material_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the materialized source must be readable");
+    assert_eq!(state, "live");
+    assert_eq!(owner_kind, "memory_revision");
+    assert_eq!(owner_id, revision);
+
+    // Nothing stored the plaintext: the material carries ciphertext only.
+    let ciphertext: Vec<u8> = sqlx::query_scalar(
+        "SELECT ciphertext FROM content_material_bytes WHERE workspace_id=$1 AND material_id=$2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(source.material_id)
+    .fetch_one(&pool)
+    .await
+    .expect("sealed bytes");
+    assert!(
+        !String::from_utf8_lossy(&ciphertext).contains("the text a rebuild would embed"),
+        "the source plaintext must not survive in the material"
+    );
+
+    // The evidence the delivery authority demands of a rebuild.
+    let snapshot: (Uuid, Uuid, Uuid, Uuid) = sqlx::query_as(
+        "SELECT connection_revision_id, connection_qualification_revision_id, \
+                model_revision_id, model_qualification_revision_id \
+           FROM model_binding_snapshots WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(accepted.snapshot_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the fixture snapshot");
+
+    let root_id = Uuid::now_v7();
+    let creation = CreateModelRequestEvidence::for_embedding_job(
+        root_id,
+        workspace,
+        accepted.external_effect_id,
+        accepted.snapshot_id,
+        snapshot.0,
+        snapshot.1,
+        snapshot.2,
+        snapshot.3,
+        accepted.job_id.as_uuid(),
+        &[source.material_id],
+        EffectiveRequestLimits::new(256, 4, 32_768).unwrap(),
+    )
+    .expect("the embedding job evidence is well formed");
+
+    // The job row first. `vestrace_create_model_request_evidence` proves an
+    // embedding-job cause by finding the job that owns this exact effect and
+    // pinned this exact snapshot, so evidence cannot precede its own job.
+    let mut accept = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(workspace.to_string())
+        .fetch_one(&mut *accept)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_accept_embedding_job($1,$2,$3,'rebuild',$4,$5,$6,NULL,NULL::BIGINT)",
+    )
+    .bind(accepted.job_id.as_uuid())
+    .bind(workspace.as_uuid())
+    .bind(accepted.space_registration_id)
+    .bind(accepted.snapshot_id)
+    .bind(accepted.external_effect_id)
+    .bind(root_id)
+    .fetch_one(&mut *accept)
+    .await
+    .expect("one accepted rebuild job");
+    accept.commit().await.unwrap();
+
+    let manager = PgTransactionManager::new(PgStore::from_pool(runtime.clone()));
+    let repository = PgModelRequestEvidenceRepository::new(vault);
+    let mut unit = manager.begin(&accepted.context).await.unwrap();
+    let created = repository
+        .create_in(unit.as_mut(), &creation)
+        .await
+        .expect("the durable authority must accept this evidence");
+    unit.commit().await.unwrap();
+
+    // The root landed under the cause the delivery authority reads.
+    let (cause_kind, cause_id, request_kind, binding): (String, Uuid, String, Option<Uuid>) =
+        sqlx::query_as(
+            "SELECT cause_kind, cause_id, request_kind, binding_snapshot_id \
+               FROM model_request_evidence_roots WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(workspace.as_uuid())
+        .bind(created.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .expect("the persisted root");
+    assert_eq!(cause_kind, "embedding_job");
+    assert_eq!(cause_id, accepted.job_id.as_uuid());
+    assert_eq!(request_kind, "embeddings");
+    assert_eq!(binding, Some(accepted.snapshot_id));
+
+    // And its sources are exactly what the delivery authority will read back.
+    // `safe_ordinal` is the per-kind ordinal this constructor assigns, which
+    // migration 0183 requires to be contiguous from zero; `ordinal` is the
+    // node's position in the whole evidence, and that is what the delivery
+    // authority reads as the job's source ordinal.
+    let sources: Vec<(String, Uuid)> = sqlx::query_as(
+        "SELECT safe_ordinal, reference_id FROM model_request_evidence_nodes \
+          WHERE workspace_id=$1 AND evidence_root_id=$2 \
+            AND reference_kind='governed_input_material' ORDER BY ordinal",
+    )
+    .bind(workspace.as_uuid())
+    .bind(created.as_uuid())
+    .fetch_all(&pool)
+    .await
+    .expect("the persisted sources");
+    assert_eq!(sources, vec![("0".to_owned(), source.material_id)]);
+
     runtime.close().await;
 }
