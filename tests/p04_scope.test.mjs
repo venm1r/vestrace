@@ -137,7 +137,7 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // vocabulary parsers both retrieval channels must share rather than copy,
   // plus the one-path amendment for the capability that authorizes a retrieval
   // retry.
-  assert.equal(changeScopePaths.length, 127);
+  assert.equal(changeScopePaths.length, 129);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -212,6 +212,8 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-fault-scenario/src/child.rs',
     'crates/vestrace-fault-scenario/src/main.rs',
     'crates/vestrace-fault-scenario/src/report.rs',
+    'crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs',
+    'crates/vestrace-fault-scenario/src/scenarios/embedding_result_finalization_crash.rs',
     'crates/vestrace-fault-scenario/src/scenarios/embedding_worker_completion_crash.rs',
     'crates/vestrace-fault-scenario/src/settings.rs',
     'crates/vestrace-http/src/api/embedding_jobs.rs',

@@ -38,6 +38,8 @@ pub(super) struct Fixture {
     pub(super) connection_id: Uuid,
     pub(super) connection_revision_id: Uuid,
     pub(super) evidence_id: Uuid,
+    /// The registration the job was accepted against, and the one every
+    /// generation, index build and activation in these scenarios works over.
     pub(super) space_registration_id: Uuid,
     pub(super) intent: Option<ExternalEffectIntent>,
 }
@@ -257,7 +259,11 @@ async fn build_fixture_with_job(
             .await
             .map_err(sql)?;
     }
-    let space = PgEmbeddingStore::new(PgStore::from_pool(runtime.clone()))
+    // Called for its effect, not its answer. It creates the legacy space and
+    // its registration, which the legacy quarantine assertions read out of the
+    // database by name; nothing here needs the identity back now that the job
+    // is accepted against the canonical registration.
+    PgEmbeddingStore::new(PgStore::from_pool(runtime.clone()))
         .ensure_space(
             &context,
             "nomic-768",
@@ -287,17 +293,20 @@ async fn build_fixture_with_job(
         .execute(&mut *governed)
         .await
         .map_err(sql)?;
-    sqlx::query("SELECT vestrace_create_model_revision_and_advance_head($1,$2,$3,$4,$5,$6,'embedding-model','embedding',NULL,NULL,NULL,NULL,NULL,NULL,0)")
+    // The revision speaks the model every other part of these scenarios already
+    // names. It used to say `embedding-model`, which nothing else did: the
+    // legacy space, the stubbed provider response and the result-eligibility
+    // plan all name the nomic model, and a canonical registration must carry
+    // `returned_model = wire_model_id`. With two different names the plan and
+    // the response could never agree.
+    sqlx::query("SELECT vestrace_create_model_revision_and_advance_head($1,$2,$3,$4,$5,$6,'text-embedding-nomic-embed-text-v1.5','embedding',NULL,NULL,NULL,NULL,NULL,NULL,0)")
         .bind(model_revision_id).bind(workspace_id.as_uuid()).bind(model_id).bind(connection_id).bind(guard_id).bind(connection_revision_id)
         .execute(&mut *governed).await.map_err(sql)?;
-    let space_registration_id: Uuid = sqlx::query_scalar(
-        "SELECT id FROM embedding_space_registrations WHERE workspace_id=$1 AND space_id=$2",
-    )
-    .bind(workspace_id.as_uuid())
-    .bind(space.id.as_uuid())
-    .fetch_one(&mut *governed)
-    .await
-    .map_err(sql)?;
+    // The legacy registration `ensure_space` created above is still there and
+    // is still what the legacy quarantine assertions read. Its id is no longer
+    // looked up here: the job is accepted against the canonical registration
+    // below, and a lookup whose result nothing uses is a lookup that will one
+    // day be believed to mean something.
     governed.commit().await.map_err(sql)?;
 
     let intent = ExternalEffectIntent::new(
@@ -348,6 +357,33 @@ async fn build_fixture_with_job(
         .bind(workspace_id.as_uuid()).bind(snapshot_id).execute(&mut *seeded).await.map_err(sql)?;
     seeded.commit().await.map_err(sql)?;
 
+    // The job is accepted against a *canonical* registration, not the legacy one
+    // the store created.
+    //
+    // Migration 0197 refuses any generation of `legacy_upgrade` representation
+    // reaching Ready, and every boundary past publication -- an index build, a
+    // transition activation, a retrieval fence -- needs a Ready generation over
+    // the job's own registration. A fixture that accepted the job against the
+    // legacy space could build a world where results publish and nothing can
+    // ever be drawn from them, which is not a world any deployment reaches.
+    //
+    // The legacy registration is still created beside it and still in the
+    // database, because the legacy quarantine boundary is what several other
+    // assertions are about. It is not carried on the fixture: nothing reads it,
+    // and a field kept for a caller that does not exist is a field that drifts.
+    let canonical_registration_id = register_canonical_space(
+        owner,
+        runtime,
+        workspace_id.as_uuid(),
+        qualification_job_id,
+        connection_id,
+        connection_revision_id,
+        no_auth_id,
+        model_revision_id,
+        connection_qualification_id,
+    )
+    .await?;
+
     if accept_job {
         let mut accept = runtime.begin().await.map_err(sql)?;
         set_workspace(&mut accept, workspace_id.as_uuid()).await?;
@@ -356,7 +392,7 @@ async fn build_fixture_with_job(
         )
         .bind(job_id.as_uuid())
         .bind(workspace_id.as_uuid())
-        .bind(space_registration_id)
+        .bind(canonical_registration_id)
         .bind(snapshot_id)
         .bind(effect_id)
         .bind(evidence_id)
@@ -424,7 +460,7 @@ async fn build_fixture_with_job(
         connection_id,
         connection_revision_id,
         evidence_id,
-        space_registration_id,
+        space_registration_id: canonical_registration_id,
         intent: Some(intent),
     };
     if accept_job {
@@ -433,6 +469,192 @@ async fn build_fixture_with_job(
         assert_result_preparation_baseline(owner, &fixture).await?;
     }
     Ok(fixture)
+}
+
+/// Seed the exact q1 structural evidence `vestrace_assert_canonical_embedding_space`
+/// demands, then register one canonical space through the real guarded authority
+/// and make it this model revision's active space.
+///
+/// The evidence chain is not faked past its own guard: the registration still
+/// goes through `vestrace_register_canonical_embedding_space`, which asserts
+/// every join below. What is seeded here is the durable evidence a real q1
+/// qualification would have left behind, exactly as the infrastructure suite's
+/// own canonical fixture seeds it.
+#[allow(clippy::too_many_arguments)]
+async fn register_canonical_space(
+    owner: &PgPool,
+    runtime: &PgPool,
+    workspace: Uuid,
+    qualification_job: Uuid,
+    connection: Uuid,
+    connection_revision: Uuid,
+    no_auth_binding: Uuid,
+    model_revision: Uuid,
+    connection_qualification: Uuid,
+) -> Result<Uuid, String> {
+    let canonical_qualification = Uuid::now_v7();
+    let probe_effect = Uuid::now_v7();
+    let evidence_root = Uuid::now_v7();
+    let target_binding = Uuid::now_v7();
+    let registration = Uuid::now_v7();
+    let shape = Uuid::now_v7();
+
+    // `external_effect_intents` predates the guarded ownership and the guarded
+    // owner holds no privilege on it, so the probe's effect is written before
+    // the role switch rather than under that role.
+    sqlx::query(
+        "INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) \
+         VALUES($1,$2,'local','{}'::jsonb)",
+    )
+    .bind(probe_effect)
+    .bind(workspace)
+    .execute(owner)
+    .await
+    .map_err(sql)?;
+
+    let mut seeded = owner.begin().await.map_err(sql)?;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *seeded)
+        .await
+        .map_err(sql)?;
+    set_workspace(&mut seeded, workspace).await?;
+    // `model_qualification_revisions` is immutable evidence, so the fixture's
+    // `embedding` capability cannot be widened in place. A second revision over
+    // the same job and model states the `embeddings` request capability the
+    // canonical assertion reads.
+    sqlx::query(
+        "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,\
+         connection_revision_id,connection_qualification_revision_id,qualification_job_id,\
+         capabilities,valid_until) \
+         VALUES($1,$2,$3,$4,$5,$6,ARRAY['embedding','embeddings']::TEXT[],NOW()+INTERVAL '1 hour')",
+    )
+    .bind(canonical_qualification)
+    .bind(workspace)
+    .bind(model_revision)
+    .bind(connection_revision)
+    .bind(connection_qualification)
+    .bind(qualification_job)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO qualification_target_bindings(id,workspace_id,qualification_job_id,\
+         connection_id,connection_revision_id,branch,no_auth_binding_revision_id,\
+         embedding_model_revision_id) VALUES($1,$2,$3,$4,$5,'no_auth',$6,$7)",
+    )
+    .bind(target_binding)
+    .bind(workspace)
+    .bind(qualification_job)
+    .bind(connection)
+    .bind(connection_revision)
+    .bind(no_auth_binding)
+    .bind(model_revision)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO model_request_evidence_roots(id,workspace_id,external_effect_id,\
+         request_kind,binding_snapshot_id,qualification_target_binding_id,cause_kind,cause_id) \
+         VALUES($1,$2,$3,'embeddings',NULL,$4,'qualification_probe',$5)",
+    )
+    .bind(evidence_root)
+    .bind(workspace)
+    .bind(probe_effect)
+    .bind(target_binding)
+    .bind(qualification_job)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    let evidence_check = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO model_request_evidence_checks(id,workspace_id,evidence_root_id,status) \
+         VALUES($1,$2,$3,'complete')",
+    )
+    .bind(evidence_check)
+    .bind(workspace)
+    .bind(evidence_root)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO qualification_probe_results(id,workspace_id,qualification_job_id,\
+         probe_ordinal,result,external_effect_id,model_request_evidence_id) \
+         VALUES($1,$2,$3,'90','pass',$4,$5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace)
+    .bind(qualification_job)
+    .bind(probe_effect)
+    .bind(evidence_root)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO provider_dispatch_causes(external_effect_id,workspace_id,\
+         model_request_evidence_id,model_request_evidence_check_id,cause_kind,\
+         qualification_job_id,qualification_target_binding_id,qualification_probe_ordinal) \
+         VALUES($1,$2,$3,$4,'qualification_probe',$5,$6,'90')",
+    )
+    .bind(probe_effect)
+    .bind(workspace)
+    .bind(evidence_root)
+    .bind(evidence_check)
+    .bind(qualification_job)
+    .bind(target_binding)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO qualification_q1_mre_sources(evidence_root_id,workspace_id,probe_ordinal,\
+         message_layout,tool_choice,parallel_tool_calls,response_format,stream,\
+         stream_include_usage) \
+         VALUES($1,$2,'90','plain_text','none',false,'none',false,false)",
+    )
+    .bind(evidence_root)
+    .bind(workspace)
+    .execute(&mut *seeded)
+    .await
+    .map_err(sql)?;
+    seeded.commit().await.map_err(sql)?;
+
+    let mut governed = runtime.begin().await.map_err(sql)?;
+    set_workspace(&mut governed, workspace).await?;
+    sqlx::query(
+        "SELECT vestrace_create_model_request_shape_revision($1,$2,1,'embeddings',false,\
+         ARRAY[]::TEXT[])",
+    )
+    .bind(shape)
+    .bind(workspace)
+    .execute(&mut *governed)
+    .await
+    .map_err(sql)?;
+    // The returned model is this revision's own `wire_model_id`, not the legacy
+    // space's model name. `vestrace_assert_canonical_embedding_space` requires
+    // `s.returned_model = m.wire_model_id`: a registration naming a model the
+    // revision does not claim to speak would be a space nothing could serve.
+    sqlx::query(
+        "SELECT vestrace_register_canonical_embedding_space($1,$2,'nomic-768',$3,$4,$5,\
+         'text-embedding-nomic-embed-text-v1.5','float',768)",
+    )
+    .bind(registration)
+    .bind(workspace)
+    .bind(model_revision)
+    .bind(canonical_qualification)
+    .bind(shape)
+    .execute(&mut *governed)
+    .await
+    .map_err(|error| format!("canonical space registration failed: {}", sql(error)))?;
+    // The registration is deliberately *not* made this model's active space.
+    //
+    // `vestrace_set_initial_embedding_active_space` additionally requires the
+    // qualification head to already point at the registration's own
+    // qualification revision, and advancing that head is a separate governed
+    // decision about which space a retrieval should be served from. Nothing
+    // these scenarios do needs it: capture, publication, index building and
+    // transition activation all name a registration directly. Setting it here
+    // would be the fixture making a routing decision it is not testing.
+    governed.commit().await.map_err(sql)?;
+    Ok(registration)
 }
 
 /// The allowed branch is driven with the guarded admission function. The

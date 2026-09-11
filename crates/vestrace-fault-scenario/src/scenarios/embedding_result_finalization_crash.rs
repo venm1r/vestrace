@@ -575,21 +575,42 @@ async fn prepare_ready_generation(runtime: &sqlx::PgPool, id: &Identity) -> Resu
     let mut tx = runtime.begin().await.map_err(dispatch::sql)?;
     dispatch::set_workspace(&mut tx, id.workspace).await?;
     let space:Uuid=sqlx::query_scalar("SELECT space_registration_id FROM embedding_job_result_preparations WHERE id=$1 AND workspace_id=$2").bind(id.preparation).bind(id.workspace).fetch_one(&mut *tx).await.map_err(dispatch::sql)?;
-    let ready: Uuid =
-        sqlx::query_scalar("SELECT vestrace_open_embedding_corpus_generation($1,$2,$3)")
-            .bind(Uuid::now_v7())
-            .bind(id.workspace)
-            .bind(space)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(dispatch::sql)?;
-    sqlx::query("SELECT vestrace_publish_embedding_corpus_generation($1,$2,$3,0::BIGINT)")
+    // The canonical capture/publish pair, not the legacy opener.
+    //
+    // Migration 0197 refuses any generation of `legacy_upgrade` representation
+    // reaching Ready, and the job's registration is canonical: the legacy pair
+    // would open a generation this schema can never publish, which is what this
+    // scenario failed on for as long as the fixture registered a legacy space.
+    //
+    // The guard version is read rather than assumed. Publishing the job's
+    // results into this registration may already have moved it, and a stated
+    // version that is merely usually right is a compare-and-swap that fails for
+    // a reason the reader would have to guess at.
+    let guard: i64 = sqlx::query_scalar(
+        "SELECT guard_version FROM embedding_index_generation_guards           WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(id.workspace)
+    .bind(space)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(dispatch::sql)?;
+    let ready = Uuid::now_v7();
+    sqlx::query("SELECT vestrace_capture_embedding_generation($1,$2,$3,$4::BIGINT)")
         .bind(ready)
         .bind(id.workspace)
         .bind(space)
+        .bind(guard)
         .execute(&mut *tx)
         .await
-        .map_err(dispatch::sql)?;
+        .map_err(|error| format!("canonical capture failed: {}", dispatch::sql(error)))?;
+    sqlx::query("SELECT vestrace_publish_embedding_generation($1,$2,$3,$4::BIGINT)")
+        .bind(id.workspace)
+        .bind(space)
+        .bind(ready)
+        .bind(guard)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| format!("canonical publication failed: {}", dispatch::sql(error)))?;
     tx.commit().await.map_err(dispatch::sql)?;
     Ok(ready)
 }
