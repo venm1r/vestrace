@@ -1688,3 +1688,361 @@ async fn the_model_projection_reports_embedding_readiness_but_never_index_presen
 
     runtime.close().await;
 }
+
+const PUBLISH_AUTHORITY: &str =
+    "public.vestrace_publish_embedding_generation(uuid,uuid,uuid,bigint)";
+
+/// The corpus-revision CAS in the publication's capture-conflict check, and the
+/// edit that removes exactly it.
+///
+/// One clause, not the whole `IF`, because the other clauses in it guard other
+/// things -- the target's state, its representation, the guard version, the
+/// epoch step -- and disabling them together would say nothing about which of
+/// them holds this rule up. The corpus revision is the only one that answers
+/// "did the corpus move between capture and publication".
+const REVISION_CAS_NEEDLE: &str = " OR target.corpus_revision<>c.corpus_revision THEN";
+const REVISION_CAS_MUTATION: &str = " THEN";
+
+/// Read one authority's definition, owner, ACL and runtime reachability.
+///
+/// Duplicated per suite rather than shared: Rust test binaries share code only
+/// through `tests/common/mod.rs`, which is outside this package's change scope.
+/// The duplication is safe in the one way that matters here -- every caller
+/// installs, reads back, and compares all four values, so a copy that drifted
+/// could not pass quietly.
+async fn authority_state(pool: &PgPool, signature: &str) -> (String, String, Option<String>, bool) {
+    sqlx::query_as(
+        "SELECT pg_get_functiondef(oid), pg_get_userbyid(proowner), \
+                array_to_string(proacl,'|'), \
+                has_function_privilege('vestrace',oid,'EXECUTE') \
+           FROM pg_proc WHERE oid=$1::regprocedure",
+    )
+    .bind(signature)
+    .fetch_one(pool)
+    .await
+    .expect("the authority is in the catalogue")
+}
+
+/// Install one definition, leaving everything about the function except its
+/// body exactly as it was.
+///
+/// Run as the connected superuser rather than as the guarded owner: the public
+/// schema belongs to the runtime role and the guarded owner holds no CREATE on
+/// it. `CREATE OR REPLACE` keeps the existing owner and ACL, and the caller
+/// checks that, because a SECURITY DEFINER function that changed hands would
+/// run the mutated body as somebody else.
+async fn install_authority(pool: &PgPool, definition: &str) {
+    sqlx::raw_sql(definition)
+        .execute(pool)
+        .await
+        .expect("the authority definition is installable");
+}
+
+/// Register a canonical space under its own name and capture one generation
+/// from the empty corpus, leaving it unpublished.
+///
+/// A name per probe, because the canonical registration key includes it: each
+/// probe therefore gets its own registration, corpus state and guard inside one
+/// workspace, and cannot be explained by a neighbour.
+async fn capture_pending(runtime: &PgPool, f: &QualificationFixture, name: &str) -> (Uuid, Uuid) {
+    let registration = Uuid::now_v7();
+    let generation = Uuid::now_v7();
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, f.workspace).await;
+    sqlx::query("SELECT vestrace_register_canonical_embedding_space($1,$2,$3,$4,$5,$6,'text-embedding-nomic-embed-text-v1.5','float',4)").bind(registration).bind(f.workspace.as_uuid()).bind(name).bind(f.model).bind(f.qualification).bind(f.shape).execute(&mut *tx).await.unwrap();
+    sqlx::query("SELECT * FROM vestrace_capture_embedding_generation($1,$2,$3,1)")
+        .bind(generation)
+        .bind(f.workspace.as_uuid())
+        .bind(registration)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    (registration, generation)
+}
+
+/// Advance the corpus under a captured generation, in one of the two column
+/// shapes the production writers actually produce.
+///
+/// `WithMembers` is the result-publication path's shape: `0195` moves
+/// `corpus_revision` and `live_member_count` together in a single `UPDATE`.
+/// `RevisionOnly` holds the member set still, which no writer does on its own;
+/// it is the isolation the qualification needs, because it is the only way to
+/// ask this clause a question the Live member-set check that follows cannot
+/// also answer.
+#[derive(Clone, Copy)]
+enum CorpusMove {
+    RevisionOnly,
+    WithMembers,
+}
+
+async fn move_corpus(
+    pool: &PgPool,
+    f: &QualificationFixture,
+    registration: Uuid,
+    shape: CorpusMove,
+) {
+    let mut tx = pool.begin().await.unwrap();
+    set_context(&mut tx, f.workspace).await;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let statement = match shape {
+        CorpusMove::RevisionOnly => {
+            "UPDATE embedding_space_corpus_states SET corpus_revision=corpus_revision+1 \
+             WHERE workspace_id=$1 AND space_registration_id=$2"
+        }
+        CorpusMove::WithMembers => {
+            "UPDATE embedding_space_corpus_states \
+             SET corpus_revision=corpus_revision+1, live_member_count=live_member_count+1 \
+             WHERE workspace_id=$1 AND space_registration_id=$2"
+        }
+    };
+    let moved = sqlx::query(statement)
+        .bind(f.workspace.as_uuid())
+        .bind(registration)
+        .execute(&mut *tx)
+        .await
+        .unwrap()
+        .rows_affected();
+    // Under FORCE RLS a mis-scoped owner statement matches nothing and
+    // succeeds, so the count is the only proof that the corpus moved.
+    assert_eq!(moved, 1, "the corpus must actually move");
+    tx.commit().await.unwrap();
+}
+
+/// Publish a captured generation, and say where and how it was refused.
+///
+/// The boundary matters as much as the message. Canonical consistency is
+/// enforced twice over: the publication's own checks raise inside the call,
+/// and `embedding_corpus_generations_canonical_consistent` is a DEFERRABLE
+/// INITIALLY DEFERRED constraint trigger that raises at COMMIT. A refusal that
+/// moved from one to the other is a different result from a refusal that
+/// stayed, and only a driver that separates them can tell.
+#[derive(Debug, PartialEq, Eq)]
+enum Boundary {
+    Call,
+    Commit,
+}
+
+fn refusal(error: sqlx::Error, boundary: Boundary) -> (Boundary, String, String) {
+    let database = error.as_database_error().expect("a database refusal");
+    (
+        boundary,
+        database
+            .code()
+            .map(|code| code.into_owned())
+            .unwrap_or_default(),
+        database.message().to_owned(),
+    )
+}
+
+async fn publish_captured(
+    runtime: &PgPool,
+    f: &QualificationFixture,
+    registration: Uuid,
+    generation: Uuid,
+) -> Result<(i64, i64), (Boundary, String, String)> {
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, f.workspace).await;
+    let outcome = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT generation_epoch,guard_version FROM vestrace_publish_embedding_generation($1,$2,$3,1)",
+    )
+    .bind(f.workspace.as_uuid())
+    .bind(registration)
+    .bind(generation)
+    .fetch_one(&mut *tx)
+    .await;
+    let row = match outcome {
+        Ok(row) => row,
+        Err(error) => {
+            tx.rollback().await.unwrap();
+            return Err(refusal(error, Boundary::Call));
+        }
+    };
+    match tx.commit().await {
+        Ok(()) => Ok(row),
+        Err(error) => Err(refusal(error, Boundary::Commit)),
+    }
+}
+
+/// What the space says about itself: the guard's current generation, the
+/// published generation's recorded revision, and the corpus's own revision.
+async fn revision_standing(
+    pool: &PgPool,
+    registration: Uuid,
+    generation: Uuid,
+) -> (Option<Uuid>, Option<i64>, i64, String) {
+    let current: Option<Uuid> = sqlx::query_scalar(
+        "SELECT current_generation_id FROM embedding_index_generation_guards \
+           WHERE space_registration_id=$1",
+    )
+    .bind(registration)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let (recorded, state): (Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT corpus_revision, state FROM embedding_corpus_generations WHERE id=$1",
+    )
+    .bind(generation)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .unwrap_or((None, None));
+    let corpus: i64 = sqlx::query_scalar(
+        "SELECT corpus_revision FROM embedding_space_corpus_states WHERE space_registration_id=$1",
+    )
+    .bind(registration)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (current, recorded, corpus, state.unwrap_or_default())
+}
+
+/// Mutation qualification: the corpus-revision CAS is the first defence against
+/// publishing a generation captured under a corpus that has since moved, and it
+/// is not the last one.
+///
+/// Two probes per side, because the two corpus moves are caught by different
+/// things and the difference is the point.
+///
+/// A corpus that moved its revision *and* its member count is caught, with the
+/// CAS gone, by the publication's own Live member-set check -- still inside the
+/// call, still 23514, but by its own name.
+///
+/// A corpus that moved only its revision gets past every check the publication
+/// makes. It is caught at COMMIT instead, by the deferred constraint trigger
+/// `embedding_corpus_generations_canonical_consistent`, which refuses a Ready
+/// generation whose recorded revision is not the corpus's own. So the mutation
+/// does not reach unsafe persisted state: it moves the refusal from the call to
+/// the commit, and the transaction takes nothing with it.
+///
+/// That is worth stating precisely, because it is the opposite of what the
+/// retrieval fence qualification found, and neither answer is readable from the
+/// source. The CAS earns its place by refusing early, in the call, where the
+/// caller gets a conflict it can retry; the trigger is the floor under it and
+/// says nothing a caller can use. Removing the CAS would not corrupt the
+/// corpus. It would turn a retryable conflict into a failed transaction.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_corpus_revision_cas_moves_the_refusal_to_the_deferred_trigger(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let f = canonical_qualification(&pool, &runtime).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, PUBLISH_AUTHORITY).await;
+    assert!(
+        original.contains(REVISION_CAS_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before, both shapes, refused in the call by the CAS's own name.
+    for (name, shape) in [
+        ("before-revision-only", CorpusMove::RevisionOnly),
+        ("before-with-members", CorpusMove::WithMembers),
+    ] {
+        let (registration, generation) = capture_pending(&runtime, &f, name).await;
+        move_corpus(&pool, &f, registration, shape).await;
+        let (boundary, state, message) = publish_captured(&runtime, &f, registration, generation)
+            .await
+            .expect_err("a moved corpus must refuse its captured generation");
+        assert_eq!(boundary, Boundary::Call);
+        assert_eq!(state, "23514");
+        assert!(
+            message.contains("canonical generation publication capture conflict"),
+            "{message}"
+        );
+        let (current, recorded, corpus, generation_state) =
+            revision_standing(&pool, registration, generation).await;
+        assert_eq!(current, None, "a refused publication takes no guard");
+        assert_eq!(generation_state, "building");
+        assert_ne!(recorded, Some(corpus));
+    }
+
+    install_authority(
+        &pool,
+        &original.replace(REVISION_CAS_NEEDLE, REVISION_CAS_MUTATION),
+    )
+    .await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, PUBLISH_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Red where the CAS was the publication's only answer: every check inside
+    // the call passes, and the deferred trigger refuses the commit instead.
+    let (registration, generation) = capture_pending(&runtime, &f, "mutated-revision-only").await;
+    move_corpus(&pool, &f, registration, CorpusMove::RevisionOnly).await;
+    let (boundary, state, message) = publish_captured(&runtime, &f, registration, generation)
+        .await
+        .expect_err("the deferred canonical-consistency trigger is the floor under the CAS");
+    assert_eq!(
+        boundary,
+        Boundary::Commit,
+        "with the CAS gone the publication itself raises nothing: {message}"
+    );
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("Ready canonical generation requires its exact current guard and corpus"),
+        "{message}"
+    );
+    let (current, recorded, corpus, generation_state) =
+        revision_standing(&pool, registration, generation).await;
+    assert_eq!(
+        (current, generation_state.as_str()),
+        (None, "building"),
+        "the refused commit leaves the space exactly as the capture left it"
+    );
+    assert_eq!((recorded, corpus), (Some(0), 1));
+
+    // Still refused inside the call where the member set moved too -- by the
+    // publication's other check, at its own boundary, saying its own thing.
+    let (registration, generation) = capture_pending(&runtime, &f, "mutated-with-members").await;
+    move_corpus(&pool, &f, registration, CorpusMove::WithMembers).await;
+    let (boundary, state, message) = publish_captured(&runtime, &f, registration, generation)
+        .await
+        .expect_err("the Live member-set check is an independent defence");
+    assert_eq!(boundary, Boundary::Call);
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("requires its exact Live member set"),
+        "the refusal must come from the member-set check rather than the CAS: {message}"
+    );
+    let (current, ..) = revision_standing(&pool, registration, generation).await;
+    assert_eq!(current, None);
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, PUBLISH_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after: back inside the call, by the CAS's own message.
+    let (registration, generation) = capture_pending(&runtime, &f, "after-revision-only").await;
+    move_corpus(&pool, &f, registration, CorpusMove::RevisionOnly).await;
+    let (boundary, state, message) = publish_captured(&runtime, &f, registration, generation)
+        .await
+        .expect_err("the CAS must refuse again");
+    assert_eq!(boundary, Boundary::Call);
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("canonical generation publication capture conflict"),
+        "{message}"
+    );
+    let (current, ..) = revision_standing(&pool, registration, generation).await;
+    assert_eq!(current, None);
+
+    runtime.close().await;
+}
