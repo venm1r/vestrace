@@ -419,33 +419,43 @@ async fn mark_failed(pool: &PgPool, fixture: &common::AcceptedJob, job_id: Embed
     transaction.commit().await.unwrap();
 }
 
-#[sqlx::test(migrations = false)]
-async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activate(pool: PgPool) {
-    provision_result_behavior_database(&pool).await;
-    let runtime = common::runtime_pool(&pool).await;
-    assert_transition_execution_acl(&runtime).await;
+/// One transition batch carried all the way to `ready_to_activate` by the real
+/// authorities: two executed delivery jobs, a planned single-recipe batch, an
+/// attempt started against the exact old projection, and a completeness proof.
+///
+/// Extracted so the qualification below can mutate a predicate against a world
+/// that reached this state the way production does. A hand-seeded batch would
+/// prove nothing about a rule whose whole subject is the agreement between the
+/// recipes and the satisfactions the execution path writes.
+struct ProvenBatch {
+    source: PreparedJob,
+    source_projections: Vec<Uuid>,
+    batch_id: Uuid,
+}
+
+async fn proven_batch(pool: &PgPool, runtime: &PgPool) -> ProvenBatch {
     let source = prepare_job(
-        &pool,
-        &runtime,
-        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        pool,
+        runtime,
+        common::prepare_delivery_embedding_job(pool, runtime).await,
         true,
     )
     .await;
-    execute(&runtime, &source).await;
+    execute(runtime, &source).await;
     let candidate = prepare_job(
-        &pool,
-        &runtime,
-        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
         false,
     )
     .await;
-    let source_projections = projections(&pool, &source.accepted, source.accepted.job_id).await;
+    let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
 
     let transition_id = Uuid::now_v7();
     let plan_id = Uuid::now_v7();
     let batch_id = Uuid::now_v7();
     plan(
-        &runtime,
+        runtime,
         &source.accepted,
         PlannedBatch {
             transition_id,
@@ -460,7 +470,7 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
     .await;
     let actual_attempt = Uuid::now_v7();
     create_attempt(
-        &runtime,
+        runtime,
         &source.accepted,
         BatchAttempt {
             plan_id,
@@ -474,16 +484,16 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
     )
     .await
     .expect("one fresh physical job may start the exact batch recipe");
-    execute(&runtime, &candidate).await;
+    execute(runtime, &candidate).await;
     assert_eq!(
         observe(
-            &runtime,
+            runtime,
             &source.accepted,
             plan_id,
             batch_id,
             0,
             Some(actual_attempt),
-            job_version(&pool, &source.accepted, candidate.accepted.job_id).await,
+            job_version(pool, &source.accepted, candidate.accepted.job_id).await,
         )
         .await
         .unwrap(),
@@ -491,7 +501,7 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
     );
     assert_eq!(
         prove(
-            &runtime,
+            runtime,
             &source.accepted,
             transition_id,
             plan_id,
@@ -502,6 +512,22 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
         .unwrap(),
         "ready_to_activate"
     );
+    ProvenBatch {
+        source,
+        source_projections,
+        batch_id,
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activate(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    assert_transition_execution_acl(&runtime).await;
+    let fixture = proven_batch(&pool, &runtime).await;
+    let source = fixture.source;
+    let source_projections = fixture.source_projections;
+    let batch_id = fixture.batch_id;
     let actual_kind: String = sqlx::query_scalar(
         "SELECT satisfaction_kind FROM embedding_transition_recipe_satisfactions \
          WHERE workspace_id=$1 AND batch_id=$2 AND recipe_ordinal=0",
@@ -1721,5 +1747,417 @@ async fn canonical_registration_probe(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(kind, "canonical");
+    runtime.close().await;
+}
+
+const BIJECTION_AUTHORITY: &str =
+    "public.vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)";
+
+/// The half of the bijection that can actually fire, and the edit that disables
+/// exactly it.
+///
+/// The rule is stated as two `EXISTS` joined by `OR` under one message: no
+/// recipe without a satisfaction, and no satisfaction without a recipe. Those
+/// are two rules sharing a refusal rather than one rule in two parts, and only
+/// the first is reachable -- the satisfactions table's own keys make an orphan
+/// unconstructible, so the second half never runs. Prefixing the first `EXISTS`
+/// with `FALSE AND` leaves the second standing, which is what lets them be told
+/// apart.
+const BIJECTION_NEEDLE: &str = "    IF EXISTS(\n        SELECT 1\n          FROM embedding_transition_batch_recipes AS recipe\n          LEFT JOIN embedding_transition_recipe_satisfactions AS satisfaction";
+const BIJECTION_MUTATION: &str = "    IF FALSE AND EXISTS(\n        SELECT 1\n          FROM embedding_transition_batch_recipes AS recipe\n          LEFT JOIN embedding_transition_recipe_satisfactions AS satisfaction";
+
+/// Read one authority's definition, owner, ACL and runtime reachability.
+///
+/// Duplicated per suite rather than shared: Rust test binaries share code only
+/// through `tests/common/mod.rs`, which is outside this package's change scope.
+/// Safe in the one way that matters -- every caller installs, reads back, and
+/// compares all four values, so a copy that drifted could not pass quietly.
+async fn authority_state(pool: &PgPool, signature: &str) -> (String, String, Option<String>, bool) {
+    sqlx::query_as(
+        "SELECT pg_get_functiondef(oid), pg_get_userbyid(proowner), \
+                array_to_string(proacl,'|'), \
+                has_function_privilege('vestrace',oid,'EXECUTE') \
+           FROM pg_proc WHERE oid=$1::regprocedure",
+    )
+    .bind(signature)
+    .fetch_one(pool)
+    .await
+    .expect("the authority is in the catalogue")
+}
+
+async fn install_authority(pool: &PgPool, definition: &str) {
+    sqlx::raw_sql(definition)
+        .execute(pool)
+        .await
+        .expect("the authority definition is installable");
+}
+
+fn refusal(error: sqlx::Error) -> (String, String) {
+    let database = error.as_database_error().expect("a database refusal");
+    (
+        database
+            .code()
+            .map(|code| code.into_owned())
+            .unwrap_or_default(),
+        database.message().to_owned(),
+    )
+}
+
+struct PartialBatch {
+    source: PreparedJob,
+    transition_id: Uuid,
+    plan_id: Uuid,
+    batch_id: Uuid,
+}
+
+/// A batch planned with two recipes and carried to a terminal result for one of
+/// them, left one satisfier short of complete.
+///
+/// Built through the real authorities rather than seeded, because the rule
+/// under test is about the agreement between what the plan asked for and what
+/// the execution path delivered. Taking a satisfaction away afterwards is not
+/// an option and should not be: `embedding_transition_recipe_satisfactions`
+/// carries `vestrace_reject_p03_immutable_mutation`, which accepts guarded
+/// inserts and nothing else, so even the guarded owner cannot delete one. The
+/// shortfall has to be arranged the only way production could reach it, by
+/// never satisfying the second recipe.
+async fn partly_satisfied_batch(pool: &PgPool, runtime: &PgPool) -> PartialBatch {
+    let source = prepare_job(
+        pool,
+        runtime,
+        common::prepare_delivery_embedding_job(pool, runtime).await,
+        true,
+    )
+    .await;
+    execute(runtime, &source).await;
+    let candidate = prepare_job(
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
+        false,
+    )
+    .await;
+    let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
+
+    let transition_id = Uuid::now_v7();
+    let plan_id = Uuid::now_v7();
+    let batch_id = Uuid::now_v7();
+    plan(
+        runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id,
+            plan_id,
+            batch_id,
+            recipe_identities: vec![Uuid::now_v7(), Uuid::now_v7()],
+            // Two constraints meet here. Each recipe's own input ordinals
+            // must be zero-based and contiguous, and no two recipes in a
+            // batch may bind the same target input ordinal -- so the second
+            // recipe declares {0,1} and binds 1.
+            inputs: serde_json::json!([[0], [0, 1]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
+        },
+    )
+    .await;
+    let attempt = Uuid::now_v7();
+    create_attempt(
+        runtime,
+        &source.accepted,
+        BatchAttempt {
+            plan_id,
+            batch_id,
+            attempt_id: attempt,
+            job_id: candidate.accepted.job_id,
+            recipe_ordinal: 0,
+            old_projection_id: source_projections[0],
+            target_input_ordinal: 0,
+        },
+    )
+    .await
+    .expect("one fresh physical job may start the first batch recipe");
+    execute(runtime, &candidate).await;
+    assert_eq!(
+        observe(
+            runtime,
+            &source.accepted,
+            plan_id,
+            batch_id,
+            0,
+            Some(attempt),
+            job_version(pool, &source.accepted, candidate.accepted.job_id).await,
+        )
+        .await
+        .unwrap(),
+        "rebuilding"
+    );
+    // The second recipe is bound and never answered. Binding it matters:
+    // `vestrace_validate_embedding_transition_bijection` checks for an unbound
+    // recipe before it counts satisfiers, so a recipe left without an attempt
+    // would be refused by that earlier clause and this qualification would be
+    // observing the wrong predicate.
+    let unanswered = prepare_job(
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
+        false,
+    )
+    .await;
+    create_attempt(
+        runtime,
+        &source.accepted,
+        BatchAttempt {
+            plan_id,
+            batch_id,
+            attempt_id: Uuid::now_v7(),
+            job_id: unanswered.accepted.job_id,
+            recipe_ordinal: 1,
+            old_projection_id: source_projections[1],
+            // Distinct from the first recipe's: the batch holds one recipe per
+            // target input ordinal.
+            target_input_ordinal: 1,
+        },
+    )
+    .await
+    .expect("the second recipe may be bound by an attempt that never finishes");
+
+    PartialBatch {
+        source,
+        transition_id,
+        plan_id,
+        batch_id,
+    }
+}
+
+/// Try to write a satisfaction for a recipe ordinal the batch does not have.
+async fn orphan_satisfaction(
+    pool: &PgPool,
+    fixture: &common::AcceptedJob,
+    batch_id: Uuid,
+) -> Result<(), (String, String)> {
+    let mut transaction = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    scoped(&mut transaction, fixture).await;
+    let written = sqlx::query(
+        "INSERT INTO embedding_transition_recipe_satisfactions(\
+           id,workspace_id,batch_id,recipe_ordinal,satisfaction_kind,attempt_id,\
+           satisfying_projection_id,satisfying_material_id,terminal_job_id,terminal_job_version) \
+         SELECT gen_random_uuid(),workspace_id,batch_id,recipe_ordinal+64,'satisfied_existing',NULL,\
+           satisfying_projection_id,satisfying_material_id,terminal_job_id,terminal_job_version \
+           FROM embedding_transition_recipe_satisfactions \
+          WHERE workspace_id=$1 AND batch_id=$2",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(batch_id)
+    .execute(&mut *transaction)
+    .await;
+    match written {
+        Ok(_) => transaction.commit().await.map_err(refusal),
+        Err(error) => {
+            transaction.rollback().await.unwrap();
+            Err(refusal(error))
+        }
+    }
+}
+
+async fn batch_standing(
+    pool: &PgPool,
+    fixture: &common::AcceptedJob,
+    batch_id: Uuid,
+) -> (String, i64, i64) {
+    let workspace = fixture.context.workspace_id.as_uuid();
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM embedding_transition_batches WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace)
+    .bind(batch_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let recipes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_transition_batch_recipes \
+          WHERE workspace_id=$1 AND batch_id=$2",
+    )
+    .bind(workspace)
+    .bind(batch_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let satisfactions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_transition_recipe_satisfactions \
+          WHERE workspace_id=$1 AND batch_id=$2",
+    )
+    .bind(workspace)
+    .bind(batch_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (state, recipes, satisfactions)
+}
+
+/// Mutation qualification: one half of the one-satisfier rule is what stands
+/// between a two-recipe batch and a completeness proof it has not earned; the
+/// other half cannot fire at all.
+///
+/// The rule reads as a bijection and is written as two `EXISTS` under a single
+/// message, which makes it look like one predicate doing two jobs. Running it
+/// one half short says otherwise.
+///
+/// **No recipe without a satisfier** is load-bearing. Disabled,
+/// `vestrace_prove_embedding_transition_completeness` accepts a batch whose
+/// second recipe nothing ever answered and moves it to `ready_to_activate`.
+/// Nothing else objects, at any boundary, and the batch then stands as an
+/// activation candidate on the strength of half its own plan.
+///
+/// **No satisfier without a recipe** never gets the chance. The satisfactions
+/// table refuses an orphan out of its own keys -- the recipe foreign key on
+/// `(workspace_id,batch_id,recipe_ordinal)`, and the uniqueness of a satisfying
+/// projection within a batch, which is the one this probe's row meets first.
+/// The refusal is identical with the mutation installed and without it. That
+/// half of the predicate is unreachable, and which key happens to catch a
+/// given orphan is an accident of how the row was built; that a key catches it
+/// before the rule ever runs is not.
+///
+/// Worth knowing about a rule one might otherwise trust to be doing both jobs,
+/// and not a thing a reader could settle without holding the schema and the
+/// function side by side and being right about the order.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_one_satisfier_rule_proves_a_batch_whose_second_recipe_nothing_answers(
+    pool: PgPool,
+) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, BIJECTION_AUTHORITY).await;
+    assert!(
+        original.contains(BIJECTION_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before: one satisfier short, and the proof is refused.
+    let before = partly_satisfied_batch(&pool, &runtime).await;
+    assert_eq!(
+        batch_standing(&pool, &before.source.accepted, before.batch_id).await,
+        ("rebuilding".into(), 2, 1)
+    );
+    let (state, message) = prove(
+        &runtime,
+        &before.source.accepted,
+        before.transition_id,
+        before.plan_id,
+        before.batch_id,
+        2,
+    )
+    .await
+    .map_err(refusal)
+    .expect_err("a batch one satisfier short must not prove complete");
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("requires exactly one satisfier per recipe"),
+        "the refusal must be the rule's own rather than an earlier check: {message}"
+    );
+    assert_eq!(
+        batch_standing(&pool, &before.source.accepted, before.batch_id).await,
+        ("rebuilding".into(), 2, 1),
+        "a refused proof moves nothing"
+    );
+
+    // The other half, before the mutation: refused by the schema, and never by
+    // the rule. The table's own keys make an orphan unconstructible -- the
+    // recipe foreign key on (workspace_id,batch_id,recipe_ordinal), and, first
+    // for this particular attempt, the uniqueness of a satisfying projection
+    // within a batch. Which key catches it is an accident of how the row is
+    // built; that a key catches it before the rule ever runs is not.
+    let (orphan_state, orphan_message) =
+        orphan_satisfaction(&pool, &before.source.accepted, before.batch_id)
+            .await
+            .expect_err("a satisfaction for an absent recipe must be refused");
+    assert_eq!(
+        orphan_state, "23505",
+        "and by an integrity key rather than by the rule: {orphan_message}"
+    );
+    assert!(
+        orphan_message.contains("embedding_transition_recipe_s"),
+        "the refusal must name the constraint that caught it: {orphan_message}"
+    );
+
+    install_authority(
+        &pool,
+        &original.replace(BIJECTION_NEEDLE, BIJECTION_MUTATION),
+    )
+    .await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, BIJECTION_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Red, in its own world so nothing here can be explained by the probe above.
+    let during = partly_satisfied_batch(&pool, &runtime).await;
+    assert_eq!(
+        prove(
+            &runtime,
+            &during.source.accepted,
+            during.transition_id,
+            during.plan_id,
+            during.batch_id,
+            2,
+        )
+        .await
+        .expect("with the half disabled nothing else refuses an unanswered recipe"),
+        "ready_to_activate"
+    );
+    assert_eq!(
+        batch_standing(&pool, &during.source.accepted, during.batch_id).await,
+        ("ready_to_activate".into(), 2, 1),
+        "the unsafe state is a batch proven ready on the strength of half its own plan"
+    );
+
+    // Unchanged: the orphan half was never what refused an orphan.
+    let (still_state, _) = orphan_satisfaction(&pool, &before.source.accepted, before.batch_id)
+        .await
+        .expect_err("the foreign key refuses an orphan with or without the rule");
+    assert_eq!(still_state, orphan_state);
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, BIJECTION_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after, on a third world, by the same refusal.
+    let after = partly_satisfied_batch(&pool, &runtime).await;
+    let (after_state, after_message) = prove(
+        &runtime,
+        &after.source.accepted,
+        after.transition_id,
+        after.plan_id,
+        after.batch_id,
+        2,
+    )
+    .await
+    .map_err(refusal)
+    .expect_err("the rule must refuse again");
+    assert_eq!(after_state, state);
+    assert_eq!(after_message, message);
+    assert_eq!(
+        batch_standing(&pool, &after.source.accepted, after.batch_id).await,
+        ("rebuilding".into(), 2, 1)
+    );
+
     runtime.close().await;
 }
