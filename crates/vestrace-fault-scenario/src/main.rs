@@ -45,6 +45,8 @@ mod embedding_dispatch_crash;
 mod embedding_result_finalization_crash;
 #[path = "scenarios/embedding_result_preparation_crash.rs"]
 mod embedding_result_preparation_crash;
+#[path = "scenarios/embedding_worker_completion_crash.rs"]
+mod embedding_worker_completion_crash;
 #[path = "scenarios/material_intent_crash.rs"]
 mod material_intent_crash;
 
@@ -202,7 +204,8 @@ mod intent_support {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
             vestrace_fault_scenario::settings::Scenario::EmbeddingResultPreparation
-            | vestrace_fault_scenario::settings::Scenario::EmbeddingResultFinalization => {
+            | vestrace_fault_scenario::settings::Scenario::EmbeddingResultFinalization
+            | vestrace_fault_scenario::settings::Scenario::EmbeddingWorkerCompletion => {
                 return Err("the intent child runs only for an intent scenario".to_owned());
             }
         };
@@ -371,6 +374,12 @@ async fn main() {
                 embedding_result_finalization_crash::run_child(&settings).await;
             }
             finish(embedding_result_finalization_crash::run_parent(&settings).await);
+        }
+        Scenario::EmbeddingWorkerCompletion => {
+            if settings.is_child() {
+                embedding_worker_completion_crash::run_child(&settings).await;
+            }
+            finish(embedding_worker_completion_crash::run_parent(&settings).await);
         }
     }
 

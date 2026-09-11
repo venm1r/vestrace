@@ -210,19 +210,31 @@ fn scenario_binary() -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .expect("target/debug must have the workspace root as its grandparent");
-    let scenario_source = workspace
-        .join("crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs");
-    assert!(
-        std::fs::metadata(&path)
-            .and_then(|binary| binary.modified())
-            .expect("fault scenario binary mtime")
-            >= std::fs::metadata(&scenario_source)
-                .and_then(|source| source.modified())
-                .expect("fault scenario source mtime"),
-        "{} is older than {}; rebuild the fault scenario before this e2e",
-        path.display(),
-        scenario_source.display()
-    );
+    // Every scenario source, not one of them. A binary older than the scenario
+    // under test would run the previous build and report an observation of code
+    // that is no longer there -- and the guard naming a single file could not
+    // see that for any of the others.
+    let built = std::fs::metadata(&path)
+        .and_then(|binary| binary.modified())
+        .expect("fault scenario binary mtime");
+    for source in [
+        "embedding_result_preparation_crash.rs",
+        "embedding_result_finalization_crash.rs",
+        "embedding_worker_completion_crash.rs",
+    ] {
+        let scenario_source = workspace.join(format!(
+            "crates/vestrace-fault-scenario/src/scenarios/{source}"
+        ));
+        assert!(
+            built
+                >= std::fs::metadata(&scenario_source)
+                    .and_then(|source| source.modified())
+                    .expect("fault scenario source mtime"),
+            "{} is older than {}; rebuild the fault scenario before this e2e",
+            path.display(),
+            scenario_source.display()
+        );
+    }
     path
 }
 
@@ -340,5 +352,95 @@ async fn result_finalization_survives_a_real_child_abort(pool: PgPool) {
         assert!(leg["pid"].as_u64().unwrap() > 0);
         assert!(leg["backend_pid"].as_u64().unwrap() > 0);
     }
+    let _ = std::fs::remove_file(url_file);
+}
+
+/// A worker that dies holding a claim never reached the provider, and the lease
+/// it left keeps the next worker out.
+///
+/// The pairing is what makes the zero mean anything. Both children get the same
+/// reachable provider address and do the same real setup; the control goes on
+/// to dispatch and the listener counts one, the crash child stops at the claim
+/// and the listener counts none. A zero from a child that was never wired to a
+/// provider would prove nothing at all.
+#[sqlx::test(migrations = false)]
+#[ignore = "needs PostgreSQL plus the vestrace runtime role; run with --ignored --nocapture"]
+async fn a_worker_dying_after_its_claim_never_reaches_the_provider(pool: PgPool) {
+    provisioned_runtime(&pool).await.close().await;
+    let database_url = ephemeral_database_url(&pool).await;
+    let url_file = write_url_file(&database_url);
+    let runtime_url =
+        std::env::var("VESTRACE_RUNTIME_DATABASE_URL").expect("runtime role is required");
+
+    let output = Command::new(scenario_binary())
+        .arg("--database-url-file")
+        .arg(&url_file)
+        .arg("--scenario")
+        .arg("embedding_worker_completion_crash")
+        .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
+        .env("VESTRACE_FAULT_POINT", "after_work_claim")
+        .env("VESTRACE_RUNTIME_DATABASE_URL", runtime_url)
+        .output()
+        .expect("the worker-completion scenario must start");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("WORKER_COMPLETION_OUTPUT stdout={stdout} stderr={stderr}");
+    assert!(
+        output.status.success(),
+        "the parent must prove its child-abort observation: {stderr}"
+    );
+    let observation: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("the parent emits one JSON observation");
+
+    assert_eq!(observation["scenario"], "embedding_worker_completion_crash");
+    assert_eq!(observation["point"], "after_work_claim");
+    assert_eq!(observation["proved"], true);
+
+    // The two halves of the claim, counted from outside both children.
+    assert_eq!(
+        observation["control_requests"], 1,
+        "the control must show the provider address was reachable"
+    );
+    assert_eq!(
+        observation["crash_requests"], 0,
+        "a worker that died at its claim must never have reached the provider"
+    );
+
+    // Each child built its own world, so the crash observation is not being
+    // read off the control's rows.
+    assert_eq!(observation["control"]["workspace_distinct"], true);
+    assert_eq!(observation["control"]["job_distinct"], true);
+
+    let persisted = &observation["persisted"];
+    assert_eq!(
+        persisted["claim_owner"], "fault-scenario-worker-that-dies",
+        "the surviving lease must name the process that is gone"
+    );
+    assert_eq!(
+        persisted["lease_live"], true,
+        "the lease outlives the holder; only time ends it"
+    );
+    assert_eq!(
+        persisted["last_outcome"],
+        serde_json::Value::Null,
+        "a process that stopped existing recorded no outcome"
+    );
+    assert_eq!(
+        persisted["job_state"], "requested",
+        "claiming a job does not advance it"
+    );
+    assert_eq!(
+        persisted["dispatching_transitions"], 0,
+        "nothing was dispatched"
+    );
+    assert_eq!(persisted["receipts"], 0, "and nothing was received");
+
+    // And the lease does its job: a living worker asking immediately afterwards
+    // is refused the job the dead one holds.
+    assert_eq!(
+        observation["successor_claimed_the_job"], false,
+        "a live lease must keep the next worker out even when its holder is gone"
+    );
+
     let _ = std::fs::remove_file(url_file);
 }

@@ -13,6 +13,7 @@ pub enum Scenario {
     EmbeddingDispatch,
     EmbeddingResultPreparation,
     EmbeddingResultFinalization,
+    EmbeddingWorkerCompletion,
 }
 
 impl Scenario {
@@ -24,6 +25,7 @@ impl Scenario {
             "embedding_dispatch_crash" => Ok(Self::EmbeddingDispatch),
             "embedding_result_preparation_crash" => Ok(Self::EmbeddingResultPreparation),
             "embedding_result_finalization_crash" => Ok(Self::EmbeddingResultFinalization),
+            "embedding_worker_completion_crash" => Ok(Self::EmbeddingWorkerCompletion),
             other => Err(format!("unknown scenario '{other}'")),
         }
     }
@@ -37,6 +39,7 @@ enum ScenarioPoint {
     Embedding(EffectFaultPoint),
     EmbeddingResultPreparation,
     EmbeddingResultFinalization,
+    EmbeddingWorkerCompletion,
 }
 
 /// What one invocation was asked to do, and whether it is allowed to.
@@ -122,6 +125,12 @@ impl ScenarioSettings {
                 }
                 ScenarioPoint::EmbeddingResultFinalization
             }
+            Scenario::EmbeddingWorkerCompletion => {
+                if requested != "after_work_claim" {
+                    return Err(format!("unknown fault point '{requested}'"));
+                }
+                ScenarioPoint::EmbeddingWorkerCompletion
+            }
         };
 
         let url_file = url_file
@@ -168,7 +177,8 @@ impl ScenarioSettings {
                 point.as_str()
             ),
             ScenarioPoint::EmbeddingResultPreparation
-            | ScenarioPoint::EmbeddingResultFinalization => panic!(
+            | ScenarioPoint::EmbeddingResultFinalization
+            | ScenarioPoint::EmbeddingWorkerCompletion => panic!(
                 "point() is defined only for the external-effect scenario, but this \
                  invocation is result preparation"
             ),
@@ -182,7 +192,8 @@ impl ScenarioSettings {
             ScenarioPoint::Effect(_)
             | ScenarioPoint::Embedding(_)
             | ScenarioPoint::EmbeddingResultPreparation
-            | ScenarioPoint::EmbeddingResultFinalization => None,
+            | ScenarioPoint::EmbeddingResultFinalization
+            | ScenarioPoint::EmbeddingWorkerCompletion => None,
         }
     }
 
@@ -200,6 +211,21 @@ impl ScenarioSettings {
         if !matches!(self.point, ScenarioPoint::EmbeddingResultPreparation) {
             panic!(
                 "embedding_result_preparation_point() is defined only for the result-preparation scenario"
+            );
+        }
+    }
+
+    /// The worker-completion scenario has one boundary: the instant after a
+    /// real work claim commits and before anything is dispatched against it.
+    ///
+    /// That instant is where the only irreversible step in the cycle has not
+    /// yet happened, so it is the one boundary whose survivors say something a
+    /// later one cannot: the lease is held by a process that no longer exists,
+    /// and the provider was never reached.
+    pub fn embedding_worker_completion_point(&self) {
+        if !matches!(self.point, ScenarioPoint::EmbeddingWorkerCompletion) {
+            panic!(
+                "embedding_worker_completion_point() is defined only for the worker-completion scenario"
             );
         }
     }
@@ -346,6 +372,30 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn worker_completion_has_only_its_post_claim_boundary() {
+        let settings = settings_for(
+            Some("embedding_worker_completion_crash"),
+            "after_work_claim",
+        )
+        .unwrap();
+        assert_eq!(settings.scenario(), Scenario::EmbeddingWorkerCompletion);
+        settings.embedding_worker_completion_point();
+        assert_eq!(settings.intent_point(), None);
+        // It borrows no other scenario's vocabulary, in either direction.
+        for borrowed in [
+            "after_dispatch_before_receipt",
+            "after_result_prepared_before_return",
+            "finalization_checkpoint_matrix",
+        ] {
+            assert!(
+                settings_for(Some("embedding_worker_completion_crash"), borrowed).is_err(),
+                "{borrowed} must not name a worker-completion boundary"
+            );
+        }
+        assert!(settings_for(None, "after_work_claim").is_err());
     }
 
     #[test]
