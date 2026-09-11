@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -49,14 +49,95 @@ pub fn embedding_job_routes() -> axum::Router<AppState> {
         ),
         post(acknowledge_carry),
     );
-    mount(
+    let router = mount(
         router,
         route_descriptor(
             &Method::POST,
             "/v1/embedding-jobs/{id}/retry-generation-changed",
         ),
         post(retry_generation_changed),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/embedding-jobs/{id}/retrieval"),
+        get(retrieval_attempt),
     )
+}
+
+/// What one retrieval attempt did, read back after the fact.
+///
+/// The absences are the contract. There is no field here for ciphertext, for
+/// vector components, for a stable vector digest, for a credential, or for
+/// whether a process has a local index loaded -- the last because the authority
+/// this is read from is a database transaction, and a database transaction
+/// cannot see another process's memory. A read model that answered that
+/// question would be reporting a guess as a fact, and an operator would act on
+/// it.
+#[derive(Debug, serde::Serialize)]
+pub struct RetrievalAttemptResponse {
+    pub embedding_job_id: Uuid,
+    pub retrieval_request_id: Uuid,
+    pub job_state: String,
+    /// The handle an authorized retry must agree with. Published so a caller
+    /// deciding to spend a further provider call states what it read rather
+    /// than guessing, which is what makes the adapter's check meaningful.
+    pub job_version: u64,
+    pub space_registration_id: Uuid,
+    pub pinned_generation_id: Uuid,
+    pub pinned_generation_epoch: u64,
+    pub pinned_generation_member_count: u64,
+    /// How many memories the terminal result named. Absent while no terminal
+    /// result exists, which is different from a result that named none.
+    pub reference_count: Option<u32>,
+    /// The closed degradation vocabulary, or absent.
+    pub degradation_reason: Option<String>,
+    pub generation_changed_reason: Option<String>,
+    pub predecessor_embedding_job_id: Option<Uuid>,
+    pub successor_embedding_job_id: Option<Uuid>,
+    /// Whether `POST .../retry-generation-changed` would have something to do.
+    /// False once a successor exists, because a predecessor has exactly one.
+    pub retry_available: bool,
+}
+
+/// Reads one attempt.
+///
+/// A job this workspace does not have, or has but never admitted as a retrieval
+/// attempt, is 404 rather than an empty view: those are the same answer to a
+/// reader, and neither is "this attempt found nothing".
+async fn retrieval_attempt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(embedding_job_id): Path<Uuid>,
+) -> Result<axum::response::Response, ApiError> {
+    let context = request_context(&headers)?;
+    let view = state
+        .embedding_retrieval_repository()?
+        .attempt_view(&context, EmbeddingJobId::from_uuid(embedding_job_id))
+        .await
+        .map_err(ApiError::from_application)?
+        .ok_or_else(|| ApiError::not_found("embedding retrieval attempt"))?;
+    Ok((
+        StatusCode::OK,
+        Json(RetrievalAttemptResponse {
+            embedding_job_id: view.job_id.as_uuid(),
+            retrieval_request_id: view.request_id.as_uuid(),
+            job_state: view.job_state,
+            job_version: view.job_version,
+            space_registration_id: view.space_registration_id,
+            pinned_generation_id: view.generation_id,
+            pinned_generation_epoch: view.generation_epoch,
+            pinned_generation_member_count: view.generation_member_count,
+            reference_count: view.reference_count,
+            degradation_reason: view.degradation_reason.map(str::to_owned),
+            generation_changed_reason: view
+                .generation_changed_reason
+                .map(|reason| reason.as_str().to_owned()),
+            predecessor_embedding_job_id: view.predecessor_job_id.map(|id| id.as_uuid()),
+            successor_embedding_job_id: view.successor_job_id.map(|id| id.as_uuid()),
+            retry_available: view.retry_available,
+        }),
+    )
+        .into_response())
 }
 
 /// One authorized successor to an attempt whose pinned generation moved.
@@ -832,6 +913,191 @@ mod tests {
         assert!(
             response.status().is_server_error(),
             "an unconfigured retry authority must not look like a client mistake"
+        );
+    }
+
+    /// Answers the read with one stated view, and records what it was asked.
+    struct StubAttemptView {
+        view: Mutex<Option<vestrace_application::embedding::RetrievalAttemptView>>,
+        asked: Mutex<Option<EmbeddingJobId>>,
+    }
+
+    impl StubAttemptView {
+        fn holding(view: Option<vestrace_application::embedding::RetrievalAttemptView>) -> Self {
+            Self {
+                view: Mutex::new(view),
+                asked: Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl vestrace_application::embedding::EmbeddingRetrievalRepository for StubAttemptView {
+        async fn attempt_view(
+            &self,
+            _context: &RequestContext,
+            job_id: EmbeddingJobId,
+        ) -> Result<Option<vestrace_application::embedding::RetrievalAttemptView>, ApplicationError>
+        {
+            *self.asked.lock().unwrap() = Some(job_id);
+            Ok(self.view.lock().unwrap().clone())
+        }
+    }
+
+    /// A degraded attempt that has earned a retry and has not spent it.
+    fn changed_attempt(job_id: Uuid) -> vestrace_application::embedding::RetrievalAttemptView {
+        vestrace_application::embedding::RetrievalAttemptView {
+            job_id: EmbeddingJobId::from_uuid(job_id),
+            request_id: vestrace_domain::id::RetrievalRunId::new(),
+            job_state: "succeeded".to_owned(),
+            job_version: 3,
+            space_registration_id: Uuid::now_v7(),
+            generation_id: Uuid::now_v7(),
+            generation_epoch: 7,
+            generation_member_count: 42,
+            reference_count: None,
+            degradation_reason: Some("retrieval_generation_changed"),
+            generation_changed_reason: Some(
+                vestrace_domain::embedding::RetrievalGenerationChangedReason::Revoked,
+            ),
+            predecessor_job_id: None,
+            successor_job_id: None,
+            retry_available: true,
+        }
+    }
+
+    fn read(uri: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("x-workspace-id", Uuid::now_v7().to_string())
+            .header("x-principal-id", Uuid::now_v7().to_string())
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_attempt_reads_back_as_identities_states_counts_and_closed_reasons() {
+        let job_id = Uuid::now_v7();
+        let expected = changed_attempt(job_id);
+        let stub = Arc::new(StubAttemptView::holding(Some(expected.clone())));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub.clone()),
+        );
+
+        let response = app
+            .oneshot(read(&format!("/v1/embedding-jobs/{job_id}/retrieval")))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            stub.asked.lock().unwrap().map(|id| id.as_uuid()),
+            Some(job_id),
+            "the read must ask about the job the path names"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["embedding_job_id"], job_id.to_string());
+        assert_eq!(json["job_state"], "succeeded");
+        assert_eq!(json["job_version"], 3);
+        assert_eq!(json["pinned_generation_epoch"], 7);
+        assert_eq!(json["pinned_generation_member_count"], 42);
+        assert_eq!(json["degradation_reason"], "retrieval_generation_changed");
+        assert_eq!(json["generation_changed_reason"], "revoked");
+        assert_eq!(json["retry_available"], true);
+        assert_eq!(json["successor_embedding_job_id"], serde_json::Value::Null);
+        // No terminal result yet is absent, not zero. A result that named no
+        // memories is a different fact from no result at all, and an operator
+        // deciding whether to authorize a retry needs to tell them apart.
+        assert_eq!(json["reference_count"], serde_json::Value::Null);
+    }
+
+    /// The view carries nothing derived from a vector.
+    ///
+    /// Asserted over the serialized body rather than field by field, because a
+    /// field-by-field assertion only covers the fields that exist today, and
+    /// this is the surface where a new one would arrive.
+    #[tokio::test]
+    async fn the_attempt_view_carries_no_ciphertext_vector_digest_or_credential() {
+        let job_id = Uuid::now_v7();
+        let stub = Arc::new(StubAttemptView::holding(Some(changed_attempt(job_id))));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app
+            .oneshot(read(&format!("/v1/embedding-jobs/{job_id}/retrieval")))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let serialized = String::from_utf8(body.to_vec()).unwrap();
+
+        for forbidden in [
+            "ciphertext",
+            "vector",
+            "digest",
+            "credential",
+            "query",
+            "embedding_components",
+            "index_loaded",
+            "local_index",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "{forbidden} must not appear in the attempt view: {serialized}"
+            );
+        }
+    }
+
+    /// A job this workspace never admitted as a retrieval attempt is absent,
+    /// not an empty attempt.
+    ///
+    /// A `delivery` or `rebuild` job has no fence. Answering for one with a
+    /// zeroed view would say it found nothing, which is a claim about a search
+    /// that never happened.
+    #[tokio::test]
+    async fn a_job_that_is_not_a_retrieval_attempt_is_not_found() {
+        let stub = Arc::new(StubAttemptView::holding(None));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app
+            .oneshot(read(&format!(
+                "/v1/embedding-jobs/{}/retrieval",
+                Uuid::now_v7()
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Without a configured authority the read refuses rather than reporting an
+    /// attempt nothing recorded.
+    #[tokio::test]
+    async fn an_attempt_read_without_a_configured_authority_fails_closed() {
+        let app = build_router(test_state().with_policy(Arc::new(TestAllowPolicy)));
+
+        let response = app
+            .oneshot(read(&format!(
+                "/v1/embedding-jobs/{}/retrieval",
+                Uuid::now_v7()
+            )))
+            .await
+            .unwrap();
+
+        assert!(
+            response.status().is_server_error(),
+            "an unconfigured read authority must not look like an absent attempt"
         );
     }
 

@@ -178,6 +178,16 @@ static ROUTE_INVENTORY: &[RouteDescriptor] = &[
         EmbeddingRetryRetrievalGenerationChanged,
         Critical
     ),
+    // Reading what an attempt did is the same entitlement as making it: the
+    // view names memories this caller was already told about, counted rather
+    // than listed. It is not the retry's capability, because a reader must be
+    // able to see that a retry is available without being able to spend one.
+    governed!(
+        GET,
+        "/v1/embedding-jobs/{id}/retrieval",
+        ContextRetrieve,
+        Low
+    ),
     governed!(GET, "/v1/artifacts", ExportRead, Low),
     governed!(GET, "/v1/triggers", WorkspaceAdmin, Low),
     governed!(GET, "/v1/connections", WorkspaceAdmin, Low),

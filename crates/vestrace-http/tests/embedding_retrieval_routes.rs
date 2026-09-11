@@ -17,6 +17,7 @@ use vestrace_http::route_inventory::{
 };
 
 const RETRY_PATH: &str = "/v1/embedding-jobs/{id}/retry-generation-changed";
+const VIEW_PATH: &str = "/v1/embedding-jobs/{id}/retrieval";
 
 /// The retry is a governed mutation, not a read, and it is not public.
 ///
@@ -123,6 +124,61 @@ fn the_retrieval_retry_capability_round_trips_its_wire_name() {
     assert_eq!(parsed, capability);
 }
 
+/// Reading an attempt is governed, and it is not the retry.
+///
+/// The separation is the point. An operator has to be able to see that a retry
+/// is available -- which attempt, against which generation, with which reason --
+/// in order to decide whether to authorize one. If reading required the retry's
+/// capability, the only principal who could look would already be the principal
+/// who could spend, and the decision would have no one to make it.
+#[test]
+fn reading_an_attempt_is_governed_and_is_not_the_retry() {
+    let descriptor = route_descriptor(&Method::GET, VIEW_PATH);
+
+    assert_eq!(
+        descriptor.exposure,
+        RouteExposure::Governed,
+        "an attempt names memories; it is never public"
+    );
+    assert_eq!(
+        descriptor.capability,
+        Capability::ContextRetrieve,
+        "reading what a retrieval did is the entitlement that made it"
+    );
+    assert_ne!(
+        descriptor.capability,
+        Capability::EmbeddingRetryRetrievalGenerationChanged,
+        "seeing that a retry is available must not require being able to spend one"
+    );
+    assert_eq!(
+        descriptor.risk,
+        RiskCategory::Low,
+        "a read that spends nothing and returns counts is not a critical action"
+    );
+}
+
+/// A concrete read resolves to its governed decision, and the same path under
+/// the retry's verb is a different route entirely.
+#[test]
+fn a_concrete_attempt_read_resolves_to_its_own_governed_decision() {
+    let path = format!("/v1/embedding-jobs/{}/retrieval", uuid::Uuid::now_v7());
+    match inventory_lookup(&Method::GET, &path) {
+        RouteDecision::Governed(request) => {
+            assert_eq!(request.capability, Capability::ContextRetrieve);
+        }
+        other => panic!("a mounted read must resolve to a governed decision, got {other:?}"),
+    }
+
+    // A POST to the read's path is not the retry under another name. If it
+    // resolved to anything, a caller could reach a mutation by guessing a
+    // read's URL.
+    assert_eq!(
+        inventory_lookup(&Method::POST, &path),
+        RouteDecision::NotInInventory,
+        "the read's path has no mutation behind it"
+    );
+}
+
 /// And the inventory as a whole still agrees with itself.
 ///
 /// Adding a route is the moment this can break: `route_inventory` validates on
@@ -131,12 +187,14 @@ fn the_retrieval_retry_capability_round_trips_its_wire_name() {
 #[test]
 fn the_inventory_still_validates_with_the_retry_in_it() {
     let inventory = route_inventory();
-    assert!(
-        inventory
-            .iter()
-            .any(|descriptor| descriptor.path_pattern == RETRY_PATH),
-        "the retry must be declared, not merely mounted"
-    );
+    for path in [RETRY_PATH, VIEW_PATH] {
+        assert!(
+            inventory
+                .iter()
+                .any(|descriptor| descriptor.path_pattern == path),
+            "{path} must be declared, not merely mounted"
+        );
+    }
     let public: Vec<&str> = inventory
         .iter()
         .filter(|descriptor| descriptor.exposure == RouteExposure::PublicBounded)

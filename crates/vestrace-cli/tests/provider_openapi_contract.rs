@@ -154,6 +154,105 @@ fn embedding_retrieval_retry_is_a_confirmed_governed_mutation_contract() {
     );
 }
 
+/// The attempt read documents a closed vocabulary, no idempotency key, and no
+/// field that could carry a vector.
+///
+/// The enumerations are the substance. A `degradation_reason` typed as a bare
+/// string would let an adapter invent a seventh reason, and a caller writing
+/// against this document would have no way to know it had seen them all -- the
+/// closed vocabulary is exactly what makes "retry only after a generation
+/// change" a rule a client can implement.
+#[test]
+fn embedding_retrieval_attempt_read_is_a_safe_governed_read_contract() {
+    let document = schema();
+    let operation = &document["paths"]["/v1/embedding-jobs/{id}/retrieval"]["get"];
+    let attempt = &document["components"]["schemas"]["EmbeddingRetrievalAttempt"];
+
+    assert_eq!(operation["parameters"][0]["name"], "x-workspace-id");
+    assert_eq!(operation["parameters"][1]["name"], "x-principal-id");
+    // A read creates nothing, so it documents no replay guarantee.
+    let header_names: Vec<&str> = operation["parameters"]
+        .as_array()
+        .expect("the read states its headers")
+        .iter()
+        .filter_map(|parameter| parameter["name"].as_str())
+        .collect();
+    assert!(
+        !header_names.contains(&"Idempotency-Key"),
+        "a read must not document an idempotency guarantee it does not make: {header_names:?}"
+    );
+    assert!(
+        operation["responses"]["404"].is_object(),
+        "a job that is not a retrieval attempt is absent, not an empty attempt"
+    );
+
+    let degradations: Vec<&str> = attempt["properties"]["degradation_reason"]["enum"]
+        .as_array()
+        .expect("the degradation vocabulary is closed in the document")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    for reason in [
+        "missing_local_index",
+        "legacy_adoption_pending",
+        "transition_not_ready",
+        "generation_not_ready",
+        "retrieval_generation_changed",
+        "retrieval_pending",
+    ] {
+        assert!(
+            degradations.contains(&reason),
+            "{reason} is part of the closed vocabulary a client must handle"
+        );
+    }
+    assert_eq!(
+        degradations.len(),
+        6,
+        "the document must not admit a reason the application cannot produce"
+    );
+
+    let changes: Vec<&str> = attempt["properties"]["generation_changed_reason"]["enum"]
+        .as_array()
+        .expect("the generation-change vocabulary is closed in the document")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        changes,
+        vec![
+            "stale",
+            "revoked",
+            "replaced",
+            "corpus_changed",
+            "member_unavailable"
+        ]
+    );
+
+    // And nothing here can carry a vector or anything derived from one. The
+    // read model is the surface where such a field would arrive, because it is
+    // the one that exists to describe the corpus.
+    for field in attempt["properties"]
+        .as_object()
+        .expect("an object schema")
+        .keys()
+    {
+        for forbidden in [
+            "query",
+            "vector",
+            "digest",
+            "ciphertext",
+            "credential",
+            "embedding_components",
+            "index_loaded",
+        ] {
+            assert!(
+                !field.contains(forbidden),
+                "a retrieval read model must not carry {forbidden}: found {field}"
+            );
+        }
+    }
+}
+
 #[test]
 fn embedding_carry_acknowledgement_is_a_governed_mutation_contract() {
     let document = schema();

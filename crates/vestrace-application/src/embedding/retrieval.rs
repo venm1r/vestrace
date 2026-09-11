@@ -104,10 +104,94 @@ impl EmbeddingRetrievalDegradation {
     }
 }
 
+/// A degradation together with the attempt it belongs to.
+///
+/// The reason alone is not actionable. Exactly one member of the vocabulary
+/// earns a retry, and the retry names a predecessor job -- so a caller told
+/// only `retrieval_generation_changed` has been told it may ask again and not
+/// what to ask about. The job identity is what closes that gap, and it is the
+/// same identity the governed read view is keyed by.
+///
+/// It is optional because a degradation can precede any attempt: with no
+/// canonical space registered, or with legacy adoption unfinished, nothing was
+/// ever admitted, so there is no job to name and nothing a retry could follow.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DegradedRetrievalAttempt {
+    pub reason: EmbeddingRetrievalDegradation,
+    pub job_id: Option<EmbeddingJobId>,
+}
+
+impl DegradedRetrievalAttempt {
+    /// A degradation that never reached an attempt.
+    pub const fn unattempted(reason: EmbeddingRetrievalDegradation) -> Self {
+        Self {
+            reason,
+            job_id: None,
+        }
+    }
+
+    pub const fn of(job_id: EmbeddingJobId, reason: EmbeddingRetrievalDegradation) -> Self {
+        Self {
+            reason,
+            job_id: Some(job_id),
+        }
+    }
+
+    /// Whether *this* degradation can be retried, which is narrower than
+    /// whether its reason can be: a retryable reason with no attempt behind it
+    /// authorizes nothing, because the retry command has no predecessor to
+    /// name.
+    pub const fn is_retryable(self) -> bool {
+        self.job_id.is_some() && self.reason.is_retryable()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum EmbeddingRetrievalOutcome {
     Completed(Vec<RetrievalCandidate>),
-    Degraded(EmbeddingRetrievalDegradation),
+    Degraded(DegradedRetrievalAttempt),
+}
+
+/// What a caller may be told about one retrieval attempt, read back after the
+/// fact.
+///
+/// Every member is an identity, a state, a count or a closed reason. The
+/// absences are the point: no ciphertext, no vector components, no stable
+/// vector digest, no credential, and no claim about whether some process has a
+/// local index loaded -- a database transaction cannot know that, and a read
+/// model that asserted it would be reporting a guess as a fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetrievalAttemptView {
+    pub job_id: EmbeddingJobId,
+    pub request_id: RetrievalRunId,
+    /// The job's own append-only state, and the version an authorized retry
+    /// must agree with.
+    pub job_state: String,
+    pub job_version: u64,
+    pub space_registration_id: uuid::Uuid,
+    /// What acceptance pinned. Read from the fence rather than resolved afresh,
+    /// because a later reader asking what the attempt answered from must get
+    /// the generation it was admitted against even after the current one moved.
+    pub generation_id: uuid::Uuid,
+    pub generation_epoch: u64,
+    pub generation_member_count: u64,
+    /// Present once a terminal result was written. The count, not the
+    /// references: how many memories answered is progress, and which ones is
+    /// the search result itself, which the caller already received.
+    pub reference_count: Option<u32>,
+    /// The closed degradation this attempt recorded, if it recorded one.
+    pub degradation_reason: Option<&'static str>,
+    /// Why the pinned generation was judged to have moved, when that is what
+    /// happened. Closed vocabulary.
+    pub generation_changed_reason: Option<RetrievalGenerationChangedReason>,
+    /// Attempt lineage. A first attempt has no predecessor; an attempt whose
+    /// retry was authorized names its one successor.
+    pub predecessor_job_id: Option<EmbeddingJobId>,
+    pub successor_job_id: Option<EmbeddingJobId>,
+    /// Whether an authorized retry is still available: a generation change was
+    /// recorded and no successor has been authorized yet. False once one has,
+    /// because a predecessor has at most one.
+    pub retry_available: bool,
 }
 
 /// The one client a retrieval request uses to reach the embedding side.  The
@@ -241,6 +325,22 @@ pub trait EmbeddingRetrievalRepository: Send + Sync {
     ) -> Result<Vec<RetrievalMemberReference>, ApplicationError> {
         Err(ApplicationError::Unavailable(
             "governed embedding retrieval member resolution is not configured".to_owned(),
+        ))
+    }
+
+    /// One attempt as a caller may read it back, or `None` when this workspace
+    /// has no attempt by that identity.
+    ///
+    /// Absent rather than refused, because "no such attempt" is an answer a
+    /// reader can act on, and an error here would be indistinguishable from an
+    /// authority that is not configured.
+    async fn attempt_view(
+        &self,
+        _context: &RequestContext,
+        _job_id: EmbeddingJobId,
+    ) -> Result<Option<RetrievalAttemptView>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding retrieval attempt view is not configured".to_owned(),
         ))
     }
 

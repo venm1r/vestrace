@@ -11,7 +11,7 @@ use vestrace_domain::{
 use crate::{
     ApplicationError, RequestContext,
     embedding::{
-        EmbeddingRetrievalDegradation, EmbeddingRetrievalOutcome, SharedEmbeddingRetrievalJobClient,
+        DegradedRetrievalAttempt, EmbeddingRetrievalOutcome, SharedEmbeddingRetrievalJobClient,
     },
     retrieval::{
         ChannelRecord, ContextPackBuilder, NormalizedRetrievalRequest, RetrievalRequest,
@@ -163,7 +163,7 @@ impl RetrievalService {
         // The closed reason the embedding side gave, if it gave one. Kept as
         // the value rather than its string so a caller deciding whether to
         // authorize a retry reads the vocabulary, not a journal message.
-        let mut embedding_degradation: Option<EmbeddingRetrievalDegradation> = None;
+        let mut embedding_degradation: Option<DegradedRetrievalAttempt> = None;
 
         match self.text_retriever.search(context, &normalized).await {
             Ok(results) => {
@@ -218,14 +218,18 @@ impl RetrievalService {
                     channel_records.push(ChannelRecord::succeeded("vector", results.len()));
                     channels.push(results);
                 }
-                Ok(EmbeddingRetrievalOutcome::Degraded(degradation)) => {
+                Ok(EmbeddingRetrievalOutcome::Degraded(attempt)) => {
                     // Not a failure: the embedding side answered, and its answer
                     // was that no canonical corpus can serve this query right
                     // now. It contributes no candidates, so it is not counted as
                     // a successful channel either.
-                    warnings.push(format!("vector channel degraded: {}", degradation.as_str()));
-                    channel_records.push(ChannelRecord::degraded("vector", degradation.as_str()));
-                    embedding_degradation = Some(degradation);
+                    warnings.push(format!(
+                        "vector channel degraded: {}",
+                        attempt.reason.as_str()
+                    ));
+                    channel_records
+                        .push(ChannelRecord::degraded("vector", attempt.reason.as_str()));
+                    embedding_degradation = Some(attempt);
                 }
                 Err(e) => {
                     warnings.push(format!("vector channel failed: {e}"));
@@ -411,10 +415,12 @@ pub struct RetrievalResult {
     pub retrieval_policy_version: String,
     pub degraded: bool,
     pub degraded_channels: Vec<String>,
-    /// Present only when the governed embedding client declined. The one
-    /// retryable member of the vocabulary is `GenerationChanged`; every other
-    /// value tells a caller that retrying changes nothing on its own.
-    pub embedding_degradation: Option<EmbeddingRetrievalDegradation>,
+    /// Present only when the governed embedding client declined, and carrying
+    /// the attempt it declined on so a caller entitled to authorize the one
+    /// retryable case can name a predecessor. The one retryable member of the
+    /// vocabulary is `GenerationChanged`; every other value tells a caller that
+    /// retrying changes nothing on its own.
+    pub embedding_degradation: Option<DegradedRetrievalAttempt>,
     pub warnings: Vec<String>,
     pub normalized: NormalizedRetrievalRequest,
 }
@@ -422,6 +428,10 @@ pub struct RetrievalResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Named here rather than beside the service's own imports: the service
+    // matches on the outcome and never on the vocabulary, so importing it there
+    // would be an unused import in every build that is not a test build.
+    use crate::embedding::EmbeddingRetrievalDegradation;
     use crate::retrieval::ChannelOutcome;
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -1456,7 +1466,10 @@ mod tests {
         let workspace = WorkspaceId::new();
         let context = RequestContext::new(workspace, PrincipalId::new());
         let client = FakeRetrievalClient::answering(EmbeddingRetrievalOutcome::Degraded(
-            EmbeddingRetrievalDegradation::MissingLocalIndex,
+            DegradedRetrievalAttempt::of(
+                vestrace_domain::EmbeddingJobId::new(),
+                EmbeddingRetrievalDegradation::MissingLocalIndex,
+            ),
         ));
         let journal = RecordingJournal::new();
         let service = with_client(journal.clone(), client.clone());
@@ -1469,7 +1482,7 @@ mod tests {
         assert!(result.degraded);
         assert_eq!(result.degraded_channels, vec!["vector"]);
         assert_eq!(
-            result.embedding_degradation,
+            result.embedding_degradation.map(|attempt| attempt.reason),
             Some(EmbeddingRetrievalDegradation::MissingLocalIndex)
         );
         assert!(
@@ -1490,9 +1503,13 @@ mod tests {
     async fn only_a_generation_change_reaches_the_caller_as_retryable() {
         let workspace = WorkspaceId::new();
         let context = RequestContext::new(workspace, PrincipalId::new());
+        let job_id = vestrace_domain::EmbeddingJobId::new();
         let client = FakeRetrievalClient::answering(EmbeddingRetrievalOutcome::Degraded(
-            EmbeddingRetrievalDegradation::GenerationChanged(
-                vestrace_domain::embedding::RetrievalGenerationChangedReason::Revoked,
+            DegradedRetrievalAttempt::of(
+                job_id,
+                EmbeddingRetrievalDegradation::GenerationChanged(
+                    vestrace_domain::embedding::RetrievalGenerationChangedReason::Revoked,
+                ),
             ),
         ));
         let service = with_client(Arc::new(StubJournal), client);
@@ -1506,9 +1523,28 @@ mod tests {
             .embedding_degradation
             .expect("a decline must be readable as a value");
         assert!(degradation.is_retryable());
+        // And it names the attempt to retry. A caller told only that a retry is
+        // permitted has been told it may spend a provider call without being
+        // told what to spend it on, and the retry command takes a predecessor.
+        assert_eq!(
+            degradation.job_id,
+            Some(job_id),
+            "a retryable decline must name the attempt a successor would follow"
+        );
         assert!(
             !EmbeddingRetrievalDegradation::TransitionNotReady.is_retryable(),
             "an unactivated transition is not fixed by asking again"
+        );
+        // A retryable reason with no attempt behind it authorizes nothing: the
+        // command would have no predecessor to name.
+        assert!(
+            !DegradedRetrievalAttempt::unattempted(
+                EmbeddingRetrievalDegradation::GenerationChanged(
+                    vestrace_domain::embedding::RetrievalGenerationChangedReason::Revoked,
+                ),
+            )
+            .is_retryable(),
+            "a degradation that preceded any attempt cannot be retried"
         );
     }
 

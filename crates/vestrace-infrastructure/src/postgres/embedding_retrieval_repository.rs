@@ -7,14 +7,18 @@ use async_trait::async_trait;
 use vestrace_application::{
     ApplicationError, RequestContext,
     embedding::{
-        AcceptRetrievalAttempt, EmbeddingRetrievalRepository, FinalizeRetrievalResult,
-        ObserveRetrievalGenerationChange, RetrievalAttemptAdmission, RetrievalMemberReference,
-        RetryRetrievalGenerationChanged,
+        AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalRepository,
+        FinalizeRetrievalResult, ObserveRetrievalGenerationChange, RetrievalAttemptAdmission,
+        RetrievalAttemptView, RetrievalMemberReference, RetryRetrievalGenerationChanged,
     },
 };
 use vestrace_domain::{
     CorpusGenerationId, EmbeddingJobId, ModelQualificationRevisionId, ModelRevisionId,
-    embedding::{CanonicalEmbeddingSpace, CanonicalGenerationSnapshot, EmbeddingSpaceKey},
+    embedding::{
+        CanonicalEmbeddingSpace, CanonicalGenerationSnapshot, EmbeddingSpaceKey,
+        RetrievalGenerationChangedReason,
+    },
+    id::RetrievalRunId,
 };
 
 use super::PgStore;
@@ -177,6 +181,124 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
                 },
             )
             .collect())
+    }
+
+    /// One attempt, read back from the durable record alone.
+    ///
+    /// Keyed from the fence rather than from the job, because the fence is what
+    /// makes a job a retrieval attempt: a job with no fence was never admitted
+    /// as one, and answering for it would report a `delivery` or `rebuild` job
+    /// as a retrieval that found nothing.
+    ///
+    /// Every optional join is at most one row -- the schema holds one fence,
+    /// one result, one generation change and one successor per job -- so this
+    /// is one query rather than a count-and-fetch. What is deliberately absent:
+    /// the result's references (the caller already received those as its search
+    /// result), the fence's guard version and corpus revision (internal
+    /// ordering, not progress), and anything at all about whether some process
+    /// has an index loaded.
+    async fn attempt_view(
+        &self,
+        context: &RequestContext,
+        job_id: EmbeddingJobId,
+    ) -> Result<Option<RetrievalAttemptView>, ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let row: Option<(
+            uuid::Uuid,
+            String,
+            i64,
+            uuid::Uuid,
+            uuid::Uuid,
+            i64,
+            i64,
+            Option<i32>,
+            Option<String>,
+            Option<uuid::Uuid>,
+            Option<uuid::Uuid>,
+        )> = sqlx::query_as(
+            "SELECT fence.request_id, job.state, job.version, \
+                    fence.space_registration_id, fence.generation_id, \
+                    fence.generation_epoch, fence.member_count, \
+                    result.reference_count, change.reason, \
+                    predecessor.predecessor_job_id, successor.successor_job_id \
+               FROM embedding_retrieval_fences AS fence \
+               JOIN embedding_jobs AS job \
+                 ON job.workspace_id = fence.workspace_id AND job.id = fence.job_id \
+          LEFT JOIN embedding_retrieval_results AS result \
+                 ON result.workspace_id = fence.workspace_id \
+                AND result.job_id = fence.job_id \
+          LEFT JOIN embedding_retrieval_generation_changes AS change \
+                 ON change.workspace_id = fence.workspace_id \
+                AND change.job_id = fence.job_id \
+          LEFT JOIN embedding_retrieval_retry_edges AS predecessor \
+                 ON predecessor.workspace_id = fence.workspace_id \
+                AND predecessor.successor_job_id = fence.job_id \
+          LEFT JOIN embedding_retrieval_retry_edges AS successor \
+                 ON successor.workspace_id = fence.workspace_id \
+                AND successor.predecessor_job_id = fence.job_id \
+              WHERE fence.workspace_id = $1 AND fence.job_id = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(job_id.as_uuid())
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(map_retrieval_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let generation_changed_reason = row.8.as_deref().map(changed_reason).transpose()?;
+        // The degradation this attempt recorded, stated from the durable facts
+        // rather than remembered from the request that observed it. A recorded
+        // generation change is one; a terminal job with neither record is the
+        // same `missing_local_index` the client reports, because the local
+        // index was the only thing that could have answered it. A job still
+        // running has not degraded -- it has not finished.
+        let degradation_reason = if let Some(reason) = generation_changed_reason {
+            Some(EmbeddingRetrievalDegradation::GenerationChanged(reason).as_str())
+        } else if row.7.is_some() {
+            None
+        } else if row.1 == "failed_definite" || row.1 == "cancelled" {
+            Some(EmbeddingRetrievalDegradation::MissingLocalIndex.as_str())
+        } else {
+            None
+        };
+        Ok(Some(RetrievalAttemptView {
+            job_id,
+            request_id: RetrievalRunId::from_uuid(row.0),
+            job_state: row.1,
+            job_version: positive(row.2, "embedding job version")?,
+            space_registration_id: row.3,
+            generation_id: row.4,
+            generation_epoch: non_negative(row.5, "pinned generation epoch")?,
+            generation_member_count: non_negative(row.6, "pinned member count")?,
+            reference_count: row
+                .7
+                .map(|count| {
+                    u32::try_from(count).map_err(|_| {
+                        ApplicationError::Internal(
+                            "retrieval reference count must be non-negative".to_owned(),
+                        )
+                    })
+                })
+                .transpose()?,
+            degradation_reason,
+            generation_changed_reason,
+            predecessor_job_id: row.9.map(EmbeddingJobId::from_uuid),
+            successor_job_id: row.10.map(EmbeddingJobId::from_uuid),
+            // A change was recorded and nothing has been authorized against it
+            // yet. Once a successor exists this is false for all time, because
+            // a predecessor has exactly one.
+            retry_available: generation_changed_reason.is_some() && row.10.is_none(),
+        }))
     }
 
     async fn accept_attempt(
@@ -351,6 +473,23 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         Ok(EmbeddingJobId::from_uuid(successor))
     }
+}
+
+/// The stored reason back into the closed vocabulary.
+///
+/// A value outside it is a storage fault rather than a new reason: the column's
+/// own CHECK admits exactly these five, so reading a sixth means the catalogue
+/// and this code disagree, and guessing would publish that disagreement as a
+/// fact.
+fn changed_reason(stored: &str) -> Result<RetrievalGenerationChangedReason, ApplicationError> {
+    RetrievalGenerationChangedReason::ALL
+        .into_iter()
+        .find(|reason| reason.as_str() == stored)
+        .ok_or_else(|| {
+            ApplicationError::Storage(format!(
+                "stored retrieval generation change reason is not in the vocabulary: {stored}"
+            ))
+        })
 }
 
 fn non_negative(value: i64, what: &str) -> Result<u64, ApplicationError> {

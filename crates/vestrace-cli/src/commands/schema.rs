@@ -60,6 +60,30 @@ fn openapi_v1() -> serde_json::Value {
             "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
         }
     ]);
+    // A read carries no Idempotency-Key. Requiring one would document a
+    // replay guarantee the route does not make and cannot make: nothing is
+    // created, so there is nothing for a second identical call to collide
+    // with.
+    let governed_read_headers = serde_json::json!([
+        {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        },
+        {
+            "name": "x-principal-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        },
+        {
+            "name": "x-request-id",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+        }
+    ]);
     serde_json::json!({
         "openapi": "3.1.0",
         "info": {
@@ -1386,6 +1410,18 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 }
             },
+            "/v1/embedding-jobs/{id}/retrieval": {
+                "get": {
+                    "summary": "Read what one retrieval attempt did",
+                    "description": "Identities, states, epochs, counts, attempt lineage and closed reasons. Never ciphertext, vector components, a vector digest, a credential, or any claim about whether a process has a local index loaded.",
+                    "tags": ["embedding-jobs"],
+                    "parameters": governed_read_headers.clone(),
+                    "responses": {
+                        "200": { "description": "The attempt", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmbeddingRetrievalAttempt" } } } },
+                        "404": { "description": "No such attempt in this workspace", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } } }
+                    }
+                }
+            },
             "/v1/embedding-transitions/{id}/acknowledge-carry": {
                 "post": {
                     "summary": "Acknowledge a carried transition ambiguity and create its one successor",
@@ -1568,6 +1604,27 @@ fn openapi_v1() -> serde_json::Value {
                         "successor_embedding_job_id": { "type": "string", "format": "uuid" }
                     },
                     "required": ["predecessor_embedding_job_id", "successor_embedding_job_id"]
+                },
+                "EmbeddingRetrievalAttempt": {
+                    "type": "object",
+                    "description": "One retrieval attempt, read back. The reference count says how many memories the terminal result named, not which; the caller already received those as its search result.",
+                    "properties": {
+                        "embedding_job_id": { "type": "string", "format": "uuid" },
+                        "retrieval_request_id": { "type": "string", "format": "uuid" },
+                        "job_state": { "type": "string", "enum": ["requested", "running", "succeeded", "failed_definite", "inconclusive_unknown", "cancelled"] },
+                        "job_version": { "type": "integer", "format": "int64", "minimum": 1, "description": "What an authorized retry must agree with." },
+                        "space_registration_id": { "type": "string", "format": "uuid" },
+                        "pinned_generation_id": { "type": "string", "format": "uuid" },
+                        "pinned_generation_epoch": { "type": "integer", "format": "int64", "minimum": 0 },
+                        "pinned_generation_member_count": { "type": "integer", "format": "int64", "minimum": 0 },
+                        "reference_count": { "type": ["integer", "null"], "minimum": 0, "description": "Absent while no terminal result exists, which is not the same as a result that named none." },
+                        "degradation_reason": { "type": ["string", "null"], "enum": ["missing_local_index", "legacy_adoption_pending", "transition_not_ready", "generation_not_ready", "retrieval_generation_changed", "retrieval_pending", null] },
+                        "generation_changed_reason": { "type": ["string", "null"], "enum": ["stale", "revoked", "replaced", "corpus_changed", "member_unavailable", null] },
+                        "predecessor_embedding_job_id": { "type": ["string", "null"], "format": "uuid" },
+                        "successor_embedding_job_id": { "type": ["string", "null"], "format": "uuid" },
+                        "retry_available": { "type": "boolean", "description": "False once a successor exists: a predecessor has exactly one." }
+                    },
+                    "required": ["embedding_job_id", "retrieval_request_id", "job_state", "job_version", "space_registration_id", "pinned_generation_id", "pinned_generation_epoch", "pinned_generation_member_count", "retry_available"]
                 },
                 "AcknowledgeEmbeddingTransitionCarryRequest": {
                     "type": "object",

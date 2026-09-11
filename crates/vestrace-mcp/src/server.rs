@@ -694,6 +694,30 @@ fn retrieval_result_content(result: &RetrievalResult) -> serde_json::Value {
         "withheld": &result.withheld,
         "retrieval_policy_version": &result.retrieval_policy_version,
         "degraded": result.degraded,
+        "vector_channel": vector_channel_content(result),
+    })
+}
+
+/// Why the governed vector channel declined, when it did.
+///
+/// `degraded` alone says a channel dropped out; it does not say which one or
+/// why, and an agent reading this output has no other way to find out. So the
+/// closed reason is stated, together with the attempt it belongs to -- exactly
+/// one member of the vocabulary earns an authorized retry, and that retry names
+/// a predecessor job, so a reason without an identity would tell an agent it
+/// may ask again without telling it what to ask about.
+///
+/// Null when the channel did not decline. Nothing about the query, its vector,
+/// or a digest of either appears here: the whole value is a reason, two booleans
+/// worth of state, and one job identity.
+fn vector_channel_content(result: &RetrievalResult) -> serde_json::Value {
+    let Some(attempt) = result.embedding_degradation else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "reason": attempt.reason.as_str(),
+        "retry_available": attempt.is_retryable(),
+        "embedding_job_id": attempt.job_id.map(|id| id.as_uuid()),
     })
 }
 

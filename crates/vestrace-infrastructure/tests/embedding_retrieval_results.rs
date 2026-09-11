@@ -1164,3 +1164,217 @@ async fn a_published_projection_resolves_to_its_memory_revision(pool: PgPool) {
     // does not do is read the answer afterwards.
     runtime.close().await;
 }
+
+/// The read model reports what the durable record holds, and nothing it does
+/// not.
+///
+/// Driven through the real guarded functions rather than by inserting rows,
+/// because the view's job is to state the outcome of those functions. Rows
+/// written by hand would prove that the SELECT reads its own columns and
+/// nothing about whether those columns mean what the view says they mean.
+#[sqlx::test(migrations = false)]
+async fn the_attempt_view_reports_what_the_durable_record_holds(pool: PgPool) {
+    use vestrace_application::embedding::EmbeddingRetrievalRepository;
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let a = attempt(&pool, &runtime).await;
+    let request = Uuid::now_v7();
+    let fence = accept_fence(&runtime, &a, request).await.unwrap();
+
+    let context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(a.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+    let repository = vestrace_infrastructure::postgres::PgEmbeddingRetrievalRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    );
+    let job_id = vestrace_domain::EmbeddingJobId::from_uuid(a.job);
+
+    // An accepted attempt that has not finished: pinned, and undecided.
+    let view = repository
+        .attempt_view(&context, job_id)
+        .await
+        .expect("an accepted attempt is readable")
+        .expect("an accepted attempt exists");
+    assert_eq!(view.job_id.as_uuid(), a.job);
+    assert_eq!(view.request_id.as_uuid(), request);
+    assert_eq!(view.space_registration_id, a.space);
+    assert_eq!(view.generation_id, a.generation);
+    assert_eq!(
+        view.reference_count, None,
+        "no terminal result is absent, not zero"
+    );
+    assert_eq!(view.degradation_reason, None);
+    assert_eq!(view.generation_changed_reason, None);
+    assert!(!view.retry_available, "nothing has been declined yet");
+    assert_eq!(view.predecessor_job_id, None);
+    assert_eq!(view.successor_job_id, None);
+
+    // What it reports about the generation is what the fence pinned, not what
+    // the generation happens to be now.
+    let (pinned_epoch, pinned_members): (i64, i64) = sqlx::query_as(
+        "SELECT generation_epoch, member_count FROM embedding_retrieval_fences \
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(a.workspace)
+    .bind(fence)
+    .fetch_one(&pool)
+    .await
+    .expect("the fence this attempt took");
+    assert_eq!(view.generation_epoch, pinned_epoch as u64);
+    assert_eq!(view.generation_member_count, pinned_members as u64);
+
+    // A job that exists but was never admitted as an attempt has no view. The
+    // fence is what makes a job an attempt, so a job with none has not declined
+    // and has not answered -- it has not started, and a zeroed view would say
+    // otherwise.
+    let base = common::prepare_delivery_embedding_job(&pool, &runtime).await;
+    let unfenced = accept_retrieval_job(&pool, &runtime, &base).await;
+    let unfenced_context = vestrace_application::RequestContext::new(
+        base.context.workspace_id,
+        vestrace_domain::PrincipalId::new(),
+    );
+    assert!(
+        repository
+            .attempt_view(
+                &unfenced_context,
+                vestrace_domain::EmbeddingJobId::from_uuid(unfenced)
+            )
+            .await
+            .expect("a job with no fence is not a failure")
+            .is_none(),
+        "a job that took no fence must not read back as a retrieval that found nothing"
+    );
+
+    // And a job in another workspace is absent rather than readable. The view
+    // is scoped by the request context, not by the identity the caller states.
+    let elsewhere = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::new(),
+        vestrace_domain::PrincipalId::new(),
+    );
+    assert!(
+        repository
+            .attempt_view(&elsewhere, job_id)
+            .await
+            .expect("a foreign attempt is not a failure")
+            .is_none(),
+        "an attempt must not be readable from another workspace"
+    );
+
+    runtime.close().await;
+}
+
+/// A terminal result reads back as its count, and a declined attempt reads back
+/// as its closed reason and the successor it earned.
+#[sqlx::test(migrations = false)]
+async fn a_terminal_attempt_reads_back_as_its_outcome_and_its_lineage(pool: PgPool) {
+    use vestrace_application::embedding::EmbeddingRetrievalRepository;
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let repository = vestrace_infrastructure::postgres::PgEmbeddingRetrievalRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    );
+
+    // One attempt that answered.
+    let answered = attempt(&pool, &runtime).await;
+    let answered_fence = accept_fence(&runtime, &answered, Uuid::now_v7())
+        .await
+        .unwrap();
+    // The reference table names identities and does not resolve them; what a
+    // reference means is `resolve_members`' job, proven in its own test.
+    let (memory, revision) = (Uuid::now_v7(), Uuid::now_v7());
+    finalize(
+        &runtime,
+        &answered,
+        answered_fence,
+        &[(memory, revision, 0, 0.75)],
+    )
+    .await
+    .expect("a result lands on a current generation");
+
+    let context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(answered.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+    let view = repository
+        .attempt_view(
+            &context,
+            vestrace_domain::EmbeddingJobId::from_uuid(answered.job),
+        )
+        .await
+        .unwrap()
+        .expect("an answered attempt exists");
+    assert_eq!(
+        view.reference_count,
+        Some(1),
+        "the count of what answered, not the references themselves"
+    );
+    assert_eq!(
+        view.degradation_reason, None,
+        "an attempt that answered did not degrade"
+    );
+    assert!(!view.retry_available);
+
+    // And one that was declined, then retried.
+    let declined = attempt(&pool, &runtime).await;
+    let declined_fence = accept_fence(&runtime, &declined, Uuid::now_v7())
+        .await
+        .unwrap();
+    observe_change(&runtime, &declined, declined_fence, "corpus_changed")
+        .await
+        .expect("a generation change is terminal");
+    let declined_context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(declined.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+    let declined_id = vestrace_domain::EmbeddingJobId::from_uuid(declined.job);
+
+    let view = repository
+        .attempt_view(&declined_context, declined_id)
+        .await
+        .unwrap()
+        .expect("a declined attempt exists");
+    assert_eq!(
+        view.degradation_reason,
+        Some("retrieval_generation_changed")
+    );
+    assert_eq!(
+        view.generation_changed_reason,
+        Some(vestrace_domain::embedding::RetrievalGenerationChangedReason::CorpusChanged)
+    );
+    assert!(
+        view.retry_available,
+        "a confirmed change with no successor is the one case a retry may follow"
+    );
+    assert_eq!(view.reference_count, None);
+
+    let successor = Uuid::now_v7();
+    authorize_retry(
+        &runtime,
+        &declined,
+        successor,
+        Uuid::now_v7(),
+        "attempt-view-key",
+    )
+    .await
+    .expect("a confirmed change authorizes one successor");
+
+    let view = repository
+        .attempt_view(&declined_context, declined_id)
+        .await
+        .unwrap()
+        .expect("the predecessor is still readable");
+    assert_eq!(
+        view.successor_job_id.map(|id| id.as_uuid()),
+        Some(successor),
+        "the predecessor names the one successor it earned"
+    );
+    assert!(
+        !view.retry_available,
+        "a predecessor has exactly one successor; once spent, the retry is gone"
+    );
+
+    runtime.close().await;
+}

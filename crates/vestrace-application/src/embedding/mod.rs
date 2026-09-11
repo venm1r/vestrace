@@ -58,10 +58,11 @@ pub use result::{
     EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
 };
 pub use retrieval::{
-    AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalExecutionService,
-    EmbeddingRetrievalJobClient, EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository,
-    EmbeddingRetrievalSink, FinalizeRetrievalResult, ObserveRetrievalGenerationChange,
-    QueryEmbedding, RetrievalAttemptAdmission, RetrievalMemberReference, RetrievalResultReference,
+    AcceptRetrievalAttempt, DegradedRetrievalAttempt, EmbeddingRetrievalDegradation,
+    EmbeddingRetrievalExecutionService, EmbeddingRetrievalJobClient, EmbeddingRetrievalOutcome,
+    EmbeddingRetrievalRepository, EmbeddingRetrievalSink, FinalizeRetrievalResult,
+    ObserveRetrievalGenerationChange, QueryEmbedding, RetrievalAttemptAdmission,
+    RetrievalAttemptView, RetrievalMemberReference, RetrievalResultReference,
     RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
     SharedEmbeddingRetrievalRepository, SharedEmbeddingRetrievalSink,
 };

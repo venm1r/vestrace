@@ -23,8 +23,8 @@ use vestrace_application::{
     ApplicationError, GovernedInputSealer, MaterialErasureService, MaterialKeyVault,
     NormalizedRetrievalRequest, RequestContext,
     embedding::{
-        AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalJobClient,
-        EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository,
+        AcceptRetrievalAttempt, DegradedRetrievalAttempt, EmbeddingRetrievalDegradation,
+        EmbeddingRetrievalJobClient, EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository,
     },
 };
 use vestrace_domain::{
@@ -174,14 +174,20 @@ impl<V, C> PgEmbeddingRetrievalJobClient<V, C> {
             Some(EmbeddingRetrievalOutcome::Completed(candidates))
         } else if let Some(reason) = row.1 {
             Some(EmbeddingRetrievalOutcome::Degraded(
-                EmbeddingRetrievalDegradation::GenerationChanged(changed_reason(&reason)?),
+                DegradedRetrievalAttempt::of(
+                    job_id,
+                    EmbeddingRetrievalDegradation::GenerationChanged(changed_reason(&reason)?),
+                ),
             ))
         } else if row.2 == "failed_definite" || row.2 == "cancelled" {
             // Terminal with neither record: no worker could answer it. The
             // local index is the only thing that can, so its absence is what
             // this says, and it says it without inventing a new vocabulary.
             Some(EmbeddingRetrievalOutcome::Degraded(
-                EmbeddingRetrievalDegradation::MissingLocalIndex,
+                DegradedRetrievalAttempt::of(
+                    job_id,
+                    EmbeddingRetrievalDegradation::MissingLocalIndex,
+                ),
             ))
         } else {
             None
@@ -310,8 +316,12 @@ where
         // deployment mid-transition still answers from its other channels, and
         // the journal records that this one declined and why.
         let Some(registration) = self.active_registration(context).await? else {
+            // No attempt was admitted, so the degradation names none. A
+            // caller cannot retry what was never tried.
             return Ok(EmbeddingRetrievalOutcome::Degraded(
-                EmbeddingRetrievalDegradation::LegacyAdoptionPending,
+                DegradedRetrievalAttempt::unattempted(
+                    EmbeddingRetrievalDegradation::LegacyAdoptionPending,
+                ),
             ));
         };
 
@@ -420,7 +430,7 @@ where
                 // may still complete it; what expired is this caller's
                 // patience, and the other channels still have an answer.
                 return Ok(EmbeddingRetrievalOutcome::Degraded(
-                    EmbeddingRetrievalDegradation::Pending,
+                    DegradedRetrievalAttempt::of(job_id, EmbeddingRetrievalDegradation::Pending),
                 ));
             }
             tokio::time::sleep(POLL_INTERVAL).await;

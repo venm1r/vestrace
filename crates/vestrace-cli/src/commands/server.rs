@@ -261,6 +261,15 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
     ))
     .with_embedding_job_repository(governed.embedding_jobs())
     .with_embedding_transition_repository(governed.embedding_transitions())
+    // Installed whether or not this deployment has an embedding provider.
+    // The authority is the database, not the provider: with none configured
+    // no attempt is ever admitted, so the read answers "no such attempt" and
+    // the retry is refused by SQL -- which are the true answers. Leaving it
+    // out would make both routes answer 503, which says the server is broken
+    // rather than that there is nothing to read.
+    .with_embedding_retrieval_repository(Arc::new(
+        vestrace_infrastructure::PgEmbeddingRetrievalRepository::new(store.clone()),
+    ))
     .with_ag_ui(Arc::new(PgAgUiRepository::new(store_for_ag_ui)))
     .with_capability_grants(capability_grants)
     .with_purge(purge)
