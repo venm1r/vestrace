@@ -5264,16 +5264,152 @@ every caller installs a definition, reads all four values back out of `pg_proc`,
 and compares them — so a copy that drifted could not pass quietly. It would
 either fail to find its needle or fail its own restore comparison.
 
-### Six of the nine remain
+### Record 4 — legacy raw-mutation guard (`ad304a2`)
 
-`canonical member Live predicate`, `recipe one-satisfier bijection`,
-`target credential slot/version lineage`, `rotation completion-blocker adoption`,
-`source/vector erasure invalidation`, `legacy runtime-write refusal`.
+- Authority: `vestrace_reject_raw_p03_mutation()`, the `BEFORE` trigger every
+  adoption table carries. From migration 0176, outside this package's range; no
+  migration file was touched, only a function body inside one isolated test
+  database.
+- Predicate: `current_user <> 'vestrace_guarded_owner'`, with its `RAISE` left
+  standing so only the condition is edited.
+- What the existing suite already asserted, and could not distinguish:
+  `the_runtime_role_cannot_write_adoption_tables_directly` drives four raw
+  statements as the runtime role and asserts 42501 for each. Two different
+  things raise 42501 on these tables — the table grant and this trigger — and
+  reading the test cannot say which.
+- **The runtime role is stopped by the grant.** PostgreSQL checks privileges
+  before firing row triggers, so the trigger never runs for that caller. Its
+  refusal is byte-identical with the guard disabled, and says "permission
+  denied" rather than the guard's own words.
+- **The trigger is the sole defence for the caller the grants let through.** A
+  privileged connection — a migration, an operator session, a mis-scoped tool —
+  passes the grant and is refused by the trigger alone. Disabled, its raw
+  `UPDATE` lands and moves an adoption's state with no guarded operation in its
+  history.
+- **Answer: outcome 2 for one caller, outcome 1 for another.** The existing test
+  proves the runtime role is walled off, which is true and worth having, and
+  does not prove what its name suggests about this guard.
+- The row is put back while the guard is still disabled, since restoring first
+  would make that the one write nobody can undo.
 
-One note taken in passing, since it decides how two of them will be built: the
-canonical member Live predicate cannot be probed by moving a material out of
-Live directly. `content_materials` carries a `BEFORE UPDATE OR DELETE` guard from
-`0174` and a deferred `AFTER UPDATE` canonical-consistency trigger from `0197`,
-so that state has to be reached through the real erasure authority. It therefore
-belongs with `source/vector erasure invalidation` in the erasure suite, and the
-two will be built together rather than each growing its own fixture.
+### Record 5 — transition one-satisfier bijection (`1090a80`)
+
+- Authority: `vestrace_validate_embedding_transition_bijection(uuid,uuid,boolean)`
+- Predicate: the first of two `EXISTS` joined by `OR` under one message,
+  prefixed with `FALSE AND` so the second stays standing. They are two rules
+  sharing a refusal, not one rule in two parts.
+- **No recipe without a satisfier is load-bearing.** Disabled,
+  `vestrace_prove_embedding_transition_completeness` accepts a batch whose second
+  recipe nothing ever answered and moves it to `ready_to_activate`. Nothing
+  objects at any boundary. The batch then stands as an activation candidate on
+  the strength of half its own plan.
+- **No satisfier without a recipe never runs.** The satisfactions table refuses
+  an orphan out of its own keys, identically with the mutation and without it.
+  Which key catches a given orphan is an accident of how the row is built — this
+  probe's row meets the projection-uniqueness key, not the recipe foreign key I
+  expected; that a key catches it before the rule runs is not an accident.
+- **Answer: outcome 1 for the reachable half, unreachable for the other.**
+- Three facts about the world had to be learned by being refused, and are now
+  written where the next reader meets them: a satisfaction cannot be deleted to
+  manufacture the shortfall (`vestrace_reject_p03_immutable_mutation` accepts
+  guarded inserts and nothing else); the second recipe must be *bound* and
+  unanswered, since an unbound recipe is caught by an earlier clause and the run
+  would be observing the wrong predicate; and a two-recipe batch needs inputs
+  `[[0],[0,1]]` with bindings 0 and 1 to satisfy per-recipe contiguity, the
+  declared-ordinal check and the one-recipe-per-target-input key at once.
+
+### Record 6 — canonical Live membership (`8e4db98`)
+
+- Authority: `vestrace_capture_embedding_generation(uuid,uuid,uuid,bigint)`
+- Predicate: `p.state='live' AND m.state='live'`, which the function states three
+  times — for the locks, the count and the enrolment. Two edits, because the two
+  questions differ. The run asserts the count is exactly three before editing
+  anything; if that ever changes, the second edit stops being "the whole
+  authority" and the record would quietly mean something else.
+- **Enrolment only:** the capture counts the Live members correctly and enrols
+  the erased one anyway. Caught at `COMMIT` by the deferred
+  `embedding_corpus_generations_canonical_consistent` trigger, which will not
+  have a generation whose member count is not the number of members it has.
+- **Whole authority:** count and enrolment agree again and are wrong together.
+  Caught inside the call by the comparison against the corpus state's own
+  `live_member_count`, which erasure had already moved using this same rule.
+- **Answer: outcome 2, twice, at two boundaries.** No unsafe state is reachable
+  through this predicate. What it buys is that the capture is *correct* rather
+  than merely caught — and the second edit is what shows why the trap closes at
+  all, since the corpus counter is computed by the same rule elsewhere.
+- The world is a canonical space that received a real delivery job's encrypted
+  outputs with one source then erased through the real propagation authority. A
+  fixture that flipped `state` by hand would be asking a question the system
+  never asks — and could not have flipped it anyway, past 0174's `BEFORE UPDATE
+  OR DELETE` guard and 0197's deferred canonical-consistency trigger.
+
+### Record 7 — erasure revocation, and a finding larger than the predicate (`e32b130`)
+
+- Authority: `vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)`
+- Predicate: the `EXISTS` deciding whether a generation holding a member
+  computed from the erased source is revoked.
+- **The branch cannot be reached on a canonical space.**
+  `vestrace_validate_canonical_member_liveness` is a deferred constraint trigger
+  refusing whenever a projection entry enrolled in any `encrypted_projection`
+  generation stops being Live. The propagation's first act per space is to
+  retire exactly such entries, so the whole transaction is refused at `COMMIT`
+  with `canonical generation member must remain Live` before the revocation can
+  mean anything. Members cannot be removed from a generation either, so no
+  ordering gets past it.
+- The mutation is installed anyway and changes nothing: same boundary, same
+  SQLSTATE, same message, propagation record rolled back too. That
+  indistinguishability is the evidence for unreachability rather than a null
+  result.
+- **Consequence, larger than the predicate and stated plainly: once a canonical
+  generation enrols a projection, the source that projection was computed from
+  can no longer be erased.** Erasure succeeds only while no generation holds it,
+  which the run demonstrates directly on the same authority one step earlier.
+- I am not calling this a defect. A corpus that cannot be unpublished arguably
+  should refuse to lose a member, and whether that is the intended design is the
+  lead's call. It is a fact about this system's erasure guarantees that no test
+  stated before now.
+- `embedding_erasure_propagation` does not contradict it. Its
+  `erasing_a_source_revokes_the_generations_computed_from_it` asserts that no
+  building or ready generation still holds a vector of the erased source, over a
+  world that contains no canonical generation — true, and vacuous. Reading that
+  suite gives the opposite impression of what the system does.
+- Scope: the branch stays reachable for `legacy_upgrade` generations, which the
+  liveness trigger deliberately does not cover. No fixture in this package builds
+  one holding real source dependencies, so that path is not qualified and is not
+  claimed to be.
+
+### Records 8 and 9 are NOT performed, and here is exactly why
+
+`target credential slot/version lineage` and `rotation completion-blocker
+adoption` both live inside `vestrace_activate_embedding_transition` — migration
+0201 lines 274–306 and 370. Neither was mutated, and neither is qualified.
+
+The reason is the one already recorded in `4a6b9a5`: **every call to
+`vestrace_activate_embedding_transition` anywhere in this repository is an
+`unwrap_err`.** No fixture has ever satisfied its preconditions. The furthest
+any test reaches is `embedding transition activation requires a canonical target
+space`, which is raised well before either of these predicates.
+
+Mutating a predicate that an earlier check already shadows would produce a
+passing test that establishes nothing. It is not the same situation as record 7,
+where the unreachability is structural — no ordering of operations gets past the
+liveness trigger — and the indistinguishability of the branch is therefore a
+property of the system. Here the shadowing is a property of the fixtures, and
+presenting it as a qualification would be dressing a gap as a result.
+
+What it would take, and how far the attempt got. The activation suite already
+holds every part: `register_canonical_space`, `prove_one_transition_onto` with
+its target-space and target-qualification arguments, `seed_qualification_head`
+and `activate`. Nobody has composed them. Composing them was attempted and does
+not yet work: pointing the delivery job's `space_registration_id` at the
+canonical registration makes the result chain fail at finalization with
+`Conflict("EMBEDDING_RESULT_CONFLICT")`, before any transition exists to
+activate. The probe that established this was removed rather than kept — a test
+asserting that conflict would enshrine it as expected behaviour, which is not
+what anyone has decided.
+
+So the remaining work for these two is a composition task, not a mutation task:
+a delivery job whose outputs land in a canonical space, on which a transition can
+be proven and activated. That is the same missing composition the package has
+carried since Task 13, and it is named here rather than absorbed into a count of
+nine.
