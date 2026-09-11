@@ -467,3 +467,109 @@ async fn a_crash_and_its_takeover_cost_one_provider_call_between_them(pool: PgPo
 
     let _ = std::fs::remove_file(url_file);
 }
+
+/// The index publication compare-and-swap has two sides, and a crash lands on
+/// exactly one of them.
+///
+/// `vestrace_publish_embedding_index_build` publishes the generation and marks
+/// the attempt published in one call. Before it, the attempt is `building`
+/// under a live claim and nothing is drawable -- a later worker must be able to
+/// take the claim when it lapses. After it, the generation is Ready and the
+/// attempt is spent, and stays that way although the process that spent it is
+/// gone.
+///
+/// Both sides are run in the same test rather than in two, because the property
+/// is that they *differ*: an observation that reported the same world on either
+/// side of a compare-and-swap would be describing the fixture, not the swap.
+#[sqlx::test(migrations = false)]
+#[ignore = "needs PostgreSQL plus the vestrace runtime role; run with --ignored --nocapture"]
+async fn an_index_build_crash_lands_on_one_side_of_its_publication(pool: PgPool) {
+    provisioned_runtime(&pool).await.close().await;
+    let database_url = ephemeral_database_url(&pool).await;
+    let url_file = write_url_file(&database_url);
+    let runtime_url =
+        std::env::var("VESTRACE_RUNTIME_DATABASE_URL").expect("runtime role is required");
+
+    let observe = |point: &'static str| {
+        let url_file = url_file.clone();
+        let runtime_url = runtime_url.clone();
+        move || {
+            let output = Command::new(scenario_binary())
+                .arg("--database-url-file")
+                .arg(&url_file)
+                .arg("--scenario")
+                .arg("embedding_worker_completion_crash")
+                .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
+                .env("VESTRACE_FAULT_POINT", point)
+                .env("VESTRACE_RUNTIME_DATABASE_URL", &runtime_url)
+                .output()
+                .expect("the index-CAS scenario must start");
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            println!("INDEX_CAS_OUTPUT point={point} stdout={stdout} stderr={stderr}");
+            assert!(
+                output.status.success(),
+                "the parent must prove its child-abort observation at {point}: {stderr}"
+            );
+            serde_json::from_str::<serde_json::Value>(stdout.trim())
+                .expect("the parent emits one JSON observation")
+        }
+    };
+
+    // Before the swap: claimed, building, nothing drawable.
+    let before = observe("before_index_cas")();
+    assert_eq!(before["point"], "before_index_cas");
+    assert_eq!(before["proved"], true);
+    assert_eq!(
+        before["persisted"]["attempt_state"], "building",
+        "the attempt the dead builder held is still its own"
+    );
+    assert_eq!(
+        before["persisted"]["attempt_claim_live"], true,
+        "and its claim outlives it, exactly as a work lease does"
+    );
+    assert_eq!(
+        before["persisted"]["generation_state"], "building",
+        "a generation whose index never published is not Ready"
+    );
+    assert_eq!(
+        before["persisted"]["ready_generations"], 0,
+        "so nothing in this workspace can be drawn from"
+    );
+
+    // After it: published and durable without its author.
+    let after = observe("after_index_cas")();
+    assert_eq!(after["point"], "after_index_cas");
+    assert_eq!(after["proved"], true);
+    assert_eq!(
+        after["persisted"]["attempt_state"], "published",
+        "the swap is durable although the process that made it is gone"
+    );
+    assert_eq!(after["persisted"]["generation_state"], "ready");
+    assert_eq!(
+        after["persisted"]["ready_generations"], 1,
+        "exactly one generation is drawable, and it is the one that was built"
+    );
+
+    // Neither side reached a provider. An index is built from projections
+    // already in the database; a crash in it must cost nothing, and a scenario
+    // that did not count would not notice a build that started calling out.
+    for (point, observation) in [("before", &before), ("after", &after)] {
+        assert_eq!(
+            observation["provider_requests"], 0,
+            "an index build must reach no provider, {point} the swap"
+        );
+    }
+
+    // And the two sides are different worlds, which is the whole claim.
+    assert_ne!(
+        before["persisted"]["attempt_state"],
+        after["persisted"]["attempt_state"]
+    );
+    assert_ne!(
+        before["persisted"]["generation_state"],
+        after["persisted"]["generation_state"]
+    );
+
+    let _ = std::fs::remove_file(url_file);
+}

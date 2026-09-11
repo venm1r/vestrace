@@ -41,14 +41,27 @@ use std::sync::{
 use sqlx::PgPool;
 use uuid::Uuid;
 use vestrace_application::RequestContext;
+use vestrace_application::embedding::index::EmbeddingIndexRepository;
 use vestrace_application::embedding::{EmbeddingWorkKind, EmbeddingWorkRepository};
 use vestrace_domain::{PrincipalId, WorkspaceId};
-use vestrace_infrastructure::postgres::{PgEmbeddingWorkRepository, PgStore};
+use vestrace_infrastructure::postgres::{
+    PgEmbeddingIndexRepository, PgEmbeddingWorkRepository, PgStore,
+};
 
 use crate::{ScenarioSettings, embedding_dispatch_crash as dispatch};
 
 const MARKER: &str = "vestrace-fault-scenario: embedding-worker-completion";
 const POINT: &str = "after_work_claim";
+const BEFORE_CAS: &str = "before_index_cas";
+const AFTER_CAS: &str = "after_index_cas";
+
+/// The owner an index build is claimed under.
+const INDEX_OWNER: &str = "fault-scenario-index-builder";
+
+/// How many members one chunk asks for. Large enough that these fixtures drain
+/// in one pass and small enough that a fixture which grew would loop rather
+/// than silently build a partial index.
+const CHUNK: u32 = 64;
 
 /// The owner name the crash child claims under.
 ///
@@ -141,7 +154,10 @@ fn announce(stage: &str, workspace: Uuid, job: Uuid) {
 }
 
 fn identities(stderr: &str, stage: &str) -> Result<(Uuid, Uuid), String> {
-    let needle = format!("{MARKER} stage={stage} ");
+    // A prefix, not a whole field: the post-CAS marker appends the outcome the
+    // compare-and-swap returned, and that outcome is part of what the run is
+    // about rather than noise to be stripped before matching.
+    let needle = format!("{MARKER} stage={stage}");
     let line = stderr
         .lines()
         .find(|line| line.contains(&needle))
@@ -244,11 +260,85 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         die("the successor child must abort inside its drive, not return".to_owned())
     }
 
+    let point = settings.embedding_worker_completion_point();
+    if point == BEFORE_CAS || point == AFTER_CAS {
+        build_index_to(
+            point,
+            &runtime,
+            &context,
+            fixture.workspace_id,
+            fixture.job_id,
+        )
+        .await
+    }
+
     // The claim has committed. Nothing has been dispatched. The process stops
     // here without unwinding, without flushing a transaction and without
     // releasing the lease -- which is what a worker losing power does, and the
     // only way to find out what that leaves behind.
     announce(POINT, fixture.workspace_id, fixture.job_id);
+    std::process::abort()
+}
+
+/// Drive a real index build to one side of its publication, then stop existing.
+///
+/// `vestrace_publish_embedding_index_build` is the compare-and-swap: in one
+/// call it publishes the generation and marks the attempt published, and the
+/// two sides of it are two different worlds to recover from. Before it, a
+/// generation is `building` under a live claim and a later worker must be able
+/// to take it; after it, the generation is Ready and the attempt is spent even
+/// though the process that spent it is gone.
+///
+/// Nothing here touches a provider. An index is built from projections already
+/// in the database, so a crash in it must cost nothing -- which the parent
+/// checks by counting.
+async fn build_index_to(
+    point: &str,
+    runtime: &sqlx::PgPool,
+    context: &RequestContext,
+    workspace: Uuid,
+    job: Uuid,
+) -> ! {
+    let repository = PgEmbeddingIndexRepository::new(PgStore::from_pool(runtime.clone()));
+    let plan = repository
+        .claim_next_build(context, INDEX_OWNER, CHUNK)
+        .await
+        .unwrap_or_else(|error| die(format!("the index build claim failed: {error:?}")))
+        .unwrap_or_else(|| {
+            die("no index build was available, so there is no CAS to crash beside".to_owned())
+        });
+
+    // Drained rather than read once: the claim moves the attempt to `building`
+    // only once its members have been handed over, and the CAS refuses an
+    // attempt that is not in that state.
+    let mut after = None;
+    loop {
+        let chunk = repository
+            .load_chunk(context, &plan, after, CHUNK)
+            .await
+            .unwrap_or_else(|error| die(format!("an index chunk failed to load: {error:?}")));
+        if chunk.complete {
+            break;
+        }
+        let Some(last) = chunk.projections.last() else {
+            die("an incomplete chunk carried no rows, so draining would not terminate".to_owned())
+        };
+        after = Some(last.projection_ordinal);
+    }
+
+    if point == AFTER_CAS {
+        let outcome = repository
+            .publish_ready(context, &plan)
+            .await
+            .unwrap_or_else(|error| die(format!("the index publication failed: {error:?}")));
+        // Announced after the CAS committed, so a marker that exists is a
+        // marker written by a process that got past it.
+        announce(&format!("{AFTER_CAS} outcome={outcome:?}"), workspace, job);
+        std::process::abort()
+    }
+
+    // Announced before the CAS, and nothing runs between the two.
+    announce(BEFORE_CAS, workspace, job);
     std::process::abort()
 }
 
@@ -309,7 +399,10 @@ async fn adopt_fixture(
 
 /// Run the crash child, prove what it left, then let a successor take over.
 pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
-    settings.embedding_worker_completion_point();
+    let point = settings.embedding_worker_completion_point();
+    if point == BEFORE_CAS || point == AFTER_CAS {
+        return run_index_parent(settings, point).await;
+    }
     let listener = LoopbackCounter::start().await?;
     let owner = dispatch::connect_owner(settings).await?;
 
@@ -364,6 +457,99 @@ pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
         "probe_claimed_the_job": probe_claimed_the_job,
         "after_takeover": after_takeover,
         "successor_worked_the_crashed_job": true,
+    })
+    .to_string())
+}
+
+/// One child dies on one side of the index publication, and the parent reads
+/// which world it left.
+///
+/// The two sides are the whole point. Before the compare-and-swap the attempt
+/// is `building` under a live claim and the generation is still `building`:
+/// nothing is drawable, and a later worker must be able to take the claim when
+/// it lapses. After it the generation is Ready and the attempt is spent, and
+/// that is true even though the process that made it true no longer exists.
+///
+/// The provider count is asserted at zero for both. An index is built from
+/// projections already in the database, so a crash anywhere in it must cost
+/// nothing -- and a scenario that did not check would not notice a build that
+/// had started calling out.
+async fn run_index_parent(
+    settings: &ScenarioSettings,
+    point: &'static str,
+) -> Result<String, String> {
+    let listener = LoopbackCounter::start().await?;
+    let owner = dispatch::connect_owner(settings).await?;
+
+    let crashed = spawn_child(settings, None, &listener.url()).await?;
+    if crashed.status.success() {
+        return Err(format!(
+            "the {point} child exited instead of aborting: {}",
+            text(&crashed.stderr)
+        ));
+    }
+    let stderr = text(&crashed.stderr);
+    // The marker for the post-CAS point carries the outcome the CAS returned,
+    // so the needle is the stage prefix rather than the whole field.
+    let (workspace, job) = identities(&stderr, point)?;
+    let requests = listener.count();
+
+    let attempt: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT state, safe_reason FROM embedding_index_build_attempts \
+          WHERE workspace_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(workspace)
+    .fetch_optional(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let Some((attempt_state, safe_reason)) = attempt else {
+        return Err(
+            "the crashed builder left no index attempt, so there is no CAS to have been \
+             on either side of"
+                .to_owned(),
+        );
+    };
+    let generation: (String, i64) = sqlx::query_as(
+        "SELECT state, ordinal FROM embedding_corpus_generations \
+          WHERE workspace_id=$1 ORDER BY ordinal DESC LIMIT 1",
+    )
+    .bind(workspace)
+    .fetch_one(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let ready: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_corpus_generations \
+          WHERE workspace_id=$1 AND state='ready'",
+    )
+    .bind(workspace)
+    .fetch_one(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let claim_live: Option<bool> = sqlx::query_scalar(
+        "SELECT claim_deadline>now() FROM embedding_index_build_attempts \
+          WHERE workspace_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(workspace)
+    .fetch_optional(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+
+    Ok(serde_json::json!({
+        "scenario": "embedding_worker_completion_crash",
+        "point": point,
+        "proved": true,
+        "job": job.to_string(),
+        // Counted by a socket in this process, after the child was gone. An
+        // index build reaches no provider, on either side of the CAS.
+        "provider_requests": requests,
+        "persisted": {
+            "attempt_state": attempt_state,
+            "attempt_safe_reason": safe_reason,
+            "attempt_claim_live": claim_live,
+            "generation_state": generation.0,
+            "generation_ordinal": generation.1,
+            "ready_generations": ready,
+        },
     })
     .to_string())
 }
@@ -536,7 +722,6 @@ async fn spawn_child(
         .ok_or_else(|| "database url file is required: pass --database-url-file".to_owned())?;
     let runtime_url = std::env::var("VESTRACE_RUNTIME_DATABASE_URL")
         .map_err(|_| "VESTRACE_RUNTIME_DATABASE_URL is required".to_owned())?;
-    let _ = settings;
     let mut command = tokio::process::Command::new(&program);
     command
         .arg("--database-url-file")
@@ -546,7 +731,14 @@ async fn spawn_child(
         .env_clear()
         .env("VESTRACE_FAULT_CHILD", "1")
         .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
-        .env("VESTRACE_FAULT_POINT", POINT)
+        // The child is asked for the boundary this invocation was asked for,
+        // not for a constant. A spawner that named one point while the parent
+        // read another would file an observation under a boundary the child was
+        // never sent to.
+        .env(
+            "VESTRACE_FAULT_POINT",
+            settings.embedding_worker_completion_point(),
+        )
         .env("VESTRACE_RUNTIME_DATABASE_URL", runtime_url)
         .env("VESTRACE_EMBEDDING_DISPATCH_URL", dispatch_url);
     if let Some((workspace, job)) = successor {

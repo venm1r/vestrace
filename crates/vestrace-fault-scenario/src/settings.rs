@@ -31,6 +31,15 @@ impl Scenario {
     }
 }
 
+/// Every boundary the worker-completion scenario knows.
+///
+/// Closed, and checked by name rather than by prefix: a point this scenario
+/// does not implement must be refused at parse time, when the refusal costs a
+/// message, rather than at abort time, when it costs an observation filed under
+/// a boundary nothing reached.
+pub const WORKER_COMPLETION_POINTS: [&str; 3] =
+    ["after_work_claim", "before_index_cas", "after_index_cas"];
+
 /// The boundary this invocation crashes at, in the vocabulary of its scenario.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScenarioPoint {
@@ -51,6 +60,10 @@ enum ScenarioPoint {
 pub struct ScenarioSettings {
     scenario: Scenario,
     point: ScenarioPoint,
+    /// The point as the invocation named it. Only the scenarios whose
+    /// vocabulary has more than one member read it, and each checks it against
+    /// its own closed list first.
+    requested_point: String,
     database_url: String,
     is_child: bool,
 }
@@ -126,7 +139,7 @@ impl ScenarioSettings {
                 ScenarioPoint::EmbeddingResultFinalization
             }
             Scenario::EmbeddingWorkerCompletion => {
-                if requested != "after_work_claim" {
+                if !WORKER_COMPLETION_POINTS.contains(&requested.as_str()) {
                     return Err(format!("unknown fault point '{requested}'"));
                 }
                 ScenarioPoint::EmbeddingWorkerCompletion
@@ -146,6 +159,7 @@ impl ScenarioSettings {
         Ok(Self {
             scenario,
             point,
+            requested_point: requested,
             database_url,
             is_child: env("VESTRACE_FAULT_CHILD").is_some(),
         })
@@ -222,12 +236,19 @@ impl ScenarioSettings {
     /// yet happened, so it is the one boundary whose survivors say something a
     /// later one cannot: the lease is held by a process that no longer exists,
     /// and the provider was never reached.
-    pub fn embedding_worker_completion_point(&self) {
+    pub fn embedding_worker_completion_point(&self) -> &'static str {
         if !matches!(self.point, ScenarioPoint::EmbeddingWorkerCompletion) {
             panic!(
                 "embedding_worker_completion_point() is defined only for the worker-completion scenario"
             );
         }
+        // Returned from the closed list rather than from the parsed string, so
+        // the value a scenario branches on is one of the names this build knows
+        // and not whatever arrived in the environment.
+        WORKER_COMPLETION_POINTS
+            .into_iter()
+            .find(|name| *name == self.requested_point)
+            .expect("the point was checked against this list at parse time")
     }
 
     pub fn database_url(&self) -> &str {
@@ -376,14 +397,12 @@ mod tests {
 
     #[test]
     fn worker_completion_has_only_its_post_claim_boundary() {
-        let settings = settings_for(
-            Some("embedding_worker_completion_crash"),
-            "after_work_claim",
-        )
-        .unwrap();
-        assert_eq!(settings.scenario(), Scenario::EmbeddingWorkerCompletion);
-        settings.embedding_worker_completion_point();
-        assert_eq!(settings.intent_point(), None);
+        for point in WORKER_COMPLETION_POINTS {
+            let settings = settings_for(Some("embedding_worker_completion_crash"), point).unwrap();
+            assert_eq!(settings.scenario(), Scenario::EmbeddingWorkerCompletion);
+            assert_eq!(settings.embedding_worker_completion_point(), point);
+            assert_eq!(settings.intent_point(), None);
+        }
         // It borrows no other scenario's vocabulary, in either direction.
         for borrowed in [
             "after_dispatch_before_receipt",
