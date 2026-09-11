@@ -5413,3 +5413,161 @@ a delivery job whose outputs land in a canonical space, on which a transition ca
 be proven and activated. That is the same missing composition the package has
 carried since Task 13, and it is named here rather than absorbed into a count of
 nine.
+
+## Completion package (2026-09-08) — Task 14, Step 4: the final complete gate matrix
+
+Run as the plan writes them, in the plan's order, on the final source. Every
+command exited 0. Durations are wall clock for the invocation on an
+already-built tree; the whole matrix took 7.8 minutes plus the forced Clippy
+re-run described below.
+
+| # | Command | Exit | Wall | Result |
+| ---: | --- | ---: | ---: | --- |
+| 1 | `cargo test -p vestrace-domain --test embedding_contract -- --nocapture` | 0 | 1.0s | 24 passed |
+| 2 | `cargo test -p vestrace-application retrieval -- --nocapture` | 0 | 2.8s | 43 + 1 passed |
+| 3 | `cargo test -p vestrace-infrastructure --test embedding_canonical_generations --test embedding_index_builds --test embedding_executor --test embedding_transition_activation --test embedding_retrieval_results --test embedding_erasure_propagation --test embedding_legacy_adoption -- --nocapture` | 0 | 172.0s | 21 + 16 + 2 + 11 + 14 + 10 + 11 = 85 passed |
+| 4 | `cargo test -p vestrace-infrastructure --test embedding_schema_contract --test embedding_runtime_role_refusals --test p03_upgrade_provisioning --test runtime_role_cannot_write_directly -- --nocapture` | 0 | 151.6s | 16 + 4 + 9 + 45 = 74 passed |
+| 5 | `cargo test -p vestrace-cli --test embedding_worker_once --test worker_once_cli --test provider_runtime_wiring --test provider_openapi_contract -- --nocapture` | 0 | 41.0s | 2 + 4 + 8 + 8 = 22 passed |
+| 6 | `cargo test -p vestrace-http --test embedding_retrieval_routes --test route_inventory_is_exhaustive -- --nocapture` | 0 | 4.7s | 9 + 8 = 17 passed |
+| 7 | `cargo test -p vestrace-mcp --test embedding_retrieval -- --nocapture` | 0 | 0.7s | 5 passed |
+| 8 | `cargo build -p vestrace-fault-scenario` | 0 | 15.3s | — |
+| 9 | `cargo test --test embedding_fault_scenario_e2e -- --ignored --nocapture --test-threads=1` | 0 | 59.7s | 6 passed (57.53s harness) |
+| 10 | `cargo fmt --all -- --check` | 0 | 4.8s | — |
+| 11 | `cargo clippy -p … --all-targets -- -D warnings` (seven crates) | 0 | 8.5s cached / **142.4s forced** | 0 diagnostics |
+| 12 | `node --test tests/p02_scope.test.mjs tests/p03_scope.test.mjs tests/p04_scope.test.mjs` | 0 | 4.5s | 17 pass, 0 fail |
+| 13 | `node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-04c-preflight.json --scope p04-scope.mjs` | 0 | 0.3s | — |
+| 14 | `node scripts/protocol-lock.mjs --check .` | 0 | 1.6s | — |
+| 15 | `git diff --check` | 0 | 0.2s | — |
+
+**271 Rust tests across commands 1–7, plus 6 fault-scenario cases and 17 node
+scope tests. Nothing skipped, nothing blocked, nothing collapsed into PASS.**
+
+### The Clippy number is recorded twice on purpose
+
+Command 11 finished in 8.5 seconds, which is not how long it takes to check
+seven crates and all their targets. It reused a cache. Earlier in this package
+that exact shape produced a false clean: a `--workspace` Clippy run reported
+zero while a fresh run with the explicit package list found
+`empty_line_after_doc_comments`, which reached `origin/main` in `c613141` and
+was repaired in `60f312a`.
+
+So the command was run again with every crate root touched to defeat the cache.
+That run took 142.4 seconds, exited 0, and produced zero diagnostics. Both
+numbers are in the table because the cached one alone would not have been
+evidence, and quietly replacing it with the forced one would hide that the
+matrix as written can produce a result that is not one.
+
+### What this matrix does not cover
+
+- `embedding_worker_restart` is not in the plan's Step 4 list, though Step 1
+  measured it. It passed 7/7 on the same source, and that figure is in the
+  baseline table rather than here, because this section reports the matrix the
+  plan specifies rather than a matrix of my own choosing.
+- It is not a workspace run. The eight red suites recorded in the baseline are
+  outside every command above and are still red; no command here would have
+  noticed them, and none of them is claimed to be fixed.
+- Command 2's filter matches nothing in six of the package's binaries. Those
+  zero-match results are not counted in the 271.
+
+
+## Completion package (2026-09-08) — Task 14, Step 5: what the earlier "Not true yet" list now gets wrong, and what it still gets right
+
+The `Not true yet` list above belongs to the earlier P04 package and is left
+exactly as it stands. Superseding it by editing it would destroy a record that
+was accurate when written and was accepted as written. What follows names each
+item this completion package has made false, with the evidence that makes it
+false, and then names the items that still hold.
+
+### Items this package has made false
+
+**"The fifth external-effect fault point, `AfterOutcomeBeforeRunCommit`, is
+unproved. Nothing composes an embedding-job executor, so there is no worker to
+crash at that boundary."**
+False on both halves. `crates/vestrace-application/src/embedding/executor.rs`
+composes the executor, and `tests/embedding_fault_scenario_e2e.rs` drives
+`after_outcome_before_run_commit` at line 126 inside
+`embedding_dispatch_crashes_leave_only_the_accepted_baseline`, against a real
+child process of the real binary that ends in `abort()`.
+
+**"Duplicate dispatch is proved at the transition level and not by an adapter
+call counter. … a counter would only establish that an uncalled test double
+stayed uncalled."**
+False. `a_crash_and_its_takeover_cost_one_provider_call_between_them` counts
+provider calls across a crash and the takeover that follows it, on a loopback
+counter read outside the crashing child. The double is called, and how many
+times is the assertion.
+
+**"No worker composes the embedding-job executor. … `worker.rs:423-455` still
+holds only the legacy `EmbedMemoryHandler` wiring. The live embedding path calls
+the raw provider and `store.upsert` directly."**
+False. `crates/vestrace-cli/src/commands/worker.rs` composes an embedding
+runtime beside the run worker and drives `poll_embedding_work` for every
+configured workspace, on the same governed dispatch graph. It is absent rather
+than degraded when no embedding provider is configured.
+`crates/vestrace-cli/tests/embedding_worker_once.rs` exercises it.
+
+**"No embedding job is dispatched outside a test. … the worker registers no
+handler for embedding work, because no work-item kind leases it yet."**
+False by the same wiring. `EmbeddingWorkKind` exists and the claim/finish work
+authorities are in migration 0199; `embedding_worker_restart.rs` proves the
+lease behaviour against the real functions.
+
+**"`waiting_for_result_keys` and `EmbeddingJobResultPrepared` are named by the
+specification and by this repository's comments, and exist nowhere in it."**
+False. `waiting_for_result_keys` is a parsed progress state in
+`embedding_key_repository.rs`, and `embedding_result_repository.rs` is the
+PostgreSQL authority for delivery `EmbeddingJobResultPrepared` markers.
+
+**"the specification's `RetrievalGenerationFence` does not exist"** (part of the
+reopened item).
+False. `crates/vestrace-domain/src/embedding/retrieval.rs` defines it, and
+`embedding_contract.rs` exercises it.
+
+### Items that still hold, and are not superseded here
+
+- **There is no operator backfill command.** Still true; nothing in
+  `crates/vestrace-cli/src/` provides one. A database upgraded under the
+  restricted runtime role still gets no corpus generations.
+- **The P04 plan has not been independently reviewed, and P03 Tasks 11–13 have
+  not been adversarially reviewed.** Neither was discharged by this package
+  either.
+- **`embedding_spaces` and `memory_embeddings` are not guarded-owner tables**
+  and escape the catalog-derived closed-world refusal test.
+- **Modifying 0188 changed its checksum**, so a persistent database that applied
+  the earlier 0188 must be rebuilt.
+- **Task 8's classifier-versus-supersession race is not independently
+  mutation-proven**, and the earlier record's account of why remains the
+  account.
+- **The `Deserialize` derive on `ConnectionAdmissionLimits`** is still there.
+- **The served OpenAPI document's pre-existing request schemas still disagree
+  with their handlers.**
+- **Five in-scope files that P04 never edited no longer match their captured
+  bytes.**
+- **A repeated identical acknowledgement is refused rather than replayed.**
+- **Whether all six embedding-job states are reachable through governed paths is
+  not established by this package.** All six appear in the vocabulary and in
+  tests, which is not the same claim, and I am not making the stronger one on
+  the strength of a grep.
+
+### What this package adds to the list
+
+- **Activation is unreachable.** Every call to
+  `vestrace_activate_embedding_transition` in this repository is an
+  `unwrap_err`; the furthest any fixture reaches is "requires a canonical target
+  space". Two of Task 14's nine mutations are therefore not performed, and the
+  composition that would enable them fails at result finalization with
+  `Conflict("EMBEDDING_RESULT_CONFLICT")`.
+- **Once a canonical generation enrols a projection, the source it was computed
+  from can no longer be erased.** Whether that is the intended design is an open
+  question; that it is the behaviour is now evidenced.
+- **`erasing_a_source_revokes_the_generations_computed_from_it` is vacuous.** Its
+  world holds no canonical generation, so its central assertion runs over an
+  empty set.
+- **The orphan half of the transition one-satisfier rule is unreachable**, the
+  satisfactions table's own keys having made the state unconstructible.
+- **The runtime role's protection on the adoption tables is the grant, not the
+  trigger.** `the_runtime_role_cannot_write_adoption_tables_directly` proves the
+  runtime role is walled off and does not prove what its name suggests about
+  `vestrace_reject_raw_p03_mutation`.
+- **The repository's red-test debt is eight suites and 26 tests**, not the seven
+  and 25 recorded earlier in this package.
