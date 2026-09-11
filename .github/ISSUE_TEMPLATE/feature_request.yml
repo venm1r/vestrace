@@ -1,0 +1,84 @@
+name: Feature request
+description: Propose a concrete capability or improvement for Vestrace
+title: "[Feature]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and user outcome before the implementation. Large architectural changes may require design discussion before code is written.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation, workflow problem, or unmet need does this request address?
+      placeholder: "When ..., users/agents cannot ..., which causes ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Describe a concrete scenario in which this capability would be used.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Vestrace do differently from a user's or integrator's perspective?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Memory / context lifecycle
+        - Governance / authority / provenance
+        - HTTP API
+        - MCP interface
+        - CLI
+        - Console
+        - Storage / PostgreSQL
+        - Import / export / interoperability
+        - Operations / deployment
+        - Documentation / developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds, existing features, or different designs have you considered?
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and boundary impact
+      description: Note any expected API, schema, migration, security, authority, provenance, or backward-compatibility implications.
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Add measurements, examples, links, prior art, or other evidence that helps evaluate the request.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and roadmap documentation for an equivalent request.
+          required: true
+        - label: I checked the implementation status so I am not reporting a proposed feature as missing implemented behavior.
+          required: true
+        - label: This request describes a problem or use case, not only a preferred implementation.
+          required: true
