@@ -734,3 +734,234 @@ impl MaterialKeyVault for RefusingVault {
         Err(VaultError::Unavailable)
     }
 }
+
+const RAW_MUTATION_GUARD: &str = "public.vestrace_reject_raw_p03_mutation()";
+
+/// The guard's whole predicate, and the edit that disables exactly it.
+///
+/// The `RAISE` is deliberately left in place. Deleting the statement would
+/// prove only that a removed refusal does not refuse; disabling the condition
+/// asks the question the qualification exists for -- whether anything else
+/// stands between a privileged connection and this table.
+const GUARD_NEEDLE: &str = "    IF current_user <> 'vestrace_guarded_owner' THEN";
+const GUARD_MUTATION: &str = "    IF FALSE THEN";
+
+/// Read one authority's definition, owner, ACL and runtime reachability.
+///
+/// Duplicated per suite rather than shared: Rust test binaries share code only
+/// through `tests/common/mod.rs`, which is outside this package's change scope.
+/// Safe in the one way that matters -- every caller installs, reads back, and
+/// compares all four values, so a copy that drifted could not pass quietly.
+async fn authority_state(pool: &PgPool, signature: &str) -> (String, String, Option<String>, bool) {
+    sqlx::query_as(
+        "SELECT pg_get_functiondef(oid), pg_get_userbyid(proowner), \
+                array_to_string(proacl,'|'), \
+                has_function_privilege('vestrace',oid,'EXECUTE') \
+           FROM pg_proc WHERE oid=$1::regprocedure",
+    )
+    .bind(signature)
+    .fetch_one(pool)
+    .await
+    .expect("the authority is in the catalogue")
+}
+
+async fn install_authority(pool: &PgPool, definition: &str) {
+    sqlx::raw_sql(definition)
+        .execute(pool)
+        .await
+        .expect("the authority definition is installable");
+}
+
+/// Move one adoption's state by a raw `UPDATE`, and say how it was refused.
+///
+/// An `UPDATE` of the plan the guarded path already wrote, rather than an
+/// `INSERT` of a new one: an insert would meet the table's foreign keys and its
+/// one-plan-per-space unique constraint first, and a refusal from those would
+/// say nothing about this guard.
+async fn raw_state_change(
+    executor: &PgPool,
+    fixture: &LegacySpace,
+    plan: Uuid,
+    state: &str,
+) -> Result<u64, (String, String)> {
+    let mut scoped = executor.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(fixture.context.workspace_id.to_string())
+        .fetch_one(&mut *scoped)
+        .await
+        .unwrap();
+    let outcome = sqlx::query(
+        "UPDATE embedding_legacy_adoptions SET state=$1 WHERE workspace_id=$2 AND id=$3",
+    )
+    .bind(state)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(plan)
+    .execute(&mut *scoped)
+    .await;
+    match outcome {
+        Ok(done) => {
+            scoped.commit().await.unwrap();
+            Ok(done.rows_affected())
+        }
+        Err(error) => {
+            scoped.rollback().await.unwrap();
+            let database = error.as_database_error().expect("a database refusal");
+            Err((
+                database
+                    .code()
+                    .map(|code| code.into_owned())
+                    .unwrap_or_default(),
+                database.message().to_owned(),
+            ))
+        }
+    }
+}
+
+async fn plan_state(pool: &PgPool, fixture: &LegacySpace, plan: Uuid) -> String {
+    sqlx::query_scalar(
+        "SELECT state FROM embedding_legacy_adoptions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(plan)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Mutation qualification: two callers, two different defences, and only one of
+/// them is this guard.
+///
+/// `the_runtime_role_cannot_write_adoption_tables_directly` asserts 42501 for
+/// the runtime role and stops there. Two different things raise 42501 on these
+/// tables and that assertion cannot tell them apart: the table grant, which the
+/// runtime role does not hold, and `vestrace_reject_raw_p03_mutation`, the
+/// `BEFORE` trigger every adoption table carries. Disabling the trigger's
+/// predicate separates them.
+///
+/// The runtime role is refused either way, and by the grant -- PostgreSQL
+/// checks privileges before it fires row triggers, so the trigger never runs
+/// for that caller at all. Its refusal is unchanged by the mutation, and that
+/// invariance is the finding rather than a null result: it localises the
+/// runtime role's barrier in the grant, where a reader of the existing test
+/// could not have placed it.
+///
+/// What the trigger actually guards is the caller the grants let through: a
+/// privileged connection, of the kind a migration, an operator session, or a
+/// mis-scoped tool runs under. Disabled, that caller's raw `UPDATE` lands and
+/// moves an adoption's state with no guarded operation anywhere in the story.
+/// So this guard is the sole defence for that caller, and the two answers
+/// together are what the run records.
+#[sqlx::test(migrations = "../../migrations")]
+async fn mutating_the_raw_mutation_guard_lets_a_privileged_connection_move_an_adoption(
+    pool: PgPool,
+) {
+    let fixture = seed_legacy_space(&pool).await;
+    let repository = repository(&pool);
+    let progress = repository
+        .start_or_resume(&fixture.context, start(&fixture, "mutation"))
+        .await
+        .expect("one plan");
+    let plan = progress.plan_id.as_uuid();
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, RAW_MUTATION_GUARD).await;
+    assert!(
+        original.contains(GUARD_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before, both callers, and they are refused by different things.
+    let (runtime_state, runtime_message) = raw_state_change(&runtime, &fixture, plan, "rebuilding")
+        .await
+        .expect_err("the runtime role must not write adoption state directly");
+    assert_eq!(runtime_state, "42501");
+    assert!(
+        runtime_message.contains("permission denied"),
+        "the runtime role is stopped by the grant, before any trigger runs: {runtime_message}"
+    );
+
+    let (privileged_state, privileged_message) =
+        raw_state_change(&pool, &fixture, plan, "rebuilding")
+            .await
+            .expect_err("a privileged connection must not write adoption state directly");
+    assert_eq!(privileged_state, "42501");
+    assert_eq!(
+        privileged_message, "P03 state changes require a guarded operation",
+        "this caller passes the grant and is stopped by the trigger instead"
+    );
+    assert_eq!(plan_state(&pool, &fixture, plan).await, "planned");
+
+    install_authority(&pool, &original.replace(GUARD_NEEDLE, GUARD_MUTATION)).await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, RAW_MUTATION_GUARD).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Red for the caller the grants let through: the raw write lands.
+    assert_eq!(
+        raw_state_change(&pool, &fixture, plan, "rebuilding")
+            .await
+            .expect("with the guard disabled nothing else refuses a privileged raw write"),
+        1
+    );
+    assert_eq!(
+        plan_state(&pool, &fixture, plan).await,
+        "rebuilding",
+        "the unsafe state is an adoption moved with no guarded operation in its history"
+    );
+
+    // Unchanged for the runtime role, because the grant never let it reach the
+    // trigger. Recorded, not skipped: it is what localises that defence.
+    let (still_state, still_message) = raw_state_change(&runtime, &fixture, plan, "completed")
+        .await
+        .expect_err("the grant refuses the runtime role with or without the trigger");
+    assert_eq!(
+        (still_state, still_message),
+        (runtime_state.clone(), runtime_message.clone())
+    );
+
+    // Put the row back while the guard is still disabled, since restoring it
+    // first would make this the one write nobody can undo.
+    assert_eq!(
+        raw_state_change(&pool, &fixture, plan, "planned")
+            .await
+            .expect("the mutated guard still permits the repair"),
+        1
+    );
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, RAW_MUTATION_GUARD).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after, both callers, each by its own refusal again.
+    let (after_state, after_message) = raw_state_change(&pool, &fixture, plan, "rebuilding")
+        .await
+        .expect_err("the guard must refuse again");
+    assert_eq!(
+        (after_state, after_message),
+        (privileged_state.clone(), privileged_message.clone())
+    );
+    let (after_runtime_state, after_runtime_message) =
+        raw_state_change(&runtime, &fixture, plan, "rebuilding")
+            .await
+            .expect_err("and the grant must refuse again");
+    assert_eq!(after_runtime_state, runtime_state);
+    assert_eq!(after_runtime_message, runtime_message);
+    assert_eq!(plan_state(&pool, &fixture, plan).await, "planned");
+
+    runtime.close().await;
+}
