@@ -37,8 +37,12 @@ impl Scenario {
 /// does not implement must be refused at parse time, when the refusal costs a
 /// message, rather than at abort time, when it costs an observation filed under
 /// a boundary nothing reached.
-pub const WORKER_COMPLETION_POINTS: [&str; 3] =
-    ["after_work_claim", "before_index_cas", "after_index_cas"];
+pub const WORKER_COMPLETION_POINTS: [&str; 4] = [
+    "after_work_claim",
+    "before_index_cas",
+    "after_index_cas",
+    "before_activation_commit",
+];
 
 /// The boundary this invocation crashes at, in the vocabulary of its scenario.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -299,8 +303,21 @@ fn parse_embedding_dispatch_point(value: &str) -> Result<EffectFaultPoint, Strin
 mod tests {
     use super::*;
 
+    /// One file per call, not one per process.
+    ///
+    /// Keyed only by process id, every test in this module wrote and read the
+    /// same path, and the harness runs them in parallel: one test could see a
+    /// half-written file another was still writing and fail with an empty
+    /// database URL. It failed about one run in three, and only ever in
+    /// whichever test happened to lose the race -- which is why it looked like a
+    /// problem with that test rather than with this helper.
     fn url_file() -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("vestrace-fault-url-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "vestrace-fault-url-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::write(&path, "postgres://localhost/ephemeral").unwrap();
         path
     }

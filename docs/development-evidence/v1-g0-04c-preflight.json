@@ -52,6 +52,7 @@
     "crates/vestrace-fault-scenario/src/report.rs",
     "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
     "crates/vestrace-fault-scenario/src/scenarios/embedding_result_finalization_crash.rs",
+    "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs",
     "crates/vestrace-fault-scenario/src/scenarios/embedding_worker_completion_crash.rs",
     "crates/vestrace-fault-scenario/src/settings.rs",
     "crates/vestrace-http/src/api/embedding_jobs.rs",
@@ -1166,6 +1167,17 @@
       "removed_paths": [],
       "authorized_by": "User-confirmed lead decision for completion Task 13 fault points.",
       "reason": "Task 13's remaining fault points -- before/after index CAS and before/after activation commit -- each need a world holding a Ready canonical generation over the job's own space registration. The shared fault-scenario fixture in crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs registers a legacy_upgrade space and accepts the job against it, and migration 0197 refuses any generation of legacy_upgrade representation reaching Ready. That same refusal is why crates/vestrace-fault-scenario/src/scenarios/embedding_result_finalization_crash.rs fails today: its prepare_ready_generation opens and publishes through the legacy pair on that registration. Both files must change together -- the fixture to seed the q1 evidence vestrace_register_canonical_embedding_space demands and to accept the job against the canonical registration, the finalization scenario to use the canonical capture/publish pair. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-11T14:12:28.946Z",
+      "added_paths": [
+        "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs"
+      ],
+      "previous_change_scope_size": 129,
+      "new_change_scope_size": 130,
+      "removed_paths": [],
+      "authorized_by": "User-confirmed lead decision for completion Task 13 activation boundaries.",
+      "reason": "The activation fault points need a second physical job driven to publication, which needs two helpers this file already holds and keeps private: read_dispatch_authority, which assembles the provider dispatch authority from durable rows, and ResultPreparationDispatch, a ProviderDispatchRepository stub. Reaching them any other way means duplicating roughly 250 lines beside the originals, where the two copies would eventually disagree and nothing would say which was right. The amendment changes no behaviour in this scenario: the two items become pub(super) and nothing else moves. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

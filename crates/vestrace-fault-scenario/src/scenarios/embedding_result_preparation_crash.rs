@@ -71,7 +71,11 @@ type PersistedResultPreparationCounts = (
 /// The result repository needs only this embedding-specific completion lock.
 /// It invokes the same guarded SQL routine as the production adapter; the other
 /// dispatch methods deliberately remain unavailable in this focused scenario.
-struct ResultPreparationDispatch;
+/// Shared with the worker-completion scenario, which drives a second physical
+/// job through the same preparation path. It is a stub because no fault
+/// scenario dispatches through this port: the provider is reached over the
+/// loopback listener instead, where a party outside the process can count it.
+pub(super) struct ResultPreparationDispatch;
 
 impl ProviderDispatchRepository for ResultPreparationDispatch {
     fn prepare_dispatch<'life0, 'async_trait>(
@@ -567,7 +571,10 @@ async fn record_allowed_delivery_policy(
         .map_err(|error| error.to_string())
 }
 
-async fn read_dispatch_authority(
+/// Shared with the worker-completion scenario for the same reason the stub
+/// above is: a second copy of this join would eventually disagree with this one
+/// and nothing would say which was right.
+pub(super) async fn read_dispatch_authority(
     runtime: &PgPool,
     fixture: &dispatch::Fixture,
 ) -> Result<ProviderDispatchAuthority, String> {

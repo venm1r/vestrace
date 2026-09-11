@@ -48,12 +48,16 @@ use vestrace_infrastructure::postgres::{
     PgEmbeddingIndexRepository, PgEmbeddingWorkRepository, PgStore,
 };
 
-use crate::{ScenarioSettings, embedding_dispatch_crash as dispatch};
+use crate::{
+    ScenarioSettings, embedding_dispatch_crash as dispatch,
+    embedding_result_preparation_crash as preparation,
+};
 
 const MARKER: &str = "vestrace-fault-scenario: embedding-worker-completion";
 const POINT: &str = "after_work_claim";
 const BEFORE_CAS: &str = "before_index_cas";
 const AFTER_CAS: &str = "after_index_cas";
+const BEFORE_ACTIVATION: &str = "before_activation_commit";
 
 /// The owner an index build is claimed under.
 const INDEX_OWNER: &str = "fault-scenario-index-builder";
@@ -62,6 +66,14 @@ const INDEX_OWNER: &str = "fault-scenario-index-builder";
 /// in one pass and small enough that a fixture which grew would loop rather
 /// than silently build a partial index.
 const CHUNK: u32 = 64;
+
+/// The model and dimension the satisfier's stubbed response declares.
+///
+/// The model must be the one the space is registered against, because the
+/// result-eligibility plan compares them and refuses a response that speaks a
+/// different model than the space it is published into.
+const SATISFIER_MODEL: &str = "text-embedding-nomic-embed-text-v1.5";
+const SATISFIER_DIMENSIONS: usize = 768;
 
 /// The owner name the crash child claims under.
 ///
@@ -198,6 +210,12 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
     // the two children two experiments, and the count that matters -- one call
     // for a crash *and* its takeover -- would be the sum of two unrelated runs.
     let successor = std::env::var_os("VESTRACE_WORKER_SUCCESSOR").is_some();
+    let point = settings.embedding_worker_completion_point();
+    let activating = point == BEFORE_ACTIVATION;
+    // Only an activation executes the fixture's own job, and only an execution
+    // needs the outputs the build prepared. Every other point discards them,
+    // because keeping what is not used is how a fixture starts to drift.
+    let mut prepared = None;
     let fixture = if successor {
         adopt_fixture(
             &owner,
@@ -206,6 +224,12 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         )
         .await
         .unwrap_or_else(|error| die(error))
+    } else if activating {
+        let (fixture, vault, outputs) = dispatch::build_fixture_with_outputs(&owner, &runtime)
+            .await
+            .unwrap_or_else(|error| die(error));
+        prepared = Some((vault, outputs));
+        fixture
     } else {
         dispatch::build_fixture(&owner, &runtime)
             .await
@@ -260,7 +284,12 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         die("the successor child must abort inside its drive, not return".to_owned())
     }
 
-    let point = settings.embedding_worker_completion_point();
+    if activating {
+        let Some((vault, outputs)) = prepared else {
+            die("an activation child built no outputs to publish".to_owned())
+        };
+        activate_to(&owner, &runtime, &fixture, vault, &outputs).await
+    }
     if point == BEFORE_CAS || point == AFTER_CAS {
         build_index_to(
             point,
@@ -393,6 +422,9 @@ async fn adopt_fixture(
         connection_revision_id: row.5,
         evidence_id: row.3,
         space_registration_id: row.0,
+        // Not carried: a successor works the job it was handed, and nothing on
+        // its path names the qualification the space was registered against.
+        canonical_qualification_id: uuid::Uuid::nil(),
         intent: None,
     })
 }
@@ -402,6 +434,9 @@ pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
     let point = settings.embedding_worker_completion_point();
     if point == BEFORE_CAS || point == AFTER_CAS {
         return run_index_parent(settings, point).await;
+    }
+    if point == BEFORE_ACTIVATION {
+        return run_activation_parent(settings).await;
     }
     let listener = LoopbackCounter::start().await?;
     let owner = dispatch::connect_owner(settings).await?;
@@ -459,6 +494,430 @@ pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
         "successor_worked_the_crashed_job": true,
     })
     .to_string())
+}
+
+/// The immutable tuple a transition plan has to restate.
+///
+/// Read out of the binding snapshot rather than carried on the fixture: these
+/// are facts the snapshot already fixed, and a fixture that repeated them could
+/// repeat them wrongly.
+struct PlanBinding {
+    connection_qualification_id: Uuid,
+    model_revision_id: Uuid,
+    no_auth_binding_id: Uuid,
+}
+
+async fn plan_binding(
+    owner: &sqlx::PgPool,
+    fixture: &dispatch::Fixture,
+) -> Result<PlanBinding, String> {
+    let row: (Uuid, Uuid, Option<Uuid>) = sqlx::query_as(
+        "SELECT connection_qualification_revision_id, model_revision_id, \
+                no_auth_binding_revision_id \
+           FROM model_binding_snapshots WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.snapshot_id)
+    .fetch_one(owner)
+    .await
+    .map_err(dispatch::sql)?;
+    Ok(PlanBinding {
+        connection_qualification_id: row.0,
+        model_revision_id: row.1,
+        no_auth_binding_id: row
+            .2
+            .ok_or_else(|| "the fixture's snapshot names no no-auth binding".to_owned())?,
+    })
+}
+
+/// Build a transition over the fixture's own canonical space, satisfy it with a
+/// second physical job, and prove it ready to activate.
+///
+/// Every step goes through the guarded function a deployment would call. The
+/// satisfier is a real executed job rather than a written-in row, because the
+/// completeness proof reads durable result facts: a forged satisfier would be
+/// proving the transition against this fixture's own invention.
+async fn prove_one_transition(
+    owner: &sqlx::PgPool,
+    runtime: &sqlx::PgPool,
+    source: &dispatch::Fixture,
+    source_vault: std::sync::Arc<vestrace_infrastructure::crypto::HostMaterialKeyVault>,
+    source_outputs: &[vestrace_application::DeliveryOutputIdentity],
+) -> Result<(Uuid, Uuid, Uuid, i64), String> {
+    let binding = plan_binding(owner, source).await?;
+
+    // The source is executed first. The fixture leaves its job accepted with its
+    // outputs prepared and nothing published, and a transition replaces a *live*
+    // projection: without this there is no corpus for one to be a transition of.
+    execute_to_publication(runtime, source, source_vault, source_outputs).await?;
+
+    let candidate = dispatch::accept_additional_job(owner, runtime, source).await?;
+    let candidate_context = RequestContext::new(
+        WorkspaceId::from_uuid(candidate.workspace_id),
+        PrincipalId::from_uuid(candidate.principal_id),
+    );
+    let (candidate_vault, candidate_outputs) =
+        preparation::prepare_dispatch_outputs(owner, runtime, &candidate, &candidate_context)
+            .await?;
+
+    let source_projections: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM embedding_projection_entries \
+          WHERE workspace_id=$1 AND job_id=$2 AND state='live' ORDER BY input_ordinal",
+    )
+    .bind(source.workspace_id)
+    .bind(source.job_id)
+    .fetch_all(owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let Some(&old_projection) = source_projections.first() else {
+        return Err(
+            "the source job has no live projection, so there is nothing for a transition to \
+             replace"
+                .to_owned(),
+        );
+    };
+
+    let transition_id = Uuid::now_v7();
+    let plan_id = Uuid::now_v7();
+    let batch_id = Uuid::now_v7();
+    let mut transaction = runtime.begin().await.map_err(dispatch::sql)?;
+    dispatch::set_workspace(&mut transaction, source.workspace_id).await?;
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_plan_embedding_transition_version(\
+          $1,$2,$3,1,$4,$5,'no_auth',NULL,$6,$4,$5,$7,$8,$9,'no_auth',\
+          NULL,NULL,NULL,NULL,$6,$10,$11,$12,$13::uuid[],$14::jsonb)",
+    )
+    .bind(transition_id)
+    .bind(plan_id)
+    .bind(source.workspace_id)
+    .bind(source.connection_id)
+    .bind(source.connection_revision_id)
+    .bind(binding.no_auth_binding_id)
+    .bind(binding.connection_qualification_id)
+    .bind(binding.model_revision_id)
+    .bind(source.canonical_qualification_id)
+    .bind(source.space_registration_id)
+    .bind(batch_id)
+    .bind(Uuid::now_v7())
+    .bind(vec![Uuid::now_v7()])
+    .bind(sqlx::types::Json(serde_json::json!([[0]])))
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| format!("the transition plan was refused: {}", dispatch::sql(error)))?;
+    transaction.commit().await.map_err(dispatch::sql)?;
+
+    let attempt_id = Uuid::now_v7();
+    let mut transaction = runtime.begin().await.map_err(dispatch::sql)?;
+    dispatch::set_workspace(&mut transaction, source.workspace_id).await?;
+    let candidate_version: i64 =
+        sqlx::query_scalar("SELECT version FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(source.workspace_id)
+            .bind(candidate.job_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(dispatch::sql)?;
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_create_embedding_transition_batch_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(source.workspace_id)
+    .bind(plan_id)
+    .bind(batch_id)
+    .bind(attempt_id)
+    .bind(candidate.job_id)
+    .bind(0_i64)
+    .bind(old_projection)
+    .bind(0_i64)
+    .bind(candidate_version)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| format!("the batch attempt was refused: {}", dispatch::sql(error)))?;
+    transaction.commit().await.map_err(dispatch::sql)?;
+
+    // The satisfier is executed only now: the attempt has to exist before the
+    // result it will be satisfied by, or the batch has nothing to attribute.
+    execute_to_publication(runtime, &candidate, candidate_vault, &candidate_outputs).await?;
+
+    let executed_version: i64 =
+        sqlx::query_scalar("SELECT version FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(source.workspace_id)
+            .bind(candidate.job_id)
+            .fetch_one(owner)
+            .await
+            .map_err(dispatch::sql)?;
+    let mut transaction = runtime.begin().await.map_err(dispatch::sql)?;
+    dispatch::set_workspace(&mut transaction, source.workspace_id).await?;
+    sqlx::query_scalar::<_, String>(
+        "SELECT vestrace_observe_embedding_transition_attempt($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(source.workspace_id)
+    .bind(plan_id)
+    .bind(batch_id)
+    .bind(0_i64)
+    .bind(Some(attempt_id))
+    .bind(executed_version)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| format!("the satisfaction was refused: {}", dispatch::sql(error)))?;
+    transaction.commit().await.map_err(dispatch::sql)?;
+
+    // Observing the satisfier already advanced the transition, so completeness
+    // is proven against whatever version the database now holds rather than the
+    // one this code last saw.
+    let observed_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM embedding_transitions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(source.workspace_id)
+    .bind(transition_id)
+    .fetch_one(owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let mut transaction = runtime.begin().await.map_err(dispatch::sql)?;
+    dispatch::set_workspace(&mut transaction, source.workspace_id).await?;
+    let state: String = sqlx::query_scalar(
+        "SELECT vestrace_prove_embedding_transition_completeness($1,$2,$3,$4,$5)",
+    )
+    .bind(source.workspace_id)
+    .bind(transition_id)
+    .bind(plan_id)
+    .bind(batch_id)
+    .bind(observed_version)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| {
+        format!(
+            "the completeness proof was refused: {}",
+            dispatch::sql(error)
+        )
+    })?;
+    transaction.commit().await.map_err(dispatch::sql)?;
+    if state != "ready_to_activate" {
+        return Err(format!(
+            "an exactly satisfied batch must prove ready to activate, not {state}"
+        ));
+    }
+
+    let proven_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM embedding_transitions WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(source.workspace_id)
+    .bind(transition_id)
+    .fetch_one(owner)
+    .await
+    .map_err(dispatch::sql)?;
+    Ok((transition_id, plan_id, batch_id, proven_version))
+}
+
+/// Prove one transition, seed everything its activation would need, and stop
+/// existing on the near side of that activation.
+///
+/// Only the near side. `after_activation_commit` is not served, and the reason
+/// is a finding rather than an omission: every call to
+/// `vestrace_activate_embedding_transition` anywhere in this repository is an
+/// `unwrap_err`. No fixture has ever satisfied its preconditions, so a child
+/// that crashed after a successful activation would first have had to construct
+/// the first successful activation in the project -- and any guard it tripped
+/// could be a defect in the activation path rather than a gap in this fixture,
+/// with no way to tell the two apart from here.
+///
+/// What this boundary does establish is the state an activation would be
+/// attempted *from*: a transition proven ready to activate, a head seeded at a
+/// known version naming no active space, an audit event waiting, and a process
+/// that stopped before spending any of it.
+async fn activate_to(
+    owner: &sqlx::PgPool,
+    runtime: &sqlx::PgPool,
+    fixture: &dispatch::Fixture,
+    vault: std::sync::Arc<vestrace_infrastructure::crypto::HostMaterialKeyVault>,
+    outputs: &[vestrace_application::DeliveryOutputIdentity],
+) -> ! {
+    // The identities the proof produced are not carried out of here. The parent
+    // reads the transition back from the database by workspace, because what it
+    // must establish is what *survived*, and a child that named its own
+    // transition would be telling the parent what to look at.
+    if let Err(error) = prove_one_transition(owner, runtime, fixture, vault, outputs).await {
+        die(error)
+    }
+
+    // The head is seeded at version 1 naming the canonical qualification the
+    // target space is registered against, because the head's deferred
+    // consistency trigger requires the two to agree once the head points at it.
+    let mut seeded = match owner.begin().await {
+        Ok(value) => value,
+        Err(error) => die(dispatch::sql(error)),
+    };
+    if let Err(error) = sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *seeded)
+        .await
+    {
+        die(dispatch::sql(error))
+    }
+    if let Err(error) = dispatch::set_workspace(&mut seeded, fixture.workspace_id).await {
+        die(error)
+    }
+    let audit_id = Uuid::now_v7();
+    for statement in [
+        "INSERT INTO model_qualification_heads(workspace_id,model_revision_id,\
+         current_qualification_revision_id,version) VALUES($1,$2,$3,1)",
+    ] {
+        if let Err(error) = sqlx::query(statement)
+            .bind(fixture.workspace_id)
+            .bind(plan_binding_model(owner, fixture).await)
+            .bind(fixture.canonical_qualification_id)
+            .execute(&mut *seeded)
+            .await
+        {
+            die(format!(
+                "the qualification head seed failed: {}",
+                dispatch::sql(error)
+            ))
+        }
+    }
+    if let Err(error) = sqlx::query(
+        "INSERT INTO audit_events(id,workspace_id,principal_id,action,resource_type,\
+         resource_id,payload,created_at) \
+         VALUES($1,$2,$3,'embedding.transition.activated','embedding_transition',$1,'{}',NOW())",
+    )
+    .bind(audit_id)
+    .bind(fixture.workspace_id)
+    .bind(fixture.principal_id)
+    .execute(&mut *seeded)
+    .await
+    {
+        die(format!(
+            "the audit event seed failed: {}",
+            dispatch::sql(error)
+        ))
+    }
+    if let Err(error) = seeded.commit().await {
+        die(dispatch::sql(error))
+    }
+
+    // Proven, seeded, and nothing committed past it.
+    announce(BEFORE_ACTIVATION, fixture.workspace_id, fixture.job_id);
+    std::process::abort()
+}
+
+async fn plan_binding_model(owner: &sqlx::PgPool, fixture: &dispatch::Fixture) -> Uuid {
+    match plan_binding(owner, fixture).await {
+        Ok(binding) => binding.model_revision_id,
+        Err(error) => die(error),
+    }
+}
+
+/// Drive one accepted job all the way to published, live projections.
+///
+/// This is the ordinary result path, not a shortcut: the dispatch authority is
+/// made durable, the provider is reached over the loopback listener, the
+/// response is prepared, and the preparation is finalized. A transition needs a
+/// satisfier whose result is a real terminal fact, and a fixture that wrote one
+/// by hand would be proving the transition against its own forgery.
+///
+/// The outputs and their vault are handed in rather than prepared here, because
+/// preparing them twice for one job is not possible: the governed input
+/// material always attaches at the same evidence ordinal.
+async fn execute_to_publication(
+    runtime: &sqlx::PgPool,
+    fixture: &dispatch::Fixture,
+    vault: std::sync::Arc<vestrace_infrastructure::crypto::HostMaterialKeyVault>,
+    outputs: &[vestrace_application::DeliveryOutputIdentity],
+) -> Result<(), String> {
+    let context = RequestContext::new(
+        WorkspaceId::from_uuid(fixture.workspace_id),
+        PrincipalId::from_uuid(fixture.principal_id),
+    );
+
+    dispatch::drive(runtime, fixture, None).await?;
+    let url = std::env::var("VESTRACE_EMBEDDING_DISPATCH_URL")
+        .map_err(|_| "the satisfier child has no loopback dispatch URL".to_owned())?;
+    reqwest::Client::new()
+        .post(url)
+        .body("one governed embedding response")
+        .send()
+        .await
+        .map_err(|error| format!("the loopback provider call failed: {error}"))?;
+
+    let authority = preparation::read_dispatch_authority(runtime, fixture).await?;
+    let repository = std::sync::Arc::new(
+        vestrace_infrastructure::postgres::PgEmbeddingResultRepository::new(
+            PgStore::from_pool(runtime.clone()),
+            std::sync::Arc::new(preparation::ResultPreparationDispatch),
+        ),
+    );
+    let response = vestrace_application::GovernedEmbeddingsResponse::new(
+        SATISFIER_MODEL,
+        SATISFIER_MODEL.into(),
+        outputs
+            .iter()
+            .enumerate()
+            .map(|(ordinal, _)| {
+                vestrace_application::GovernedEmbeddingVector::from_provider_components(
+                    ordinal,
+                    vec![0.25_f32; SATISFIER_DIMENSIONS],
+                )
+                .map_err(|error| format!("the satisfier response is invalid: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        outputs.len(),
+    )
+    .map_err(|error| format!("the satisfier response is invalid: {error}"))?;
+
+    let preparation_id = vestrace_application::EmbeddingResultPreparationId::new();
+    let outcome = vestrace_application::EmbeddingResultPreparationService::new(
+        repository,
+        vault.clone(),
+        std::sync::Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+    )
+    .prepare(
+        context.clone(),
+        vestrace_application::EmbeddingResultDispatchAuthority {
+            job_id: vestrace_domain::EmbeddingJobId::from_uuid(fixture.job_id),
+            effect_id: vestrace_domain::ExternalEffectId::from_uuid(fixture.effect_id),
+            dispatch: authority,
+        },
+        vestrace_application::EmbeddingResultPreparationIdentities {
+            preparation_id,
+            receipt_id: vestrace_domain::id::ExternalEffectReceiptId::new(),
+            attachments: outputs
+                .iter()
+                .map(
+                    |output| vestrace_application::EmbeddingResultPreparedAttachment {
+                        output_ordinal: output.output_ordinal,
+                        intent_id: output.intent_id,
+                        attachment_id: vestrace_domain::PreparedMaterialAttachmentId::new(),
+                    },
+                )
+                .collect(),
+        },
+        response,
+    )
+    .await
+    .map_err(|error| format!("the satisfier's result preparation was refused: {error}"))?;
+    if outcome
+        != (vestrace_application::EmbeddingResultPreparationOutcome::Prepared { preparation_id })
+    {
+        return Err("the satisfier's preparation did not commit its own marker".to_owned());
+    }
+
+    vestrace_application::EmbeddingResultFinalizationService::new(
+        std::sync::Arc::new(
+            vestrace_infrastructure::postgres::PgEmbeddingResultFinalizationRepository::new(
+                PgStore::from_pool(runtime.clone()),
+            ),
+        ),
+        vault,
+        std::sync::Arc::new(vestrace_infrastructure::postgres::EmbeddingOutputHmacCommitter::new()),
+    )
+    .finalize(
+        &context,
+        &vestrace_application::EmbeddingResultFinalizationAuthority {
+            preparation_id,
+            job_id: vestrace_domain::EmbeddingJobId::from_uuid(fixture.job_id),
+            effect_id: vestrace_domain::ExternalEffectId::from_uuid(fixture.effect_id),
+        },
+    )
+    .await
+    .map_err(|error| format!("the satisfier's finalization was refused: {error}"))?;
+    Ok(())
 }
 
 /// One child dies on one side of the index publication, and the parent reads
@@ -549,6 +1008,77 @@ async fn run_index_parent(
             "generation_state": generation.0,
             "generation_ordinal": generation.1,
             "ready_generations": ready,
+        },
+    })
+    .to_string())
+}
+
+/// One child proves a transition, seeds what its activation would need, and
+/// stops on the near side of it. The parent reads what is standing there.
+///
+/// Everything is read back by workspace rather than taken from the child: the
+/// transition it proved, the head it seeded, the receipt that does not exist.
+/// The last of those is the point -- an activation is the only thing that may
+/// write one, and nothing here has activated.
+async fn run_activation_parent(settings: &ScenarioSettings) -> Result<String, String> {
+    let listener = LoopbackCounter::start().await?;
+    let owner = dispatch::connect_owner(settings).await?;
+
+    let crashed = spawn_child(settings, None, &listener.url()).await?;
+    if crashed.status.success() {
+        return Err(format!(
+            "the {BEFORE_ACTIVATION} child exited instead of aborting: {}",
+            text(&crashed.stderr)
+        ));
+    }
+    let (workspace, job) = identities(&text(&crashed.stderr), BEFORE_ACTIVATION)?;
+
+    let transition: (String, i64) =
+        sqlx::query_as("SELECT state, version FROM embedding_transitions WHERE workspace_id=$1")
+            .bind(workspace)
+            .fetch_one(&owner)
+            .await
+            .map_err(dispatch::sql)?;
+    let head: (Option<Uuid>, i64) = sqlx::query_as(
+        "SELECT active_space_registration_id, version FROM model_qualification_heads \
+          WHERE workspace_id=$1",
+    )
+    .bind(workspace)
+    .fetch_one(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_transition_activation_receipts WHERE workspace_id=$1",
+    )
+    .bind(workspace)
+    .fetch_one(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+    let live_projections: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_projection_entries \
+          WHERE workspace_id=$1 AND state='live'",
+    )
+    .bind(workspace)
+    .fetch_one(&owner)
+    .await
+    .map_err(dispatch::sql)?;
+
+    Ok(serde_json::json!({
+        "scenario": "embedding_worker_completion_crash",
+        "point": BEFORE_ACTIVATION,
+        "proved": true,
+        "job": job.to_string(),
+        // Two provider calls: the source's own result and the satisfier's.
+        // Proving a transition costs exactly the physical rebuild it names, and
+        // the activation itself -- had it happened -- would cost none.
+        "provider_requests": listener.count(),
+        "persisted": {
+            "transition_state": transition.0,
+            "transition_version": transition.1,
+            "head_active_space": head.0.map(|id| id.to_string()),
+            "head_version": head.1,
+            "activation_receipts": receipts,
+            "live_projections": live_projections,
         },
     })
     .to_string())

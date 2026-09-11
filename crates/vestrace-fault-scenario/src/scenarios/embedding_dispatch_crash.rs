@@ -41,6 +41,14 @@ pub(super) struct Fixture {
     /// The registration the job was accepted against, and the one every
     /// generation, index build and activation in these scenarios works over.
     pub(super) space_registration_id: Uuid,
+    /// The qualification revision that registration is bound to.
+    ///
+    /// An activation names it twice -- once as the batch's target
+    /// qualification and once as the head's current one -- because the head's
+    /// deferred consistency trigger demands the active space and the head agree
+    /// on it. A scenario that re-derived it would be re-deriving the thing
+    /// under test.
+    pub(super) canonical_qualification_id: Uuid,
     pub(super) intent: Option<ExternalEffectIntent>,
 }
 
@@ -163,6 +171,31 @@ fn replace_database(url: &str, database: &str) -> Result<String, String> {
 /// guarded revisions, pre-existing effect intent, qualification/snapshot rows,
 /// acceptance, admission policy, and complete request evidence.
 pub(super) async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fixture, String> {
+    build_fixture_with_outputs(owner, runtime)
+        .await
+        .map(|(fixture, _, _)| fixture)
+}
+
+/// The same fixture, keeping the prepared outputs and the vault that holds
+/// their keys.
+///
+/// A caller that wants to *execute* this job needs both, and preparing the
+/// outputs a second time is not an option: the governed input material always
+/// attaches at the same evidence ordinal, so a second preparation collides with
+/// the first. The plain `build_fixture` above discards them because the
+/// scenarios that crash before dispatch have no use for them.
+#[allow(clippy::type_complexity)]
+pub(super) async fn build_fixture_with_outputs(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> Result<
+    (
+        Fixture,
+        std::sync::Arc<vestrace_infrastructure::crypto::HostMaterialKeyVault>,
+        Vec<vestrace_application::DeliveryOutputIdentity>,
+    ),
+    String,
+> {
     // Job acceptance must atomically fix its outputs; an already accepted bare
     // job cannot be backfilled with guessed identities under the current gate.
     let fixture = build_result_preparation_fixture(owner, runtime).await?;
@@ -170,12 +203,12 @@ pub(super) async fn build_fixture(owner: &PgPool, runtime: &PgPool) -> Result<Fi
         WorkspaceId::from_uuid(fixture.workspace_id),
         PrincipalId::from_uuid(fixture.principal_id),
     );
-    super::embedding_result_preparation_crash::prepare_dispatch_outputs(
+    let (vault, outputs) = super::embedding_result_preparation_crash::prepare_dispatch_outputs(
         owner, runtime, &fixture, &context,
     )
     .await?;
     assert_baseline(owner, &fixture).await?;
-    Ok(fixture)
+    Ok((fixture, vault, outputs))
 }
 
 /// Result preparation receives its delivery job from the guarded output
@@ -371,7 +404,7 @@ async fn build_fixture_with_job(
     // database, because the legacy quarantine boundary is what several other
     // assertions are about. It is not carried on the fixture: nothing reads it,
     // and a field kept for a caller that does not exist is a field that drifts.
-    let canonical_registration_id = register_canonical_space(
+    let (canonical_registration_id, canonical_qualification_id) = register_canonical_space(
         owner,
         runtime,
         workspace_id.as_uuid(),
@@ -461,6 +494,7 @@ async fn build_fixture_with_job(
         connection_revision_id,
         evidence_id,
         space_registration_id: canonical_registration_id,
+        canonical_qualification_id,
         intent: Some(intent),
     };
     if accept_job {
@@ -491,7 +525,7 @@ async fn register_canonical_space(
     no_auth_binding: Uuid,
     model_revision: Uuid,
     connection_qualification: Uuid,
-) -> Result<Uuid, String> {
+) -> Result<(Uuid, Uuid), String> {
     let canonical_qualification = Uuid::now_v7();
     let probe_effect = Uuid::now_v7();
     let evidence_root = Uuid::now_v7();
@@ -654,7 +688,131 @@ async fn register_canonical_space(
     // transition activation all name a registration directly. Setting it here
     // would be the fixture making a routing decision it is not testing.
     governed.commit().await.map_err(sql)?;
-    Ok(registration)
+    Ok((registration, canonical_qualification))
+}
+
+/// One more delivery job in a world that already exists, ready to be accepted.
+///
+/// A transition needs a second physical job: the source's projection is the one
+/// being replaced, so the satisfier has to be somebody else's. Everything
+/// immutable is reused -- the same workspace, principal, binding snapshot and
+/// canonical registration -- and only the three identities a job owns
+/// exclusively are fresh: its external effect, its evidence root and itself.
+pub(super) async fn accept_additional_job(
+    owner: &PgPool,
+    runtime: &PgPool,
+    base: &Fixture,
+) -> Result<Fixture, String> {
+    let evidence_id = Uuid::now_v7();
+    let job_id = Uuid::now_v7();
+
+    // A real intent, not a copied row: the result path takes the value rather
+    // than the record, and an intent whose identity was chosen here could not be
+    // the one the repository persisted.
+    let workspace = WorkspaceId::from_uuid(base.workspace_id);
+    let principal = PrincipalId::from_uuid(base.principal_id);
+    let intent = ExternalEffectIntent::new(
+        "workspace://",
+        workspace,
+        principal,
+        "openai-compatible",
+        "embeddings",
+        "http://127.0.0.1:1234/v1/embeddings",
+        "sha256:arguments",
+        "produce a governed embedding",
+        vec![
+            EffectPrecondition::new("model-snapshot", base.snapshot_id.to_string())
+                .map_err(|error| error.to_string())?,
+        ],
+        "sha256:preconditions",
+        RiskCategory::Medium,
+        EffectReversibility::Unknown,
+        IdempotencyProfile::ProviderKey,
+        vestrace_domain::DeliverySemantics::AtLeastOnce,
+        Capability::ExportRead,
+        None::<String>,
+        None::<String>,
+        now(),
+    )
+    .map_err(|error| error.to_string())?;
+    let effect_id = intent.id().as_uuid();
+    PgExternalEffectRepository::new(PgStore::from_pool(runtime.clone()))
+        .insert_intent(&RequestContext::new(workspace, principal), &intent)
+        .await
+        .map_err(|error| format!("the additional intent was refused: {error}"))?;
+
+    // The job is deliberately *not* accepted here. `accept_delivery_outputs`
+    // accepts it and fixes its outputs in one transaction, and an already
+    // accepted bare job cannot be backfilled with guessed identities -- the same
+    // rule the source fixture above is built around. Whoever prepares this job's
+    // outputs accepts it.
+
+    // The evidence root is copied from the first job's rather than rebuilt, so
+    // the second job's request is provably the same shape as the first's and
+    // any difference between them is one this fixture chose.
+    //
+    // The structural nodes only. A governed input material is attached later,
+    // by whoever prepares this job's outputs, and it always takes the same
+    // ordinal -- so copying the first job's would collide with the second job's
+    // own the moment that job is prepared.
+    let mut evidence = owner.begin().await.map_err(sql)?;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *evidence)
+        .await
+        .map_err(sql)?;
+    set_workspace(&mut evidence, base.workspace_id).await?;
+    sqlx::query(
+        "INSERT INTO model_request_evidence_roots(id,workspace_id,external_effect_id,\
+         request_kind,binding_snapshot_id,cause_kind,cause_id) \
+         VALUES($1,$2,$3,'embeddings',$4,'embedding_job',$5)",
+    )
+    .bind(evidence_id)
+    .bind(base.workspace_id)
+    .bind(effect_id)
+    .bind(base.snapshot_id)
+    .bind(job_id)
+    .execute(&mut *evidence)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO model_request_evidence_nodes(id,workspace_id,evidence_root_id,ordinal,\
+         reference_kind,reference_id,reference_version) \
+         SELECT gen_random_uuid(),workspace_id,$1,ordinal,reference_kind,\
+                CASE WHEN reference_kind='external_effect' THEN $2 ELSE reference_id END,\
+                reference_version \
+           FROM model_request_evidence_nodes           WHERE evidence_root_id=$3 AND workspace_id=$4             AND reference_kind<>'governed_input_material'",
+    )
+    .bind(evidence_id)
+    .bind(effect_id)
+    .bind(base.evidence_id)
+    .bind(base.workspace_id)
+    .execute(&mut *evidence)
+    .await
+    .map_err(sql)?;
+    sqlx::query(
+        "INSERT INTO model_request_evidence_checks(id,workspace_id,evidence_root_id,status,\
+         missing_reference_count) VALUES(gen_random_uuid(),$1,$2,'complete',0)",
+    )
+    .bind(base.workspace_id)
+    .bind(evidence_id)
+    .execute(&mut *evidence)
+    .await
+    .map_err(sql)?;
+    evidence.commit().await.map_err(sql)?;
+
+    Ok(Fixture {
+        workspace_id: base.workspace_id,
+        principal_id: base.principal_id,
+        job_id,
+        effect_id,
+        snapshot_id: base.snapshot_id,
+        canonical_qualification_id: base.canonical_qualification_id,
+        connection_id: base.connection_id,
+        connection_revision_id: base.connection_revision_id,
+        evidence_id,
+        space_registration_id: base.space_registration_id,
+        intent: Some(intent),
+    })
 }
 
 /// The allowed branch is driven with the guarded admission function. The
@@ -955,6 +1113,7 @@ fn marker(stderr: &str, stage: &str) -> Result<Fixture, String> {
         job_id: id("job")?,
         effect_id: id("effect")?,
         snapshot_id: Uuid::nil(),
+        canonical_qualification_id: Uuid::nil(),
         connection_id: Uuid::nil(),
         connection_revision_id: Uuid::nil(),
         evidence_id: Uuid::nil(),

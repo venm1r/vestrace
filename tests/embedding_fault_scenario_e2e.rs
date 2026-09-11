@@ -573,3 +573,86 @@ async fn an_index_build_crash_lands_on_one_side_of_its_publication(pool: PgPool)
 
     let _ = std::fs::remove_file(url_file);
 }
+
+/// A crash on the near side of an activation leaves a transition standing
+/// ready and a head that has moved nowhere.
+///
+/// The child does the whole real thing: it executes its own job, accepts a
+/// second one, plans a transition over the canonical space, attaches the
+/// satisfier to the batch recipe, executes it, observes the satisfaction, and
+/// proves the batch complete. Then it stops, one call short of activating.
+///
+/// The far side is not covered, and the reason is a finding rather than an
+/// omission. Every call to `vestrace_activate_embedding_transition` anywhere in
+/// this repository is an `unwrap_err`: no fixture has ever satisfied its
+/// preconditions. A child crashing after a successful activation would first
+/// have had to construct the first successful activation in the project, and
+/// any guard it tripped could be a defect in the activation path rather than a
+/// gap in the fixture -- indistinguishable from here.
+#[sqlx::test(migrations = false)]
+#[ignore = "needs PostgreSQL plus the vestrace runtime role; run with --ignored --nocapture"]
+async fn a_crash_before_activation_leaves_a_proven_transition_and_an_unmoved_head(pool: PgPool) {
+    provisioned_runtime(&pool).await.close().await;
+    let database_url = ephemeral_database_url(&pool).await;
+    let url_file = write_url_file(&database_url);
+    let runtime_url =
+        std::env::var("VESTRACE_RUNTIME_DATABASE_URL").expect("runtime role is required");
+
+    let output = Command::new(scenario_binary())
+        .arg("--database-url-file")
+        .arg(&url_file)
+        .arg("--scenario")
+        .arg("embedding_worker_completion_crash")
+        .env("VESTRACE_FAULT_ISOLATION", "ephemeral")
+        .env("VESTRACE_FAULT_POINT", "before_activation_commit")
+        .env("VESTRACE_RUNTIME_DATABASE_URL", runtime_url)
+        .output()
+        .expect("the activation scenario must start");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("ACTIVATION_OUTPUT stdout={stdout} stderr={stderr}");
+    assert!(
+        output.status.success(),
+        "the parent must prove its child-abort observation: {stderr}"
+    );
+    let observation: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("the parent emits one JSON observation");
+
+    assert_eq!(observation["scenario"], "embedding_worker_completion_crash");
+    assert_eq!(observation["point"], "before_activation_commit");
+    assert_eq!(observation["proved"], true);
+
+    let persisted = &observation["persisted"];
+    assert_eq!(
+        persisted["transition_state"], "ready_to_activate",
+        "the transition the dead child proved is still proven"
+    );
+    assert_eq!(
+        persisted["head_active_space"],
+        serde_json::Value::Null,
+        "and the head it would have moved has moved nowhere"
+    );
+    assert_eq!(
+        persisted["head_version"], 1,
+        "the head is exactly where the child seeded it, so an activation would \
+         still find the version it expects"
+    );
+    assert_eq!(
+        persisted["activation_receipts"], 0,
+        "only an activation may write a receipt, and none has happened"
+    );
+    assert!(
+        persisted["live_projections"].as_i64().unwrap_or_default() > 0,
+        "a transition replaces live projections, so there must be some: {persisted}"
+    );
+
+    // Two provider calls, and both are physical rebuilds: the source's own
+    // result and the satisfier's. Proving a transition costs exactly the work
+    // it names -- and the activation itself, had it happened, would cost none.
+    assert_eq!(
+        observation["provider_requests"], 2,
+        "proving a transition costs one provider call per physical job and no more"
+    );
+
+    let _ = std::fs::remove_file(url_file);
+}
