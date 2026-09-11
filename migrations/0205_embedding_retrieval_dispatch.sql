@@ -125,6 +125,13 @@ BEGIN
         -- owner's ACL entry, and the later ownership transfer had nothing left
         -- to carry. The guarded owner has been unable to insert a claim since.
         GRANT ALL ON TABLE public.embedding_job_work_claims TO vestrace_guarded_owner;
+        -- Posture parity for the corpus-change stream. 0203's hand-back grants
+        -- the runtime role SELECT on it, because the erasure sweep reads
+        -- committed invalidation events every worker cycle; 0195's fresh-install
+        -- branch never did, so a database migrated without the provisioner left
+        -- that sweep refused with 42501 on every pass. Read-only, and the same
+        -- read the upgrade path has always allowed.
+        GRANT SELECT ON TABLE public.embedding_index_rebuild_events TO vestrace;
         REVOKE ALL ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
             FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
