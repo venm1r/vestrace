@@ -79,6 +79,8 @@ pub struct AppState {
     credential_activation_repository:
         Option<std::sync::Arc<dyn vestrace_application::CredentialActivationRepository>>,
     embedding_job_repository: Option<vestrace_application::SharedEmbeddingJobRepository>,
+    embedding_retrieval_repository:
+        Option<vestrace_application::embedding::SharedEmbeddingRetrievalRepository>,
     embedding_transition_repository:
         Option<vestrace_application::SharedEmbeddingTransitionRepository>,
     secret_store: Option<vestrace_application::SharedSecretStore>,
@@ -220,6 +222,7 @@ impl AppState {
             qualification_job_repository: None,
             credential_activation_repository: None,
             embedding_job_repository: None,
+            embedding_retrieval_repository: None,
             embedding_transition_repository: None,
             secret_store: None,
             access_token_store: None,
@@ -732,6 +735,35 @@ impl AppState {
                 ),
             )
         })
+    }
+
+    /// The authority that records one authorized successor to a retrieval
+    /// attempt whose generation moved. Absent by default and fails closed: a
+    /// surface that reported a successor it had not durably recorded would
+    /// promise a second provider call nobody would make.
+    pub fn with_embedding_retrieval_repository(
+        mut self,
+        repository: vestrace_application::embedding::SharedEmbeddingRetrievalRepository,
+    ) -> Self {
+        self.embedding_retrieval_repository = Some(repository);
+        self
+    }
+
+    pub fn embedding_retrieval_repository(
+        &self,
+    ) -> Result<
+        &dyn vestrace_application::embedding::EmbeddingRetrievalRepository,
+        crate::api::ApiError,
+    > {
+        self.embedding_retrieval_repository
+            .as_deref()
+            .ok_or_else(|| {
+                crate::api::ApiError::from_application(
+                    vestrace_application::ApplicationError::Unavailable(
+                        "governed embedding retrieval retry is not configured".to_owned(),
+                    ),
+                )
+            })
     }
 
     pub fn with_embedding_transition_repository(

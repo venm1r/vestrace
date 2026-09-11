@@ -49,6 +49,7 @@ export const changeScopePaths = [
   'crates/vestrace-domain/src/embedding/space.rs',
   'crates/vestrace-domain/src/id.rs',
   'crates/vestrace-domain/src/material/intent.rs',
+  'crates/vestrace-domain/src/security/mod.rs',
   'crates/vestrace-domain/tests/embedding_contract.rs',
   'crates/vestrace-fault-scenario/src/child.rs',
   'crates/vestrace-fault-scenario/src/main.rs',

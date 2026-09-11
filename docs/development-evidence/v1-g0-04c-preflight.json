@@ -43,6 +43,7 @@
     "crates/vestrace-domain/src/embedding/space.rs",
     "crates/vestrace-domain/src/id.rs",
     "crates/vestrace-domain/src/material/intent.rs",
+    "crates/vestrace-domain/src/security/mod.rs",
     "crates/vestrace-domain/tests/embedding_contract.rs",
     "crates/vestrace-fault-scenario/src/child.rs",
     "crates/vestrace-fault-scenario/src/main.rs",
@@ -1124,6 +1125,17 @@
       "new_change_scope_size": 123,
       "authorized_by": "User-confirmed lead decision for completion Task 11.",
       "reason": "Task 11 step 5 requires the surfaces to install EmbeddingRetrievalJobClient and to drop the pgvector composition. Two files the Task 1-14 map did not name are needed for it. The client is a component, not a composition: it accepts a durable retrieval_query job under a generation fence, materializes the query as a governed input material because the 0183 reconstruction contract requires embeddings evidence to name at least one, waits within the request budget, and erases the query material on every branch. It holds SQL, so it cannot live in crates/vestrace-cli/src/commands/server.rs where it is composed. The migration is needed because 0199 claims only delivery and rebuild jobs -- it said so, and said the other kinds had no producer until their later migrations; 0202 built that producer, so a retrieval_query job, its effect, its evidence and its fence are all durable and nothing claims them. 0205 admits a retrieval query whose fence exists and has not expired. It also repairs a defect it did not cause: vestrace_claim_embedding_work names job_id unqualified against its own OUT parameter, and 0199 revoked ALL from the role that then owned embedding_job_work_claims, so the guarded owner ended with an empty ACL. Both made every dispatch claim fail; no test had ever executed the function. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged. The third path is one word: the two closed-vocabulary parsers that turn a stored memory kind and status back into their domain values become pub(super) so the retrieval client reads them rather than copying them. Two channels answering one request through two spellings of the same vocabulary is exactly the drift a shared parser prevents."
+    },
+    {
+      "amended_at_utc": "2026-09-11T03:53:56.823Z",
+      "added_paths": [
+        "crates/vestrace-domain/src/security/mod.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 123,
+      "new_change_scope_size": 124,
+      "authorized_by": "User-confirmed lead decision for completion Task 12.",
+      "reason": "Task 12 exposes POST /v1/embedding-jobs/{id}/retry-generation-changed, which the plan requires to be capability-gated. Capability is a closed domain vocabulary and the two retries it already carries are different decisions: embedding.retry_after_unknown and embedding.retry_carried_transition_batch_after_unknown both follow an outcome nobody observed, while a retrieval retry follows a definite answer that arrived against a corpus that had already changed, and spends one further provider call to ask again. Reusing either would make an operator authorizing a recovery authorize a spend. Adds one variant, its wire name and its parse arm; no other behaviour in the domain changes and no match on Capability was exhaustive over it. Adds only crates/vestrace-domain/src/security/mod.rs. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

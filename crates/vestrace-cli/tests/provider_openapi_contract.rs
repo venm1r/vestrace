@@ -81,6 +81,79 @@ fn embedding_unknown_acknowledgement_is_a_governed_mutation_contract() {
     assert!(operation["responses"]["409"].is_object());
 }
 
+/// The retrieval retry documents what it costs, and documents nothing about
+/// the query.
+///
+/// Two claims in one test on purpose: a caller reading this document must be
+/// able to see that the call is charged and must not be able to find a field
+/// that would carry a query, a vector, or a digest of either. The second is the
+/// one that would be silently wrong -- a leak in a schema is invisible until
+/// something serializes into it.
+#[test]
+fn embedding_retrieval_retry_is_a_confirmed_governed_mutation_contract() {
+    let document = schema();
+    let operation = &document["paths"]["/v1/embedding-jobs/{id}/retry-generation-changed"]["post"];
+    let request =
+        &document["components"]["schemas"]["RetryEmbeddingRetrievalGenerationChangedRequest"];
+    let response =
+        &document["components"]["schemas"]["RetryEmbeddingRetrievalGenerationChangedResponse"];
+
+    assert_eq!(operation["parameters"][0]["name"], "x-workspace-id");
+    assert_eq!(operation["parameters"][1]["name"], "x-principal-id");
+    assert_eq!(operation["parameters"][3]["name"], "Idempotency-Key");
+    assert_eq!(operation["parameters"][3]["required"], true);
+    assert!(
+        operation["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("charged")),
+        "a caller must be able to read that this spends a further provider call"
+    );
+    assert!(operation["responses"]["409"].is_object());
+
+    let required = request["required"]
+        .as_array()
+        .expect("the request states what it requires");
+    for field in [
+        "expected_predecessor_version",
+        "successor_embedding_job_id",
+        "successor_request_id",
+        "acknowledge_additional_provider_call",
+    ] {
+        assert!(
+            required.iter().any(|name| name == field),
+            "{field} is an explicit caller statement"
+        );
+    }
+    assert_eq!(
+        request["properties"]["acknowledge_additional_provider_call"]["const"],
+        serde_json::Value::Bool(true),
+        "the acknowledgement has exactly one accepted value"
+    );
+
+    // Nothing in either shape can carry a query or anything derived from one.
+    for shape in [request, response] {
+        let fields: Vec<&str> = shape["properties"]
+            .as_object()
+            .expect("an object schema")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        for field in &fields {
+            for forbidden in ["query", "vector", "digest", "embedding_components", "score"] {
+                assert!(
+                    !field.contains(forbidden),
+                    "a retrieval retry surface must not carry {forbidden}: found {field}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        response["properties"].as_object().map(serde_json::Map::len),
+        Some(2),
+        "the response names the two jobs and nothing else"
+    );
+}
+
 #[test]
 fn embedding_carry_acknowledgement_is_a_governed_mutation_contract() {
     let document = schema();

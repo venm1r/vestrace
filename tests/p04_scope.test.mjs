@@ -134,8 +134,10 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // for the governed on-write route that replaces the retired handler, plus
   // the three-path amendment for the governed retrieval client, the migration
   // that lets a fenced retrieval query be claimed at all, and the two closed
-  // vocabulary parsers both retrieval channels must share rather than copy.
-  assert.equal(changeScopePaths.length, 123);
+  // vocabulary parsers both retrieval channels must share rather than copy,
+  // plus the one-path amendment for the capability that authorizes a retrieval
+  // retry.
+  assert.equal(changeScopePaths.length, 124);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -203,6 +205,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-domain/src/embedding/space.rs',
     'crates/vestrace-domain/src/id.rs',
     'crates/vestrace-domain/src/material/intent.rs',
+    'crates/vestrace-domain/src/security/mod.rs',
     'crates/vestrace-domain/tests/embedding_contract.rs',
     'crates/vestrace-fault-scenario/src/child.rs',
     'crates/vestrace-fault-scenario/src/main.rs',

@@ -44,6 +44,12 @@ pub enum Capability {
     ExportRead,
     EmbeddingRetryAfterUnknown,
     EmbeddingRetryCarriedTransitionBatchAfterUnknown,
+    /// Authorizes exactly one successor to an attempt whose pinned generation
+    /// moved under it. Distinct from the two retries above because it is a
+    /// distinct decision: those follow an outcome nobody observed, this follows
+    /// a definite answer that arrived against a corpus that had already
+    /// changed, and it spends one further provider call to ask again.
+    EmbeddingRetryRetrievalGenerationChanged,
     CapabilityDelegate,
     WorkspaceAdmin,
 }
@@ -76,6 +82,9 @@ impl fmt::Display for Capability {
             Self::AuditRead => "audit.read",
             Self::ExportRead => "export.read",
             Self::EmbeddingRetryAfterUnknown => "embedding.retry_after_unknown",
+            Self::EmbeddingRetryRetrievalGenerationChanged => {
+                "embedding.retry_retrieval_generation_changed"
+            }
             Self::EmbeddingRetryCarriedTransitionBatchAfterUnknown => {
                 "embedding.retry_carried_transition_batch_after_unknown"
             }
@@ -116,6 +125,9 @@ impl FromStr for Capability {
             "audit.read" => Ok(Self::AuditRead),
             "export.read" => Ok(Self::ExportRead),
             "embedding.retry_after_unknown" => Ok(Self::EmbeddingRetryAfterUnknown),
+            "embedding.retry_retrieval_generation_changed" => {
+                Ok(Self::EmbeddingRetryRetrievalGenerationChanged)
+            }
             "embedding.retry_carried_transition_batch_after_unknown" => {
                 Ok(Self::EmbeddingRetryCarriedTransitionBatchAfterUnknown)
             }

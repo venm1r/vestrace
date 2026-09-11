@@ -172,6 +172,12 @@ static ROUTE_INVENTORY: &[RouteDescriptor] = &[
         EmbeddingRetryCarriedTransitionBatchAfterUnknown,
         Critical
     ),
+    governed!(
+        POST,
+        "/v1/embedding-jobs/{id}/retry-generation-changed",
+        EmbeddingRetryRetrievalGenerationChanged,
+        Critical
+    ),
     governed!(GET, "/v1/artifacts", ExportRead, Low),
     governed!(GET, "/v1/triggers", WorkspaceAdmin, Low),
     governed!(GET, "/v1/connections", WorkspaceAdmin, Low),

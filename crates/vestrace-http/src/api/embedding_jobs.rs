@@ -41,14 +41,97 @@ pub fn embedding_job_routes() -> axum::Router<AppState> {
         route_descriptor(&Method::POST, "/v1/embedding-jobs/{id}/acknowledge-unknown"),
         post(acknowledge_unknown),
     );
-    mount(
+    let router = mount(
         router,
         route_descriptor(
             &Method::POST,
             "/v1/embedding-transitions/{id}/acknowledge-carry",
         ),
         post(acknowledge_carry),
+    );
+    mount(
+        router,
+        route_descriptor(
+            &Method::POST,
+            "/v1/embedding-jobs/{id}/retry-generation-changed",
+        ),
+        post(retry_generation_changed),
     )
+}
+
+/// One authorized successor to an attempt whose pinned generation moved.
+///
+/// Every field is stated by the caller and checked here rather than inferred,
+/// for the same reason the acknowledgement above states its predecessor twice:
+/// this spends a further provider call, and a surface that inferred any part of
+/// which call to make could spend it on something the caller did not ask for.
+#[derive(Debug, Deserialize)]
+pub struct RetryGenerationChangedRequest {
+    pub embedding_job_id: Uuid,
+    pub expected_predecessor_version: u64,
+    pub successor_embedding_job_id: Uuid,
+    pub successor_request_id: Uuid,
+    /// The caller's acknowledgement that this asks the provider again, and is
+    /// charged again. Required and required to be true: a default would make
+    /// the acknowledgement a formality, and a formality acknowledges nothing.
+    pub acknowledge_additional_provider_call: bool,
+}
+
+async fn retry_generation_changed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(embedding_job_id): Path<Uuid>,
+    Json(request): Json<RetryGenerationChangedRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    let context = request_context(&headers)?;
+    if request.embedding_job_id != embedding_job_id {
+        return Err(ApiError::bad_request(
+            "the path embedding job id and the request body disagree",
+        ));
+    }
+    if !request.acknowledge_additional_provider_call {
+        return Err(ApiError::bad_request(
+            "a retrieval retry asks the provider again and is charged again; set              acknowledge_additional_provider_call to confirm it",
+        ));
+    }
+    if request.successor_embedding_job_id == embedding_job_id {
+        return Err(ApiError::bad_request(
+            "a retrieval retry successor must be a new job, not its own predecessor",
+        ));
+    }
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let successor = state
+        .embedding_retrieval_repository()?
+        .authorize_retry(
+            &context,
+            vestrace_application::embedding::RetryRetrievalGenerationChanged {
+                predecessor_job_id: EmbeddingJobId::from_uuid(embedding_job_id),
+                expected_predecessor_version: request.expected_predecessor_version,
+                successor_job_id: EmbeddingJobId::from_uuid(request.successor_embedding_job_id),
+                successor_request_id: vestrace_domain::id::RetrievalRunId::from_uuid(
+                    request.successor_request_id,
+                ),
+                idempotency_key,
+            },
+        )
+        .await
+        .map_err(ApiError::from_application)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(RetryGenerationChangedResponse {
+            predecessor_embedding_job_id: embedding_job_id,
+            successor_embedding_job_id: successor.as_uuid(),
+        }),
+    )
+        .into_response())
+}
+
+/// What the caller may be told. Identities only: no vector, no digest, no
+/// reason text beyond what the durable record already holds.
+#[derive(Debug, serde::Serialize)]
+pub struct RetryGenerationChangedResponse {
+    pub predecessor_embedding_job_id: Uuid,
+    pub successor_embedding_job_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -449,6 +532,307 @@ mod tests {
             snapshot_id,
             body,
         }
+    }
+
+    /// Records what the retry authority was asked to do, and answers with the
+    /// successor the caller named.
+    #[derive(Default)]
+    struct SpyRetrievalRetry {
+        command: Mutex<Option<vestrace_application::embedding::RetryRetrievalGenerationChanged>>,
+    }
+
+    #[async_trait::async_trait]
+    impl vestrace_application::embedding::EmbeddingRetrievalRepository for SpyRetrievalRetry {
+        async fn authorize_retry(
+            &self,
+            _context: &RequestContext,
+            command: vestrace_application::embedding::RetryRetrievalGenerationChanged,
+        ) -> Result<vestrace_domain::EmbeddingJobId, ApplicationError> {
+            let successor = command.successor_job_id;
+            *self.command.lock().unwrap() = Some(command);
+            Ok(successor)
+        }
+    }
+
+    /// The authority refusing a caller that acted on a stale reading.
+    struct ConflictingRetrievalRetry;
+
+    #[async_trait::async_trait]
+    impl vestrace_application::embedding::EmbeddingRetrievalRepository for ConflictingRetrievalRetry {
+        async fn authorize_retry(
+            &self,
+            _context: &RequestContext,
+            _command: vestrace_application::embedding::RetryRetrievalGenerationChanged,
+        ) -> Result<vestrace_domain::EmbeddingJobId, ApplicationError> {
+            Err(ApplicationError::Conflict(
+                "the retrieval retry predecessor is at version 5, not the expected 2".to_owned(),
+            ))
+        }
+    }
+
+    struct RetryPost {
+        predecessor_id: Uuid,
+        successor_id: Uuid,
+        request_id: Uuid,
+    }
+
+    impl RetryPost {
+        fn new() -> Self {
+            Self {
+                predecessor_id: Uuid::now_v7(),
+                successor_id: Uuid::now_v7(),
+                request_id: Uuid::now_v7(),
+            }
+        }
+
+        fn body(&self, acknowledged: bool) -> String {
+            serde_json::json!({
+                "embedding_job_id": self.predecessor_id,
+                "expected_predecessor_version": 2,
+                "successor_embedding_job_id": self.successor_id,
+                "successor_request_id": self.request_id,
+                "acknowledge_additional_provider_call": acknowledged,
+            })
+            .to_string()
+        }
+
+        fn uri(&self) -> String {
+            format!(
+                "/v1/embedding-jobs/{}/retry-generation-changed",
+                self.predecessor_id
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_retry_reaches_the_authority_with_every_stated_identity() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+        let key = Uuid::now_v7().to_string();
+
+        let response = app
+            .oneshot(request(&post.uri(), Some(key.clone()), &post.body(true)))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let command = spy.command.lock().unwrap().take().expect("retry reached");
+        assert_eq!(command.predecessor_job_id.as_uuid(), post.predecessor_id);
+        assert_eq!(command.expected_predecessor_version, 2);
+        assert_eq!(command.successor_job_id.as_uuid(), post.successor_id);
+        assert_eq!(command.successor_request_id.as_uuid(), post.request_id);
+        assert_eq!(command.idempotency_key, key);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["successor_embedding_job_id"].as_str(),
+            Some(post.successor_id.to_string().as_str())
+        );
+        // Identities only. A retrieval surface that answered with anything
+        // derived from a vector would be the one place the whole package is
+        // careful about leaking from.
+        assert_eq!(
+            json.as_object().map(|fields| fields.len()),
+            Some(2),
+            "the response names the two jobs and nothing else: {json}"
+        );
+    }
+
+    /// An unconfirmed retry is refused, and the authority is never asked.
+    ///
+    /// The confirmation is the caller saying it accepts a second provider call
+    /// and its charge. A default would make that a formality, so the field is
+    /// required and required to be true.
+    #[tokio::test]
+    async fn an_unconfirmed_retry_never_reaches_the_authority() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+
+        let response = app
+            .oneshot(request(
+                &post.uri(),
+                Some(Uuid::now_v7().to_string()),
+                &post.body(false),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            spy.command.lock().unwrap().is_none(),
+            "a refused confirmation must not reach the authority"
+        );
+    }
+
+    /// A body missing the acknowledgement entirely is refused too. Absent and
+    /// false must mean the same thing, or the field could be omitted to skip
+    /// the decision it exists to record.
+    #[tokio::test]
+    async fn a_retry_without_the_acknowledgement_field_is_refused() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+        let body = serde_json::json!({
+            "embedding_job_id": post.predecessor_id,
+            "expected_predecessor_version": 2,
+            "successor_embedding_job_id": post.successor_id,
+            "successor_request_id": post.request_id,
+        })
+        .to_string();
+
+        let response = app
+            .oneshot(request(
+                &post.uri(),
+                Some(Uuid::now_v7().to_string()),
+                &body,
+            ))
+            .await
+            .unwrap();
+
+        assert!(
+            response.status().is_client_error(),
+            "an absent acknowledgement is not an acknowledgement"
+        );
+        assert!(spy.command.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_retry_whose_path_and_body_disagree_is_refused() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+
+        let response = app
+            .oneshot(request(
+                &format!(
+                    "/v1/embedding-jobs/{}/retry-generation-changed",
+                    Uuid::now_v7()
+                ),
+                Some(Uuid::now_v7().to_string()),
+                &post.body(true),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(spy.command.lock().unwrap().is_none());
+    }
+
+    /// A successor that is its own predecessor is not a successor.
+    #[tokio::test]
+    async fn a_retry_that_names_itself_as_its_successor_is_refused() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+        let body = serde_json::json!({
+            "embedding_job_id": post.predecessor_id,
+            "expected_predecessor_version": 2,
+            "successor_embedding_job_id": post.predecessor_id,
+            "successor_request_id": post.request_id,
+            "acknowledge_additional_provider_call": true,
+        })
+        .to_string();
+
+        let response = app
+            .oneshot(request(
+                &post.uri(),
+                Some(Uuid::now_v7().to_string()),
+                &body,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(spy.command.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_retry_without_an_idempotency_key_is_refused() {
+        let spy = Arc::new(SpyRetrievalRetry::default());
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(spy.clone()),
+        );
+        let post = RetryPost::new();
+
+        let response = app
+            .oneshot(request(&post.uri(), None, &post.body(true)))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(spy.command.lock().unwrap().is_none());
+    }
+
+    /// A stale expected version is a conflict the caller must resolve by
+    /// reading again, not a failure it should retry blindly.
+    #[tokio::test]
+    async fn a_stale_expected_version_is_reported_as_a_conflict() {
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(Arc::new(ConflictingRetrievalRetry)),
+        );
+        let post = RetryPost::new();
+
+        let response = app
+            .oneshot(request(
+                &post.uri(),
+                Some(Uuid::now_v7().to_string()),
+                &post.body(true),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    /// Without a configured authority the route refuses rather than reporting a
+    /// successor nothing recorded.
+    #[tokio::test]
+    async fn a_retry_without_a_configured_authority_fails_closed() {
+        let app = build_router(test_state().with_policy(Arc::new(TestAllowPolicy)));
+        let post = RetryPost::new();
+
+        let response = app
+            .oneshot(request(
+                &post.uri(),
+                Some(Uuid::now_v7().to_string()),
+                &post.body(true),
+            ))
+            .await
+            .unwrap();
+
+        assert!(
+            response.status().is_server_error(),
+            "an unconfigured retry authority must not look like a client mistake"
+        );
     }
 
     fn request(uri: &str, idempotency_key: Option<String>, body: &str) -> Request<Body> {

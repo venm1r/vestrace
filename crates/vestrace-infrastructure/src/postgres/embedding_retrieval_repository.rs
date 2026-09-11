@@ -310,6 +310,30 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
             .begin_scoped(context)
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        // The version the caller agreed to, read in the transaction that
+        // authorizes rather than by the caller beforehand. It is an agreement
+        // check and not a lock: a predecessor that earned a retry is terminal,
+        // so its version does not move on its own, and what this catches is a
+        // caller acting on a reading it took before something else acted.
+        let observed: Option<i64> = sqlx::query_scalar(
+            "SELECT version FROM embedding_jobs WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(command.predecessor_job_id.as_uuid())
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(map_retrieval_error)?;
+        let observed = observed.ok_or_else(|| {
+            ApplicationError::Conflict(
+                "the retrieval retry predecessor does not exist in this workspace".to_owned(),
+            )
+        })?;
+        if non_negative(observed, "predecessor version")? != command.expected_predecessor_version {
+            return Err(ApplicationError::Conflict(format!(
+                "the retrieval retry predecessor is at version {observed}, not the expected {}",
+                command.expected_predecessor_version
+            )));
+        }
         let successor: uuid::Uuid = sqlx::query_scalar(
             "SELECT vestrace_authorize_embedding_retrieval_retry($1,$2,$3,$4,$5)",
         )

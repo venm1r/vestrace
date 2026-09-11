@@ -178,6 +178,11 @@ pub struct ObserveRetrievalGenerationChange {
 #[derive(Clone, Debug)]
 pub struct RetryRetrievalGenerationChanged {
     pub predecessor_job_id: EmbeddingJobId,
+    /// What the caller believed the predecessor was when it decided to spend a
+    /// further provider call. Checked rather than trusted: a predecessor that
+    /// moved since the caller read it is a different decision, and the caller
+    /// should make it again knowing what it is now.
+    pub expected_predecessor_version: u64,
     pub successor_job_id: EmbeddingJobId,
     pub successor_request_id: RetrievalRunId,
     pub idempotency_key: String,

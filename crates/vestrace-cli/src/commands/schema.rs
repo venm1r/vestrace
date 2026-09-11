@@ -1372,6 +1372,20 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 }
             },
+            "/v1/embedding-jobs/{id}/retry-generation-changed": {
+                "post": {
+                    "summary": "Authorize one successor to a retrieval attempt whose generation moved",
+                    "description": "Asks the provider again, and is charged again. The caller must acknowledge that explicitly; the acknowledgement is not defaulted.",
+                    "tags": ["embedding-jobs"],
+                    "parameters": governed_mutation_headers.clone(),
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetryEmbeddingRetrievalGenerationChangedRequest" } } } },
+                    "responses": {
+                        "201": { "description": "Successor authorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetryEmbeddingRetrievalGenerationChangedResponse" } } } },
+                        "400": { "description": "Unconfirmed, self-naming, or disagreeing request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } } },
+                        "409": { "description": "Stale predecessor version, or a different key against the same predecessor", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } } }
+                    }
+                }
+            },
             "/v1/embedding-transitions/{id}/acknowledge-carry": {
                 "post": {
                     "summary": "Acknowledge a carried transition ambiguity and create its one successor",
@@ -1534,6 +1548,26 @@ fn openapi_v1() -> serde_json::Value {
                         "effect_intent": { "$ref": "#/components/schemas/EmbeddingEffectIntent" }
                     },
                     "required": ["embedding_job_id", "expected_predecessor_version", "successor_embedding_job_id", "successor_model_request_evidence_id", "space_registration_id", "model_binding_snapshot_id", "kind", "effect_intent"]
+                },
+                "RetryEmbeddingRetrievalGenerationChangedRequest": {
+                    "type": "object",
+                    "description": "Every identity is stated by the caller and checked by the server. Nothing about the query, its vector, or any digest of either appears here or in the response.",
+                    "properties": {
+                        "embedding_job_id": { "type": "string", "format": "uuid" },
+                        "expected_predecessor_version": { "type": "integer", "format": "int64", "minimum": 0 },
+                        "successor_embedding_job_id": { "type": "string", "format": "uuid" },
+                        "successor_request_id": { "type": "string", "format": "uuid" },
+                        "acknowledge_additional_provider_call": { "type": "boolean", "const": true, "description": "Must be present and true. The retry asks the provider again and is charged again." }
+                    },
+                    "required": ["embedding_job_id", "expected_predecessor_version", "successor_embedding_job_id", "successor_request_id", "acknowledge_additional_provider_call"]
+                },
+                "RetryEmbeddingRetrievalGenerationChangedResponse": {
+                    "type": "object",
+                    "properties": {
+                        "predecessor_embedding_job_id": { "type": "string", "format": "uuid" },
+                        "successor_embedding_job_id": { "type": "string", "format": "uuid" }
+                    },
+                    "required": ["predecessor_embedding_job_id", "successor_embedding_job_id"]
                 },
                 "AcknowledgeEmbeddingTransitionCarryRequest": {
                     "type": "object",
