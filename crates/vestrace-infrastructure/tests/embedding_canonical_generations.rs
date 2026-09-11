@@ -592,8 +592,26 @@ async fn canonical_registration_requires_qualified_evidence_and_captures_exact_e
     );
 }
 
-#[sqlx::test(migrations = false)]
-async fn canonical_capture_enrolls_every_live_encrypted_output(pool: PgPool) {
+/// One canonical embedding space that has actually received a delivery job's
+/// encrypted outputs, through the real result chain.
+///
+/// This is the only world in which the canonical membership rules mean
+/// anything: a space registered through `vestrace_register_canonical_embedding_space`
+/// whose corpus holds Live projection entries computed by a real job, each with
+/// its own Live vector material and its own source dependencies. A projection
+/// seeded by hand would carry none of that, and a rule about which members a
+/// capture may draw would have nothing to be wrong about.
+struct CanonicalDeliveryWorld {
+    f: QualificationFixture,
+    registration: Uuid,
+    result: common::result_preparation_fixture::ResultFixture,
+}
+
+async fn canonical_delivery_world(
+    pool: &PgPool,
+    runtime: &PgPool,
+    f: QualificationFixture,
+) -> CanonicalDeliveryWorld {
     use common::result_preparation_fixture::*;
     use std::sync::Arc;
     use vestrace_application::{
@@ -605,15 +623,12 @@ async fn canonical_capture_enrolls_every_live_encrypted_output(pool: PgPool) {
         EmbeddingOutputHmacCommitter, PgEmbeddingResultFinalizationRepository,
         PgExternalEffectRepository,
     };
-    provision_result_behavior_database(&pool).await;
-    let runtime = common::runtime_pool(&pool).await;
-    let f = canonical_qualification(&pool, &runtime).await;
     let registration = Uuid::now_v7();
     let mut tx = runtime.begin().await.unwrap();
     set_context(&mut tx, f.workspace).await;
     sqlx::query("SELECT vestrace_register_canonical_embedding_space($1,$2,'encrypted',$3,$4,$5,'text-embedding-nomic-embed-text-v1.5','float',768)").bind(registration).bind(f.workspace.as_uuid()).bind(f.model).bind(f.qualification).bind(f.shape).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
-    let (connection_id,connection_revision_id,connection_qualification_id,no_auth_binding_id):(Uuid,Uuid,Uuid,Uuid)=sqlx::query_as("SELECT r.connection_id,q.connection_revision_id,q.connection_qualification_revision_id,n.id FROM model_qualification_revisions q JOIN connection_revisions r ON r.id=q.connection_revision_id JOIN no_auth_binding_revisions n ON n.connection_revision_id=r.id WHERE q.id=$1").bind(f.qualification).fetch_one(&pool).await.unwrap();
+    let (connection_id,connection_revision_id,connection_qualification_id,no_auth_binding_id):(Uuid,Uuid,Uuid,Uuid)=sqlx::query_as("SELECT r.connection_id,q.connection_revision_id,q.connection_qualification_revision_id,n.id FROM model_qualification_revisions q JOIN connection_revisions r ON r.id=q.connection_revision_id JOIN no_auth_binding_revisions n ON n.connection_revision_id=r.id WHERE q.id=$1").bind(f.qualification).fetch_one(pool).await.unwrap();
     let context = RequestContext::new(f.workspace, f.principal);
     let snapshot_id = Uuid::now_v7();
     let intent = common::workspace_scoped_intent(&context, snapshot_id);
@@ -647,7 +662,7 @@ async fn canonical_capture_enrolls_every_live_encrypted_output(pool: PgPool) {
     sqlx::query("INSERT INTO model_binding_snapshot_scopes(workspace_id,snapshot_id,scope,transition_plan_id) VALUES($1,$2,'ordinary',NULL)").bind(f.workspace.as_uuid()).bind(snapshot_id).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     let result = result_fixture_for_accepted(
-        &pool,
+        pool,
         runtime.clone(),
         accepted,
         DeliveryPolicyCase::ExactAllowed,
@@ -678,6 +693,32 @@ async fn canonical_capture_enrolls_every_live_encrypted_output(pool: PgPool) {
     .finalize(&result.accepted.context, &authority)
     .await
     .unwrap();
+    CanonicalDeliveryWorld {
+        f,
+        registration,
+        result,
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn canonical_capture_enrolls_every_live_encrypted_output(pool: PgPool) {
+    use common::result_preparation_fixture::*;
+    use std::sync::Arc;
+    use vestrace_application::{
+        EmbeddingResultFinalizationAuthority, EmbeddingResultFinalizationService,
+        EmbeddingResultPreparationId,
+    };
+    use vestrace_domain::ExternalEffectId;
+    use vestrace_infrastructure::postgres::{
+        EmbeddingOutputHmacCommitter, PgEmbeddingResultFinalizationRepository,
+    };
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let f = canonical_qualification(&pool, &runtime).await;
+    let world = canonical_delivery_world(&pool, &runtime, f).await;
+    let f = world.f;
+    let registration = world.registration;
+    let result = world.result;
     let generation = Uuid::now_v7();
     let mut tx = runtime.begin().await.unwrap();
     set_context(&mut tx, f.workspace).await;
@@ -2043,6 +2084,338 @@ async fn mutating_the_corpus_revision_cas_moves_the_refusal_to_the_deferred_trig
     );
     let (current, ..) = revision_standing(&pool, registration, generation).await;
     assert_eq!(current, None);
+
+    runtime.close().await;
+}
+
+const CAPTURE_AUTHORITY: &str =
+    "public.vestrace_capture_embedding_generation(uuid,uuid,uuid,bigint)";
+
+/// The Live membership predicate, in the one place that decides who is
+/// enrolled, and the edit that removes exactly it there.
+///
+/// `vestrace_capture_embedding_generation` applies `p.state='live' AND
+/// m.state='live'` three times: to take the share locks, to count the live
+/// members, and to enrol them. This needle is the third -- the `WHERE` of the
+/// `INSERT ... SELECT`, identified by the `RETURN QUERY` that follows it --
+/// because that is the one that decides membership. The other two describe the
+/// same set for other purposes.
+const MEMBER_LIVE_NEEDLE: &str = " AND p.state='live' AND m.state='live';\n    RETURN QUERY";
+const MEMBER_LIVE_MUTATION: &str = ";\n    RETURN QUERY";
+
+/// The same predicate everywhere in the same authority, which is what it takes
+/// to ask whether the *function* keeps a non-Live projection out rather than
+/// whether its three uses agree with each other.
+const CAPTURE_LIVE_NEEDLE: &str = " AND p.state='live' AND m.state='live'";
+const CAPTURE_LIVE_MUTATION: &str = "";
+
+/// Erase one source of this world's projections through the real authority, and
+/// report what the corpus says afterwards.
+///
+/// Not a hand-written state change: erasure is what makes a projection stop
+/// being Live in production, and it moves the corpus revision, the live member
+/// count, the generation epoch and the guard version with it. A fixture that
+/// only flipped `state` would be asking the capture a question the system never
+/// asks it.
+async fn erase_one_source(
+    pool: &PgPool,
+    runtime: &PgPool,
+    world: &CanonicalDeliveryWorld,
+) -> (i64, i64) {
+    let workspace = world.f.workspace.as_uuid();
+    let material: Uuid = sqlx::query_scalar(
+        "SELECT dependency.source_material_id \
+           FROM embedding_projection_source_dependencies AS dependency \
+           JOIN embedding_projection_entries AS entry \
+             ON entry.workspace_id=dependency.workspace_id \
+            AND entry.id=dependency.projection_id \
+          WHERE dependency.workspace_id=$1 AND entry.space_registration_id=$2 \
+          ORDER BY dependency.source_ordinal LIMIT 1",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(pool)
+    .await
+    .expect("the executed job recorded its source dependencies");
+
+    let mut scoped = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(world.f.workspace.to_string())
+        .fetch_one(&mut *scoped)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.principal_id',$1,true)")
+        .bind(world.f.principal.to_string())
+        .fetch_one(&mut *scoped)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>("SELECT vestrace_propagate_embedding_source_erasure($1,$2,$3)")
+        .bind(Uuid::now_v7())
+        .bind(workspace)
+        .bind(material)
+        .fetch_one(&mut *scoped)
+        .await
+        .expect("a Live source with dependents must propagate");
+    scoped.commit().await.unwrap();
+
+    sqlx::query_as(
+        "SELECT live_member_count, \
+                (SELECT count(*) FROM embedding_projection_entries \
+                  WHERE workspace_id=$1 AND space_registration_id=$2 AND state<>'live') \
+           FROM embedding_space_corpus_states \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Capture one generation at the guard's current version, and say how it was
+/// refused and at which boundary.
+async fn capture_at_head(
+    pool: &PgPool,
+    runtime: &PgPool,
+    world: &CanonicalDeliveryWorld,
+) -> (Uuid, Result<i64, (Boundary, String, String)>) {
+    let workspace = world.f.workspace.as_uuid();
+    let version: i64 = sqlx::query_scalar(
+        "SELECT guard_version FROM embedding_index_generation_guards \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let generation = Uuid::now_v7();
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, world.f.workspace).await;
+    let captured = sqlx::query_scalar::<_, i64>(
+        "SELECT member_count FROM vestrace_capture_embedding_generation($1,$2,$3,$4)",
+    )
+    .bind(generation)
+    .bind(workspace)
+    .bind(world.registration)
+    .bind(version)
+    .fetch_one(&mut *tx)
+    .await;
+    let members = match captured {
+        Ok(members) => members,
+        Err(error) => {
+            tx.rollback().await.unwrap();
+            return (generation, Err(refusal(error, Boundary::Call)));
+        }
+    };
+    match tx.commit().await {
+        Ok(()) => (generation, Ok(members)),
+        Err(error) => (generation, Err(refusal(error, Boundary::Commit))),
+    }
+}
+
+/// Publish a captured generation at the guard's current version.
+///
+/// A space holds at most one Building generation, so a probe that means to ask
+/// the capture a second question has to settle the first one rather than leave
+/// it open.
+async fn publish_head(runtime: &PgPool, world: &CanonicalDeliveryWorld, generation: Uuid) {
+    let workspace = world.f.workspace.as_uuid();
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, world.f.workspace).await;
+    let version: i64 = sqlx::query_scalar(
+        "SELECT guard_version FROM embedding_index_generation_guards           WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("SELECT vestrace_publish_embedding_generation($1,$2,$3,$4)")
+        .bind(workspace)
+        .bind(world.registration)
+        .bind(generation)
+        .bind(version)
+        .execute(&mut *tx)
+        .await
+        .expect("a generation captured against the current corpus must publish");
+    tx.commit().await.unwrap();
+}
+
+/// How many rows the generation actually enrolled, and how many of them name a
+/// projection entry that is no longer Live.
+async fn enrolled(pool: &PgPool, generation: Uuid) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE entry.state<>'live') \
+           FROM embedding_corpus_generation_members AS member \
+           JOIN embedding_projection_entries AS entry \
+             ON entry.workspace_id=member.workspace_id \
+            AND entry.id=member.embedding_projection_entry_id \
+          WHERE member.corpus_generation_id=$1",
+    )
+    .bind(generation)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Mutation qualification: the Live membership predicate is what keeps an
+/// erased projection out of a new generation, and it is defended twice over.
+///
+/// The world is a canonical space that received a real delivery job's encrypted
+/// outputs, with one of its sources then erased through
+/// `vestrace_propagate_embedding_source_erasure`. That is the only way a
+/// projection stops being Live in production, and it moves the corpus revision,
+/// the live member count, the epoch and the guard version along with it.
+///
+/// Two edits, because the predicate appears three times in one function and the
+/// two questions they answer are different:
+///
+/// - **Enrolment only.** With the `INSERT ... SELECT`'s `WHERE` short of the
+///   predicate, the capture counts the Live members correctly and enrols the
+///   erased one anyway. The mismatch is caught at `COMMIT` by the deferred
+///   `embedding_corpus_generations_canonical_consistent` trigger, which will not
+///   have a generation whose member count is not the number of members it has.
+/// - **The whole authority.** With all three uses short of it, the count agrees
+///   with the enrolment again and both are wrong together. That is caught inside
+///   the call, by the comparison against the corpus state's own
+///   `live_member_count`, which erasure had already moved.
+///
+/// So the answer for this predicate is that no unsafe state is reachable
+/// through it: a generation holding an erased member is refused twice, at two
+/// boundaries, by two mechanisms neither of which is the predicate itself. What
+/// the predicate buys is that the capture is *correct* rather than merely
+/// caught -- and the second edit shows why the corpus state's counter, computed
+/// by the same predicate at erasure time, is the thing that makes the trap
+/// close.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_live_membership_predicate_is_caught_twice_and_persists_nothing(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let f = canonical_qualification(&pool, &runtime).await;
+    let world = canonical_delivery_world(&pool, &runtime, f).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, CAPTURE_AUTHORITY).await;
+    assert!(
+        original.contains(MEMBER_LIVE_NEEDLE),
+        "the enrolment predicate this qualification mutates is no longer in the \
+         authority; the mutation would silently test nothing: {original}"
+    );
+    assert_eq!(
+        original.matches(CAPTURE_LIVE_NEEDLE).count(),
+        3,
+        "the authority is expected to state the Live predicate exactly three \
+         times -- for the locks, the count and the enrolment; a different number \
+         means the second edit is no longer the whole authority: {original}"
+    );
+
+    let (live_members, not_live) = erase_one_source(&pool, &runtime, &world).await;
+    assert!(
+        not_live >= 1,
+        "the erasure must actually take a projection out of Live"
+    );
+
+    // Green before: the capture draws only what remains.
+    let (generation, captured) = capture_at_head(&pool, &runtime, &world).await;
+    assert_eq!(
+        captured.map_err(|(boundary, state, message)| format!("{boundary:?} {state} {message}")),
+        Ok(live_members),
+        "the capture must agree with the corpus about what is still Live"
+    );
+    // Published rather than left standing: a space holds at most one Building
+    // generation, so every later probe would meet that unique key instead of
+    // the predicate under test. Publishing is also the honest continuation --
+    // a capture nobody publishes is not a state this system stays in.
+    publish_head(&runtime, &world, generation).await;
+    assert_eq!(
+        enrolled(&pool, generation).await,
+        (live_members, 0),
+        "and must enrol exactly those members, none of them erased"
+    );
+
+    // First edit: enrolment only.
+    install_authority(
+        &pool,
+        &original.replace(MEMBER_LIVE_NEEDLE, MEMBER_LIVE_MUTATION),
+    )
+    .await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, CAPTURE_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    let (enrolment_generation, enrolment) = capture_at_head(&pool, &runtime, &world).await;
+    let (boundary, state, message) =
+        enrolment.expect_err("a generation may not hold a member its own count does not admit");
+    assert_eq!(
+        boundary,
+        Boundary::Commit,
+        "the capture itself raises nothing: {message}"
+    );
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("canonical generation member count must be exact"),
+        "{message}"
+    );
+    assert_eq!(
+        enrolled(&pool, enrolment_generation).await,
+        (0, 0),
+        "the refused commit takes the whole capture with it"
+    );
+
+    // Second edit: the same predicate everywhere in the authority.
+    install_authority(
+        &pool,
+        &original.replace(CAPTURE_LIVE_NEEDLE, CAPTURE_LIVE_MUTATION),
+    )
+    .await;
+    let (whole, whole_owner, whole_acl, whole_execute) =
+        authority_state(&pool, CAPTURE_AUTHORITY).await;
+    assert_ne!(whole, original);
+    assert_ne!(whole, mutated, "the two edits must not be the same edit");
+    assert_eq!(whole_owner, owner);
+    assert_eq!(whole_acl, acl);
+    assert_eq!(whole_execute, runtime_execute);
+
+    let (whole_generation, whole_capture) = capture_at_head(&pool, &runtime, &world).await;
+    let (whole_boundary, whole_state, whole_message) =
+        whole_capture.expect_err("a capture that counts the erased member must not stand either");
+    assert_eq!(
+        whole_boundary,
+        Boundary::Call,
+        "this one is caught inside the call: {whole_message}"
+    );
+    assert_eq!(whole_state, "23514");
+    assert!(
+        whole_message.contains("canonical corpus live count mismatch"),
+        "the corpus state's own counter is what refuses it: {whole_message}"
+    );
+    assert_eq!(enrolled(&pool, whole_generation).await, (0, 0));
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, CAPTURE_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after: the capture draws what remains, again.
+    let (after_generation, after) = capture_at_head(&pool, &runtime, &world).await;
+    assert_eq!(
+        after.map_err(|(boundary, state, message)| format!("{boundary:?} {state} {message}")),
+        Ok(live_members)
+    );
+    assert_eq!(enrolled(&pool, after_generation).await, (live_members, 0));
 
     runtime.close().await;
 }
