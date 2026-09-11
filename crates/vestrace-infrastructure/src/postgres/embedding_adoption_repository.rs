@@ -571,6 +571,30 @@ where
             return Ok(Err(LegacyAdoptionBlocker::SourceContentErased));
         }
 
+        Ok(Ok(self
+            .materialize_bytes(
+                context,
+                "memory_revision",
+                memory_revision_id,
+                content.as_bytes(),
+            )
+            .await?))
+    }
+
+    /// Arbitrary plaintext as a Live governed content material.
+    ///
+    /// The owner pair is the caller's, because what owns a material decides
+    /// what may later be said about it: a memory revision for content that was
+    /// written, a retrieval request for a query that was asked. Nothing else
+    /// differs -- the reservation, the key, the sealing and the publication are
+    /// one sequence and it is the same one every governed input goes through.
+    pub async fn materialize_bytes(
+        &self,
+        context: &RequestContext,
+        owner_kind: &str,
+        owner_id: Uuid,
+        plaintext: &[u8],
+    ) -> Result<MaterializedSource, ApplicationError> {
         let intent_id = MaterialKeyCreationIntentId::new();
         let material_id = ContentMaterialId::new();
         let key_id = MaterialKeyId::new();
@@ -582,8 +606,8 @@ where
             material_id,
             key_id,
             nonce,
-            "memory_revision",
-            memory_revision_id,
+            owner_kind,
+            owner_id,
             0,
         );
         self.materials.reserve(context, &intent).await?;
@@ -609,16 +633,15 @@ where
                     material_id,
                     key_id,
                     dek,
-                    content.as_bytes(),
+                    plaintext,
                 ));
             })
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         let ciphertext = sealed.ok_or_else(|| {
             ApplicationError::Internal(
-                "the material vault returned without sealing the adoption source".to_owned(),
+                "the material vault returned without sealing the governed input".to_owned(),
             )
         })??;
-        drop(content);
 
         self.materials
             .prepare_content(
@@ -634,10 +657,10 @@ where
             .await?;
         self.materials.finalize_bound(context, intent_id).await?;
 
-        Ok(Ok(MaterializedSource {
+        Ok(MaterializedSource {
             material_id: material_id.as_uuid(),
             intent_id: intent_id.as_uuid(),
-        }))
+        })
     }
 }
 

@@ -22,8 +22,8 @@ use vestrace_infrastructure::{
     PgOutboxRepository, PgProvenanceRepository, PgProviderRepository, PgPurgeRepository,
     PgRelationRepository, PgRetrievalJournal, PgRevisionHydrator, PgRoutingDecisionRepository,
     PgRunLeasePort, PgRunRepository, PgSecretStore, PgSkillRepository, PgStore, PgTextRetriever,
-    PgTriggerRepository, PgVectorRetriever, PgWorkQueuePort, PgWorkflowRepository,
-    PgWorkspaceCounts, PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
+    PgTriggerRepository, PgWorkQueuePort, PgWorkflowRepository, PgWorkspaceCounts,
+    PgWorkspaceSettingsRepository, PolicyEngineKind, PostgresRunStore,
 };
 
 pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result<()> {
@@ -90,7 +90,6 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
     let store_for_purge = store.clone();
     let store_for_effects = store.clone();
     let store_for_grant_seed = store.clone();
-    let store_for_vectors = store.clone();
     let store_for_evidence = store.clone();
     let store_for_counts = store.clone();
     let store_for_artifacts = store.clone();
@@ -121,35 +120,19 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
         Arc::new(PgTextRetriever::new(store.clone()));
     let retrieval_journal: vestrace_application::SharedRetrievalJournal =
         Arc::new(PgRetrievalJournal::new(store_for_journal));
-    // The vector channel, when a deployment configures an embedding model.
-    // Without one the service runs with a single channel, which is what it has
-    // always done — and the journal now records that the channel was not
-    // configured rather than leaving its absence indistinguishable from a
-    // channel that returned nothing.
-    let embedding_provider = build_embedding_provider(config, &store)?;
-    let vector_retriever: Option<vestrace_application::SharedVectorRetriever> =
-        embedding_provider.as_ref().map(|provider| {
-            Arc::new(PgVectorRetriever::new(
-                store_for_vectors.clone(),
-                Arc::clone(provider),
-                config.embedding.space_name.clone(),
-            )) as vestrace_application::SharedVectorRetriever
-        });
-    if vector_retriever.is_some() {
+    // The vector channel is a governed retrieval-query job now, not a direct
+    // query against plaintext vectors. The surface accepts the job under a
+    // generation fence and waits within the request budget; a worker holding
+    // the local index answers it.
+    let embedding_retrieval_client = build_embedding_retrieval_client(config, &store)?;
+    if embedding_retrieval_client.is_some() {
         tracing::info!(
             model = %config.embedding.model_name,
             space = %config.embedding.space_name,
-            "retrieval has a vector channel"
+            "retrieval has a governed vector channel"
         );
     }
-    let retrieval_service = Arc::new(
-        RetrievalService::with_channels(
-            text_retriever,
-            vector_retriever,
-            None,
-            None,
-            retrieval_journal,
-        )
+    let mut retrieval_service = RetrievalService::new(text_retriever, retrieval_journal)
         .with_corpus_generation_resolver(
             Arc::new(PgCorpusGenerationResolver::new(store.clone())),
             config.embedding.space_name.clone(),
@@ -159,8 +142,18 @@ pub async fn run(config: &AppConfig, dispatch_owner: WorkerId) -> anyhow::Result
             Arc::new(PgRevisionHydrator::new(store.clone())),
             retrieval_policy,
             config.policy.version.clone(),
-        ),
-    );
+        );
+    if let Some(client) = embedding_retrieval_client {
+        retrieval_service = retrieval_service
+            .with_embedding_retrieval_client(
+                client,
+                std::time::Duration::from_secs(u64::from(
+                    config.embedding.limits.retrieval_wait_seconds,
+                )),
+            )
+            .map_err(|error| anyhow!("retrieval wait budget is invalid: {error}"))?;
+    }
+    let retrieval_service = Arc::new(retrieval_service);
 
     let provider_repository: vestrace_application::SharedProviderRepository =
         Arc::new(PgProviderRepository::new(store_for_catalog.clone()));
@@ -979,6 +972,62 @@ pub(crate) fn build_model_data_policy_settings(
 /// assembled from configuration, so a deployment cannot present one key as
 /// another. Failure refuses startup: a process that ran without a vault would
 /// reach a provider with material it could not have sealed.
+/// The one governed route from a retrieval request to the embedding side.
+///
+/// `None` is a deployment with no embedding provider configured, which is the
+/// same single-channel retrieval it has always had -- and the journal records
+/// that the channel was not configured rather than leaving its absence
+/// indistinguishable from a channel that returned nothing.
+pub(crate) fn build_embedding_retrieval_client(
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<Option<vestrace_application::embedding::SharedEmbeddingRetrievalJobClient>> {
+    // Asked in this order on purpose. A deployment with no embedding provider
+    // has no vector channel and never needed provider-execution storage, so
+    // demanding roots first would refuse to start a surface over a capability
+    // it was not asked to have. One that does configure a provider needs the
+    // material vault those roots hold, and missing roots there are a refusal
+    // rather than a channel quietly dropped.
+    if build_embedding_provider(config, store)?.is_none() {
+        return Ok(None);
+    }
+    let storage_roots = config
+        .provider_execution
+        .roots()
+        .map_err(|_| anyhow!("provider execution storage roots are unavailable or overlap"))?;
+    let vault = build_material_vault(config, &storage_roots)?;
+    let client = vestrace_infrastructure::postgres::PgEmbeddingRetrievalJobClient::new(
+        store.clone(),
+        Arc::new(
+            vestrace_infrastructure::postgres::PgGovernedContentMaterializer::new(
+                store.clone(),
+                vault.clone(),
+                Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+            ),
+        ),
+        Arc::new(
+            vestrace_infrastructure::postgres::PgGovernedEmbeddingJobFactory::new(
+                store.clone(),
+                Arc::new(
+                    vestrace_infrastructure::postgres::PgEmbeddingJobRepository::new(store.clone()),
+                ),
+                Arc::new(
+                    vestrace_infrastructure::postgres::PgModelRequestEvidenceRepository::new(
+                        vault.clone(),
+                    ),
+                ),
+                vestrace_application::EffectiveRequestLimits::new(256, 4, 32_768)
+                    .map_err(|error| anyhow!("retrieval request limits are invalid: {error}"))?,
+            ),
+        ),
+        Arc::new(vestrace_application::MaterialErasureService::new(
+            vestrace_infrastructure::postgres::PgMaterialErasureRepository::new(store.clone()),
+            vault,
+        )),
+    );
+    Ok(Some(Arc::new(client)))
+}
+
 pub(crate) fn build_material_vault(
     config: &AppConfig,
     roots: &vestrace_infrastructure::config::ProviderExecutionStorageRoots,

@@ -33,7 +33,7 @@ fn storage_error(error: impl std::fmt::Display) -> ApplicationError {
     ApplicationError::Storage(error.to_string())
 }
 
-fn memory_kind_from_str(value: &str) -> Result<MemoryKind, ApplicationError> {
+pub(super) fn memory_kind_from_str(value: &str) -> Result<MemoryKind, ApplicationError> {
     match value {
         "fact" => Ok(MemoryKind::Fact),
         "preference" => Ok(MemoryKind::Preference),
@@ -50,7 +50,7 @@ fn memory_kind_from_str(value: &str) -> Result<MemoryKind, ApplicationError> {
     }
 }
 
-fn memory_status_from_str(value: &str) -> Result<MemoryStatus, ApplicationError> {
+pub(super) fn memory_status_from_str(value: &str) -> Result<MemoryStatus, ApplicationError> {
     match value {
         "candidate" => Ok(MemoryStatus::Candidate),
         "active" => Ok(MemoryStatus::Active),

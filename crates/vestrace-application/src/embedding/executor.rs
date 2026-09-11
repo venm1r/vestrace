@@ -45,6 +45,7 @@ pub struct EmbeddingExecutor<R, V, S, F, C> {
     finalization: Arc<EmbeddingResultFinalizationService<F, V, C>>,
     adapter: Arc<dyn GovernedModelAdapter>,
     worker_id: WorkerId,
+    retrieval: Option<crate::embedding::SharedEmbeddingRetrievalSink>,
 }
 
 impl<R, V, S, F, C> EmbeddingExecutor<R, V, S, F, C>
@@ -68,7 +69,23 @@ where
             finalization,
             adapter,
             worker_id,
+            retrieval: None,
         }
+    }
+
+    /// Answer `retrieval_query` jobs as well as the two that persist a vector.
+    ///
+    /// Opt-in because a process without a local index cannot answer one, and a
+    /// build that claimed such a job and had nowhere to send the response would
+    /// charge for a provider call it then discarded. Without a sink the job is
+    /// refused before dispatch instead.
+    #[must_use]
+    pub fn with_retrieval_sink(
+        mut self,
+        sink: crate::embedding::SharedEmbeddingRetrievalSink,
+    ) -> Self {
+        self.retrieval = Some(sink);
+        self
     }
 
     pub async fn execute(
@@ -117,6 +134,15 @@ where
             ));
         }
         let effect_id = plan.attempt.external_effect_id;
+        // Checked before the provider call, not after: a build with no sink
+        // would otherwise pay for a response it has nowhere to send.
+        if plan.attempt.kind == vestrace_domain::embedding::EmbeddingJobKind::RetrievalQuery
+            && self.retrieval.is_none()
+        {
+            return Err(ApplicationError::Unavailable(
+                "this build cannot answer a retrieval query job: no local index is composed".into(),
+            ));
+        }
         let now = Utc::now();
         let audit = AuditEvent::new(
             vestrace_domain::AuditEventId::new(),
@@ -223,6 +249,11 @@ where
                 return Err(application_error);
             }
         };
+        if plan.attempt.kind == vestrace_domain::embedding::EmbeddingJobKind::RetrievalQuery {
+            return self
+                .complete_retrieval(context, &plan.intent, job_id, authority, response)
+                .await;
+        }
         let prepared = self
             .preparation
             .prepare_with_generated_identities(
@@ -258,6 +289,67 @@ where
             effect_id,
         };
         self.finalization.finalize(context, &authority).await?;
+        Ok(EmbeddingExecutionOutcome::Succeeded)
+    }
+
+    /// A retrieval query's response never reaches the corpus.
+    ///
+    /// The receipt is recorded first and carries no response digest, because a
+    /// digest of this response is a digest of a query vector -- exactly what
+    /// the retrieval records are forbidden to hold. Then the vector is handed
+    /// to the sink as a `QueryEmbedding`, which zeroizes when that call
+    /// returns.
+    async fn complete_retrieval(
+        &self,
+        context: &RequestContext,
+        intent: &vestrace_domain::ExternalEffectIntent,
+        job_id: EmbeddingJobId,
+        authority: ProviderDispatchAuthority,
+        response: crate::GovernedEmbeddingsResponse,
+    ) -> Result<EmbeddingExecutionOutcome, ApplicationError> {
+        let Some(sink) = self.retrieval.clone() else {
+            return Err(ApplicationError::Internal(
+                "a retrieval query reached dispatch without a sink".into(),
+            ));
+        };
+        // Exactly one vector, because exactly one query was sent. More is a
+        // provider disagreeing with the request that was reconstructed from
+        // evidence, which is a refusal rather than a choice of which to use.
+        if response.vectors().len() != 1 {
+            self.record_non_success(
+                context,
+                intent,
+                authority,
+                AdapterDispatchResult::failed(
+                    "provider_response_shape_mismatch",
+                    vec!["retrieval_query_dispatch".into()],
+                ),
+            )
+            .await?;
+            return Ok(EmbeddingExecutionOutcome::FailedDefinite);
+        }
+        self.dispatch
+            .complete_post_network(
+                context,
+                ProviderPostNetworkCompletion {
+                    authority: authority.clone(),
+                    receipt: observed_receipt(
+                        intent,
+                        &authority,
+                        AdapterDispatchResult::acknowledged(
+                            "retrieval_query_embedded",
+                            None,
+                            None,
+                            vec![format!("embedding_job:{}", job_id.as_uuid())],
+                        ),
+                    )?,
+                    throttle: None,
+                },
+            )
+            .await?;
+        let query =
+            crate::embedding::QueryEmbedding::new(response.vectors()[0].components().to_vec())?;
+        sink.complete(context, job_id, query).await?;
         Ok(EmbeddingExecutionOutcome::Succeeded)
     }
 

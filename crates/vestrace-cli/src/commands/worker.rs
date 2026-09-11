@@ -563,8 +563,8 @@ fn build_outbox_dispatcher(
     // an ordinary delivery job, which the worker's embedding cycles then carry
     // through the same provider path a rebuild uses.
     //
-    // The route this replaces called `PgEmbeddingStore::upsert`, which the
-    // canonical transition retired, so every message it handled failed. It
+    // The route this replaces wrote straight into the legacy vector table the
+    // canonical transition closed, so every message it handled failed. It
     // stayed registered because `command_contract` requires every produced
     // topic to have a handler -- an unhandled message sits undelivered forever,
     // while a failing one stays retriable and visible. That requirement is now

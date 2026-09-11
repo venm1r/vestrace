@@ -747,3 +747,144 @@ async fn the_runtime_role_cannot_write_retrieval_tables_directly(pool: PgPool) {
     }
     runtime.close().await;
 }
+
+// --- What migration 0205 opened, and the two reads the worker makes through
+// the fence it opened them for.
+
+/// Claims one bounded batch of dispatch work as the runtime role.
+async fn claim_dispatch(runtime: &PgPool, workspace: Uuid, owner: &str) -> Vec<Uuid> {
+    let mut governed = runtime.begin().await.unwrap();
+    scoped(&mut governed, workspace).await;
+    let rows: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT job_id FROM vestrace_claim_embedding_work($1,'dispatch',$2,16)")
+            .bind(workspace)
+            .bind(owner)
+            .fetch_all(&mut *governed)
+            .await
+            .expect("a dispatch claim");
+    governed.commit().await.unwrap();
+    rows.into_iter().map(|row| row.0).collect()
+}
+
+/// A retrieval query is claimable exactly when it has a live fence.
+///
+/// Before the fence there is no pinned generation, so dispatching would embed a
+/// query against a corpus nothing had agreed on; after the deadline nobody is
+/// waiting, so the provider call would be paid for an answer with no reader.
+#[sqlx::test(migrations = false)]
+async fn only_a_live_fence_makes_a_retrieval_query_claimable(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let a = attempt(&pool, &runtime).await;
+
+    let unfenced = claim_dispatch(&runtime, a.workspace, "worker:unfenced").await;
+    assert!(
+        !unfenced.contains(&a.job),
+        "a retrieval query with no fence pins no generation and must not be claimable"
+    );
+
+    accept_fence(&runtime, &a, Uuid::now_v7())
+        .await
+        .expect("the fence");
+    let fenced = claim_dispatch(&runtime, a.workspace, "worker:fenced").await;
+    assert!(
+        fenced.contains(&a.job),
+        "a fenced retrieval query is exactly the work a worker holding a local index must take"
+    );
+
+    // Past its deadline it stops being claimable, and the claim is not merely
+    // hidden by the one just taken: a fresh owner sees the same refusal.
+    // Both tables are guarded, so the clock is moved as the guarded owner. No
+    // product path expires a fence in place; this is a test reaching past the
+    // authority on purpose, to observe what the claim does on the other side of
+    // a deadline it cannot otherwise wait for.
+    let mut owner = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+    scoped(&mut owner, a.workspace).await;
+    sqlx::query(
+        "UPDATE embedding_retrieval_fences SET deadline=now()-INTERVAL '1 second'           WHERE workspace_id=$1 AND job_id=$2",
+    )
+    .bind(a.workspace)
+    .bind(a.job)
+    .execute(&mut *owner)
+    .await
+    .expect("an expired fence");
+    sqlx::query("DELETE FROM embedding_job_work_claims WHERE workspace_id=$1 AND job_id=$2")
+        .bind(a.workspace)
+        .bind(a.job)
+        .execute(&mut *owner)
+        .await
+        .expect("the claim just taken is cleared so a fresh owner may try");
+    owner.commit().await.unwrap();
+    let expired = claim_dispatch(&runtime, a.workspace, "worker:expired").await;
+    assert!(
+        !expired.contains(&a.job),
+        "past its deadline nobody is waiting for the answer"
+    );
+    runtime.close().await;
+}
+
+/// The worker reads back exactly the generation the fence pinned, in the shape
+/// the local registry keys an index by.
+#[sqlx::test(migrations = false)]
+async fn the_worker_reads_back_the_generation_the_fence_pinned(pool: PgPool) {
+    use vestrace_application::embedding::EmbeddingRetrievalRepository;
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let a = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &a, Uuid::now_v7())
+        .await
+        .expect("the fence");
+
+    let context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(a.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+    let repository = vestrace_infrastructure::postgres::PgEmbeddingRetrievalRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    );
+    let (read_fence, snapshot) = repository
+        .pinned_attempt(&context, vestrace_domain::EmbeddingJobId::from_uuid(a.job))
+        .await
+        .expect("the pinned attempt of an accepted retrieval query");
+
+    assert_eq!(read_fence, fence, "the fence a job owns is the one it took");
+    assert_eq!(
+        snapshot.generation_id.as_uuid(),
+        a.generation,
+        "the snapshot names the generation the fence pinned"
+    );
+    assert_eq!(snapshot.workspace_id.as_uuid(), a.workspace);
+    assert!(
+        snapshot.space.is_canonical(),
+        "only a canonical space can carry a Ready generation to answer from"
+    );
+    // Every number comes from the generation itself, so a snapshot assembled
+    // from two sources cannot name a pair that never existed together.
+    let stored: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT generation_epoch, captured_guard_version, corpus_revision, \
+                built_through_projection_ordinal, member_count \
+           FROM embedding_corpus_generations WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(a.workspace)
+    .bind(a.generation)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(i64::try_from(snapshot.generation_epoch).unwrap(), stored.0);
+    assert_eq!(i64::try_from(snapshot.guard_version).unwrap(), stored.1);
+    assert_eq!(i64::try_from(snapshot.corpus_revision).unwrap(), stored.2);
+    assert_eq!(
+        i64::try_from(snapshot.built_through_projection_ordinal).unwrap(),
+        stored.3
+    );
+    assert_eq!(i64::try_from(snapshot.member_count).unwrap(), stored.4);
+    snapshot
+        .validate()
+        .expect("what the registry is keyed by must be a valid canonical snapshot");
+    runtime.close().await;
+}

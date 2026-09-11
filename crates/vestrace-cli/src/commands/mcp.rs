@@ -50,19 +50,32 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         Arc::new(PgTextRetriever::new(store.clone()));
     let retrieval_journal: vestrace_application::SharedRetrievalJournal =
         Arc::new(PgRetrievalJournal::new(store_for_journal));
-    let retrieval_service = Arc::new(
-        RetrievalService::new(text_retriever, retrieval_journal)
-            .with_corpus_generation_resolver(
-                Arc::new(PgCorpusGenerationResolver::new(store.clone())),
-                config.embedding.space_name.clone(),
-                config.embedding.model_name.clone(),
+    // The same governed vector channel the HTTP surface installs. MCP had none
+    // at all, which made its retrieval quietly narrower than the API's for the
+    // same workspace.
+    let mut retrieval_service = RetrievalService::new(text_retriever, retrieval_journal)
+        .with_corpus_generation_resolver(
+            Arc::new(PgCorpusGenerationResolver::new(store.clone())),
+            config.embedding.space_name.clone(),
+            config.embedding.model_name.clone(),
+        )
+        .with_hydration(
+            Arc::new(PgRevisionHydrator::new(store.clone())),
+            retrieval_policy,
+            config.policy.version.clone(),
+        );
+    if let Some(client) = crate::commands::server::build_embedding_retrieval_client(config, &store)?
+    {
+        retrieval_service = retrieval_service
+            .with_embedding_retrieval_client(
+                client,
+                std::time::Duration::from_secs(u64::from(
+                    config.embedding.limits.retrieval_wait_seconds,
+                )),
             )
-            .with_hydration(
-                Arc::new(PgRevisionHydrator::new(store.clone())),
-                retrieval_policy,
-                config.policy.version.clone(),
-            ),
-    );
+            .map_err(|error| anyhow::anyhow!("retrieval wait budget is invalid: {error}"))?;
+    }
+    let retrieval_service = Arc::new(retrieval_service);
 
     let model_repository: vestrace_application::SharedModelRepository =
         Arc::new(PgModelRepository::new(store.clone()));

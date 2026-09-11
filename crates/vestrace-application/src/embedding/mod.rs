@@ -58,11 +58,12 @@ pub use result::{
     EmbeddingResultRepository, EmbeddingResultSealer, SealedEmbeddingResultOutput,
 };
 pub use retrieval::{
-    AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalJobClient,
-    EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository, FinalizeRetrievalResult,
-    ObserveRetrievalGenerationChange, QueryEmbedding, RetrievalAttemptAdmission,
-    RetrievalResultReference, RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
-    SharedEmbeddingRetrievalRepository,
+    AcceptRetrievalAttempt, EmbeddingRetrievalDegradation, EmbeddingRetrievalExecutionService,
+    EmbeddingRetrievalJobClient, EmbeddingRetrievalOutcome, EmbeddingRetrievalRepository,
+    EmbeddingRetrievalSink, FinalizeRetrievalResult, ObserveRetrievalGenerationChange,
+    QueryEmbedding, RetrievalAttemptAdmission, RetrievalMemberReference, RetrievalResultReference,
+    RetryRetrievalGenerationChanged, SharedEmbeddingRetrievalJobClient,
+    SharedEmbeddingRetrievalRepository, SharedEmbeddingRetrievalSink,
 };
 pub use transition::{
     ActivateEmbeddingTransition, CreateEmbeddingTransitionBatchAttempt,

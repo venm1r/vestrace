@@ -70,6 +70,7 @@
     "crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_result_finalization_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_result_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_retrieval_client.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_retrieval_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
@@ -82,6 +83,7 @@
     "crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
     "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
     "crates/vestrace-infrastructure/tests/credential_activation.rs",
     "crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs",
@@ -118,6 +120,7 @@
     "migrations/0202_embedding_retrieval_results.sql",
     "migrations/0203_embedding_erasure_propagation.sql",
     "migrations/0204_embedding_legacy_adoption.sql",
+    "migrations/0205_embedding_retrieval_dispatch.sql",
     "scripts/p04-scope.mjs",
     "tests/embedding_fault_scenario_e2e.rs",
     "tests/p04_scope.test.mjs"
@@ -1108,6 +1111,19 @@
       "new_change_scope_size": 120,
       "authorized_by": "User-confirmed lead decision for completion Task 11.",
       "reason": "Task 11 removes the retired on-write embedding route from the worker. The route it replaces called PgEmbeddingStore::upsert, which the canonical transition closed, so every memory.created and memory.revised message failed; it stayed registered only because command_contract requires every produced topic to have a handler. The replacement calls no provider: it materializes the written revision content as a governed content material and accepts an ordinary delivery job, which the worker embedding cycles already carry. That is a new outbox handler and it needs a file. Task 1-14 mapped the composition change to crates/vestrace-cli/src/commands/worker.rs alone, which is where the handler is registered but not where an adapter may live: the worker is a composition root and the handler holds SQL. Adds only crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-11T00:29:36.923Z",
+      "added_paths": [
+        "crates/vestrace-infrastructure/src/postgres/embedding_retrieval_client.rs",
+        "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
+        "migrations/0205_embedding_retrieval_dispatch.sql"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 120,
+      "new_change_scope_size": 123,
+      "authorized_by": "User-confirmed lead decision for completion Task 11.",
+      "reason": "Task 11 step 5 requires the surfaces to install EmbeddingRetrievalJobClient and to drop the pgvector composition. Two files the Task 1-14 map did not name are needed for it. The client is a component, not a composition: it accepts a durable retrieval_query job under a generation fence, materializes the query as a governed input material because the 0183 reconstruction contract requires embeddings evidence to name at least one, waits within the request budget, and erases the query material on every branch. It holds SQL, so it cannot live in crates/vestrace-cli/src/commands/server.rs where it is composed. The migration is needed because 0199 claims only delivery and rebuild jobs -- it said so, and said the other kinds had no producer until their later migrations; 0202 built that producer, so a retrieval_query job, its effect, its evidence and its fence are all durable and nothing claims them. 0205 admits a retrieval query whose fence exists and has not expired. It also repairs a defect it did not cause: vestrace_claim_embedding_work names job_id unqualified against its own OUT parameter, and 0199 revoked ALL from the role that then owned embedding_job_work_claims, so the guarded owner ended with an empty ACL. Both made every dispatch claim fail; no test had ever executed the function. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged. The third path is one word: the two closed-vocabulary parsers that turn a stored memory kind and status back into their domain values become pub(super) so the retrieval client reads them rather than copying them. Two channels answering one request through two spellings of the same vocabulary is exactly the drift a shared parser prevents."
     }
   ],
   "previous_captures": []

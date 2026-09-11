@@ -408,6 +408,7 @@ impl EmbeddingWorkerRuntime {
         limits
             .validate()
             .map_err(vestrace_application::ApplicationError::InvalidConfiguration)?;
+        let owner_name: String = owner.into();
 
         let preparation = Arc::new(
             vestrace_application::embedding::EmbeddingResultPreparationService::new(
@@ -432,14 +433,6 @@ impl EmbeddingWorkerRuntime {
                 Arc::new(EmbeddingOutputHmacCommitter::new()),
             ),
         );
-        let executor = Arc::new(vestrace_application::embedding::EmbeddingExecutor::new(
-            dispatch,
-            preparation,
-            finalization,
-            Arc::new(crate::providers::OpenAiGovernedModelAdapter),
-            worker_id,
-        ));
-
         // One budget for the whole process: the decoder and the index it builds
         // draw from the same allowance, so a large decode cannot leave the
         // builder without room it was promised.
@@ -476,6 +469,33 @@ impl EmbeddingWorkerRuntime {
             ),
         );
 
+        // The executor is composed last of the three, because answering a
+        // retrieval query needs the local index the index service owns. A
+        // process without one refuses such a job before dispatch rather than
+        // paying for a response it cannot use.
+        let retrieval = Arc::new(
+            vestrace_application::embedding::EmbeddingRetrievalExecutionService::new(
+                Arc::new(
+                    embedding_retrieval_repository::PgEmbeddingRetrievalRepository::new(
+                        store.clone(),
+                    ),
+                ),
+                index.clone(),
+                owner_name.clone(),
+                limits.max_index_members.min(1024) as usize,
+            )?,
+        );
+        let executor = Arc::new(
+            vestrace_application::embedding::EmbeddingExecutor::new(
+                dispatch,
+                preparation,
+                finalization,
+                Arc::new(crate::providers::OpenAiGovernedModelAdapter),
+                worker_id,
+            )
+            .with_retrieval_sink(retrieval),
+        );
+
         let erasure = Arc::new(
             vestrace_application::embedding::EmbeddingErasureService::new(
                 Arc::new(
@@ -493,7 +513,7 @@ impl EmbeddingWorkerRuntime {
             index,
             erasure,
             claim_batch: limits.claim_batch,
-            owner: owner.into(),
+            owner: owner_name,
         })
     }
 
@@ -621,6 +641,7 @@ impl EmbeddingWorkerRuntime {
 mod embedding_adoption_repository;
 mod embedding_erasure_repository;
 mod embedding_index_repository;
+mod embedding_retrieval_client;
 mod embedding_write_route;
 pub use embedding_adoption_repository::{
     PgEmbeddingLegacyAdoptionRepository, PgGovernedContentMaterializer,
@@ -628,4 +649,5 @@ pub use embedding_adoption_repository::{
 };
 pub use embedding_erasure_repository::PgEmbeddingErasureRepository;
 pub use embedding_index_repository::PgEmbeddingIndexRepository;
+pub use embedding_retrieval_client::PgEmbeddingRetrievalJobClient;
 pub use embedding_write_route::PgGovernedMemoryEmbeddingHandler;

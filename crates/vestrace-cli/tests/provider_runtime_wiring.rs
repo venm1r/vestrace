@@ -1,5 +1,7 @@
 const SERVER_SOURCE: &str = include_str!("../src/commands/server.rs");
 const WORKER_SOURCE: &str = include_str!("../src/commands/worker.rs");
+const MCP_SOURCE: &str = include_str!("../src/commands/mcp.rs");
+const REBUILD_SOURCE: &str = include_str!("../src/commands/rebuild.rs");
 const HTTP_ROUTER_SOURCE: &str = include_str!("../../vestrace-http/src/router.rs");
 
 /// The old factory is process-configured and has no immutable Connection /
@@ -161,4 +163,62 @@ fn the_governed_runtime_composes_one_dispatch_authority_for_both_callers() {
         !RUNTIME_SOURCE.contains("embedding_dispatch"),
         "embedding work must reach the provider through the shared dispatch authority"
     );
+}
+
+/// The four legacy embedding routes, gone from every composition root.
+///
+/// Each of them writes or reads a plaintext vector outside the canonical
+/// path. `PgEmbeddingStore::upsert` and `PgVectorRetriever::search` are already
+/// permanent stubs, so a root still constructing them is not broken in an
+/// obvious way -- it silently embeds nothing and retrieves nothing while every
+/// request keeps succeeding. That is the failure this asserts against.
+#[test]
+fn no_composition_root_constructs_a_legacy_embedding_path() {
+    for (name, source) in [
+        ("server", SERVER_SOURCE),
+        ("worker", WORKER_SOURCE),
+        ("mcp", MCP_SOURCE),
+        ("rebuild", REBUILD_SOURCE),
+    ] {
+        for legacy in [
+            "EmbedMemoryHandler",
+            "EmbeddingBackfillService",
+            "PgEmbeddingStore",
+            "PgVectorRetriever",
+        ] {
+            assert!(
+                !source.contains(legacy),
+                "{name} still composes the retired {legacy}"
+            );
+        }
+    }
+}
+
+/// Retrieval reaches the embedding side through the one governed client, and
+/// the surfaces that answer a user do not build their own.
+#[test]
+fn the_surfaces_install_the_governed_retrieval_client() {
+    for (name, source) in [("server", SERVER_SOURCE), ("mcp", MCP_SOURCE)] {
+        assert!(
+            source.contains("with_embedding_retrieval_client"),
+            "{name} does not install the governed embedding retrieval client"
+        );
+    }
+}
+
+/// The worker is the only root that runs embedding work, and it runs it inside
+/// the configured bounds rather than constants of its own.
+#[test]
+fn the_worker_runs_embedding_work_inside_its_configured_bounds() {
+    assert!(
+        WORKER_SOURCE.contains("embedding.limits"),
+        "the worker does not read the configured embedding bounds"
+    );
+    for surface in [("server", SERVER_SOURCE), ("mcp", MCP_SOURCE)] {
+        assert!(
+            !surface.1.contains("EmbeddingExecutor::new"),
+            "{} constructs an embedding executor; only the worker may",
+            surface.0
+        );
+    }
 }

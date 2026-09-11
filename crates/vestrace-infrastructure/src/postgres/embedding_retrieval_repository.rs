@@ -8,11 +8,14 @@ use vestrace_application::{
     ApplicationError, RequestContext,
     embedding::{
         AcceptRetrievalAttempt, EmbeddingRetrievalRepository, FinalizeRetrievalResult,
-        ObserveRetrievalGenerationChange, RetrievalAttemptAdmission,
+        ObserveRetrievalGenerationChange, RetrievalAttemptAdmission, RetrievalMemberReference,
         RetryRetrievalGenerationChanged,
     },
 };
-use vestrace_domain::EmbeddingJobId;
+use vestrace_domain::{
+    CorpusGenerationId, EmbeddingJobId, ModelQualificationRevisionId, ModelRevisionId,
+    embedding::{CanonicalEmbeddingSpace, CanonicalGenerationSnapshot, EmbeddingSpaceKey},
+};
 
 use super::PgStore;
 
@@ -29,6 +32,153 @@ impl PgEmbeddingRetrievalRepository {
 
 #[async_trait]
 impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
+    async fn pinned_attempt(
+        &self,
+        context: &RequestContext,
+        job_id: vestrace_domain::EmbeddingJobId,
+    ) -> Result<(uuid::Uuid, CanonicalGenerationSnapshot), ApplicationError> {
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        // The generation's own numbers, not the fence's, for everything the
+        // registry keys an index by. The fence records what it pinned so a
+        // later reader can see it; the index was built from the generation, and
+        // a snapshot assembled from two sources could name a pair that never
+        // existed together.
+        let row: (
+            uuid::Uuid,
+            String,
+            uuid::Uuid,
+            uuid::Uuid,
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            i32,
+            uuid::Uuid,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = sqlx::query_as(
+            "SELECT fence.id, registration.name, registration.model_revision_id, \
+                    registration.model_qualification_revision_id, \
+                    registration.request_shape_revision_id, \
+                    registration.adapter_profile_revision, registration.returned_model, \
+                    registration.encoding_format, registration.dimensions, \
+                    generation.id, generation.generation_epoch, \
+                    generation.captured_guard_version, generation.corpus_revision, \
+                    generation.built_through_projection_ordinal, generation.member_count \
+               FROM embedding_retrieval_fences AS fence \
+               JOIN embedding_space_registrations AS registration \
+                 ON registration.workspace_id = fence.workspace_id \
+                AND registration.id = fence.space_registration_id \
+               JOIN embedding_corpus_generations AS generation \
+                 ON generation.workspace_id = fence.workspace_id \
+                AND generation.id = fence.generation_id \
+              WHERE fence.workspace_id = $1 AND fence.job_id = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(job_id.as_uuid())
+        .fetch_one(transaction.connection())
+        .await
+        .map_err(map_retrieval_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+
+        let space = EmbeddingSpaceKey::canonical(
+            context.workspace_id,
+            row.1,
+            CanonicalEmbeddingSpace {
+                model_revision_id: ModelRevisionId::from_uuid(row.2),
+                model_qualification_revision_id: ModelQualificationRevisionId::from_uuid(row.3),
+                request_shape_revision_id: row.4,
+                adapter_profile_revision: row.5,
+                returned_model: row.6,
+                encoding_format: row.7,
+                dimensions: u32::try_from(row.8).map_err(|_| {
+                    ApplicationError::Storage("stored space dimensions are negative".to_owned())
+                })?,
+            },
+        )
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        let snapshot = CanonicalGenerationSnapshot::new(
+            space,
+            CorpusGenerationId::from_uuid(row.9),
+            non_negative(row.10, "generation epoch")?,
+            positive(row.11, "captured guard version")?,
+            non_negative(row.12, "corpus revision")?,
+            // Zero is lawful: a generation captured from an empty corpus has
+            // reached no projection ordinal, and the snapshot's own validator
+            // requires only the epoch and the guard version to be positive.
+            non_negative(row.13, "built-through ordinal")?,
+            non_negative(row.14, "member count")?,
+        )
+        .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        Ok((row.0, snapshot))
+    }
+
+    async fn resolve_members(
+        &self,
+        context: &RequestContext,
+        projection_ids: &[uuid::Uuid],
+    ) -> Result<Vec<RetrievalMemberReference>, ApplicationError> {
+        if projection_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut transaction = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        // The link from a projection back to what it means: the projection's
+        // source material, the intent that governs it, and the memory revision
+        // that intent names as its owner. A projection whose source has been
+        // erased has no row here, which is why the caller drops rather than
+        // guesses.
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
+            "SELECT DISTINCT dependency.projection_id, revision.memory_id, revision.id \
+               FROM embedding_projection_source_dependencies AS dependency \
+               JOIN content_materials AS material \
+                 ON material.workspace_id = dependency.workspace_id \
+                AND material.id = dependency.source_material_id \
+               JOIN material_key_creation_intents AS intent \
+                 ON intent.workspace_id = material.workspace_id \
+                AND intent.id = material.intent_id \
+                AND intent.owner_kind = 'memory_revision' \
+               JOIN memory_revisions AS revision \
+                 ON revision.workspace_id = intent.workspace_id \
+                AND revision.id = intent.owner_id \
+              WHERE dependency.workspace_id = $1 \
+                AND dependency.projection_id = ANY($2) \
+                AND material.state = 'live'",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(projection_ids)
+        .fetch_all(transaction.connection())
+        .await
+        .map_err(map_retrieval_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(projection_id, memory_id, revision_id)| RetrievalMemberReference {
+                    projection_id,
+                    memory_id,
+                    revision_id,
+                },
+            )
+            .collect())
+    }
+
     async fn accept_attempt(
         &self,
         context: &RequestContext,

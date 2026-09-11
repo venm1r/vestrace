@@ -2548,6 +2548,14 @@ BEGIN
                 BEFORE INSERT OR UPDATE OR DELETE ON public.embedding_job_work_claims
                 FOR EACH ROW EXECUTE FUNCTION vestrace_reject_raw_p03_mutation();
             ALTER TABLE public.embedding_job_work_claims OWNER TO vestrace_guarded_owner;
+            -- Restored, not assumed. The REVOKE above names `vestrace`, which
+            -- owned this table at that moment, and revoking from an owner
+            -- removes its own ACL entry rather than leaving a default one. The
+            -- ownership transfer then had an empty ACL to carry, so the guarded
+            -- owner ended with no privilege on the table its own SECURITY
+            -- DEFINER function must insert into -- and every dispatch claim
+            -- failed with 42501 from the first one.
+            GRANT ALL ON TABLE public.embedding_job_work_claims TO vestrace_guarded_owner;
             FOR target IN
                 SELECT procedure.oid::regprocedure FROM pg_proc AS procedure
                 JOIN pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
@@ -3381,5 +3389,81 @@ BEGIN
         GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_legacy_adoption_upgrade() TO vestrace;
     END IF;
 END $legacy_adoption_bootstrap$;
+
+DO $retrieval_dispatch_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=205 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+             WHERE oid=to_regprocedure(
+                 'public.vestrace_claim_embedding_work(uuid,text,text,integer)'))
+           <>'vestrace_guarded_owner'
+           OR NOT has_function_privilege('vestrace',
+                'public.vestrace_claim_embedding_work(uuid,text,text,integer)','EXECUTE')
+           OR has_function_privilege('public',
+                'public.vestrace_claim_embedding_work(uuid,text,text,integer)','EXECUTE')
+        THEN
+            RAISE EXCEPTION 'embedding retrieval dispatch owner or runtime ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_retrieval_dispatch_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_retrieval_dispatch_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_retrieval_dispatch_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=204 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=205 AND success) THEN
+                RAISE EXCEPTION 'retrieval dispatch upgrade requires exact accepted 0204 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            -- 0205 forward-replaces 0199's work claim so a fenced retrieval
+            -- query becomes claimable, and CREATE OR REPLACE requires
+            -- ownership. Lent for the migration and handed straight back below.
+            ALTER FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
+                OWNER TO vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_prepare_embedding_retrieval_dispatch_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_retrieval_dispatch_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_retrieval_dispatch_upgrade()
+            TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_retrieval_dispatch_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_claim_embedding_work(uuid,text,text,integer)'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'work claim hand-back is unavailable' USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
+                OWNER TO vestrace_guarded_owner;
+            REVOKE ALL ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
+                FROM PUBLIC;
+            -- Standing since 0199: the worker calls this every cycle, so the
+            -- hand-back restores EXECUTE rather than leaving it unreachable.
+            GRANT EXECUTE ON FUNCTION public.vestrace_claim_embedding_work(uuid,text,text,integer)
+                TO vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_finish_embedding_retrieval_dispatch_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_retrieval_dispatch_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_retrieval_dispatch_upgrade()
+            TO vestrace;
+    END IF;
+END $retrieval_dispatch_bootstrap$;
 
 SQL
