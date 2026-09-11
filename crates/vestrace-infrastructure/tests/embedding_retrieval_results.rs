@@ -1681,3 +1681,136 @@ async fn mutating_the_one_successor_lookup_moves_the_refusal_and_restores_exactl
 
     runtime.close().await;
 }
+
+const FINALIZE_AUTHORITY: &str = "public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])";
+
+/// The pinned-generation revalidation, and the edit that disables all of it.
+///
+/// All six clauses, not one: they raise a single refusal between them, so the
+/// primary predicate is the revalidation itself. Disabling one clause would
+/// qualify the redundancy inside it; disabling the predicate asks the question
+/// the qualification exists for -- whether anything else stands between a moved
+/// corpus and a stored answer.
+const FENCE_NEEDLE: &str = "    IF guard_row.current_generation_id IS DISTINCT FROM fence_row.generation_id\n       OR guard_row.guard_version <> fence_row.guard_version\n       OR generation_row.state <> 'ready'\n       OR generation_row.generation_epoch <> fence_row.generation_epoch\n       OR generation_row.corpus_revision <> fence_row.corpus_revision\n       OR generation_row.member_count <> fence_row.member_count THEN";
+const FENCE_MUTATION: &str = "    IF FALSE THEN";
+
+/// Move the corpus under an accepted attempt, then try to land its answer.
+///
+/// Returns the refusal, or the result identity if one was stored. A stored
+/// result here is the unsafe state itself: an answer attributed to a generation
+/// that no longer exists, which is exactly what the fence is for.
+async fn land_on_a_moved_generation(
+    pool: &PgPool,
+    runtime: &PgPool,
+) -> (Attempt, Result<Uuid, (String, String)>) {
+    let a = attempt(pool, runtime).await;
+    let fence = accept_fence(runtime, &a, Uuid::now_v7()).await.unwrap();
+    advance_generation(pool, runtime, &a).await;
+    let landed = finalize(
+        runtime,
+        &a,
+        fence,
+        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+    )
+    .await;
+    let outcome = match landed {
+        Ok(id) => Ok(id),
+        Err(error) => {
+            let database = error.as_database_error().expect("a database refusal");
+            Err((
+                database
+                    .code()
+                    .map(|code| code.into_owned())
+                    .unwrap_or_default(),
+                database.message().to_owned(),
+            ))
+        }
+    };
+    (a, outcome)
+}
+
+/// Mutation qualification: the pinned-generation fence is the only thing
+/// between a moved corpus and a stored answer.
+///
+/// With the predicate disabled the result *lands*. Nothing else refuses it: no
+/// constraint, no trigger, no later check. So unlike the one-successor rule --
+/// which the table's primary key also enforces -- this rule rests on this
+/// predicate alone, and that is what the run records.
+///
+/// It is worth saying plainly what the mutated world contains, because it is
+/// the thing the fence prevents: a terminal retrieval result, attributed to a
+/// job, whose fence names a generation the corpus has already replaced. A
+/// caller reading it would be told what the corpus used to say, with nothing
+/// marking it stale.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_pinned_generation_fence_lets_a_stale_answer_land(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, FINALIZE_AUTHORITY).await;
+    assert!(
+        original.contains(FENCE_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before: the fence refuses, by its own message, and stores nothing.
+    let (before_attempt, before) = land_on_a_moved_generation(&pool, &runtime).await;
+    let (before_state, before_message) =
+        before.expect_err("a moved generation must refuse its answer");
+    assert_eq!(before_state, "23514");
+    assert!(
+        before_message.contains("requires its exact pinned generation"),
+        "{before_message}"
+    );
+    assert_eq!(
+        counts(&pool, &before_attempt).await,
+        (0, 0),
+        "a refused answer leaves neither a result nor a change"
+    );
+
+    install_authority(&pool, &original.replace(FENCE_NEEDLE, FENCE_MUTATION)).await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, FINALIZE_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Red, and red in the sharpest way: the answer lands.
+    let (mutated_attempt, landed) = land_on_a_moved_generation(&pool, &runtime).await;
+    landed.expect(
+        "with the fence disabled nothing else refuses a stale answer; if this is a \
+         refusal, some other defence exists and the qualification must say which",
+    );
+    assert_eq!(
+        counts(&pool, &mutated_attempt).await,
+        (1, 0),
+        "the unsafe state is a stored terminal result against a generation the \
+         corpus has already replaced"
+    );
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, FINALIZE_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after: the same refusal, and nothing stored.
+    let (after_attempt, after) = land_on_a_moved_generation(&pool, &runtime).await;
+    let (after_state, after_message) = after.expect_err("the fence must refuse again");
+    assert_eq!(after_state, before_state);
+    assert_eq!(after_message, before_message);
+    assert_eq!(counts(&pool, &after_attempt).await, (0, 0));
+
+    runtime.close().await;
+}
