@@ -5571,3 +5571,80 @@ False. `crates/vestrace-domain/src/embedding/retrieval.rs` defines it, and
   `vestrace_reject_raw_p03_mutation`.
 - **The repository's red-test debt is eight suites and 26 tests**, not the seven
   and 25 recorded earlier in this package.
+
+## Completion package (2026-09-08) — why activation has never been reachable, exactly
+
+Task 14 could not qualify two of its nine predicates because activation is
+unreachable. That much was already recorded. This section names the cause, which
+turns out to be one line in a shared test fixture rather than anything about the
+activation authority itself.
+
+### The two requirements that cannot both be met
+
+`vestrace_assert_canonical_embedding_space` requires, at migration 0197 line
+147, that a canonical registration's `returned_model` equal its model revision's
+`wire_model_id`:
+
+```sql
+AND 'embeddings'=ANY(q.capabilities) AND s.returned_model=m.wire_model_id
+```
+
+The shared delivery fixture declares two different models for one job:
+
+- `crates/vestrace-infrastructure/tests/common/mod.rs` line 348 inserts the
+  model revision with `wire_model_id = 'embedding-model'`.
+- The same file, line 1669, has `acceptance_command` declare
+  `response_model: RESULT_MODEL`, and line 1236 defines `RESULT_MODEL` as
+  `"text-embedding-nomic-embed-text-v1.5"`.
+
+The result chain compares the dispatch request's model against what the delivery
+outputs declared; the canonical registration is checked against the wire model.
+A job from this fixture can satisfy one or the other and never both.
+
+### What that costs, in order
+
+1. A canonical space registered under the wire model refuses the fixture's
+   results: `Conflict("EMBEDDING_RESULT_CONFLICT")` from `validate_plan`, on
+   `response.model() != plan.response_model`.
+2. A canonical space registered under `RESULT_MODEL` is refused at registration:
+   23514, `canonical embedding space requires exact qualified structural
+   evidence`, from the clause quoted above.
+3. So no delivery job built by the shared fixture can land its outputs in a
+   canonical space.
+4. So no transition over such a space can be proven and activated, and every
+   call to `vestrace_activate_embedding_transition` in this repository remains
+   an `unwrap_err`.
+5. So Task 14's mutations 8 and 9 — target credential slot/version lineage, and
+   rotation completion-blocker adoption, both inside that authority — cannot be
+   qualified.
+
+### How this was established, and what was not kept
+
+By composing the parts the activation suite already holds —
+`register_canonical_space`, `prove_one_transition_onto` with its target
+arguments, `seed_qualification_head`, `activate` — and watching where the
+composition stops. Three intermediate probes were written and all three were
+removed; `embedding_transition_activation.rs` is byte-identical to what
+`1090a80` pushed, and passes 11/11 on those bytes.
+
+One intermediate change is worth naming because it was tried and reverted rather
+than kept: making the suite's loopback adapter echo the model its request names,
+instead of a constant. That is more faithful to how a provider behaves, and it
+does not help here, because the request and the registration disagree upstream
+of the adapter. Keeping a change that fixes nothing would have been churn.
+
+### The repair, and why this package did not make it
+
+One string. Either the shared fixture's model revision takes `RESULT_MODEL` as
+its `wire_model_id`, or `acceptance_command` declares the wire model. Both live
+in `crates/vestrace-infrastructure/tests/common/mod.rs`, which is outside this
+package's frozen change scope, and which every suite in the crate depends on —
+so the change is small, is not local, and is not this package's to make without
+an amendment.
+
+It is worth being plain about what that means for the package's claims. Task 7
+of the completion plan is titled "Activate transitions and staged credential
+rotation atomically". Its authority exists, is owned, is granted, and refuses
+correctly at every boundary any fixture can reach. Whether it *activates* is not
+demonstrated by anything in this repository, and this section is the reason
+rather than an excuse for it.
