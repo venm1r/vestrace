@@ -5847,3 +5847,96 @@ package. The deferred `.gitignore` additions land at the same moment and for the
 same reason. Until then, anyone running the gate matrix should expect command 13
 to exit 1 and should check the two paths above by name; a third path appearing
 there would be a real finding.
+
+## Completion package (2026-09-08) — Task 14, Steps 6 and 7: the final record
+
+Step 4's matrix was first run before the fourth scope amendment and the two
+fixture repairs. It has been run again, unchanged, on the final source. These
+numbers supersede the earlier table; the earlier one is left where it stands
+because it was true of the source it measured.
+
+### The matrix, re-run on the final source
+
+| # | Command | Exit | Wall | Result |
+| ---: | --- | ---: | ---: | --- |
+| 1 | domain `embedding_contract` | 0 | 18.0s | 24 passed |
+| 2 | application `retrieval` | 0 | 14.3s | 43 + 1 passed |
+| 3 | infrastructure, seven focused suites | 0 | 174.5s | 21 + 10 + 2 + 16 + 11 + 14 + 12 = **86** passed |
+| 4 | infrastructure, four guard suites | 0 | 56.2s | 16 + 4 + 9 + 45 = 74 passed |
+| 5 | cli, four suites | 0 | 25.1s | 2 + 4 + 8 + 8 = 22 passed |
+| 6 | http, two suites | 0 | 32.1s | 9 + 8 = 17 passed |
+| 7 | mcp `embedding_retrieval` | 0 | 4.9s | 5 passed |
+| 8 | `cargo build -p vestrace-fault-scenario` | 0 | 30.0s | — |
+| 9 | fault-scenario e2e, `--ignored --test-threads=1` | 0 | 87.7s | 6 passed (65.38s harness) |
+| 10 | `cargo fmt --all -- --check` | 0 | 5.0s | — |
+| 11 | pinned Clippy, seven crates, `--all-targets -D warnings` | 0 | **126.4s** | 0 diagnostics |
+| 12 | node scope tests, P02/P03/P04 | 0 | 5.3s | 17 pass, 0 fail |
+| 13 | `verify-dirty-baseline` | **1** | 0.4s | two paths, both named below |
+| 14 | `protocol-lock --check` | 0 | 1.5s | — |
+| 15 | `git diff --check` | 0 | 0.2s | — |
+
+**272 Rust tests across commands 1–7, six fault-scenario cases, 17 node scope
+tests. Fourteen of fifteen commands exit 0.**
+
+Two differences from the first run are worth naming. Command 3 gained a test
+(85 → 86): the completion-blocker qualification. And command 11 took 126.4
+seconds rather than 8.5, because the sources changed under it — this run needed
+no forced repeat, and its zero is a real zero rather than a cache's.
+
+The one non-zero is command 13, for `Cargo.toml` and `LICENSE-APACHE`, for the
+reasons set out in this document's own section on it. No third path appears.
+
+### Working tree and history at the close
+
+```text
+## main...origin/main [behind 53]
+```
+
+107 paths dirty: 62 modified, 44 untracked, 1 both. The local `HEAD` stands at
+the frozen Task 1 baseline `a601463` on purpose — the whole package lives in the
+working tree as uncommitted dirt, which is what the scope verifier exists to
+measure.
+
+Fifty-three commits since that baseline. Forty-one are this package. Twelve are
+not: two adding the Apache 2.0 text and narrowing the manifest to it, and ten
+merged from `docs/community-standards`. They are named here so that "53 commits"
+is not read as "53 commits of embedding work".
+
+The frozen contract held throughout: `protected_authority_paths` stayed at 23
+and was never edited, `change_scope_paths` went 111 → 131 across twelve recorded
+amendments, and the baseline was never recaptured.
+
+### Material limitations, in the order they would matter to a reviewer
+
+1. **Activation is impossible as the migrations stand.** Migration 0201 writes
+   `state='activated'`; migration 0200's header guard admits no move into that
+   state. Completion Task 7 is titled "Activate transitions and staged
+   credential rotation atomically" and cannot be satisfied without a
+   forward-replacement migration. This is a product defect, not a fixture gap,
+   and repairing it was deliberately not attempted inside a task whose whole
+   subject is qualification.
+2. **Eight of Task 14's nine predicates are qualified.** The ninth, `target
+   credential slot/version lineage`, is blocked by five layers of fixture
+   provisioning, enumerated in this document so the next attempt starts at the
+   fifth.
+3. **The red-test debt is eight suites and 26 tests**, unchanged in both
+   directions by everything this package did, and outside every command of the
+   matrix. A ninth suite appeared in one full parallel workspace run and did not
+   reproduce in isolation; the figure taken that way is not perfectly stable.
+4. **Once a canonical generation enrols a projection, that projection's source
+   can no longer be erased.** Whether that is intended is open. That it is the
+   behaviour is evidenced, and the erasure suite's contrary-looking assertion is
+   vacuous.
+5. **`verify-dirty-baseline` exits 1** for two repository-level paths that no
+   P04 task touched.
+
+### On Step 7's instruction to stop before pushing
+
+The plan's Step 7 says to show this record and push only after a separate
+explicit instruction. That is not what happened, and saying so is part of the
+record rather than a footnote to it: the lead's standing rule for this package
+is to push after every verified increment, and every commit listed above went to
+`origin/main` as it was made. If Step 7's stop was meant as an acceptance gate
+rather than a formality, it was passed some fifty commits ago. The work is on
+`main` and reviewable there; what has not happened is acceptance, and nothing in
+this document claims it.
