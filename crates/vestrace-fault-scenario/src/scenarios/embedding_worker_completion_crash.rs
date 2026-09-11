@@ -8,25 +8,29 @@
 //! so "a second worker never reaches the provider" is, in that suite, an
 //! argument rather than an observation.
 //!
-//! This is the observation. Two children of the same build do the same real
-//! setup against the same database and are given the same reachable provider
-//! address:
+//! This is the observation, and it is one job's whole story rather than two
+//! unrelated runs. Both children are the same build, given the same reachable
+//! provider address, and the second works the job the first died on:
 //!
-//! - the control claims the work and goes on to dispatch, and the listener
-//!   counts one request;
-//! - the crash child claims the work and stops existing, and the listener
-//!   counts none.
+//! - the crash child claims the work and stops existing; the listener counts
+//!   nothing;
+//! - the lease is then aged the way time would age it;
+//! - the successor child claims *that same job* and carries it past the
+//!   dispatch; the listener counts one.
 //!
-//! The count is taken by a socket in the parent, after the child is gone. It is
-//! never a number a child reported. That is the whole point of the pairing: a
-//! zero from a child that was never wired to a provider proves nothing, and the
-//! control is what shows the wire was live.
+//! So the question the pairing answers is the one that costs money: a worker
+//! crashing and a worker taking over after it is **one** provider call between
+//! them, not two. The successor is also what shows the wire was live, on the
+//! very job whose crash counted zero -- a separate control against a separate
+//! world would have left that inference to the reader.
 //!
-//! What survives is then read out of PostgreSQL rather than remembered: the
-//! claim row is still there, still owned by a process that no longer exists,
-//! still inside its lease -- which is exactly the state that keeps the next
-//! worker out until the lease lapses, and exactly the state the restart suite
-//! reasons from.
+//! Every count is taken by a socket in the parent, after each child is gone.
+//! None is a number a child reported.
+//!
+//! What survives is read out of PostgreSQL rather than remembered: after the
+//! crash the claim row is still there, owned by a process that no longer
+//! exists, still inside its lease -- which is what keeps the next worker out
+//! until the lease lapses, asserted here by asking for it and being refused.
 
 use std::io::Write;
 use std::sync::{
@@ -52,7 +56,12 @@ const POINT: &str = "after_work_claim";
 /// surviving lease rather than merely that someone does. A random name would
 /// make the assertion "a claim exists", which a control run also satisfies.
 const CRASHED_OWNER: &str = "fault-scenario-worker-that-dies";
-const CONTROL_OWNER: &str = "fault-scenario-worker-control";
+const SUCCESSOR_OWNER: &str = "fault-scenario-worker-that-takes-over";
+
+/// The owner the parent claims under to prove the dead worker's lease still
+/// excludes a living one. Distinct from the successor's, because that attempt
+/// must be refused and this one must not be confused with it.
+const PROBE_OWNER: &str = "fault-scenario-worker-probing-the-lease";
 
 /// Counts what arrives, from outside every process under test.
 ///
@@ -168,11 +177,25 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
     let runtime = dispatch::connect_runtime(&owner)
         .await
         .unwrap_or_else(|error| die(error));
-    let fixture = dispatch::build_fixture(&owner, &runtime)
-        .await
-        .unwrap_or_else(|error| die(error));
 
-    let control = std::env::var_os("VESTRACE_EMBEDDING_CONTROL").is_some();
+    // The successor works a job it did not create. Building its own would make
+    // the two children two experiments, and the count that matters -- one call
+    // for a crash *and* its takeover -- would be the sum of two unrelated runs.
+    let successor = std::env::var_os("VESTRACE_WORKER_SUCCESSOR").is_some();
+    let fixture = if successor {
+        adopt_fixture(
+            &owner,
+            adopted_identity("WORKSPACE"),
+            adopted_identity("JOB"),
+        )
+        .await
+        .unwrap_or_else(|error| die(error))
+    } else {
+        dispatch::build_fixture(&owner, &runtime)
+            .await
+            .unwrap_or_else(|error| die(error))
+    };
+
     let context = RequestContext::new(
         WorkspaceId::from_uuid(fixture.workspace_id),
         PrincipalId::from_uuid(fixture.principal_id),
@@ -182,8 +205,8 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         .claim(
             &context,
             EmbeddingWorkKind::Dispatch,
-            if control {
-                CONTROL_OWNER
+            if successor {
+                SUCCESSOR_OWNER
             } else {
                 CRASHED_OWNER
             },
@@ -196,31 +219,29 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
         .any(|claim| claim.job_id.as_uuid() == fixture.job_id)
     {
         die(format!(
-            "the accepted job {} was not among the claimed work {claimed:?}",
+            "the job {} was not among the claimed work {claimed:?}",
             fixture.job_id
         ))
     }
 
-    if control {
+    if successor {
         // Announced before driving, because the drive ends in an abort of its
         // own and a marker written after it would never be flushed.
-        announce("control", fixture.workspace_id, fixture.job_id);
-        // The control carries on past the dispatch the crash child stops short
-        // of, as far as the boundary just after the provider has answered. Its
-        // whole job is to show that the address the crash child was given is
-        // reachable, so that child's zero means "did not call" rather than
-        // "could not have". `drive` reaches the provider only when it is given
-        // a point past the dispatch commit -- with no point it returns early,
-        // which is what makes the durable-row control of the dispatch scenario
-        // silent on the wire.
+        announce("successor", fixture.workspace_id, fixture.job_id);
+        // `drive` reaches the provider only when given a point past the
+        // dispatch commit; with no point it returns early, which is what makes
+        // the dispatch scenario's durable-row control silent on the wire. The
+        // boundary just after the receipt is the first one past the call.
         dispatch::drive(
             &runtime,
             &fixture,
-            Some(vestrace_domain::external_effects::EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation),
+            Some(
+                vestrace_domain::external_effects::EffectFaultPoint::AfterReceiptBeforeOutcomeConfirmation,
+            ),
         )
         .await
         .unwrap_or_else(|error| die(error));
-        die("the control child must abort inside its drive, not return".to_owned())
+        die("the successor child must abort inside its drive, not return".to_owned())
     }
 
     // The claim has committed. Nothing has been dispatched. The process stops
@@ -231,47 +252,126 @@ pub async fn run_child(settings: &ScenarioSettings) -> ! {
     std::process::abort()
 }
 
-/// Run the control, then the crash child, then read what is left.
+/// One identity the parent handed this child.
+///
+/// A successor is told which job to work rather than finding one, because
+/// "whatever is claimable" would let a mistake in the fixture look like a
+/// successful takeover of something else entirely.
+fn adopted_identity(name: &str) -> Uuid {
+    let variable = format!("VESTRACE_WORKER_{name}");
+    std::env::var(&variable)
+        .unwrap_or_else(|_| die(format!("the successor child needs {variable}")))
+        .parse()
+        .unwrap_or_else(|error| die(format!("{variable} is not a uuid: {error}")))
+}
+
+/// Rebuild the dispatch fixture for a job that already exists.
+///
+/// Every field comes out of the rows the first child committed, so the
+/// successor drives exactly the effect, evidence and binding snapshot the
+/// crashed worker was going to. The intent is `None` because `drive` does not
+/// read it: it works from the identities, and inventing one here would be this
+/// child asserting something about the first child's world.
+async fn adopt_fixture(
+    owner: &PgPool,
+    workspace: Uuid,
+    job: Uuid,
+) -> Result<dispatch::Fixture, String> {
+    let row: (Uuid, Uuid, Uuid, Uuid, Uuid, Uuid, Uuid) = sqlx::query_as(
+        "SELECT j.space_registration_id, j.model_binding_snapshot_id, j.external_effect_id, \
+                j.model_request_evidence_id, s.connection_id, s.connection_revision_id, \
+                c.principal_id \
+           FROM embedding_jobs j \
+           JOIN model_binding_snapshots s \
+             ON s.id=j.model_binding_snapshot_id AND s.workspace_id=j.workspace_id \
+           JOIN connections c \
+             ON c.id=s.connection_id AND c.workspace_id=s.workspace_id \
+          WHERE j.workspace_id=$1 AND j.id=$2",
+    )
+    .bind(workspace)
+    .bind(job)
+    .fetch_one(owner)
+    .await
+    .map_err(dispatch::sql)?;
+    Ok(dispatch::Fixture {
+        workspace_id: workspace,
+        principal_id: row.6,
+        job_id: job,
+        effect_id: row.2,
+        snapshot_id: row.1,
+        connection_id: row.4,
+        connection_revision_id: row.5,
+        evidence_id: row.3,
+        space_registration_id: row.0,
+        intent: None,
+    })
+}
+
+/// Run the crash child, prove what it left, then let a successor take over.
+
 pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
     settings.embedding_worker_completion_point();
     let listener = LoopbackCounter::start().await?;
+    let owner = dispatch::connect_owner(settings).await?;
 
-    // The control aborts too. It has to: the only path in this build that
-    // reaches the provider is one that ends at a fault point, and a control
-    // that exited cleanly would be a different code path from the one under
-    // test.
-    let control = spawn_child(settings, true, &listener.url()).await?;
-    if control.status.success() {
-        return Err(format!(
-            "the control child must abort at the boundary past the provider call, not              exit: {}",
-            text(&control.stderr)
-        ));
-    }
-    let (control_workspace, control_job) = identities(&text(&control.stderr), "control")?;
-    let after_control = listener.count();
-    if after_control != 1 {
-        return Err(format!(
-            "the control child must reach the provider exactly once so the crash child's \
-             zero means something; the listener counted {after_control}"
-        ));
-    }
-
-    let crashed = spawn_child(settings, false, &listener.url()).await?;
+    // --- the crash -------------------------------------------------------
+    let crashed = spawn_child(settings, None, &listener.url()).await?;
     if crashed.status.success() {
         return Err("the worker-completion child exited instead of aborting".to_owned());
     }
     let (workspace, job) = identities(&text(&crashed.stderr), POINT)?;
-    let crash_requests = listener.count() - after_control;
+    let crash_requests = listener.count();
+    let after_crash = read_survivors(&owner, workspace, job).await?;
 
-    let owner = dispatch::connect_owner(settings).await?;
-    let survivors = read_survivors(&owner, workspace, job).await?;
-
-    // The lease the dead process holds still excludes a living one. Asked
-    // through the same guarded function a real worker would use, under the
+    // The lease a dead process holds still excludes a living one. Asked
+    // through the same guarded function a real worker uses, under the
     // restricted runtime role, after the holder is gone.
-    let runtime = dispatch::connect_runtime(&owner).await?;
-    let work = PgEmbeddingWorkRepository::new(PgStore::from_pool(runtime.clone()));
-    let principal: Uuid = sqlx::query_scalar(
+    let principal = principal_of(&owner, workspace, job).await?;
+    let probe = claim_as(&owner, workspace, principal, PROBE_OWNER).await?;
+    let probe_claimed_the_job = probe.contains(&job);
+
+    // --- the takeover ----------------------------------------------------
+    // Aged rather than waited out: the lease is sixty seconds and nothing is
+    // learned by spending them. Both timestamps move, because the row carries
+    // `claim_deadline > created_at` and time does not move one without the
+    // other.
+    expire_lease(&owner, workspace, job).await?;
+    let successor = spawn_child(settings, Some((workspace, job)), &listener.url()).await?;
+    if successor.status.success() {
+        return Err(format!(
+            "the successor must abort at the boundary past the provider call, not exit: {}",
+            text(&successor.stderr)
+        ));
+    }
+    let (successor_workspace, successor_job) = identities(&text(&successor.stderr), "successor")?;
+    if (successor_workspace, successor_job) != (workspace, job) {
+        return Err(format!(
+            "the successor worked {successor_workspace}/{successor_job}, not the crashed \
+             job {workspace}/{job}, so this is two experiments rather than one takeover"
+        ));
+    }
+    let successor_requests = listener.count() - crash_requests;
+    let after_takeover = read_survivors(&owner, workspace, job).await?;
+
+    Ok(serde_json::json!({
+        "scenario": "embedding_worker_completion_crash",
+        "point": POINT,
+        "proved": true,
+        // Counted by a socket in this process, each after its child was gone.
+        "crash_requests": crash_requests,
+        "successor_requests": successor_requests,
+        "total_requests": listener.count(),
+        "after_crash": after_crash,
+        "probe_claimed_the_job": probe_claimed_the_job,
+        "after_takeover": after_takeover,
+        "successor_worked_the_crashed_job": true,
+    })
+    .to_string())
+}
+
+/// The principal the job's own connection belongs to.
+async fn principal_of(owner: &PgPool, workspace: Uuid, job: Uuid) -> Result<Uuid, String> {
+    sqlx::query_scalar(
         "SELECT c.principal_id FROM connections c \
            JOIN model_binding_snapshots s \
              ON s.connection_id=c.id AND s.workspace_id=c.workspace_id \
@@ -281,39 +381,76 @@ pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
     )
     .bind(workspace)
     .bind(job)
-    .fetch_one(&owner)
+    .fetch_one(owner)
     .await
-    .map_err(dispatch::sql)?;
-    let successor = work
+    .map_err(dispatch::sql)
+}
+
+/// Ask for work as a worker would, and say which jobs came back.
+async fn claim_as(
+    owner: &PgPool,
+    workspace: Uuid,
+    principal: Uuid,
+    as_owner: &str,
+) -> Result<Vec<Uuid>, String> {
+    let runtime = dispatch::connect_runtime(owner).await?;
+    let work = PgEmbeddingWorkRepository::new(PgStore::from_pool(runtime.clone()));
+    let claimed = work
         .claim(
             &RequestContext::new(
                 WorkspaceId::from_uuid(workspace),
                 PrincipalId::from_uuid(principal),
             ),
             EmbeddingWorkKind::Dispatch,
-            "fault-scenario-worker-after-the-crash",
+            as_owner,
             8,
         )
         .await
-        .map_err(|error| format!("the successor's claim must answer, not fail: {error:?}"))?;
-    let successor_claimed_the_job = successor.iter().any(|claim| claim.job_id.as_uuid() == job);
+        .map_err(|error| format!("a claim must answer, not fail: {error:?}"));
     runtime.close().await;
+    Ok(claimed?
+        .into_iter()
+        .map(|claim| claim.job_id.as_uuid())
+        .collect())
+}
 
-    Ok(serde_json::json!({
-        "scenario": "embedding_worker_completion_crash",
-        "point": POINT,
-        "proved": true,
-        // Counted by a socket in this process, after the child was gone.
-        "control_requests": after_control,
-        "crash_requests": crash_requests,
-        "control": {
-            "workspace_distinct": control_workspace != workspace,
-            "job_distinct": control_job != job,
-        },
-        "persisted": survivors,
-        "successor_claimed_the_job": successor_claimed_the_job,
-    })
-    .to_string())
+/// End a lease the way time would.
+///
+/// As the guarded owner with the workspace set, and the affected count is
+/// checked. Both tables force row-level security, so an owner statement without
+/// `vestrace.workspace_id` matches nothing and *succeeds* -- a step that
+/// skipped it would leave the lease live and the takeover below would then be
+/// measuring the wrong refusal.
+async fn expire_lease(owner: &PgPool, workspace: Uuid, job: Uuid) -> Result<(), String> {
+    let mut transaction = owner.begin().await.map_err(dispatch::sql)?;
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *transaction)
+        .await
+        .map_err(dispatch::sql)?;
+    sqlx::query("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(workspace.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(dispatch::sql)?;
+    let aged = sqlx::query(
+        "UPDATE embedding_job_work_claims \
+            SET created_at=now()-INTERVAL '2 hours', \
+                claim_deadline=now()-INTERVAL '1 hour' \
+          WHERE workspace_id=$1 AND job_id=$2 AND work_kind='dispatch'",
+    )
+    .bind(workspace)
+    .bind(job)
+    .execute(&mut *transaction)
+    .await
+    .map_err(dispatch::sql)?
+    .rows_affected();
+    transaction.commit().await.map_err(dispatch::sql)?;
+    if aged != 1 {
+        return Err(format!(
+            "exactly one lease should have been aged, but {aged} rows changed"
+        ));
+    }
+    Ok(())
 }
 
 /// What the database still holds for the crashed attempt.
@@ -391,7 +528,7 @@ async fn read_survivors(
 /// from the parent's idea of the cycle and nothing would notice.
 async fn spawn_child(
     settings: &ScenarioSettings,
-    control: bool,
+    successor: Option<(Uuid, Uuid)>,
     dispatch_url: &str,
 ) -> Result<std::process::Output, String> {
     let program = std::env::current_exe()
@@ -413,8 +550,11 @@ async fn spawn_child(
         .env("VESTRACE_FAULT_POINT", POINT)
         .env("VESTRACE_RUNTIME_DATABASE_URL", runtime_url)
         .env("VESTRACE_EMBEDDING_DISPATCH_URL", dispatch_url);
-    if control {
-        command.env("VESTRACE_EMBEDDING_CONTROL", "1");
+    if let Some((workspace, job)) = successor {
+        command
+            .env("VESTRACE_WORKER_SUCCESSOR", "1")
+            .env("VESTRACE_WORKER_WORKSPACE", workspace.to_string())
+            .env("VESTRACE_WORKER_JOB", job.to_string());
     }
     // Windows resolves DLLs through the inherited environment, so the cleared
     // environment keeps the few variables a process needs to start at all.

@@ -355,17 +355,20 @@ async fn result_finalization_survives_a_real_child_abort(pool: PgPool) {
     let _ = std::fs::remove_file(url_file);
 }
 
-/// A worker that dies holding a claim never reached the provider, and the lease
-/// it left keeps the next worker out.
+/// A crash and the takeover after it cost one provider call between them.
 ///
-/// The pairing is what makes the zero mean anything. Both children get the same
-/// reachable provider address and do the same real setup; the control goes on
-/// to dispatch and the listener counts one, the crash child stops at the claim
-/// and the listener counts none. A zero from a child that was never wired to a
-/// provider would prove nothing at all.
+/// One job, two processes, and a listener outside both. The crash child claims
+/// real work and stops existing: nothing arrives. Its lease is then aged the
+/// way time would age it, and a successor claims *that same job* and carries it
+/// past the dispatch: exactly one request arrives.
+///
+/// Both halves matter. The zero alone would be satisfied by a child that was
+/// never wired to a provider, and the one alone says nothing about what a crash
+/// costs. Together they answer the question that costs money: a worker dying
+/// and a worker replacing it is one call, not two.
 #[sqlx::test(migrations = false)]
 #[ignore = "needs PostgreSQL plus the vestrace runtime role; run with --ignored --nocapture"]
-async fn a_worker_dying_after_its_claim_never_reaches_the_provider(pool: PgPool) {
+async fn a_crash_and_its_takeover_cost_one_provider_call_between_them(pool: PgPool) {
     provisioned_runtime(&pool).await.close().await;
     let database_url = ephemeral_database_url(&pool).await;
     let url_file = write_url_file(&database_url);
@@ -396,50 +399,70 @@ async fn a_worker_dying_after_its_claim_never_reaches_the_provider(pool: PgPool)
     assert_eq!(observation["point"], "after_work_claim");
     assert_eq!(observation["proved"], true);
 
-    // The two halves of the claim, counted from outside both children.
-    assert_eq!(
-        observation["control_requests"], 1,
-        "the control must show the provider address was reachable"
-    );
+    // Counted from outside, each after its child was gone.
     assert_eq!(
         observation["crash_requests"], 0,
         "a worker that died at its claim must never have reached the provider"
     );
-
-    // Each child built its own world, so the crash observation is not being
-    // read off the control's rows.
-    assert_eq!(observation["control"]["workspace_distinct"], true);
-    assert_eq!(observation["control"]["job_distinct"], true);
-
-    let persisted = &observation["persisted"];
     assert_eq!(
-        persisted["claim_owner"], "fault-scenario-worker-that-dies",
+        observation["successor_requests"], 1,
+        "the takeover must reach the provider, or the zero above proves nothing"
+    );
+    assert_eq!(
+        observation["total_requests"], 1,
+        "a crash and its takeover are one provider call between them"
+    );
+    assert_eq!(
+        observation["successor_worked_the_crashed_job"], true,
+        "one job's story, not two runs"
+    );
+
+    // What the crash left behind.
+    let after_crash = &observation["after_crash"];
+    assert_eq!(
+        after_crash["claim_owner"], "fault-scenario-worker-that-dies",
         "the surviving lease must name the process that is gone"
     );
     assert_eq!(
-        persisted["lease_live"], true,
-        "the lease outlives the holder; only time ends it"
+        after_crash["lease_live"], true,
+        "the lease outlives its holder; only time ends it"
     );
     assert_eq!(
-        persisted["last_outcome"],
+        after_crash["last_outcome"],
         serde_json::Value::Null,
         "a process that stopped existing recorded no outcome"
     );
     assert_eq!(
-        persisted["job_state"], "requested",
+        after_crash["job_state"], "requested",
         "claiming a job does not advance it"
     );
     assert_eq!(
-        persisted["dispatching_transitions"], 0,
+        after_crash["dispatching_transitions"], 0,
         "nothing was dispatched"
     );
-    assert_eq!(persisted["receipts"], 0, "and nothing was received");
+    assert_eq!(after_crash["receipts"], 0, "and nothing was received");
 
-    // And the lease does its job: a living worker asking immediately afterwards
-    // is refused the job the dead one holds.
+    // While that lease was live it kept a living worker out.
     assert_eq!(
-        observation["successor_claimed_the_job"], false,
-        "a live lease must keep the next worker out even when its holder is gone"
+        observation["probe_claimed_the_job"], false,
+        "a live lease must exclude the next worker even when its holder is gone"
+    );
+
+    // And after the takeover: one dispatch, one receipt, the lease now the
+    // successor's. Two dispatching transitions here would be the duplicate this
+    // whole design exists to prevent.
+    let after_takeover = &observation["after_takeover"];
+    assert_eq!(
+        after_takeover["claim_owner"], "fault-scenario-worker-that-takes-over",
+        "the lease moved to the worker that finished the job"
+    );
+    assert_eq!(
+        after_takeover["dispatching_transitions"], 1,
+        "exactly one dispatch for the job, across both workers"
+    );
+    assert_eq!(
+        after_takeover["receipts"], 1,
+        "and exactly one receipt to go with it"
     );
 
     let _ = std::fs::remove_file(url_file);
