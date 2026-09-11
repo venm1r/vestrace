@@ -1505,3 +1505,179 @@ async fn the_retry_queue_holds_only_unspent_confirmed_changes(pool: PgPool) {
 
     runtime.close().await;
 }
+
+/// The signature whose primary predicate this qualification mutates.
+const RETRY_AUTHORITY: &str =
+    "public.vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)";
+
+/// The one-successor lookup, and the smallest edit that disables it.
+///
+/// `AND FALSE` rather than a deleted block: the mutation has to be a *predicate*
+/// change, so that what is being qualified is the rule and not the shape of the
+/// function around it. It also restores by exact string, which is what makes
+/// the byte-equality check afterwards meaningful.
+const ONE_SUCCESSOR_NEEDLE: &str = "WHERE workspace_id=target_workspace AND predecessor_job_id=target_predecessor\n     FOR UPDATE";
+const ONE_SUCCESSOR_MUTATION: &str = "WHERE workspace_id=target_workspace AND predecessor_job_id=target_predecessor AND FALSE\n     FOR UPDATE";
+
+/// What the catalogue holds for a function: its definition and its posture.
+///
+/// Both, because a mutation that restored the text and lost the owner would
+/// leave a SECURITY DEFINER function running as somebody else -- which is the
+/// defect this package already found once, in the provisioner's hand-back.
+async fn authority_state(pool: &PgPool, signature: &str) -> (String, String, Option<String>, bool) {
+    sqlx::query_as(
+        "SELECT pg_get_functiondef(oid), pg_get_userbyid(proowner), \
+                array_to_string(proacl,'|'), \
+                has_function_privilege('vestrace',oid,'EXECUTE') \
+           FROM pg_proc WHERE oid=$1::regprocedure",
+    )
+    .bind(signature)
+    .fetch_one(pool)
+    .await
+    .expect("the authority is in the catalogue")
+}
+
+/// Install one definition, leaving everything about the function except its
+/// body exactly as it was.
+///
+/// Run as the connected superuser rather than as the guarded owner: the public
+/// schema belongs to the runtime role and the guarded owner holds no CREATE on
+/// it, so the owner cannot replace its own function. `CREATE OR REPLACE` keeps
+/// the existing owner and ACL, and the caller checks that -- because a
+/// SECURITY DEFINER function that changed hands would run the mutated body as
+/// somebody else, and the observation would then be about the role rather than
+/// about the predicate.
+async fn install_authority(pool: &PgPool, definition: &str) {
+    sqlx::raw_sql(definition)
+        .execute(pool)
+        .await
+        .expect("the authority definition is installable");
+}
+
+/// Drive the one-successor rule and say how it was refused, or that it was not.
+///
+/// Returns the SQLSTATE and message of the refusal a second, differently-keyed
+/// authorization earns. The point of naming both is that a mutation may move
+/// the refusal to another defence rather than removing it, and those two
+/// outcomes are not the same result.
+async fn second_key_refusal(pool: &PgPool, runtime: &PgPool) -> Result<Uuid, (String, String)> {
+    let a = attempt(pool, runtime).await;
+    let fence = accept_fence(runtime, &a, Uuid::now_v7()).await.unwrap();
+    observe_change(runtime, &a, fence, "revoked").await.unwrap();
+    authorize_retry(runtime, &a, Uuid::now_v7(), Uuid::now_v7(), "key-1")
+        .await
+        .expect("a confirmed change authorizes its first successor");
+    match authorize_retry(runtime, &a, Uuid::now_v7(), Uuid::now_v7(), "key-2").await {
+        Ok(id) => Ok(id),
+        Err(error) => {
+            let database = error.as_database_error().expect("a database refusal");
+            Err((
+                database
+                    .code()
+                    .map(|code| code.into_owned())
+                    .unwrap_or_default(),
+                database.message().to_owned(),
+            ))
+        }
+    }
+}
+
+/// Mutation qualification: one predicate, one run, restored byte-exactly.
+///
+/// The rule under test is that a predecessor has one successor for all time.
+/// Two independent defences enforce it -- this function's own lookup for an
+/// existing edge, and the table's primary key. Disabling the lookup is what
+/// tells them apart: if the guarded refusal simply disappeared, the rule would
+/// rest on a message; if some other defence catches it, the rule is layered and
+/// the qualification says at which boundary.
+///
+/// The restore is checked on the definition *and* the posture, and the rule is
+/// re-driven afterwards, because a qualification that left the authority
+/// subtly different would make every later test in this suite a test of the
+/// mutation.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_one_successor_lookup_moves_the_refusal_and_restores_exactly(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) = authority_state(&pool, RETRY_AUTHORITY).await;
+    assert!(
+        original.contains(ONE_SUCCESSOR_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before: the guarded refusal, by its own message.
+    let before = second_key_refusal(&pool, &runtime).await;
+    let (before_state, before_message) = before.expect_err("a second key must be refused");
+    assert_eq!(before_state, "23505");
+    assert!(
+        before_message.contains("predecessor already has its successor"),
+        "{before_message}"
+    );
+
+    // Mutate exactly one predicate.
+    install_authority(
+        &pool,
+        &original.replace(ONE_SUCCESSOR_NEEDLE, ONE_SUCCESSOR_MUTATION),
+    )
+    .await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, RETRY_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    // Only the body may differ. A mutation that also moved the owner would be
+    // two mutations, and the one that mattered would be the one nobody chose.
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(
+        mutated_execute, runtime_execute,
+        "nor whether the runtime role may call it"
+    );
+
+    // Red: the rule still holds, and the qualification records where.
+    let (mutated_state, mutated_message) = second_key_refusal(&pool, &runtime)
+        .await
+        .expect_err("a second successor must not become reachable");
+    assert_eq!(
+        mutated_state, "23505",
+        "the table's primary key is the independent defence, and it is still a \
+         unique violation"
+    );
+    assert!(
+        !mutated_message.contains("predecessor already has its successor"),
+        "with the lookup disabled the guarded message cannot be what refused; \
+         an unchanged message would mean the mutation never took: {mutated_message}"
+    );
+    assert!(
+        mutated_message.contains("embedding_retrieval_retry_edges"),
+        "the refusal now names the constraint rather than the rule, which is the \
+         different boundary this run exists to record: {mutated_message}"
+    );
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, RETRY_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner, "and so must its owner");
+    assert_eq!(restored_acl, acl, "and its access control list");
+    assert_eq!(
+        restored_execute, runtime_execute,
+        "and the runtime role's ability to call it"
+    );
+
+    // Green after: the guarded refusal is back, by its own message.
+    let (after_state, after_message) = second_key_refusal(&pool, &runtime)
+        .await
+        .expect_err("a second key must be refused again");
+    assert_eq!(after_state, before_state);
+    assert_eq!(after_message, before_message);
+
+    runtime.close().await;
+}
