@@ -2575,7 +2575,24 @@ BEGIN
                     'vestrace_commit_embedding_result_preparation',
                     'vestrace_lock_embedding_job_recovery_authority',
                     'vestrace_validate_embedding_projection_dependency',
-                    'vestrace_validate_embedding_result_preparation'
+                    'vestrace_validate_embedding_result_preparation',
+                    -- The two work functions 0199 created. The prepare helper
+                    -- above lends both to `vestrace` for the migration, and
+                    -- this list -- the one that hands ownership back -- named
+                    -- neither, so on every provisioned database both stayed
+                    -- owned by the role the REVOKE below strips of all
+                    -- privilege on the claim table. A SECURITY DEFINER function
+                    -- owned by that role cannot touch the table it exists to
+                    -- write: `vestrace_finish_embedding_work` failed with 42501
+                    -- on its first call and on every call since, so a worker
+                    -- could claim work and never retire the claim, every lease
+                    -- ran its full sixty seconds, and no outcome was ever
+                    -- recorded. `vestrace_claim_embedding_work` had the same
+                    -- fault and was repaired incidentally by 0205's own
+                    -- hand-back, which is why claiming worked and finishing did
+                    -- not -- and why nothing noticed.
+                    'vestrace_claim_embedding_work',
+                    'vestrace_finish_embedding_work'
                 ])
             LOOP
                 EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',target);
