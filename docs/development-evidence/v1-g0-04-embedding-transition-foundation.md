@@ -4935,3 +4935,345 @@ scope remains 127/23, and all migration digests remain unchanged.
 This acceptance closes Task 14E only. The approved rotation-before-adoption
 deferral remains binding, and P04, G0, and v1.0 remain incomplete. No commit,
 push, or deployment was performed.
+
+## Completion package (2026-09-08) — Task 14, Step 1: the unchanged-source baseline
+
+Everything under this heading belongs to the **completion** package planned in
+`docs/superpowers/plans/2026-09-08-vestrace-v1-g0-04-completion.md`. It does not
+amend, supersede or reopen the Task 14A–14E records above. Those belong to the
+earlier P04 package, were accepted as written, and are left exactly as they
+stand.
+
+### Why a baseline is written down before any mutation
+
+A mutation qualification is a difference, and a difference needs two sides. If
+the unchanged source is not recorded first, a RED cannot be distinguished from
+a suite that was already failing, and a GREEN after restoration cannot be
+distinguished from a suite that stopped running. So the numbers below are taken
+on the unchanged final source, before any predicate is edited, and every later
+mutation record is read against them.
+
+The record is deliberately per-suite rather than aggregate. A total that moves
+says only that something moved.
+
+### The focused matrix on unchanged source
+
+Repository toolchain 1.85.0, plain Cargo, real PostgreSQL at `127.0.0.1:55432`,
+already-built tree. Two figures per row: the wall time of the `cargo` invocation
+and the duration the test harness reported for itself. Every command exited 0.
+
+| Command | Binary | Tests | Harness | Wall |
+| --- | --- | ---: | ---: | ---: |
+| `cargo test -p vestrace-domain --test embedding_contract` | `embedding_contract` | 24 | 0.00s | 1.2s |
+| `cargo test -p vestrace-application retrieval` | lib `vestrace_application` | 43 | 0.01s | 2.5s |
+| ″ | `embedding_data_policy` | 1 | 0.00s | ″ |
+| `cargo test -p vestrace-infrastructure --test embedding_canonical_generations` | `embedding_canonical_generations` | 19 | 17.97s | 19.0s |
+| `… --test embedding_index_builds` | `embedding_index_builds` | 16 | 67.97s | 70.2s |
+| `… --test embedding_executor` | `embedding_executor` | 2 | 8.26s | 10.4s |
+| `… --test embedding_transition_activation` | `embedding_transition_activation` | 10 | 12.28s | 14.3s |
+| `… --test embedding_retrieval_results` | `embedding_retrieval_results` | 14 | 14.78s | 15.7s |
+| `… --test embedding_erasure_propagation` | `embedding_erasure_propagation` | 10 | 9.95s | 12.3s |
+| `… --test embedding_legacy_adoption` | `embedding_legacy_adoption` | 10 | 7.81s | 9.9s |
+| `… --test embedding_worker_restart` | `embedding_worker_restart` | 7 | 6.41s | 8.3s |
+| `cargo test -p vestrace-infrastructure --test embedding_schema_contract --test embedding_runtime_role_refusals --test p03_upgrade_provisioning --test runtime_role_cannot_write_directly` | `embedding_schema_contract` | 16 | 8.37s | 49.4s (all four) |
+| ″ | `embedding_runtime_role_refusals` | 4 | 4.61s | ″ |
+| ″ | `p03_upgrade_provisioning` | 9 | 6.94s | ″ |
+| ″ | `runtime_role_cannot_write_directly` | 45 | 24.32s | ″ |
+| `cargo test -p vestrace-cli --test embedding_worker_once --test worker_once_cli --test provider_runtime_wiring --test provider_openapi_contract` | `embedding_worker_once` | 2 | 5.27s | 17.5s (all four) |
+| ″ | `worker_once_cli` | 4 | 6.10s | ″ |
+| ″ | `provider_runtime_wiring` | 8 | 0.01s | ″ |
+| ″ | `provider_openapi_contract` | 8 | 0.08s | ″ |
+| `cargo test -p vestrace-http --test embedding_retrieval_routes --test route_inventory_is_exhaustive` | `embedding_retrieval_routes` | 9 | 0.00s | 6.0s (both) |
+| ″ | `route_inventory_is_exhaustive` | 8 | 2.84s | ″ |
+| `cargo test -p vestrace-mcp --test embedding_retrieval` | `embedding_retrieval` | 5 | 0.00s | 0.7s |
+
+**274 tests, 0 failed, 0 ignored, every command exit 0.**
+
+The fault-scenario matrix is listed apart because it is not an ordinary suite:
+its cases are `#[ignore]`d, run single-threaded, and each one crashes a real
+child process of the real binary against a real database.
+
+| Command | Tests | Harness | Wall |
+| --- | ---: | ---: | ---: |
+| `cargo build -p vestrace-fault-scenario` | — | — | 0.9s |
+| `cargo test --test embedding_fault_scenario_e2e -- --ignored --nocapture --test-threads=1` | 6 | 56.06s | 57.1s |
+
+Both exited 0.
+
+Two notes on reading the table honestly. The `-p vestrace-application retrieval`
+filter runs against every binary in the package, and six of them matched nothing
+(`execute_step`, `run_coordinator`, `run_event_store_contract`, `run_replay`,
+`run_worker`, `shared_memory_read`); those zero-match binaries are not counted
+above and are not evidence of anything. And `--test` flags do not fix execution
+order, so each multi-binary row names the binary its count came from rather than
+relying on the order the flags were written in.
+
+### Source hashes of the focused suites
+
+SHA-256 of the exact bytes the runs above executed.
+
+| File | SHA-256 |
+| --- | --- |
+| `crates/vestrace-domain/tests/embedding_contract.rs` | `0c4a61c6d38d78f73a860f99cc8fdd74910542ca885a0d02161dd2d3d368292e` |
+| `crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs` | `4d348efa6f025f721730fe02fca87753e777fb8827f4d53399a80966d99f3df5` |
+| `crates/vestrace-infrastructure/tests/embedding_index_builds.rs` | `a65cbc0b8e7d1c6bffbe2d6a9b8b2c0d66e948f046d1b08f1085b1e95a23bba1` |
+| `crates/vestrace-infrastructure/tests/embedding_executor.rs` | `d3fb469c64357e0a405274a978881cc809f6577a4bf9d87f32280fe2d04d933d` |
+| `crates/vestrace-infrastructure/tests/embedding_transition_activation.rs` | `a05b26545b33a53d6af0a9867099fe884d171a0c80b74e8d81f04f7e0e213da4` |
+| `crates/vestrace-infrastructure/tests/embedding_retrieval_results.rs` | `e5ae1ee8ef7d648973e5927d06bce00a0b6acd5a38b5b8d1ccfd795d69ddec33` |
+| `crates/vestrace-infrastructure/tests/embedding_erasure_propagation.rs` | `73948cbbcb34a15908788e13cb5a9ede04f89e6ddf4e2e7f89506e9352b5705e` |
+| `crates/vestrace-infrastructure/tests/embedding_legacy_adoption.rs` | `8e508e267acfdca6ab33d729338de1497d3731c3ab522c14c924615bc61956b2` |
+| `crates/vestrace-infrastructure/tests/embedding_worker_restart.rs` | `f4140be4c31247373626792baaa0cf858035d356e2341248f5f1ba333b218ae3` |
+| `crates/vestrace-infrastructure/tests/embedding_schema_contract.rs` | `f09c962a91669faf60992a974bf03a95ca0066ea4314188e9135c6ab51ddbe6f` |
+| `crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs` | `f384e64c76191d51e3e20a188cfaebd9dadde6e89fb8146c3da1caba379e1618` |
+| `crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs` | `d11c4a783e87921aa5a815a3edea033c7776ab842386c42ad90e18d069069893` |
+| `crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs` | `eef2b14c206cf517602c4cbba5552f6f37d1ac0e38c6a980e5718c87338b91f4` |
+| `crates/vestrace-cli/tests/embedding_worker_once.rs` | `a63fe4df18a66a2668c18ed2bbac4346f1d20b48d651ef76d9bcb95b3184ed0a` |
+| `crates/vestrace-cli/tests/worker_once_cli.rs` | `da8dfdf9adf02049875df00ef2775b98642a144f22926827cc29ca42effc6e8e` |
+| `crates/vestrace-cli/tests/provider_runtime_wiring.rs` | `8c09241f7c56c23883b35ac12eca31b488ac2c4ce724e893aaac43bc849b2bdb` |
+| `crates/vestrace-cli/tests/provider_openapi_contract.rs` | `78b9aaf7cc14f6a7205c007ce4f9aed449282377acbf43108879fb4b7ad9e57b` |
+| `crates/vestrace-http/tests/embedding_retrieval_routes.rs` | `602c7d8d76d97a576b5c1e5a9cef203f804cc62834b52b0a45ffca69fa13465e` |
+| `crates/vestrace-mcp/tests/embedding_retrieval.rs` | `be2b0ceac3c7b3330ffc732eeaa9d55882469138c9a289ddf9b93517dd97dc98` |
+| `tests/embedding_fault_scenario_e2e.rs` | `b7944810cfccaebf05a1401a73476b3ab637af1788f7327657d8a86214ec1a99` |
+
+Two of these hashes are already stale by design: `embedding_retrieval_results.rs`
+and `embedding_canonical_generations.rs` each gained a qualification after this
+baseline was taken, in `81d4b41` and `1d7163d`. The hashes above are the bytes
+the 14/14 and 19/19 counts were measured on, which is what a baseline is for;
+each mutation record names the bytes it ran on itself.
+
+### Migration hashes for this package's forward-only range
+
+| File | SHA-256 |
+| --- | --- |
+| `migrations/0197_embedding_canonical_generations.sql` | `a773a50f38e689bb9e43280a54c581fbbcb0c76bdd8f14361c3a2369e81115ea` |
+| `migrations/0198_embedding_index_builds.sql` | `66f8e83e2f38df643ac30b824d71b0a934598ac652ba63383619450cef60cd4e` |
+| `migrations/0199_embedding_executor_work.sql` | `a982a499885c1f5eedd835dd9147b4dc40d16f4ccb97083d038675eebcc0276f` |
+| `migrations/0200_embedding_transition_execution.sql` | `cd84cbfa1d05d7e72450e39e94eb899e6957909a4d0c4a5c033856a4e12fa99a` |
+| `migrations/0201_embedding_transition_activation.sql` | `d2144409689b8e8e9d24ee5cccea3227387c5144a85f2b5d28172f984669a52c` |
+| `migrations/0202_embedding_retrieval_results.sql` | `ae7a566daa66e9111b145285beac6d55f576a363e92c43385ae18db811ad4ed3` |
+| `migrations/0203_embedding_erasure_propagation.sql` | `62d8390e887a041d46d4dc1aced6f2e78df12be7f3eb51fa004a52765e10b26b` |
+| `migrations/0204_embedding_legacy_adoption.sql` | `f1d724509c5d158ed77ac0b9877bcaece5b8d4c7899bed6fe371f24ce1bca9f7` |
+| `migrations/0205_embedding_retrieval_dispatch.sql` | `854ed13fe873addaa773c7369c4b12ccb451bfd2f35198d50ee66cf7950cdeb4` |
+
+No migration in this range changed at any point during Step 2, and none may:
+the mutations replace a function body in a running test database and restore it,
+and never touch a migration file.
+
+### The mutated authorities and how their catalogue state is checked
+
+Every SQL authority this package mutates is a SECURITY DEFINER function owned by
+`vestrace_guarded_owner`, with `ALL` revoked from `PUBLIC` and from `vestrace`
+and `EXECUTE` then granted back to `vestrace` — `0197` lines 612–615 and 640–641
+for the two canonical-generation authorities, `0202` lines 418–427 for the four
+retrieval authorities, in both cases through the provisioner's own loop rather
+than per-function statements.
+
+Those three facts — owner, ACL, and whether the runtime role can execute — are
+not transcribed into this document as literals, and deliberately so. The base
+`vestrace_test` database carries no migrations; every run provisions its own
+isolated database, so a literal copied here would describe a database that no
+longer exists. Instead each qualification reads all three from `pg_proc` before
+installing its mutation, asserts them unchanged immediately after installing it,
+and asserts them equal again after restoring:
+
+```sql
+SELECT pg_get_functiondef(oid), pg_get_userbyid(proowner),
+       array_to_string(proacl,'|'),
+       has_function_privilege('vestrace',oid,'EXECUTE')
+  FROM pg_proc WHERE oid=$1::regprocedure
+```
+
+The reason to check the owner and not only the body is specific: a SECURITY
+DEFINER function that changed hands during replacement would run the mutated
+body as somebody else, and the observation would then be about the role rather
+than about the predicate.
+
+### What this baseline does not say
+
+It is a baseline for the focused matrix, and nothing more.
+
+- **It is not a claim that the workspace is green.** Seven suites outside this
+  matrix are known red, measured with `--no-fail-fast` because a plain
+  `cargo test` stops at the first failing binary and would have reported one
+  failing suite instead of seven. They are recorded separately below and were
+  unchanged, in both directions, by every commit in this package.
+- **It does not cover the gate matrix.** `cargo fmt`, the pinned Clippy command,
+  the node scope tests, the dirty-baseline verifier and the protocol lock belong
+  to Step 4 and are recorded there.
+- **It is not acceptance.** Steps 2 through 7 remain open, and neither this
+  package, nor P04, nor G0, nor v1.0 is closed by it.
+
+
+### The red-test debt, re-measured — and a correction to my own earlier count
+
+Measured with `cargo test --workspace --no-fail-fast`, exit 101, 37.3 minutes.
+The flag is not optional: a plain `cargo test` stops at the first failing binary,
+and measuring this debt without it is how I previously reported one failing suite
+when there were several.
+
+| Suite | Failed | Of |
+| --- | ---: | ---: |
+| `embedding_dispatch_is_atomic` | 9 | 22 |
+| `text_retriever` | 7 | 7 |
+| `embedding_space_isolation` | 3 | 4 |
+| `vector_retriever_data_policy` | 3 | 3 |
+| `embedding_output_keys` | 1 | 28 |
+| `model_request_evidence` | 1 | 32 |
+| `retrieval_classification_boundary` | 1 | 1 |
+| `model_request_semantic_observation` | 1 | 5 |
+
+**Eight suites, 26 tests.**
+
+**Correction.** Earlier in this package I recorded this debt as seven suites and
+25 tests. That figure was wrong: it missed
+`model_request_semantic_observation`. The correct standing figure is the table
+above, and every earlier claim in this package that the debt was "7 suites / 25
+tests, unchanged in both directions" should be read as the eight-suite figure
+with the same "unchanged" claim, which still holds.
+
+The missed suite is not new breakage and is not this package's. Its one failing
+case is `loopback_observes_semantic_equality_with_the_production_adapter` in
+`tests/model_request_semantic_observation.rs`, and the reason it fails is
+visible by reading: the test's own loopback stub answers `/embeddings` with
+`{"data":[{"index":0,"embedding":[0.25,0.75]}]}`, and
+`GovernedEmbeddingsWireResponse` requires a `model` field the stub does not
+send, so deserialization fails before any semantic comparison happens and the
+adapter refuses with `provider returned invalid embeddings JSON`. Neither
+`crates/vestrace-infrastructure/src/providers/openai_compatible.rs` nor
+`tests/model_request_semantic_observation.rs` is modified in the working tree,
+and neither is inside this package's frozen change scope, so this package can
+neither have caused it nor repair it without an amendment.
+
+What can be claimed about movement, precisely: the seven suites measured at
+Task 12 show the same per-suite counts today as they did then, and no suite
+outside this table is red. The eighth was not observed at Task 12 — that is the
+whole point of the correction — so I cannot say from observation that it was
+failing then, only that this package cannot have caused it, since both files
+involved are unmodified and out of scope.
+
+That is a narrower claim than "the workspace is green", which is not true and is
+not asserted anywhere in this record.
+
+
+## Completion package (2026-09-08) — Task 14, Step 2: mutation records
+
+Nine predicates, one at a time, each in its own isolated database. Every record
+below follows the same shape and is only complete when all five parts are in it:
+the predicate is confirmed present in the live catalogue before anything is
+edited; the unchanged source refuses, by an exact SQLSTATE and message; the
+mutation installs with owner, ACL and runtime `EXECUTE` proven unchanged; the
+mutated world is *observed* rather than merely reported as failing; the original
+is restored byte-exactly and the refusal comes back identical.
+
+The fourth part is the one that makes the exercise worth doing, and it is the
+part a pass/fail count cannot carry. "The test went red" is not a result. What a
+mutation is for is the question *what is actually holding this rule up* — and
+the three answers so far are three different things, none of them readable from
+the source.
+
+### Why each record names a boundary
+
+A mutated predicate can fail in three distinguishable ways, and collapsing them
+would destroy the evidence:
+
+1. **The unsafe state becomes reachable.** Nothing else objects; the rule rested
+   on this predicate alone.
+2. **Another defence refuses, at a different boundary.** The rule holds, but not
+   because of the predicate under test — and the system is then honest about
+   defence in depth rather than assumed to have it.
+3. **Nothing changes.** The predicate is dead, or the mutation never took. Both
+   are defects in the qualification, not results, which is why each record
+   asserts that the mutated refusal is *different* from the original one.
+
+### Record 1 — retrieval one-successor uniqueness (`d809c2b`)
+
+- Authority: `vestrace_authorize_embedding_retrieval_retry(uuid,uuid,uuid,uuid,text)`
+- Predicate: the `FOR UPDATE` lookup of an existing successor for the predecessor
+  job; mutated by appending `AND FALSE` to its `WHERE`, so the lookup can never
+  find one.
+- Green before: 23505, "predecessor already has its successor".
+- Mutated: **still refused**, and still 23505, but the message no longer contains
+  the rule's own words and does name `embedding_retrieval_retry_edges`. The
+  table's unique key is an independent defence and it caught the second
+  successor at its own boundary.
+- **Answer: outcome 2.** The unsafe state is not reachable. The explicit lookup
+  buys a message a caller can act on, not the guarantee itself.
+- Restored byte-exactly; green after, message for message.
+
+### Record 2 — pinned-generation fence (`81d4b41`)
+
+- Authority: `vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])`
+- Predicate: the six-clause revalidation of the pinned generation — current
+  generation id, guard version, Ready state, epoch, corpus revision, member
+  count — disabled whole with `IF FALSE THEN`. All six, not one: they raise a
+  single refusal between them, so they are one rule, and disabling a single
+  clause would qualify the redundancy inside the check rather than the check.
+- Green before: 23514, "requires its exact pinned generation", and neither a
+  result nor a change stored.
+- Mutated: the answer **lands**. One terminal retrieval result stands, attributed
+  to a job, whose fence names a generation the corpus has already replaced. A
+  caller reading it would be told what the corpus used to say, with nothing
+  marking it stale.
+- **Answer: outcome 1.** The unsafe state is reachable. This predicate is the
+  sole defence.
+- Restored byte-exactly; green after, message for message, nothing stored.
+
+### Record 3 — corpus-revision CAS (`1d7163d`)
+
+- Authority: `vestrace_publish_embedding_generation(uuid,uuid,uuid,bigint)`
+- Predicate: `target.corpus_revision<>c.corpus_revision`, one clause removed from
+  the larger capture-conflict check and the rest left standing, because the
+  others guard the target's state, its representation, the guard version and the
+  epoch step, and taking them out together would say nothing about which of them
+  holds this rule up.
+- Two corpus moves were driven, because they turn out to be caught by different
+  things:
+  - Revision **and** live member count together — the column pair `0195`'s
+    result-publication path writes in one `UPDATE`. With the CAS gone this is
+    still refused inside the call, by the publication's own Live member-set
+    check, at its own boundary and by its own name.
+  - Revision **only**, the member set held still. This gets past every check the
+    publication makes and is refused at `COMMIT` by the deferred constraint
+    trigger `embedding_corpus_generations_canonical_consistent`, which will not
+    have a Ready generation whose recorded revision is not the corpus's own.
+- **Answer: outcome 2, twice, by two different defences.** No unsafe state is
+  persisted: the generation is left `building` and the guard still names nothing.
+- What the CAS is therefore worth is not the corpus's integrity — the deferred
+  trigger is the floor under that. It is that the conflict is raised early, in
+  the call, where the caller gets something it can retry, rather than late, at
+  commit, where a failed transaction says nothing a caller can act on. Worth
+  having, and worth knowing that it is that rather than the last line.
+- Restored byte-exactly; green after, at the same boundary, by the same message.
+
+The driver for this record separates the call boundary from the commit boundary
+deliberately. A refusal that moved from one to the other and a refusal that
+stayed put are different results, and a driver that only asked "did it fail"
+would have reported them as the same thing — which is exactly the mistake the
+whole step exists to avoid.
+
+### Where the harness lives, and why it is duplicated
+
+`authority_state` and `install_authority` are copied into each suite that
+qualifies a predicate rather than shared. Rust integration-test binaries share
+code only through `tests/common/mod.rs`, which is outside this package's frozen
+change scope, and Task 14's own file list names the six suites and not that
+module. No scope amendment was taken for it.
+
+The duplication is safe in the one way that matters for a *verification* helper:
+every caller installs a definition, reads all four values back out of `pg_proc`,
+and compares them — so a copy that drifted could not pass quietly. It would
+either fail to find its needle or fail its own restore comparison.
+
+### Six of the nine remain
+
+`canonical member Live predicate`, `recipe one-satisfier bijection`,
+`target credential slot/version lineage`, `rotation completion-blocker adoption`,
+`source/vector erasure invalidation`, `legacy runtime-write refusal`.
+
+One note taken in passing, since it decides how two of them will be built: the
+canonical member Live predicate cannot be probed by moving a material out of
+Live directly. `content_materials` carries a `BEFORE UPDATE OR DELETE` guard from
+`0174` and a deferred `AFTER UPDATE` canonical-consistency trigger from `0197`,
+so that state has to be reached through the real erasure authority. It therefore
+belongs with `source/vector erasure invalidation` in the erasure suite, and the
+two will be built together rather than each growing its own fixture.
