@@ -308,7 +308,6 @@ async fn adopt_fixture(
 }
 
 /// Run the crash child, prove what it left, then let a successor take over.
-
 pub async fn run_parent(settings: &ScenarioSettings) -> Result<String, String> {
     settings.embedding_worker_completion_point();
     let listener = LoopbackCounter::start().await?;
