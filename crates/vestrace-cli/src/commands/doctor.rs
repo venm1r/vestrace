@@ -3,12 +3,15 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow};
 use secrecy::ExposeSecret;
 use vestrace_application::{
-    HealthInspectionService, HealthMonitorService, MonitoredFinding, RequestContext,
-    standard_invariants,
+    HealthInspectionService, HealthMonitorService, ModelRevisionRepository, MonitoredFinding,
+    RequestContext, standard_invariants,
 };
+use vestrace_domain::embedding::EmbeddingReadinessReason;
 use vestrace_domain::health::HealthSeverity;
 use vestrace_domain::{PrincipalId, WorkspaceId};
-use vestrace_infrastructure::{AppConfig, PgHealthFindingRepository, PgInvariantObserver, PgStore};
+use vestrace_infrastructure::{
+    AppConfig, PgHealthFindingRepository, PgInvariantObserver, PgModelRevisionRepository, PgStore,
+};
 
 pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     let url = config.database.url.expose_secret();
@@ -49,6 +52,8 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
         ));
     }
 
+    let models = PgModelRevisionRepository::new(store.clone());
+
     let principal_id = PrincipalId::new();
     let mut error_count = 0usize;
     let mut warning_count = 0usize;
@@ -63,6 +68,13 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
             .await
             .context("invariant inspection failed")?;
         println!("done");
+
+        // Before the `continue` below, not after it. Embedding readiness is not
+        // an invariant violation, so a workspace where every invariant holds is
+        // exactly a workspace whose adoption state an operator still needs to
+        // see -- and reporting it only when something else was already wrong
+        // would hide it precisely when it is the only thing to report.
+        report_embedding_readiness(&models, &ctx).await?;
 
         if findings.is_empty() {
             println!("  every invariant holds");
@@ -118,5 +130,83 @@ pub async fn run(config: &AppConfig) -> anyhow::Result<()> {
     } else {
         println!("Doctor: {warning_count} warning(s) found, no errors");
         Ok(())
+    }
+}
+
+/// What is standing in the way of this workspace answering from embeddings.
+///
+/// Read from the governed Models projection rather than computed here, so an
+/// operator running `doctor` and an operator reading `GET /v1/models` are told
+/// the same thing by the same authority. A second derivation would eventually
+/// disagree with the first, and the operator would have no way to know which
+/// was right.
+///
+/// `embedding-index-not-loaded` never appears, and cannot: `doctor` holds a
+/// database connection and nothing else, and no database transaction can see
+/// whether some worker process has an index in memory. A doctor that printed it
+/// would send an operator to rebuild an index that may already be loaded.
+async fn report_embedding_readiness(
+    models: &PgModelRevisionRepository,
+    context: &RequestContext,
+) -> anyhow::Result<()> {
+    let projections = models
+        .list_safe_models(context)
+        .await
+        .context("reading the governed model projection failed")?;
+
+    let mut reported = 0usize;
+    for model in &projections {
+        let reasons: Vec<EmbeddingReadinessReason> = model
+            .blockers
+            .iter()
+            .filter_map(|blocker| blocker.parse().ok())
+            .collect();
+        if reasons.is_empty() {
+            continue;
+        }
+        reported += 1;
+        for reason in reasons {
+            println!(
+                "[EMBED] model {model_id}: {reason}",
+                model_id = model.id.as_uuid()
+            );
+            println!(
+                "         remediation: {remedy}",
+                remedy = remediation(reason)
+            );
+        }
+    }
+    if reported == 0 && !projections.is_empty() {
+        println!("  embedding readiness: nothing blocking");
+    }
+    // Not counted as an error or a warning. These are standing conditions of an
+    // installation mid-adoption, not invariant violations, and an exit code
+    // that failed a deployment for being mid-transition would make `doctor`
+    // unusable during exactly the work it exists to supervise.
+    Ok(())
+}
+
+/// What to do about each. Stated here rather than beside the vocabulary because
+/// a remedy is an operational instruction and the vocabulary is a protocol.
+const fn remediation(reason: EmbeddingReadinessReason) -> &'static str {
+    match reason {
+        EmbeddingReadinessReason::LegacyAdoptionRequired => {
+            "run governed legacy adoption; the plaintext corpus cannot be read directly"
+        }
+        EmbeddingReadinessReason::IndexNotLoaded => {
+            "unreachable from a database read; see the retrieval degradation instead"
+        }
+        EmbeddingReadinessReason::GenerationNotReady => {
+            "publish a generation: capture and publish through the governed builder"
+        }
+        EmbeddingReadinessReason::QualificationTransitionNotReady => {
+            "finish or abandon the transition that owns this space before retrieval resumes"
+        }
+        EmbeddingReadinessReason::ErasurePending => {
+            "run the erasure reconciler; projections of an erased source are still drawable"
+        }
+        EmbeddingReadinessReason::IndexBuildFailed => {
+            "read the failed build attempt's safe reason, then rebuild the current generation"
+        }
     }
 }

@@ -6,6 +6,7 @@ use vestrace_application::{
     ApplicationError, NormalizedRetrievalRequest, RequestContext, SharedGovernedEmbeddingProvider,
     VectorRetriever,
 };
+use vestrace_domain::embedding::EmbeddingReadinessReason;
 use vestrace_domain::embedding::{
     CanonicalEmbeddingSpace, CanonicalGenerationSnapshot, EmbeddingSpaceKey,
 };
@@ -39,8 +40,13 @@ impl VectorRetriever for PgVectorRetriever {
         _context: &RequestContext,
         _request: &NormalizedRetrievalRequest,
     ) -> Result<Vec<RetrievalCandidate>, ApplicationError> {
+        // The name comes from the vocabulary rather than from a literal here.
+        // Migration 0197 raises the same string as a SQL exception message, and
+        // two places agreeing on a literal is an agreement nothing enforces.
         Err(ApplicationError::Unavailable(
-            "embedding-legacy-adoption-required".into(),
+            EmbeddingReadinessReason::LegacyAdoptionRequired
+                .as_str()
+                .into(),
         ))
     }
 }
@@ -91,8 +97,13 @@ impl CorpusGenerationResolver for PgCorpusGenerationResolver {
                 .bind(context.workspace_id.as_uuid()).bind(space_name).bind(model).fetch_one(scoped.connection()).await.map_err(storage_error)?;
             scoped.commit().await.map_err(storage_error)?;
             return Err(ApplicationError::Unavailable(
+                // Only the first branch is a readiness reason. The second is
+                // this resolver's own refusal: it means no canonical generation
+                // matches the exact snapshot asked for, which is narrower than
+                // "the space has no ready generation" and is what a caller on
+                // the retrieval path needs to hear.
                 if legacy && !active_canonical {
-                    "embedding-legacy-adoption-required"
+                    EmbeddingReadinessReason::LegacyAdoptionRequired.as_str()
                 } else {
                     "embedding-canonical-generation-required"
                 }

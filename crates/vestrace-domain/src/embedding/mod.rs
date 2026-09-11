@@ -9,6 +9,7 @@ mod adoption;
 mod generation;
 mod index;
 mod job;
+mod readiness;
 mod retrieval;
 mod space;
 
@@ -23,5 +24,6 @@ pub use job::{
     EmbeddingSpaceTransitionState, TransitionInputOrdinal, TransitionRecipeOrdinal,
     TransitionVersion, UnknownEmbeddingJobKind,
 };
+pub use readiness::{EmbeddingReadinessReason, UnknownEmbeddingReadinessReason};
 pub use retrieval::{RetrievalGenerationChangedReason, RetrievalGenerationFence};
 pub use space::{CanonicalEmbeddingSpace, EmbeddingSpaceKey, EmbeddingSpaceKeyError};

@@ -1577,3 +1577,114 @@ async fn generation_guard_is_permanent_when_ready(pool: PgPool) {
 async fn generation_guard_is_permanent_when_empty(pool: PgPool) {
     assert_generation_guard_is_permanent(pool, false).await;
 }
+
+/// The governed Models projection reports embedding readiness by its exact
+/// names, for embedding models only, and never claims an index is loaded.
+///
+/// Two phases against one world, because the interesting property is that the
+/// reported reason *changes* as adoption progresses. A projection that reported
+/// the same thing before and after registering a canonical space would be
+/// describing the installation rather than its state.
+#[sqlx::test(migrations = false)]
+async fn the_model_projection_reports_embedding_readiness_but_never_index_presence(pool: PgPool) {
+    use vestrace_application::{ModelRevisionRepository, RequestContext};
+    use vestrace_domain::embedding::EmbeddingReadinessReason;
+    use vestrace_infrastructure::postgres::{PgModelRevisionRepository, PgStore};
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let f = canonical_qualification(&pool, &runtime).await;
+    let repository = PgModelRevisionRepository::new(PgStore::from_pool(runtime.clone()));
+    let context = RequestContext::new(f.workspace, f.principal);
+
+    // The projection for the embedding model revision, and for everything else.
+    async fn split(
+        repository: &PgModelRevisionRepository,
+        context: &RequestContext,
+        embedding_revision: Uuid,
+    ) -> (Vec<String>, Vec<String>) {
+        let models = repository
+            .list_safe_models(context)
+            .await
+            .expect("the governed projection is readable");
+        let mut embedding = Vec::new();
+        let mut others = Vec::new();
+        for model in models {
+            if model.revision_id.map(|id| id.as_uuid()) == Some(embedding_revision) {
+                embedding = model.blockers;
+            } else {
+                others.extend(model.blockers);
+            }
+        }
+        (embedding, others)
+    }
+
+    fn readiness(blockers: &[String]) -> Vec<EmbeddingReadinessReason> {
+        blockers
+            .iter()
+            .filter_map(|blocker| blocker.parse().ok())
+            .collect()
+    }
+
+    // Phase one: a legacy corpus exists for this model's wire name and no
+    // canonical space has been registered.
+    let legacy_space = Uuid::now_v7();
+    sqlx::query("INSERT INTO embedding_spaces(id,workspace_id,name,dimensions,model) VALUES($1,$2,'canonical',4,'text-embedding-nomic-embed-text-v1.5')")
+        .bind(legacy_space).bind(f.workspace.as_uuid()).execute(&pool).await.unwrap();
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, f.workspace).await;
+    sqlx::query("SELECT vestrace_register_embedding_space($1,$2,$3,'canonical','text-embedding-nomic-embed-text-v1.5',4)")
+        .bind(Uuid::now_v7()).bind(f.workspace.as_uuid()).bind(legacy_space).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let (embedding, others) = split(&repository, &context, f.model).await;
+    assert_eq!(
+        readiness(&embedding),
+        vec![EmbeddingReadinessReason::LegacyAdoptionRequired],
+        "an unadopted legacy corpus is the one thing blocking this model: {embedding:?}"
+    );
+    assert!(
+        readiness(&others).is_empty(),
+        "a chat model has no corpus, so no embedding reason may be reported against it: {others:?}"
+    );
+
+    // Phase two: a canonical space is registered and made active, and no
+    // generation has been published into it yet.
+    let registration = Uuid::now_v7();
+    let mut tx = runtime.begin().await.unwrap();
+    set_context(&mut tx, f.workspace).await;
+    sqlx::query("SELECT vestrace_register_canonical_embedding_space($1,$2,'canonical',$3,$4,$5,'text-embedding-nomic-embed-text-v1.5','float',4)")
+        .bind(registration).bind(f.workspace.as_uuid()).bind(f.model).bind(f.qualification).bind(f.shape).execute(&mut *tx).await.unwrap();
+    sqlx::query("SELECT vestrace_set_initial_embedding_active_space($1,$2,1,$3)")
+        .bind(f.workspace.as_uuid())
+        .bind(f.model)
+        .bind(registration)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let (embedding, others) = split(&repository, &context, f.model).await;
+    assert_eq!(
+        readiness(&embedding),
+        vec![EmbeddingReadinessReason::GenerationNotReady],
+        "adoption has happened; what is missing now is a published generation: {embedding:?}"
+    );
+    assert!(readiness(&others).is_empty());
+
+    // And in neither phase, for any model, does a database read claim to know
+    // whether some process holds an index. It cannot: the process that would
+    // know is not this one, and it may have died since anything was written.
+    let all = repository.list_safe_models(&context).await.unwrap();
+    for model in &all {
+        for blocker in &model.blockers {
+            assert_ne!(
+                blocker.as_str(),
+                EmbeddingReadinessReason::IndexNotLoaded.as_str(),
+                "a storage projection must never assert process-local index presence"
+            );
+        }
+    }
+
+    runtime.close().await;
+}

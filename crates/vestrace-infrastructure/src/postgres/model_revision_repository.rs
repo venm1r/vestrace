@@ -9,7 +9,10 @@ use vestrace_application::{
     GovernedProviderProjection, ModelRevisionRepository, RequestContext, SetWorkspaceModelDefault,
     UnitOfWork,
 };
-use vestrace_domain::{ModelKind, ModelObservationSource, ModelRevisionId, id::ModelId};
+use vestrace_domain::{
+    ModelKind, ModelObservationSource, ModelRevisionId, embedding::EmbeddingReadinessReason,
+    id::ModelId,
+};
 
 use super::{PgGovernedMutationRepository, PgScopedTransaction, PgStore};
 
@@ -91,7 +94,77 @@ impl ModelRevisionRepository for PgModelRevisionRepository {
                    connection_qualification.valid_until AS connection_qualification_valid_until,
                    model_qualification.connection_qualification_revision_id
                      AS model_qualification_connection_qualification_revision_id,
-                   model_qualification.valid_until AS model_qualification_valid_until
+                   model_qualification.valid_until AS model_qualification_valid_until,
+                   model_revision.kind AS model_kind,
+                   model_qualification_head.active_space_registration_id,
+                   -- A legacy registration is keyed by the wire model name, not
+                   -- by a revision: migration 0197 requires
+                   -- `model_revision_id IS NULL` on a legacy row, so there is no
+                   -- other link from a model to the corpus it has not yet
+                   -- adopted.
+                   EXISTS(
+                     SELECT 1 FROM embedding_space_registrations AS legacy
+                      WHERE legacy.workspace_id=m.workspace_id
+                        AND legacy.registration_kind='legacy_upgrade'
+                        AND legacy.model=model_revision.wire_model_id
+                   ) AS legacy_registration_exists,
+                   EXISTS(
+                     SELECT 1 FROM embedding_index_generation_guards AS guard
+                       JOIN embedding_corpus_generations AS generation
+                         ON generation.workspace_id=guard.workspace_id
+                        AND generation.id=guard.current_generation_id
+                      WHERE guard.workspace_id=m.workspace_id
+                        AND guard.space_registration_id
+                            =model_qualification_head.active_space_registration_id
+                        AND generation.state='ready'
+                   ) AS has_ready_generation,
+                   EXISTS(
+                     SELECT 1 FROM embedding_transitions AS transition
+                      WHERE transition.workspace_id=m.workspace_id
+                        AND transition.target_space_registration_id
+                            =model_qualification_head.active_space_registration_id
+                        AND transition.state
+                            IN ('planned','rebuilding','ready_to_activate')
+                   ) AS transition_pending,
+                   -- A source whose erasure is prepared but whose projections
+                   -- are still drawable: the corpus would answer from material
+                   -- that is on its way out.
+                   EXISTS(
+                     SELECT 1 FROM embedding_projection_entries AS projection
+                       JOIN embedding_projection_source_dependencies AS dependency
+                         ON dependency.workspace_id=projection.workspace_id
+                        AND dependency.projection_id=projection.id
+                       JOIN content_materials AS material
+                         ON material.workspace_id=dependency.workspace_id
+                        AND material.id=dependency.source_material_id
+                      WHERE projection.workspace_id=m.workspace_id
+                        AND projection.space_registration_id
+                            =model_qualification_head.active_space_registration_id
+                        AND projection.state='live'
+                        AND material.state='erasure_prepared'
+                   ) AS erasure_pending,
+                   -- A failed build with nothing succeeding after it. Compared
+                   -- on `terminal_at` rather than on existence, because a
+                   -- generation that failed once and was rebuilt is ready, and
+                   -- reporting it as failed would send an operator to fix
+                   -- something already fixed.
+                   EXISTS(
+                     SELECT 1 FROM embedding_index_generation_guards AS guard
+                       JOIN embedding_index_build_attempts AS failed
+                         ON failed.workspace_id=guard.workspace_id
+                        AND failed.generation_id=guard.current_generation_id
+                        AND failed.state='failed'
+                      WHERE guard.workspace_id=m.workspace_id
+                        AND guard.space_registration_id
+                            =model_qualification_head.active_space_registration_id
+                        AND NOT EXISTS(
+                          SELECT 1 FROM embedding_index_build_attempts AS later
+                           WHERE later.workspace_id=failed.workspace_id
+                             AND later.generation_id=failed.generation_id
+                             AND later.state IN ('published','loaded')
+                             AND later.terminal_at>failed.terminal_at
+                        )
+                   ) AS index_build_failed
               FROM models AS m
               LEFT JOIN model_revision_heads AS model_head
                 ON model_head.workspace_id=m.workspace_id
@@ -256,6 +329,60 @@ fn decode_safe_model_projection(
             .to_owned(),
         );
     }
+    // Embedding readiness, in the vocabulary Doctor and this projection share.
+    //
+    // Only for an embedding model: a chat model has no corpus, and reporting
+    // one of these against it would send an operator looking for a space that
+    // was never meant to exist. The reasons are appended rather than replacing
+    // the qualification blockers, because a model can be both unqualified and
+    // unable to serve retrieval, and an operator fixing one would otherwise be
+    // told the other had gone.
+    //
+    // `embedding-index-not-loaded` is absent and must stay absent: this is a
+    // database read, and `is_observable_from_storage` says what a database read
+    // may claim. Whether a process holds an index is knowable only to that
+    // process.
+    let model_kind: Option<String> = row.try_get("model_kind").map_err(storage_error)?;
+    if model_kind.as_deref() == Some("embedding") {
+        let active_space: Option<uuid::Uuid> = row
+            .try_get("active_space_registration_id")
+            .map_err(storage_error)?;
+        let mut embedding_blocker = |reason: EmbeddingReadinessReason| {
+            debug_assert!(
+                reason.is_observable_from_storage(),
+                "a storage projection may not assert {reason}"
+            );
+            blockers.push(reason.as_str().to_owned());
+        };
+        if active_space.is_none() {
+            // No canonical space is active. That is only a blocker when there
+            // is a legacy corpus waiting to be adopted; a model that has simply
+            // never been used for embedding is not broken.
+            if row
+                .try_get("legacy_registration_exists")
+                .map_err(storage_error)?
+            {
+                embedding_blocker(EmbeddingReadinessReason::LegacyAdoptionRequired);
+            }
+        } else {
+            if row.try_get("transition_pending").map_err(storage_error)? {
+                embedding_blocker(EmbeddingReadinessReason::QualificationTransitionNotReady);
+            }
+            if !row
+                .try_get::<bool, _>("has_ready_generation")
+                .map_err(storage_error)?
+            {
+                embedding_blocker(EmbeddingReadinessReason::GenerationNotReady);
+            }
+            if row.try_get("erasure_pending").map_err(storage_error)? {
+                embedding_blocker(EmbeddingReadinessReason::ErasurePending);
+            }
+            if row.try_get("index_build_failed").map_err(storage_error)? {
+                embedding_blocker(EmbeddingReadinessReason::IndexBuildFailed);
+            }
+        }
+    }
+
     let state = if revision_id.is_none() {
         "legacy"
     } else if blockers.is_empty() {

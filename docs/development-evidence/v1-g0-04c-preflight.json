@@ -24,6 +24,7 @@
     "crates/vestrace-application/src/retrieval/ports.rs",
     "crates/vestrace-application/src/retrieval/request.rs",
     "crates/vestrace-application/src/retrieval/service.rs",
+    "crates/vestrace-cli/src/commands/doctor.rs",
     "crates/vestrace-cli/src/commands/mcp.rs",
     "crates/vestrace-cli/src/commands/rebuild.rs",
     "crates/vestrace-cli/src/commands/schema.rs",
@@ -39,6 +40,7 @@
     "crates/vestrace-domain/src/embedding/index.rs",
     "crates/vestrace-domain/src/embedding/job.rs",
     "crates/vestrace-domain/src/embedding/mod.rs",
+    "crates/vestrace-domain/src/embedding/readiness.rs",
     "crates/vestrace-domain/src/embedding/retrieval.rs",
     "crates/vestrace-domain/src/embedding/space.rs",
     "crates/vestrace-domain/src/id.rs",
@@ -82,6 +84,7 @@
     "crates/vestrace-infrastructure/src/postgres/mod.rs",
     "crates/vestrace-infrastructure/src/postgres/model_binding_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
@@ -1136,6 +1139,19 @@
       "new_change_scope_size": 124,
       "authorized_by": "User-confirmed lead decision for completion Task 12.",
       "reason": "Task 12 exposes POST /v1/embedding-jobs/{id}/retry-generation-changed, which the plan requires to be capability-gated. Capability is a closed domain vocabulary and the two retries it already carries are different decisions: embedding.retry_after_unknown and embedding.retry_carried_transition_batch_after_unknown both follow an outcome nobody observed, while a retrieval retry follows a definite answer that arrived against a corpus that had already changed, and spends one further provider call to ask again. Reusing either would make an operator authorizing a recovery authorize a spend. Adds one variant, its wire name and its parse arm; no other behaviour in the domain changes and no match on Capability was exhaustive over it. Adds only crates/vestrace-domain/src/security/mod.rs. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-11T09:07:31.753Z",
+      "added_paths": [
+        "crates/vestrace-cli/src/commands/doctor.rs",
+        "crates/vestrace-domain/src/embedding/readiness.rs",
+        "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 124,
+      "new_change_scope_size": 127,
+      "authorized_by": "User-confirmed lead decision for completion Task 12 read models.",
+      "reason": "The design requires Doctor, readiness and Models to report the embedding readiness vocabulary by its exact names. Five of the six are derivable only from tables those two surfaces read, and neither file was in scope: Models blockers are built in crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs and the operator surface is crates/vestrace-cli/src/commands/doctor.rs. Without them the vocabulary has no consumer and exists only as one string literal in vector_retriever.rs. The public readiness probe is deliberately not widened and crates/vestrace-http/src/health.rs is unchanged: it answers before authentication, and the route inventory holds the public surface at the two probes, so workspace state must not be published there. crates/vestrace-domain/src/embedding/readiness.rs is the new closed vocabulary itself, placed in the domain because migration 0197 already raises two of its names as SQL exception messages, so the names are a durable protocol form rather than an adapter detail. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

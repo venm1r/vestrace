@@ -137,7 +137,7 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // vocabulary parsers both retrieval channels must share rather than copy,
   // plus the one-path amendment for the capability that authorizes a retrieval
   // retry.
-  assert.equal(changeScopePaths.length, 124);
+  assert.equal(changeScopePaths.length, 127);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -186,6 +186,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-application/src/retrieval/ports.rs',
     'crates/vestrace-application/src/retrieval/request.rs',
     'crates/vestrace-application/src/retrieval/service.rs',
+    'crates/vestrace-cli/src/commands/doctor.rs',
     'crates/vestrace-cli/src/commands/mcp.rs',
     'crates/vestrace-cli/src/commands/rebuild.rs',
     'crates/vestrace-cli/src/commands/schema.rs',
@@ -201,6 +202,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-domain/src/embedding/index.rs',
     'crates/vestrace-domain/src/embedding/job.rs',
     'crates/vestrace-domain/src/embedding/mod.rs',
+    'crates/vestrace-domain/src/embedding/readiness.rs',
     'crates/vestrace-domain/src/embedding/retrieval.rs',
     'crates/vestrace-domain/src/embedding/space.rs',
     'crates/vestrace-domain/src/id.rs',
@@ -244,6 +246,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/postgres/mod.rs',
     'crates/vestrace-infrastructure/src/postgres/model_binding_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/text_retriever.rs',

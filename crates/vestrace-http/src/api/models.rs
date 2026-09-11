@@ -305,3 +305,170 @@ pub async fn list_models(
         .map_err(ApiError::from_application)?;
     Ok(Json(models.into_iter().map(ModelResponse::from).collect()))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    use vestrace_application::{
+        ApplicationError, ModelRevisionRepository, RequestContext, SharedModelRevisionRepository,
+    };
+    use vestrace_domain::embedding::EmbeddingReadinessReason;
+
+    use super::*;
+    use crate::{
+        api::runs::tests::{TestAllowPolicy, test_state},
+        build_router,
+    };
+
+    /// Answers the governed projection with one stated model.
+    struct StubProjection(Vec<GovernedModelProjection>);
+
+    #[async_trait::async_trait]
+    impl ModelRevisionRepository for StubProjection {
+        async fn create_governed(
+            &self,
+            _context: RequestContext,
+            _command: CreateModelRevision,
+        ) -> Result<vestrace_application::GovernedMutationReceipt, ApplicationError> {
+            unreachable!("this suite reads the projection only")
+        }
+
+        async fn set_workspace_default_governed(
+            &self,
+            _context: RequestContext,
+            _command: vestrace_application::SetWorkspaceModelDefault,
+        ) -> Result<vestrace_application::GovernedMutationReceipt, ApplicationError> {
+            unreachable!("this suite reads the projection only")
+        }
+
+        async fn list_safe_models(
+            &self,
+            _context: &RequestContext,
+        ) -> Result<Vec<GovernedModelProjection>, ApplicationError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn model_with(blockers: Vec<String>) -> GovernedModelProjection {
+        GovernedModelProjection {
+            id: vestrace_domain::id::ModelId::new(),
+            revision_id: Some(ModelRevisionId::new()),
+            state: "blocked".to_owned(),
+            qualification_state: "qualified".to_owned(),
+            blockers,
+        }
+    }
+
+    fn listing(repository: SharedModelRevisionRepository) -> Request<Body> {
+        let _ = repository;
+        Request::builder()
+            .method("GET")
+            .uri("/v1/models")
+            .header("x-workspace-id", Uuid::now_v7().to_string())
+            .header("x-principal-id", Uuid::now_v7().to_string())
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// The embedding readiness reasons reach a caller by their exact names.
+    ///
+    /// Exact because an operator reading this list is meant to act on it, and
+    /// because the same names are what `doctor` prints and what migration 0197
+    /// raises. A surface that paraphrased one would give three descriptions of
+    /// one condition.
+    #[tokio::test]
+    async fn the_model_listing_carries_embedding_readiness_by_its_exact_names() {
+        let repository: SharedModelRevisionRepository =
+            Arc::new(StubProjection(vec![model_with(vec![
+                "qualification_required".to_owned(),
+                EmbeddingReadinessReason::LegacyAdoptionRequired
+                    .as_str()
+                    .to_owned(),
+                EmbeddingReadinessReason::GenerationNotReady
+                    .as_str()
+                    .to_owned(),
+            ])]));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_model_revision_repository(repository.clone()),
+        );
+
+        let response = app.oneshot(listing(repository)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let blockers: Vec<&str> = json[0]["blockers"]
+            .as_array()
+            .expect("a model states its blockers")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+
+        assert!(
+            blockers.contains(&"embedding-legacy-adoption-required"),
+            "{blockers:?}"
+        );
+        assert!(
+            blockers.contains(&"embedding-generation-not-ready"),
+            "{blockers:?}"
+        );
+        // The qualification blockers are still there. A model can be both
+        // unqualified and unable to serve retrieval, and an operator fixing one
+        // must not be told the other has gone.
+        assert!(blockers.contains(&"qualification_required"), "{blockers:?}");
+
+        // Every embedding-shaped blocker parses back into the closed
+        // vocabulary. One that did not would be a name an operator could read
+        // and no client could handle.
+        for blocker in &blockers {
+            if blocker.starts_with("embedding-") {
+                assert!(
+                    blocker.parse::<EmbeddingReadinessReason>().is_ok(),
+                    "{blocker} is not in the vocabulary"
+                );
+            }
+        }
+    }
+
+    /// And the one reason storage cannot know never reaches this surface.
+    ///
+    /// `/v1/models` is answered from a database projection. If it ever carried
+    /// `embedding-index-not-loaded`, an operator would rebuild an index that
+    /// may already be loaded in a worker this transaction cannot see.
+    #[tokio::test]
+    async fn the_model_listing_never_claims_an_index_is_not_loaded() {
+        assert!(
+            !EmbeddingReadinessReason::IndexNotLoaded.is_observable_from_storage(),
+            "the rule this surface depends on"
+        );
+        let repository: SharedModelRevisionRepository =
+            Arc::new(StubProjection(vec![model_with(vec![
+                EmbeddingReadinessReason::GenerationNotReady
+                    .as_str()
+                    .to_owned(),
+            ])]));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_model_revision_repository(repository.clone()),
+        );
+
+        let response = app.oneshot(listing(repository)).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let serialized = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            !serialized.contains(EmbeddingReadinessReason::IndexNotLoaded.as_str()),
+            "a database-backed listing must not assert process-local index \
+             presence: {serialized}"
+        );
+    }
+}
