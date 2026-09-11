@@ -2419,3 +2419,273 @@ async fn mutating_the_live_membership_predicate_is_caught_twice_and_persists_not
 
     runtime.close().await;
 }
+
+const PROPAGATION_AUTHORITY: &str =
+    "public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)";
+
+/// The predicate that decides whether a generation is revoked by an erasure,
+/// and the edit that disables exactly it.
+///
+/// It asks whether any member of the generation was computed from the source
+/// being erased. `FALSE AND` in front of it leaves the rest of the propagation
+/// -- the projection retirements, the corpus advance, the epoch step -- doing
+/// its work, which is the point: the question is what the revocation is for,
+/// not what the whole function is for.
+const REVOCATION_NEEDLE: &str = "            IF EXISTS (\n                SELECT 1 FROM embedding_corpus_generation_members AS member";
+const REVOCATION_MUTATION: &str = "            IF FALSE AND EXISTS (\n                SELECT 1 FROM embedding_corpus_generation_members AS member";
+
+/// One canonical world whose corpus is held by a published Ready generation,
+/// with the source that generation's members were computed from.
+///
+/// This qualification lives beside `canonical_delivery_world` rather than in
+/// `embedding_erasure_propagation`, because the predicate under test only means
+/// something when a generation exists to revoke, and a generation may only
+/// exist on a canonical registration holding real encrypted projections.
+async fn published_world(pool: &PgPool, runtime: &PgPool) -> (CanonicalDeliveryWorld, Uuid, Uuid) {
+    let f = canonical_qualification(pool, runtime).await;
+    let world = canonical_delivery_world(pool, runtime, f).await;
+    let (generation, captured) = capture_at_head(pool, runtime, &world).await;
+    let members = captured
+        .map_err(|(boundary, state, message)| format!("{boundary:?} {state} {message}"))
+        .expect("the full Live corpus must capture");
+    assert!(members >= 1, "the world must hold something to revoke");
+    publish_head(runtime, &world, generation).await;
+    let material = a_source_of_generation(pool, world.f.workspace.as_uuid(), generation).await;
+    (world, generation, material)
+}
+
+async fn a_source_of_generation(pool: &PgPool, workspace: Uuid, generation: Uuid) -> Uuid {
+    sqlx::query_scalar(
+        "SELECT dependency.source_material_id \
+           FROM embedding_projection_source_dependencies AS dependency \
+           JOIN embedding_corpus_generation_members AS member \
+             ON member.workspace_id=dependency.workspace_id \
+            AND member.embedding_projection_entry_id=dependency.projection_id \
+          WHERE dependency.workspace_id=$1 AND member.corpus_generation_id=$2 \
+          ORDER BY dependency.source_ordinal LIMIT 1",
+    )
+    .bind(workspace)
+    .bind(generation)
+    .fetch_one(pool)
+    .await
+    .expect("the published generation's members carry their source dependencies")
+}
+
+/// Run the real propagation, and say how it was refused and where.
+async fn propagate_erasure(
+    runtime: &PgPool,
+    world: &CanonicalDeliveryWorld,
+    material: Uuid,
+) -> Result<Uuid, (Boundary, String, String)> {
+    let propagation = Uuid::now_v7();
+    let mut scoped = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(world.f.workspace.to_string())
+        .fetch_one(&mut *scoped)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.principal_id',$1,true)")
+        .bind(world.f.principal.to_string())
+        .fetch_one(&mut *scoped)
+        .await
+        .unwrap();
+    let called = sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_propagate_embedding_source_erasure($1,$2,$3)",
+    )
+    .bind(propagation)
+    .bind(world.f.workspace.as_uuid())
+    .bind(material)
+    .fetch_one(&mut *scoped)
+    .await;
+    if let Err(error) = called {
+        scoped.rollback().await.unwrap();
+        return Err(refusal(error, Boundary::Call));
+    }
+    match scoped.commit().await {
+        Ok(()) => Ok(propagation),
+        Err(error) => Err(refusal(error, Boundary::Commit)),
+    }
+}
+
+/// What the space says about the generation afterwards: its state, whether the
+/// guard still points at it, and the corpus revision.
+async fn generation_standing(
+    pool: &PgPool,
+    world: &CanonicalDeliveryWorld,
+    generation: Uuid,
+) -> (String, Option<Uuid>, i64) {
+    let workspace = world.f.workspace.as_uuid();
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM embedding_corpus_generations WHERE id=$1")
+            .bind(generation)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let current: Option<Uuid> = sqlx::query_scalar(
+        "SELECT current_generation_id FROM embedding_index_generation_guards \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let revision: i64 = sqlx::query_scalar(
+        "SELECT corpus_revision FROM embedding_space_corpus_states \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(world.registration)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (state, current, revision)
+}
+
+/// Mutation qualification, and a finding the mutation is what surfaced: the
+/// revocation branch of `vestrace_propagate_embedding_source_erasure` cannot be
+/// reached on a canonical space at all.
+///
+/// The intended reading of that branch is stated in the migration: a revoked
+/// generation is no longer current, and leaving the guard pointing at it would
+/// let retrieval acceptance pin a generation whose members are being erased.
+/// The run set out to check that claim by disabling the branch. It could not,
+/// because the unmutated erasure is already refused.
+///
+/// `vestrace_validate_canonical_member_liveness` is a deferred constraint
+/// trigger that refuses whenever a projection entry enrolled in *any*
+/// `encrypted_projection` generation stops being Live. The propagation's first
+/// act on each affected space is to retire exactly such entries, so on a
+/// canonical space holding a generation the whole transaction is refused at
+/// COMMIT with `canonical generation member must remain Live`, before the
+/// revocation it contains can mean anything. Members cannot be removed from a
+/// generation either -- `embedding_corpus_generation_members` refuses deletion
+/// -- so there is no order of operations that gets past it.
+///
+/// The mutation is still installed and still recorded, and it changes nothing:
+/// the same refusal, at the same boundary, by the same message. That is the
+/// evidence for unreachability rather than a null result, because a branch
+/// whose presence and absence are indistinguishable from outside is precisely
+/// what "unreachable" means here.
+///
+/// The consequence is stated plainly rather than smoothed over, because it is
+/// larger than the predicate: **once a canonical generation enrols a
+/// projection, the source that projection was computed from can no longer be
+/// erased.** Erasure of such a source succeeds only while no generation holds
+/// it -- which the companion qualification of the Live membership predicate
+/// exercises, and which is the same authority succeeding on the same kind of
+/// world one step earlier. The revocation branch remains reachable for
+/// `legacy_upgrade` generations, which the liveness trigger deliberately does
+/// not cover; no fixture in this package builds one holding real dependencies,
+/// so that path is not qualified here and is not claimed to be.
+#[sqlx::test(migrations = false)]
+async fn the_erasure_revocation_branch_is_unreachable_while_a_canonical_generation_holds_its_members(
+    pool: PgPool,
+) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) =
+        authority_state(&pool, PROPAGATION_AUTHORITY).await;
+    assert!(
+        original.contains(REVOCATION_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Unmutated, with a generation holding the members: already refused.
+    let (before, before_generation, before_material) = published_world(&pool, &runtime).await;
+    let standing = generation_standing(&pool, &before, before_generation).await;
+    assert_eq!(
+        (standing.0.as_str(), standing.1),
+        ("ready", Some(before_generation))
+    );
+    let (boundary, state, message) = propagate_erasure(&runtime, &before, before_material)
+        .await
+        .expect_err("a canonical generation's member may not stop being Live");
+    assert_eq!(
+        boundary,
+        Boundary::Commit,
+        "the propagation itself raises nothing: {message}"
+    );
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("canonical generation member must remain Live"),
+        "{message}"
+    );
+    assert_eq!(
+        generation_standing(&pool, &before, before_generation).await,
+        standing,
+        "a refused erasure leaves the space exactly as it found it"
+    );
+
+    install_authority(
+        &pool,
+        &original.replace(REVOCATION_NEEDLE, REVOCATION_MUTATION),
+    )
+    .await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, PROPAGATION_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Mutated, in its own world: indistinguishable.
+    let (during, during_generation, during_material) = published_world(&pool, &runtime).await;
+    let during_standing = generation_standing(&pool, &during, during_generation).await;
+    let (mutated_boundary, mutated_state, mutated_message) =
+        propagate_erasure(&runtime, &during, during_material)
+            .await
+            .expect_err("disabling the revocation cannot help an erasure that never gets there");
+    assert_eq!(mutated_boundary, boundary);
+    assert_eq!(mutated_state, state);
+    assert_eq!(
+        mutated_message, message,
+        "the branch's presence and absence must be indistinguishable, which is \
+         what makes it unreachable rather than merely defended"
+    );
+    assert_eq!(
+        generation_standing(&pool, &during, during_generation).await,
+        during_standing
+    );
+    let attempted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_erasure_propagations WHERE workspace_id=$1",
+    )
+    .bind(during.f.workspace.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        attempted, 0,
+        "including the propagation record, which rolled back with it"
+    );
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, PROPAGATION_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // And the contrast that gives the finding its edge: the same authority, the
+    // same kind of world, one step earlier -- no generation yet -- succeeds.
+    let f = canonical_qualification(&pool, &runtime).await;
+    let open = canonical_delivery_world(&pool, &runtime, f).await;
+    let (open_live, open_not_live) = erase_one_source(&pool, &runtime, &open).await;
+    assert!(
+        open_not_live >= 1,
+        "with no generation holding them, the projections do retire"
+    );
+    assert!(open_live >= 0);
+
+    runtime.close().await;
+}
