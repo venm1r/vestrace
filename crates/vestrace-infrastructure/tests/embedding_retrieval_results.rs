@@ -888,3 +888,279 @@ async fn the_worker_reads_back_the_generation_the_fence_pinned(pool: PgPool) {
         .expect("what the registry is keyed by must be a valid canonical snapshot");
     runtime.close().await;
 }
+
+// --- The whole path, once: a question asked against a pinned generation and an
+// answer read back from the durable result.
+//
+// Everything before this proves a piece. This proves they are the same path.
+// The one piece it does not rebuild is the local index, because an index is a
+// cache and `embedding_index_builds` proves how one is built; what is under
+// test here is what retrieval does with a generation, a query and an index that
+// already exists.
+
+const E2E_MODEL: &str = "text-embedding-nomic-embed-text-v1.5";
+const E2E_OUTPUT_COUNT: usize = 2;
+
+#[derive(Default)]
+struct E2eAdapter {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl vestrace_application::run::GovernedModelAdapter for E2eAdapter {
+    async fn execute(
+        &self,
+        _kind: vestrace_domain::ConnectionKind,
+        _runtime_base_url: &str,
+        _auth: vestrace_application::ConnectionAuth,
+        request: vestrace_application::EffectiveModelRequest,
+    ) -> Result<vestrace_application::EffectiveModelResponse, vestrace_application::ProviderError>
+    {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            request,
+            vestrace_application::EffectiveModelRequest::Embeddings(_)
+        ));
+        let data = (0..E2E_OUTPUT_COUNT)
+            .map(|ordinal| {
+                vestrace_application::GovernedEmbeddingVector::from_provider_components(
+                    ordinal,
+                    vec![1.0; 768],
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(vestrace_application::EffectiveModelResponse::Embeddings(
+            vestrace_application::GovernedEmbeddingsResponse::new(
+                E2E_MODEL,
+                E2E_MODEL.into(),
+                data,
+                E2E_OUTPUT_COUNT,
+            )?,
+        ))
+    }
+}
+
+/// One active memory whose current content becomes a governed source material.
+///
+/// This is the link the whole answer hangs on. A projection names a material,
+/// a material's intent names what owns it, and only a `memory_revision` owner
+/// lets a hit be reported as a memory at all -- so a fixture that seeded any
+/// other owner would prove the search and nothing about the answer.
+async fn e2e_memory_source(
+    pool: &PgPool,
+    runtime: &PgPool,
+    accepted: &common::AcceptedJob,
+) -> (Uuid, Uuid, Uuid) {
+    let workspace = accepted.context.workspace_id;
+    let memory = Uuid::now_v7();
+    let revision = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO memories(id,workspace_id,kind,status,state_revision) \
+         VALUES($1,$2,'fact','candidate',1)",
+    )
+    .bind(memory)
+    .bind(workspace.as_uuid())
+    .execute(pool)
+    .await
+    .expect("memory");
+    sqlx::query(
+        "INSERT INTO memory_revisions(id,memory_id,workspace_id,revision_number,content,\
+         confidence,importance) VALUES($1,$2,$3,1,'the answer a query should find',1.0,0.5)",
+    )
+    .bind(revision)
+    .bind(memory)
+    .bind(workspace.as_uuid())
+    .execute(pool)
+    .await
+    .expect("revision");
+    sqlx::query("UPDATE memories SET active_revision_id=$1 WHERE id=$2")
+        .bind(revision)
+        .bind(memory)
+        .execute(pool)
+        .await
+        .expect("active revision");
+
+    let vault_fixture = common::result_preparation_fixture::OutputVaultFixture::new();
+    let materializer = vestrace_infrastructure::postgres::PgGovernedContentMaterializer::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+        std::sync::Arc::new(vault_fixture.vault(workspace)),
+        std::sync::Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+    );
+    let source = materializer
+        .materialize_revision(&accepted.context, revision)
+        .await
+        .expect("materialization must not fail")
+        .expect("an intact revision is not a blocker");
+    (memory, revision, source.material_id)
+}
+
+/// Executes the fixture's delivery job with the memory-owned material among its
+/// sources, so the projections it publishes depend on a memory revision.
+async fn e2e_publish_projections(
+    pool: &PgPool,
+    runtime: &PgPool,
+    accepted: &common::AcceptedJob,
+    memory_source: Uuid,
+) {
+    use common::result_preparation_fixture::{
+        DeliveryPolicyCase, OutputVaultFixture, acceptance_command, attach_source_to_evidence,
+        live_source, outputs, reconcile_output_receipts, record_delivery_policy,
+    };
+    use vestrace_application::EmbeddingOutputKeyRepository;
+
+    let sources = [
+        vestrace_domain::ContentMaterialId::from_uuid(memory_source),
+        live_source(runtime, accepted).await,
+    ];
+    common::make_dispatchable_with_policy(pool, runtime, accepted, true).await;
+    for (ordinal, source) in sources.into_iter().enumerate() {
+        attach_source_to_evidence(pool, accepted, source, 8 + ordinal as i64).await;
+    }
+    let output_set = outputs();
+    let receipt_id = Uuid::now_v7();
+    vestrace_infrastructure::postgres::PgEmbeddingOutputKeyRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    )
+    .accept_delivery_outputs(
+        &accepted.context,
+        acceptance_command(accepted, receipt_id, output_set.clone()),
+    )
+    .await
+    .expect("the result chain must accept the delivery job");
+    let vault = OutputVaultFixture::new();
+    reconcile_output_receipts(runtime, accepted, &output_set, &vault).await;
+    record_delivery_policy(runtime, receipt_id, DeliveryPolicyCase::ExactAllowed).await;
+
+    let store = vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone());
+    let dispatch = std::sync::Arc::new(common::dispatching_repository(runtime, None));
+    let output_vault = std::sync::Arc::new(vault.vault(accepted.context.workspace_id));
+    let preparation = std::sync::Arc::new(
+        vestrace_application::EmbeddingResultPreparationService::new(
+            std::sync::Arc::new(
+                vestrace_infrastructure::postgres::PgEmbeddingResultRepository::new(
+                    store.clone(),
+                    dispatch.clone(),
+                ),
+            ),
+            output_vault.clone(),
+            std::sync::Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+        ),
+    );
+    let finalization = std::sync::Arc::new(
+        vestrace_application::EmbeddingResultFinalizationService::new(
+            std::sync::Arc::new(
+                vestrace_infrastructure::postgres::PgEmbeddingResultFinalizationRepository::new(
+                    store,
+                ),
+            ),
+            output_vault,
+            std::sync::Arc::new(
+                vestrace_infrastructure::postgres::EmbeddingOutputHmacCommitter::new(),
+            ),
+        ),
+    );
+    let adapter = std::sync::Arc::new(E2eAdapter::default());
+    let outcome = vestrace_application::embedding::EmbeddingExecutor::new(
+        dispatch,
+        preparation,
+        finalization,
+        adapter.clone(),
+        vestrace_domain::WorkerId::new(),
+    )
+    .execute(&accepted.context, accepted.job_id)
+    .await
+    .expect("the delivery job must finalize");
+    assert_eq!(
+        outcome,
+        vestrace_application::embedding::EmbeddingExecutionOutcome::Succeeded
+    );
+    assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// A published projection resolves to the memory revision it was computed from.
+///
+/// This is the link every retrieval answer hangs on and the one that fails
+/// silently. A projection names the material it came from, that material's
+/// intent names what owns it, and only a `memory_revision` owner lets a hit be
+/// reported as a memory at all. Get the join wrong and retrieval returns an
+/// empty answer rather than a wrong one -- indistinguishable, from outside,
+/// from a corpus that genuinely matched nothing.
+///
+/// The projections here are real: a delivery job executed through the whole
+/// result chain, with one of its sources materialized from a memory revision by
+/// the same materializer the on-write route uses.
+#[sqlx::test(migrations = false)]
+async fn a_published_projection_resolves_to_its_memory_revision(pool: PgPool) {
+    use vestrace_application::embedding::EmbeddingRetrievalRepository;
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let accepted = common::prepare_delivery_embedding_job(&pool, &runtime).await;
+    let workspace = accepted.context.workspace_id;
+
+    let (memory, revision, memory_source) = e2e_memory_source(&pool, &runtime, &accepted).await;
+    e2e_publish_projections(&pool, &runtime, &accepted, memory_source).await;
+
+    // Two projections, and only one of them was computed from a memory.
+    let all: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM embedding_projection_entries WHERE workspace_id=$1 ORDER BY id",
+    )
+    .bind(workspace.as_uuid())
+    .fetch_all(&pool)
+    .await
+    .expect("the executed job published projections");
+    assert_eq!(all.len(), E2E_OUTPUT_COUNT);
+
+    let of_memory: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT dependency.projection_id \
+           FROM embedding_projection_source_dependencies AS dependency \
+          WHERE dependency.workspace_id=$1 AND dependency.source_material_id=$2",
+    )
+    .bind(workspace.as_uuid())
+    .bind(memory_source)
+    .fetch_all(&pool)
+    .await
+    .expect("the dependency the delivery recorded");
+    assert!(
+        !of_memory.is_empty(),
+        "the delivery must have recorded the memory-owned source as a dependency"
+    );
+
+    let repository = vestrace_infrastructure::postgres::PgEmbeddingRetrievalRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    );
+    let resolved = repository
+        .resolve_members(&accepted.context, &all)
+        .await
+        .expect("resolution must not fail");
+
+    assert_eq!(
+        resolved.len(),
+        of_memory.len(),
+        "exactly the projections computed from a memory resolve; a projection whose source is \
+         some other governed input has no memory to name"
+    );
+    for member in &resolved {
+        assert!(
+            of_memory.contains(&member.projection_id),
+            "only a projection that depends on the memory-owned source may resolve"
+        );
+        assert_eq!(member.memory_id, memory, "the memory the projection means");
+        assert_eq!(member.revision_id, revision, "and its exact revision");
+    }
+
+    // An unknown projection resolves to nothing rather than to something.
+    let absent = repository
+        .resolve_members(&accepted.context, &[Uuid::now_v7()])
+        .await
+        .expect("an unknown projection is not a failure");
+    assert!(absent.is_empty());
+
+    // That a projection stops resolving once its source leaves Live is not
+    // asserted here. Taking a material out of Live is the two-phase erasure's
+    // job and the schema refuses any shortcut to it -- `Live material requires
+    // its exact Bound promotion` -- so proving it needs the vault sequence,
+    // which `embedding_erasure_propagation` already drives. What that suite
+    // does not do is read the answer afterwards.
+    runtime.close().await;
+}
