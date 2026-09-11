@@ -57,11 +57,61 @@ pub fn embedding_job_routes() -> axum::Router<AppState> {
         ),
         post(retry_generation_changed),
     );
-    mount(
+    let router = mount(
         router,
         route_descriptor(&Method::GET, "/v1/embedding-jobs/{id}/retrieval"),
         get(retrieval_attempt),
+    );
+    mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/embedding-retrievals/awaiting-retry"),
+        get(retrievals_awaiting_retry),
     )
+}
+
+/// The attempts with a retry decision waiting on them.
+///
+/// This exists because `POST .../retry-generation-changed` takes a predecessor
+/// job id and, until now, nothing told a caller one. The search surface that
+/// observed the decline is protocol-locked and cannot carry an identity, so the
+/// identity is found by asking the workspace what it is holding rather than by
+/// remembering what a particular request returned. An MCP caller is told
+/// directly; an HTTP caller comes here.
+#[derive(Debug, serde::Serialize)]
+pub struct AwaitingRetryResponse {
+    pub attempts: Vec<RetrievalAttemptResponse>,
+    /// The most this route will name in one answer.
+    pub limit: u32,
+    /// True when the workspace holds more than `limit`. Stated rather than left
+    /// to be inferred from the length, because a caller that authorized every
+    /// attempt it was handed and stopped would otherwise believe it had drained
+    /// the queue.
+    pub truncated: bool,
+}
+
+async fn retrievals_awaiting_retry(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, ApiError> {
+    let context = request_context(&headers)?;
+    let awaiting = state
+        .embedding_retrieval_repository()?
+        .attempts_awaiting_retry(&context)
+        .await
+        .map_err(ApiError::from_application)?;
+    Ok((
+        StatusCode::OK,
+        Json(AwaitingRetryResponse {
+            attempts: awaiting
+                .attempts
+                .into_iter()
+                .map(RetrievalAttemptResponse::from)
+                .collect(),
+            limit: vestrace_application::embedding::MAXIMUM_AWAITING_RETRY,
+            truncated: awaiting.truncated,
+        }),
+    )
+        .into_response())
 }
 
 /// What one retrieval attempt did, read back after the fact.
@@ -99,6 +149,29 @@ pub struct RetrievalAttemptResponse {
     pub retry_available: bool,
 }
 
+impl From<vestrace_application::embedding::RetrievalAttemptView> for RetrievalAttemptResponse {
+    fn from(view: vestrace_application::embedding::RetrievalAttemptView) -> Self {
+        Self {
+            embedding_job_id: view.job_id.as_uuid(),
+            retrieval_request_id: view.request_id.as_uuid(),
+            job_state: view.job_state,
+            job_version: view.job_version,
+            space_registration_id: view.space_registration_id,
+            pinned_generation_id: view.generation_id,
+            pinned_generation_epoch: view.generation_epoch,
+            pinned_generation_member_count: view.generation_member_count,
+            reference_count: view.reference_count,
+            degradation_reason: view.degradation_reason.map(str::to_owned),
+            generation_changed_reason: view
+                .generation_changed_reason
+                .map(|reason| reason.as_str().to_owned()),
+            predecessor_embedding_job_id: view.predecessor_job_id.map(|id| id.as_uuid()),
+            successor_embedding_job_id: view.successor_job_id.map(|id| id.as_uuid()),
+            retry_available: view.retry_available,
+        }
+    }
+}
+
 /// Reads one attempt.
 ///
 /// A job this workspace does not have, or has but never admitted as a retrieval
@@ -116,28 +189,7 @@ async fn retrieval_attempt(
         .await
         .map_err(ApiError::from_application)?
         .ok_or_else(|| ApiError::not_found("embedding retrieval attempt"))?;
-    Ok((
-        StatusCode::OK,
-        Json(RetrievalAttemptResponse {
-            embedding_job_id: view.job_id.as_uuid(),
-            retrieval_request_id: view.request_id.as_uuid(),
-            job_state: view.job_state,
-            job_version: view.job_version,
-            space_registration_id: view.space_registration_id,
-            pinned_generation_id: view.generation_id,
-            pinned_generation_epoch: view.generation_epoch,
-            pinned_generation_member_count: view.generation_member_count,
-            reference_count: view.reference_count,
-            degradation_reason: view.degradation_reason.map(str::to_owned),
-            generation_changed_reason: view
-                .generation_changed_reason
-                .map(|reason| reason.as_str().to_owned()),
-            predecessor_embedding_job_id: view.predecessor_job_id.map(|id| id.as_uuid()),
-            successor_embedding_job_id: view.successor_job_id.map(|id| id.as_uuid()),
-            retry_available: view.retry_available,
-        }),
-    )
-        .into_response())
+    Ok((StatusCode::OK, Json(RetrievalAttemptResponse::from(view))).into_response())
 }
 
 /// One authorized successor to an attempt whose pinned generation moved.
@@ -920,6 +972,7 @@ mod tests {
     struct StubAttemptView {
         view: Mutex<Option<vestrace_application::embedding::RetrievalAttemptView>>,
         asked: Mutex<Option<EmbeddingJobId>>,
+        truncated: bool,
     }
 
     impl StubAttemptView {
@@ -927,12 +980,31 @@ mod tests {
             Self {
                 view: Mutex::new(view),
                 asked: Mutex::new(None),
+                truncated: false,
+            }
+        }
+
+        fn truncated(view: vestrace_application::embedding::RetrievalAttemptView) -> Self {
+            Self {
+                view: Mutex::new(Some(view)),
+                asked: Mutex::new(None),
+                truncated: true,
             }
         }
     }
 
     #[async_trait::async_trait]
     impl vestrace_application::embedding::EmbeddingRetrievalRepository for StubAttemptView {
+        async fn attempts_awaiting_retry(
+            &self,
+            _context: &RequestContext,
+        ) -> Result<vestrace_application::embedding::AwaitingRetry, ApplicationError> {
+            Ok(vestrace_application::embedding::AwaitingRetry {
+                attempts: self.view.lock().unwrap().clone().into_iter().collect(),
+                truncated: self.truncated,
+            })
+        }
+
         async fn attempt_view(
             &self,
             _context: &RequestContext,
@@ -1098,6 +1170,128 @@ mod tests {
         assert!(
             response.status().is_server_error(),
             "an unconfigured read authority must not look like an absent attempt"
+        );
+    }
+
+    const AWAITING: &str = "/v1/embedding-retrievals/awaiting-retry";
+
+    /// The queue names the attempts a caller may authorize, in the shape the
+    /// single read uses.
+    ///
+    /// Same shape on purpose: a listing that described an attempt differently
+    /// from the read an operator confirms against would be a second answer to
+    /// the same question.
+    #[tokio::test]
+    async fn the_retry_queue_names_attempts_in_the_same_shape_as_the_single_read() {
+        let job_id = Uuid::now_v7();
+        let stub = Arc::new(StubAttemptView::holding(Some(changed_attempt(job_id))));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app.oneshot(read(AWAITING)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["attempts"][0]["embedding_job_id"], job_id.to_string());
+        assert_eq!(json["attempts"][0]["retry_available"], true);
+        assert_eq!(
+            json["attempts"][0]["degradation_reason"],
+            "retrieval_generation_changed"
+        );
+        assert_eq!(
+            json["limit"],
+            vestrace_application::embedding::MAXIMUM_AWAITING_RETRY,
+            "the caller is told the bound rather than left to infer it"
+        );
+        assert_eq!(json["truncated"], false);
+    }
+
+    /// A truncated queue says so.
+    ///
+    /// A caller that authorized everything it was handed and stopped would
+    /// otherwise believe it had drained a queue that is still full.
+    #[tokio::test]
+    async fn a_truncated_retry_queue_says_there_is_more() {
+        let stub = Arc::new(StubAttemptView::truncated(changed_attempt(Uuid::now_v7())));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app.oneshot(read(AWAITING)).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["truncated"], true);
+    }
+
+    /// An empty queue is an empty list, not a 404. There being nothing to
+    /// authorize is an answer.
+    #[tokio::test]
+    async fn an_empty_retry_queue_is_an_empty_list() {
+        let stub = Arc::new(StubAttemptView::holding(None));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app.oneshot(read(AWAITING)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["attempts"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// And the queue carries nothing derived from a vector either. It is the
+    /// same body repeated, so it is the same exposure repeated.
+    #[tokio::test]
+    async fn the_retry_queue_carries_no_ciphertext_vector_digest_or_credential() {
+        let stub = Arc::new(StubAttemptView::holding(Some(changed_attempt(
+            Uuid::now_v7(),
+        ))));
+        let app = build_router(
+            test_state()
+                .with_policy(Arc::new(TestAllowPolicy))
+                .with_embedding_retrieval_repository(stub),
+        );
+
+        let response = app.oneshot(read(AWAITING)).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let serialized = String::from_utf8(body.to_vec()).unwrap();
+
+        for forbidden in [
+            "ciphertext",
+            "vector",
+            "digest",
+            "credential",
+            "query",
+            "embedding_components",
+            "local_index",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "{forbidden} must not appear in the retry queue: {serialized}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_retry_queue_without_a_configured_authority_fails_closed() {
+        let app = build_router(test_state().with_policy(Arc::new(TestAllowPolicy)));
+
+        let response = app.oneshot(read(AWAITING)).await.unwrap();
+
+        assert!(
+            response.status().is_server_error(),
+            "an unconfigured listing authority must not look like an empty queue"
         );
     }
 

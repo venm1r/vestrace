@@ -1422,6 +1422,17 @@ fn openapi_v1() -> serde_json::Value {
                     }
                 }
             },
+            "/v1/embedding-retrievals/awaiting-retry": {
+                "get": {
+                    "summary": "The retrieval attempts with a retry decision waiting on them",
+                    "description": "How a caller learns a predecessor embedding job id. The search response cannot carry one, so the attempts that earned a retry and have not spent it are listed here, oldest change first.",
+                    "tags": ["embedding-jobs"],
+                    "parameters": governed_read_headers.clone(),
+                    "responses": {
+                        "200": { "description": "The queue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmbeddingRetrievalsAwaitingRetry" } } } }
+                    }
+                }
+            },
             "/v1/embedding-transitions/{id}/acknowledge-carry": {
                 "post": {
                     "summary": "Acknowledge a carried transition ambiguity and create its one successor",
@@ -1625,6 +1636,16 @@ fn openapi_v1() -> serde_json::Value {
                         "retry_available": { "type": "boolean", "description": "False once a successor exists: a predecessor has exactly one." }
                     },
                     "required": ["embedding_job_id", "retrieval_request_id", "job_state", "job_version", "space_registration_id", "pinned_generation_id", "pinned_generation_epoch", "pinned_generation_member_count", "retry_available"]
+                },
+                "EmbeddingRetrievalsAwaitingRetry": {
+                    "type": "object",
+                    "description": "Bounded rather than paged: this is a queue to work, not a history to walk. A workspace holding more than the limit has a problem that authorizing one retry at a time will not fix, and says so through `truncated`.",
+                    "properties": {
+                        "attempts": { "type": "array", "items": { "$ref": "#/components/schemas/EmbeddingRetrievalAttempt" } },
+                        "limit": { "type": "integer", "minimum": 1, "description": "The most this route names in one answer." },
+                        "truncated": { "type": "boolean", "description": "True when more are held than were named. A caller that authorized everything it was handed and stopped would otherwise believe the queue was drained." }
+                    },
+                    "required": ["attempts", "limit", "truncated"]
                 },
                 "AcknowledgeEmbeddingTransitionCarryRequest": {
                     "type": "object",

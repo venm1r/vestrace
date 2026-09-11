@@ -1378,3 +1378,130 @@ async fn a_terminal_attempt_reads_back_as_its_outcome_and_its_lineage(pool: PgPo
 
     runtime.close().await;
 }
+
+/// The retry queue holds exactly the attempts a confirmed change left
+/// retryable, and drops each one the moment its successor is authorized.
+///
+/// This is the route by which an HTTP caller learns a predecessor job id at
+/// all, so what it must never do is name an attempt that the single read then
+/// says is not retryable. Both are driven here against the same rows.
+#[sqlx::test(migrations = false)]
+async fn the_retry_queue_holds_only_unspent_confirmed_changes(pool: PgPool) {
+    use vestrace_application::embedding::EmbeddingRetrievalRepository;
+
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let repository = vestrace_infrastructure::postgres::PgEmbeddingRetrievalRepository::new(
+        vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+    );
+
+    // One workspace holding three attempts in three different conditions.
+    let base = common::prepare_delivery_embedding_job(&pool, &runtime).await;
+    let workspace = base.context.workspace_id;
+    let context =
+        vestrace_application::RequestContext::new(workspace, vestrace_domain::PrincipalId::new());
+
+    // Nothing has declined yet.
+    let empty = repository
+        .attempts_awaiting_retry(&context)
+        .await
+        .expect("an empty queue is an answer");
+    assert!(empty.attempts.is_empty());
+    assert!(!empty.truncated);
+
+    let declined = attempt(&pool, &runtime).await;
+    let declined_fence = accept_fence(&runtime, &declined, Uuid::now_v7())
+        .await
+        .unwrap();
+    observe_change(&runtime, &declined, declined_fence, "revoked")
+        .await
+        .expect("a generation change is terminal");
+    let declined_context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(declined.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+
+    // An attempt that answered is not in the queue: it has nothing to decide.
+    let answered = attempt(&pool, &runtime).await;
+    let answered_fence = accept_fence(&runtime, &answered, Uuid::now_v7())
+        .await
+        .unwrap();
+    finalize(
+        &runtime,
+        &answered,
+        answered_fence,
+        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+    )
+    .await
+    .expect("a result lands on a current generation");
+
+    // Each `attempt` builds its own workspace, so the queue is read per
+    // workspace -- which is itself the scoping claim worth making.
+    let queue = repository
+        .attempts_awaiting_retry(&declined_context)
+        .await
+        .expect("the declined workspace has a queue");
+    assert_eq!(
+        queue.attempts.len(),
+        1,
+        "exactly the one confirmed change is waiting"
+    );
+    assert!(!queue.truncated);
+    let waiting = &queue.attempts[0];
+    assert_eq!(waiting.job_id.as_uuid(), declined.job);
+    assert!(waiting.retry_available);
+    assert_eq!(
+        waiting.generation_changed_reason,
+        Some(vestrace_domain::embedding::RetrievalGenerationChangedReason::Revoked)
+    );
+
+    // The queue and the single read describe the same attempt identically.
+    let single = repository
+        .attempt_view(&declined_context, waiting.job_id)
+        .await
+        .unwrap()
+        .expect("the queued attempt is readable on its own");
+    assert_eq!(
+        &single, waiting,
+        "the queue must not describe an attempt differently from the read an \
+         operator confirms against"
+    );
+
+    // The answered workspace's queue is empty.
+    let answered_context = vestrace_application::RequestContext::new(
+        vestrace_domain::WorkspaceId::from_uuid(answered.workspace),
+        vestrace_domain::PrincipalId::new(),
+    );
+    assert!(
+        repository
+            .attempts_awaiting_retry(&answered_context)
+            .await
+            .unwrap()
+            .attempts
+            .is_empty(),
+        "an attempt that answered has no decision waiting on it"
+    );
+
+    // Authorizing the successor empties the queue for all time: a predecessor
+    // has exactly one successor, so the edge that appears is permanent.
+    authorize_retry(
+        &runtime,
+        &declined,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        "queue-key",
+    )
+    .await
+    .expect("a confirmed change authorizes one successor");
+    assert!(
+        repository
+            .attempts_awaiting_retry(&declined_context)
+            .await
+            .unwrap()
+            .attempts
+            .is_empty(),
+        "a spent retry leaves the queue"
+    );
+
+    runtime.close().await;
+}

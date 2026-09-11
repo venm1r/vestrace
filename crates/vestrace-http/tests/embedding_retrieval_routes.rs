@@ -18,6 +18,7 @@ use vestrace_http::route_inventory::{
 
 const RETRY_PATH: &str = "/v1/embedding-jobs/{id}/retry-generation-changed";
 const VIEW_PATH: &str = "/v1/embedding-jobs/{id}/retrieval";
+const QUEUE_PATH: &str = "/v1/embedding-retrievals/awaiting-retry";
 
 /// The retry is a governed mutation, not a read, and it is not public.
 ///
@@ -179,6 +180,71 @@ fn a_concrete_attempt_read_resolves_to_its_own_governed_decision() {
     );
 }
 
+/// The retry queue is a read under the reader's capability, not the spender's.
+///
+/// This route is the only way an HTTP caller can learn a predecessor job id,
+/// because the search surface that observed the decline is protocol-locked and
+/// cannot carry one. If it were gated by the retry's capability, the identity
+/// needed to decide would be reachable only by a principal who had already been
+/// granted the decision.
+#[test]
+fn the_retry_queue_is_a_read_under_the_readers_capability() {
+    let descriptor = route_descriptor(&Method::GET, QUEUE_PATH);
+
+    assert_eq!(descriptor.exposure, RouteExposure::Governed);
+    assert_eq!(descriptor.capability, Capability::ContextRetrieve);
+    assert_eq!(descriptor.risk, RiskCategory::Low);
+    assert_ne!(
+        descriptor.capability,
+        Capability::EmbeddingRetryRetrievalGenerationChanged,
+        "finding the attempts that need a decision must not require the decision"
+    );
+
+    match inventory_lookup(&Method::GET, QUEUE_PATH) {
+        RouteDecision::Governed(request) => {
+            assert_eq!(request.capability, Capability::ContextRetrieve);
+        }
+        other => panic!("the queue must resolve to a governed decision, got {other:?}"),
+    }
+    assert_eq!(
+        inventory_lookup(&Method::POST, QUEUE_PATH),
+        RouteDecision::NotInInventory,
+        "the queue's path has no mutation behind it"
+    );
+}
+
+/// Every embedding route agrees with the same rule: a read is Low and a
+/// mutation is Critical, and none of them is public.
+///
+/// Stated over the whole family rather than route by route because the next
+/// embedding route will be added by someone reading this list, and a Medium
+/// mutation or a Critical read among them would be the drift that makes the
+/// risk column stop meaning anything.
+#[test]
+fn every_embedding_route_is_governed_and_carries_the_risk_its_verb_implies() {
+    for descriptor in route_inventory()
+        .iter()
+        .filter(|descriptor| descriptor.path_pattern.starts_with("/v1/embedding-"))
+    {
+        assert_eq!(
+            descriptor.exposure,
+            RouteExposure::Governed,
+            "{} must not be public",
+            descriptor.path_pattern
+        );
+        let expected = if descriptor.method == Method::GET {
+            RiskCategory::Low
+        } else {
+            RiskCategory::Critical
+        };
+        assert_eq!(
+            descriptor.risk, expected,
+            "{} {} carries the wrong risk",
+            descriptor.method, descriptor.path_pattern
+        );
+    }
+}
+
 /// And the inventory as a whole still agrees with itself.
 ///
 /// Adding a route is the moment this can break: `route_inventory` validates on
@@ -187,7 +253,7 @@ fn a_concrete_attempt_read_resolves_to_its_own_governed_decision() {
 #[test]
 fn the_inventory_still_validates_with_the_retry_in_it() {
     let inventory = route_inventory();
-    for path in [RETRY_PATH, VIEW_PATH] {
+    for path in [RETRY_PATH, VIEW_PATH, QUEUE_PATH] {
         assert!(
             inventory
                 .iter()

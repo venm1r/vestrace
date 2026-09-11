@@ -287,6 +287,25 @@ pub struct RetrievalMemberReference {
     pub revision_id: uuid::Uuid,
 }
 
+/// The most attempts one listing may name.
+///
+/// A cap rather than a page cursor, because this is a queue an operator works
+/// and not a history to walk: a workspace with more than this many unspent
+/// retries has a problem that authorizing them one at a time will not fix, and
+/// the listing says so by telling the caller it was truncated.
+pub const MAXIMUM_AWAITING_RETRY: u32 = 100;
+
+/// The attempts that earned a retry and have not spent it, and whether there
+/// were more than could be named.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AwaitingRetry {
+    pub attempts: Vec<RetrievalAttemptView>,
+    /// True when the workspace holds more than `MAXIMUM_AWAITING_RETRY`. A
+    /// caller that authorized every attempt it was given and stopped would
+    /// otherwise believe it had drained the queue.
+    pub truncated: bool,
+}
+
 #[async_trait]
 pub trait EmbeddingRetrievalRepository: Send + Sync {
     /// The fence one job owns, and the exact generation it pinned, in the shape
@@ -341,6 +360,28 @@ pub trait EmbeddingRetrievalRepository: Send + Sync {
     ) -> Result<Option<RetrievalAttemptView>, ApplicationError> {
         Err(ApplicationError::Unavailable(
             "governed embedding retrieval attempt view is not configured".to_owned(),
+        ))
+    }
+
+    /// Every attempt in this workspace that a confirmed generation change left
+    /// retryable, oldest change first.
+    ///
+    /// This exists because the retry command takes a predecessor job id and
+    /// there was no way to learn one. A caller whose search declined is told
+    /// the reason, but the surface that told it is protocol-locked and cannot
+    /// carry an identity; so the identity is found here instead, by asking the
+    /// workspace what it is holding rather than by remembering what a
+    /// particular request returned.
+    ///
+    /// Oldest first because a retry follows a corpus that moved, and the
+    /// attempt that has waited longest is the one whose caller has been
+    /// without an answer longest.
+    async fn attempts_awaiting_retry(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<AwaitingRetry, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "governed embedding retrieval attempt listing is not configured".to_owned(),
         ))
     }
 

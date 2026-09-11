@@ -188,6 +188,15 @@ static ROUTE_INVENTORY: &[RouteDescriptor] = &[
         ContextRetrieve,
         Low
     ),
+    // The queue an operator works before authorizing any retry. Same
+    // entitlement and same risk as reading one attempt: it names the same
+    // facts, for the attempts that have a decision waiting on them.
+    governed!(
+        GET,
+        "/v1/embedding-retrievals/awaiting-retry",
+        ContextRetrieve,
+        Low
+    ),
     governed!(GET, "/v1/artifacts", ExportRead, Low),
     governed!(GET, "/v1/triggers", WorkspaceAdmin, Low),
     governed!(GET, "/v1/connections", WorkspaceAdmin, Low),

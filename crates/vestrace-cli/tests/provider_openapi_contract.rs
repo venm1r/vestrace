@@ -253,6 +253,42 @@ fn embedding_retrieval_attempt_read_is_a_safe_governed_read_contract() {
     }
 }
 
+/// The retry queue documents its bound and reuses the attempt shape.
+///
+/// Reusing the shape is the substantive claim: a document that described a
+/// queued attempt with its own inline object would let the two drift, and a
+/// caller would find that the attempt it authorized from the queue does not
+/// match the attempt it reads back afterwards.
+#[test]
+fn embedding_retry_queue_is_a_bounded_read_over_the_attempt_shape() {
+    let document = schema();
+    let operation = &document["paths"]["/v1/embedding-retrievals/awaiting-retry"]["get"];
+    let queue = &document["components"]["schemas"]["EmbeddingRetrievalsAwaitingRetry"];
+
+    assert_eq!(operation["parameters"][0]["name"], "x-workspace-id");
+    assert_eq!(
+        queue["properties"]["attempts"]["items"]["$ref"],
+        "#/components/schemas/EmbeddingRetrievalAttempt",
+        "the queue must name the same attempt shape the single read returns"
+    );
+    for field in ["attempts", "limit", "truncated"] {
+        assert!(
+            queue["required"]
+                .as_array()
+                .expect("the queue states what it always carries")
+                .iter()
+                .any(|name| name == field),
+            "{field} must always be present: a caller cannot infer a bound it is not told"
+        );
+    }
+    assert!(
+        operation["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("predecessor")),
+        "a caller must be able to read that this is where a predecessor id comes from"
+    );
+}
+
 #[test]
 fn embedding_carry_acknowledgement_is_a_governed_mutation_contract() {
     let document = schema();
