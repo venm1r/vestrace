@@ -92,6 +92,7 @@
     "crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
     "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
+    "crates/vestrace-infrastructure/tests/common/mod.rs",
     "crates/vestrace-infrastructure/tests/credential_activation.rs",
     "crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs",
     "crates/vestrace-infrastructure/tests/embedding_carry_classification.rs",
@@ -1178,6 +1179,17 @@
       "removed_paths": [],
       "authorized_by": "User-confirmed lead decision for completion Task 13 activation boundaries.",
       "reason": "The activation fault points need a second physical job driven to publication, which needs two helpers this file already holds and keeps private: read_dispatch_authority, which assembles the provider dispatch authority from durable rows, and ResultPreparationDispatch, a ProviderDispatchRepository stub. Reaching them any other way means duplicating roughly 250 lines beside the originals, where the two copies would eventually disagree and nothing would say which was right. The amendment changes no behaviour in this scenario: the two items become pub(super) and nothing else moves. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-11T19:02:18.875Z",
+      "added_paths": [
+        "crates/vestrace-infrastructure/tests/common/mod.rs"
+      ],
+      "previous_change_scope_size": 130,
+      "new_change_scope_size": 131,
+      "removed_paths": [],
+      "authorized_by": "User-confirmed lead decision for completion Task 14: expand scope and carry activation through.",
+      "reason": "Embedding transition activation has been unreachable for the whole package, and the cause is in this file. Migration 0197 line 147 requires a canonical registration's returned_model to equal its model revision's wire_model_id, and this fixture declares two different models for one job: the model revision is inserted with wire_model_id 'embedding-model', while acceptance_command declares response_model RESULT_MODEL, which is 'text-embedding-nomic-embed-text-v1.5'. The result chain compares the dispatch request's model against what the outputs declared and the canonical registration against the wire model, so a job from this fixture can satisfy one or the other and never both. Registered under the wire model the canonical space refuses the fixture's results with EMBEDDING_RESULT_CONFLICT; registered under RESULT_MODEL the space is refused at registration with 23514. Consequently no fixture-built delivery job can land outputs in a canonical space, no transition over one can be activated, every call to vestrace_activate_embedding_transition in the repository is an unwrap_err, and Task 14's mutations 8 and 9 -- both inside that authority -- cannot be qualified. The amendment unifies the two strings onto RESULT_MODEL. Measured before requesting it: the only other files naming 'embedding-model' are embedding_data_policy, embedding_carry_classification, model_request_evidence, provider_dispatch_is_atomic and embedding_dispatch_crash, and all of them still pass on the unified fixture (model_request_evidence keeps its one pre-existing 55006 failure, unchanged). No further path is therefore added. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

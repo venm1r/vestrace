@@ -5648,3 +5648,202 @@ rotation atomically". Its authority exists, is owned, is granted, and refuses
 correctly at every boundary any fixture can reach. Whether it *activates* is not
 demonstrated by anything in this repository, and this section is the reason
 rather than an excuse for it.
+
+## Completion package (2026-09-08) — Task 14, Step 2 continued: activation reached, and a defect that stops it
+
+The lead authorised expanding the frozen scope to carry activation through. This
+records what that bought and what it found. The short version: activation is not
+blocked by its own preconditions, and it cannot succeed anywhere, because
+migration 0201 added it and did not extend migration 0200's header guard to
+admit the state it writes.
+
+### Two fixture repairs, both under the fourth amendment
+
+`crates/vestrace-infrastructure/tests/common/mod.rs` entered the change scope as
+the package's fourth amendment, recorded in the preflight record with its
+rationale. Two things in it were wrong, and each independently made canonical
+embedding unreachable for every job the fixture builds.
+
+**The fixture declared two models for one job.** The model revision was inserted
+with `wire_model_id = 'embedding-model'`; `acceptance_command` declared
+`response_model: RESULT_MODEL`, which is
+`"text-embedding-nomic-embed-text-v1.5"`. Migration 0197 line 147 requires a
+canonical registration's `returned_model` to equal its revision's
+`wire_model_id`, and the result chain compares the dispatch request's model
+against what the outputs declared. One job could satisfy either, never both:
+registered under the wire model it met `EMBEDDING_RESULT_CONFLICT` from
+`validate_plan`; registered under `RESULT_MODEL` it was refused at registration
+with 23514. Repaired by unifying both strings onto `RESULT_MODEL`.
+
+**The fixture gave `memory_embeddings` to the wrong owner.**
+`prepare_legacy_embedding_runtime_ownership` handed five legacy tables to
+`vestrace` under an assertion reading "fixture must mirror the production owner".
+For four of them that is right. For `memory_embeddings` it is the *pre-0197*
+owner: migration 0197 line 604 hands that table to `vestrace_guarded_owner`, and
+the real provisioner does the same at `docker/postgres/init-runtime-role.sh`
+line 2306. Under the fixture's owner, the deferred constraint trigger
+`vestrace_validate_embedding_corpus_generation_member` — SECURITY DEFINER as the
+guarded owner, and it reads that table — cannot read it, so **every** canonical
+generation publication in a world built from this fixture failed at `COMMIT`
+with 42501. Repaired by removing that one table from the list.
+
+Measured before requesting the amendment and again after applying it: the five
+other files naming `'embedding-model'` all still pass, and
+`model_request_evidence` keeps its one pre-existing 55006 failure unchanged.
+
+### What the repairs bought
+
+The activation attempt moved, one barrier at a time, and each step was a
+different refusal:
+
+| Before the repairs | `embedding transition activation requires a canonical target space` |
+| --- | --- |
+| After the model repair | `embedding transition activation requires an exact Ready current generation` |
+| After the ownership repair, generation published before proving | same — the rebuild job's own results stale the standing generation |
+| Publishing after proving | `embedding transition activation requires complete completion-blocker adoption` |
+| With that gate disabled | `embedding transition permits only guarded progress` |
+
+Two of those steps are worth keeping as knowledge. A generation has to be
+published *after* the transition is proven, because proving runs a rebuild job
+whose results publish into the same space and stale whatever was standing. And
+the completion-blocker gate is reachable only once everything before it is
+satisfied, which is why no earlier run in this package ever saw it.
+
+### Record 8 — completion-blocker adoption (outcome 2, and a defect)
+
+- Authority: `vestrace_activate_embedding_transition(uuid,uuid,uuid,uuid,bigint,bigint,uuid)`
+- Predicate: `IF unadopted > 0 THEN`, disabled by `IF FALSE THEN`. The count
+  still runs; only the decision changes.
+- Green before: 23514, `embedding transition activation requires complete
+  completion-blocker adoption`, head unmoved at version 1 with no active space,
+  no receipt.
+- Mutated: the refusal **moves** to
+  `vestrace_guard_embedding_transition_header`, 23514, `embedding transition
+  permits only guarded progress`. The head still does not move and no receipt
+  survives.
+- Restored byte-exactly; green after, by the gate's own message again.
+
+### The defect the mutation surfaced
+
+`vestrace_activate_embedding_transition` writes
+`UPDATE embedding_transitions SET state='activated', version=version+1` at
+migration 0201 line 244. `vestrace_guard_embedding_transition_header`, migration
+0200 lines 427-430, permits exactly two moves:
+
+```text
+planned    -> rebuilding
+rebuilding -> ready_to_activate
+```
+
+There is no permitted move into `activated`, although migration 0188 line 42
+lists `activated` among the legal states of `embedding_transitions` and 0201 is
+the authority written to reach it.
+
+So the activation authority cannot succeed anywhere — not under any fixture,
+and not in production. Migration 0201 added activation and did not extend
+0200's header guard to admit the state it writes. Every `unwrap_err` on this
+authority in this repository has this as its final cause; nothing got close
+enough to see it before, because the two fixture faults above stopped every
+attempt several barriers earlier.
+
+Stated plainly for the lead, because it bears on a plan item rather than on a
+test: completion Task 7 is titled "Activate transitions and staged credential
+rotation atomically". It is not merely undemonstrated. As the migrations stand
+it is impossible, and no amount of fixture work would change that.
+
+Repairing it is a product change — a forward-replacement migration that teaches
+the header guard the moves 0201 needs, `ready_to_activate -> activated` at
+least, and whatever the staged-rotation path at 0201 line 429 requires. That is
+not made here, and is not this task's to decide.
+
+### The remaining predicate, and the five layers under it
+
+`target credential slot/version lineage` sits at 0201 lines 274-306, inside the
+branch that runs only when the transition names a credential target. It is the
+one predicate of the nine still unqualified, and the attempt to reach it was
+carried far enough to say exactly what stands in the way. Each layer was found
+by removing the one above it:
+
+1. **`register_canonical_space` evidenced the `no_auth` branch only.** A
+   credential-backed fixture fails its q1 target binding with 23503 against
+   `no_auth_binding_revisions`. Solvable: the helper can take the branch the
+   fixture actually pinned.
+2. **`plan` said `'no_auth'` unconditionally**, in both the source and target
+   positions of `vestrace_plan_embedding_transition_version`. A plan whose
+   target branch is never `credential` leaves 0201's credential clauses
+   unreached however complete the world is. Solvable the same way.
+3. **`prove_one_transition_onto` did not carry the branch through** to the plan
+   it builds. Solvable.
+4. **`common::dispatching_repository` wires `UnusedCredentialLeases`**, whose
+   every method is `unreachable!("rediscovery and recovery take no credential
+   lease")`. True for the worlds it was written for, fatal for a job that pins a
+   credential. Solvable by building the repository with the real
+   `PgCredentialDispatchLeaseRepository` over the fixture's own vault.
+5. **The real lease repository is then refused with 42501**, surfacing as
+   `CREDENTIAL_DISPATCH_LEASE_RAW_MUTATION_REFUSED`. This is where the attempt
+   stopped. It is the same shape as the `memory_embeddings` fault repaired
+   above -- a privilege the fixture's provisioning does not arrange -- but
+   establishing that would take another diagnostic pass, and guessing is not
+   evidence.
+
+All four solvable layers were built and proven to compile, and then removed
+rather than committed: they are only meaningful together with a qualification
+none of them reaches yet, and unused plumbing in a test suite is dead code that
+the next reader has to disprove. What is kept is this list, so the next attempt
+starts at layer five instead of layer one.
+
+The honest summary for the nine: **eight qualified, one not**, and the one is
+blocked by a fixture-provisioning gap rather than by anything about the
+predicate.
+
+## Completion package (2026-09-08) — why `verify-dirty-baseline` now exits 1, and why it is left that way
+
+Step 4's command 13 exited 0 as of `5ca0356`. It now exits 1, and the exit is
+explained here rather than removed, on the lead's agreement.
+
+### The two paths, by name
+
+```text
+new dirty path outside P04 scope: Cargo.toml
+new dirty path outside P04 scope: LICENSE-APACHE
+```
+
+| Path | SHA-256 | Why it exists |
+| --- | --- | --- |
+| `LICENSE-APACHE` | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` | The canonical Apache License 2.0, 11358 bytes, pure LF, copied byte-for-byte from a verifiable local source. Added in `42fc4e7`. |
+| `Cargo.toml` | `c977d9296fdd2fca0740fc27fd6dbee69adeb7e53b1f5818539e70ad1e7375ea` | `license = "MIT OR Apache-2.0"` became `license = "Apache-2.0"`. One line, in `07781df`. |
+
+Neither path is touched by any task of this package, and neither has anything to
+do with embeddings. They are ordinary repository work that happened to land
+while a frozen scope was open.
+
+### Why the exit is not removed
+
+The verifier permits a dirty path when it is in the change scope *or* in the
+preflight's captured `dirty_files` set — `verify-dirty-baseline.mjs` line 209.
+Both routes were considered and both are wrong here.
+
+**Adding them to `changeScopePaths`** would say these files are P04's to change.
+They are not. The allowlist is the package's claim about its own reach, and
+widening it until nothing is outside is how that claim stops meaning anything.
+
+**Adding them to `dirty_files`** is blocked by design, and rightly. Lines
+186-194 cross-check every `dirty_files` entry against the captured raw
+porcelain and its SHA-256, so an entry cannot be added without recapturing the
+frozen contract baseline. That baseline is the thing that makes "what did P04
+change" a provable question rather than an assertion, and recapturing it
+mid-package would answer the question by changing it.
+
+So the exit stays at 1, with both causes enumerated above. An exit of 1 whose
+every cause is named and justified carries more information than an exit of 0
+obtained by widening a list until the check has nothing left to catch. The
+verifier is doing exactly its job: it noticed two files this package did not
+put there, and said so.
+
+### When it goes back to 0
+
+At P04 acceptance, when the baseline is recaptured as part of closing the
+package. The deferred `.gitignore` additions land at the same moment and for the
+same reason. Until then, anyone running the gate matrix should expect command 13
+to exit 1 and should check the two paths above by name; a third path appearing
+there would be a real finding.

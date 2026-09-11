@@ -136,8 +136,12 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // that lets a fenced retrieval query be claimed at all, and the two closed
   // vocabulary parsers both retrieval channels must share rather than copy,
   // plus the one-path amendment for the capability that authorizes a retrieval
-  // retry.
-  assert.equal(changeScopePaths.length, 130);
+  // retry, plus the one-path Task 13 amendment for the fault scenario whose two
+  // private helpers a second physical job needs, plus the one-path Task 14
+  // amendment for the shared delivery fixture, whose model revision and declared
+  // response model contradicted each other and therefore made every canonical
+  // space unreachable to every job it builds.
+  assert.equal(changeScopePaths.length, 131);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -254,6 +258,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/text_retriever.rs',
     'crates/vestrace-infrastructure/src/postgres/vector_retriever.rs',
+    'crates/vestrace-infrastructure/tests/common/mod.rs',
     'crates/vestrace-infrastructure/tests/credential_activation.rs',
     'crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs',
     'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',

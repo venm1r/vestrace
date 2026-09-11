@@ -86,9 +86,16 @@ pub async fn runtime_pool(source: &PgPool) -> PgPool {
 /// Mirror that production ownership before exercising the real runtime paths;
 /// no function owner or runtime privilege is changed here.
 pub async fn prepare_legacy_embedding_runtime_ownership(pool: &PgPool) {
+    // `memory_embeddings` is deliberately absent. Migration 0197 line 604 hands
+    // it to `vestrace_guarded_owner`, and the real provisioner does the same at
+    // init-runtime-role.sh:2306, so giving it back to `vestrace` here does not
+    // mirror production -- it restores the pre-0197 owner. It also breaks the
+    // canonical corpus outright: `vestrace_validate_embedding_corpus_generation_member`
+    // is SECURITY DEFINER as the guarded owner and reads this table, so under
+    // the wrong owner every canonical generation publication fails at COMMIT
+    // with 42501, which is why no fixture built here could ever reach one.
     for table in [
         "embedding_spaces",
-        "memory_embeddings",
         "memories",
         "memory_revisions",
         "search_documents",
@@ -345,7 +352,7 @@ async fn accept_embedding_job_inner(
     .unwrap();
     sqlx::query(
         "INSERT INTO models(id,provider_id,workspace_id,model_name,context_window,\
-         input_cost_per_mtoken,output_cost_per_mtoken) VALUES($1,$2,$3,'embedding-model',4096,0,0)",
+         input_cost_per_mtoken,output_cost_per_mtoken) VALUES($1,$2,$3,'text-embedding-nomic-embed-text-v1.5',4096,0,0)",
     )
     .bind(model_id)
     .bind(provider_id)
@@ -477,7 +484,7 @@ async fn accept_embedding_job_inner(
     }
     sqlx::query_scalar::<_, Uuid>(
         "SELECT vestrace_create_model_revision_and_advance_head(\
-           $1,$2,$3,$4,$5,$6,'embedding-model','embedding',NULL,NULL,NULL,NULL,NULL,NULL,0)",
+           $1,$2,$3,$4,$5,$6,'text-embedding-nomic-embed-text-v1.5','embedding',NULL,NULL,NULL,NULL,NULL,NULL,0)",
     )
     .bind(model_revision_id)
     .bind(workspace_id.as_uuid())

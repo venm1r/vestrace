@@ -2161,3 +2161,224 @@ async fn mutating_the_one_satisfier_rule_proves_a_batch_whose_second_recipe_noth
 
     runtime.close().await;
 }
+
+const ACTIVATION_AUTHORITY: &str =
+    "public.vestrace_activate_embedding_transition(uuid,uuid,uuid,uuid,bigint,bigint,uuid)";
+
+/// The completion-blocker adoption gate, and the edit that disables exactly it.
+///
+/// `unadopted` counts the batch's `satisfied_result` satisfactions whose result
+/// preparation has no row in `embedding_result_credential_blocker_adoptions`.
+/// The edit disables the comparison and leaves the count, so the query still
+/// runs and only the decision changes.
+const ADOPTION_NEEDLE: &str = "    IF unadopted > 0 THEN";
+const ADOPTION_MUTATION: &str = "    IF FALSE THEN";
+
+/// One world carried as far as activation can currently be carried: a canonical
+/// space that received a real delivery job's outputs, a proven transition onto
+/// it, and a Ready current generation standing at the moment of the attempt.
+///
+/// The order matters and was learned by being refused. The transition has to be
+/// proven *before* the generation is published, because proving it runs a
+/// rebuild job whose results publish into the same space and stale whatever
+/// generation was standing -- so a generation published first is no longer
+/// current by the time activation looks.
+struct ActivationWorld {
+    source: PreparedJob,
+    proven: ProvenTransition,
+}
+
+async fn activation_world(pool: &PgPool, runtime: &PgPool) -> ActivationWorld {
+    let mut accepted = common::prepare_delivery_embedding_job(pool, runtime).await;
+    let (registration, qualification) = register_canonical_space(pool, runtime, &accepted).await;
+    accepted.space_registration_id = registration;
+    let source = prepare_job(pool, runtime, accepted, true).await;
+    execute(runtime, &source).await;
+    seed_qualification_head(pool, &source.accepted).await;
+
+    let proven =
+        prove_one_transition_onto(pool, runtime, &source, registration, Some(qualification)).await;
+
+    let workspace = source.accepted.context.workspace_id.as_uuid();
+    let generation = Uuid::now_v7();
+    let mut tx = runtime.begin().await.unwrap();
+    scoped(&mut tx, &source.accepted).await;
+    let version: i64 = sqlx::query_scalar(
+        "SELECT guard_version FROM embedding_index_generation_guards \
+          WHERE workspace_id=$1 AND space_registration_id=$2",
+    )
+    .bind(workspace)
+    .bind(registration)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("SELECT * FROM vestrace_capture_embedding_generation($1,$2,$3,$4)")
+        .bind(generation)
+        .bind(workspace)
+        .bind(registration)
+        .bind(version)
+        .execute(&mut *tx)
+        .await
+        .expect("the canonical corpus must capture");
+    sqlx::query("SELECT * FROM vestrace_publish_embedding_generation($1,$2,$3,$4)")
+        .bind(workspace)
+        .bind(registration)
+        .bind(generation)
+        .bind(version)
+        .execute(&mut *tx)
+        .await
+        .expect("the captured generation must publish Ready");
+    tx.commit()
+        .await
+        .expect("the published generation must stand");
+
+    ActivationWorld { source, proven }
+}
+
+async fn attempt_activation(
+    pool: &PgPool,
+    runtime: &PgPool,
+    world: &ActivationWorld,
+) -> Result<Uuid, sqlx::Error> {
+    let audit = audit_event(pool, &world.source.accepted).await;
+    activate(
+        runtime,
+        &world.source.accepted,
+        world.proven.transition_id,
+        world.proven.plan_id,
+        world.proven.batch_id,
+        world.proven.proven_version,
+        1,
+        audit,
+    )
+    .await
+}
+
+/// Mutation qualification: the completion-blocker adoption gate is the last
+/// thing standing between a proven transition and the qualification head.
+///
+/// This is the first run in this repository to carry an activation attempt past
+/// its earlier guards. Reaching it took the scope amendment recorded for Task
+/// 14 and two fixture repairs -- the shared delivery fixture declared a model
+/// its own model revision contradicted, and handed `memory_embeddings` to
+/// `vestrace` under a comment claiming to mirror production, which migration
+/// 0197 and the real provisioner both contradict. Until both were repaired, the
+/// attempt stopped at "requires a canonical target space" and this predicate
+/// was unreachable.
+///
+/// With the gate in place the attempt is refused by its own message, the head
+/// does not move, and no receipt is written. That much is the qualification.
+///
+/// With the comparison disabled the refusal **moves**, and where it moves is a
+/// product defect this run is the first thing in the repository to reach. The
+/// activation proceeds to its own final write --
+/// `UPDATE embedding_transitions SET state='activated'` at 0201 line 244 -- and
+/// is refused there by `vestrace_guard_embedding_transition_header`, which
+/// migration 0200 lines 427-430 defines to permit exactly two moves:
+/// `planned -> rebuilding` and `rebuilding -> ready_to_activate`. There is no
+/// permitted move into `activated`, although 0188 line 42 lists `activated`
+/// among the legal states and 0201 is the authority written to reach it.
+///
+/// So `vestrace_activate_embedding_transition` cannot succeed anywhere, under
+/// any fixture, in production included: migration 0201 added activation and did
+/// not extend 0200's header guard to admit it. Every `unwrap_err` on this
+/// authority in this repository has this as its final cause, and no test before
+/// this one got close enough to see it, because the earlier barriers -- the
+/// shared fixture's contradictory model, and its misassignment of
+/// `memory_embeddings` -- stopped every attempt long before.
+///
+/// This test therefore records the gate's qualification honestly as **outcome
+/// two**: the rule holds under mutation, but not because of the gate, and the
+/// mechanism that holds it is broken rather than protective. Repairing the
+/// header guard is a product change and is not made here.
+#[sqlx::test(migrations = false)]
+async fn mutating_the_completion_blocker_gate_lets_an_unadopted_transition_take_the_head(
+    pool: PgPool,
+) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+
+    let (original, owner, acl, runtime_execute) =
+        authority_state(&pool, ACTIVATION_AUTHORITY).await;
+    assert!(
+        original.contains(ADOPTION_NEEDLE),
+        "the predicate this qualification mutates is no longer in the authority; \
+         the mutation would silently test nothing: {original}"
+    );
+
+    // Green before: refused by this gate, by name, with nothing moved.
+    let before = activation_world(&pool, &runtime).await;
+    let error = attempt_activation(&pool, &runtime, &before)
+        .await
+        .expect_err("an unadopted completion blocker must refuse the activation");
+    assert_refusal(
+        error,
+        "23514",
+        "embedding transition activation requires complete completion-blocker adoption",
+    );
+    let (_, space, version) = head_tuple(&pool, &before.source.accepted).await;
+    assert_eq!(
+        (space, version),
+        (None, 1),
+        "a refused activation leaves the head where it was"
+    );
+    assert_eq!(receipt_count(&pool, &before.source.accepted).await, 0);
+
+    install_authority(&pool, &original.replace(ADOPTION_NEEDLE, ADOPTION_MUTATION)).await;
+    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
+        authority_state(&pool, ACTIVATION_AUTHORITY).await;
+    assert_ne!(mutated, original, "the mutation must actually be installed");
+    assert_eq!(
+        mutated_owner, owner,
+        "the mutation must not change the owner"
+    );
+    assert_eq!(mutated_acl, acl, "nor the access control list");
+    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+
+    // Red, in its own world -- and the refusal moves somewhere that has no
+    // business being able to refuse it. See this test's note.
+    let during = activation_world(&pool, &runtime).await;
+    let error = attempt_activation(&pool, &runtime, &during)
+        .await
+        .expect_err("the transition header guard refuses every move into 'activated'");
+    assert_refusal(
+        error,
+        "23514",
+        "embedding transition permits only guarded progress",
+    );
+    let (_, moved_space, moved_version) = head_tuple(&pool, &during.source.accepted).await;
+    assert_eq!(
+        (moved_space, moved_version),
+        (None, 1),
+        "so the head does not move even with the gate disabled"
+    );
+    assert_eq!(receipt_count(&pool, &during.source.accepted).await, 0);
+
+    // Restore, byte-exactly, and prove it.
+    install_authority(&pool, &original).await;
+    let (restored, restored_owner, restored_acl, restored_execute) =
+        authority_state(&pool, ACTIVATION_AUTHORITY).await;
+    assert_eq!(
+        restored, original,
+        "the definition must be restored exactly"
+    );
+    assert_eq!(restored_owner, owner);
+    assert_eq!(restored_acl, acl);
+    assert_eq!(restored_execute, runtime_execute);
+
+    // Green after, on a third world, by the same refusal.
+    let after = activation_world(&pool, &runtime).await;
+    let error = attempt_activation(&pool, &runtime, &after)
+        .await
+        .expect_err("the gate must refuse again");
+    assert_refusal(
+        error,
+        "23514",
+        "embedding transition activation requires complete completion-blocker adoption",
+    );
+    let (_, after_space, after_version) = head_tuple(&pool, &after.source.accepted).await;
+    assert_eq!((after_space, after_version), (None, 1));
+    assert_eq!(receipt_count(&pool, &after.source.accepted).await, 0);
+
+    runtime.close().await;
+}

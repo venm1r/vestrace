@@ -98,6 +98,7 @@ export const changeScopePaths = [
   'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
   'crates/vestrace-infrastructure/src/postgres/text_retriever.rs',
   'crates/vestrace-infrastructure/src/postgres/vector_retriever.rs',
+  'crates/vestrace-infrastructure/tests/common/mod.rs',
   'crates/vestrace-infrastructure/tests/credential_activation.rs',
   'crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs',
   'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
