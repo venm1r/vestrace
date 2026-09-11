@@ -2267,30 +2267,29 @@ async fn attempt_activation(
 /// was unreachable.
 ///
 /// With the gate in place the attempt is refused by its own message, the head
-/// does not move, and no receipt is written. That much is the qualification.
+/// does not move, and no receipt is written. With it disabled the activation
+/// **completes**: a receipt is written and the qualification head advances onto
+/// the canonical registration, on the strength of results whose credential
+/// completion blockers nothing ever adopted. So the gate is the sole defence at
+/// this boundary.
 ///
-/// With the comparison disabled the refusal **moves**, and where it moves is a
-/// product defect this run is the first thing in the repository to reach. The
-/// activation proceeds to its own final write --
-/// `UPDATE embedding_transitions SET state='activated'` at 0201 line 244 -- and
-/// is refused there by `vestrace_guard_embedding_transition_header`, which
-/// migration 0200 lines 427-430 defines to permit exactly two moves:
-/// `planned -> rebuilding` and `rebuilding -> ready_to_activate`. There is no
-/// permitted move into `activated`, although 0188 line 42 lists `activated`
-/// among the legal states and 0201 is the authority written to reach it.
+/// This test is also the first thing in the repository to complete an
+/// activation at all, and getting here took three repairs. Two were fixtures --
+/// the shared delivery fixture declared a model its own model revision
+/// contradicted, and handed `memory_embeddings` to `vestrace` under a comment
+/// claiming to mirror production, which migration 0197 and the real provisioner
+/// both contradict. The third was a product defect this very qualification
+/// surfaced: `vestrace_guard_embedding_transition_header` admitted only the two
+/// moves 0200 wrote and refused the `activated` that 0201 writes and the
+/// `stale` that 0203 writes, so activation could not complete in any
+/// deployment. Migration 0206 adds those two moves and
+/// `the_transition_header_guard_admits_every_move_its_authorities_make` holds
+/// the guard to exactly its writers.
 ///
-/// So `vestrace_activate_embedding_transition` cannot succeed anywhere, under
-/// any fixture, in production included: migration 0201 added activation and did
-/// not extend 0200's header guard to admit it. Every `unwrap_err` on this
-/// authority in this repository has this as its final cause, and no test before
-/// this one got close enough to see it, because the earlier barriers -- the
-/// shared fixture's contradictory model, and its misassignment of
-/// `memory_embeddings` -- stopped every attempt long before.
-///
-/// This test therefore records the gate's qualification honestly as **outcome
-/// two**: the rule holds under mutation, but not because of the gate, and the
-/// mechanism that holds it is broken rather than protective. Repairing the
-/// header guard is a product change and is not made here.
+/// What the run still does not demonstrate is a *lawful* activation: the
+/// adoption rows are absent rather than present, and making them present needs
+/// a credential-backed delivery fixture that the suite cannot yet build. That
+/// is named in the package evidence rather than implied by this test's silence.
 #[sqlx::test(migrations = false)]
 async fn mutating_the_completion_blocker_gate_lets_an_unadopted_transition_take_the_head(
     pool: PgPool,
@@ -2335,24 +2334,22 @@ async fn mutating_the_completion_blocker_gate_lets_an_unadopted_transition_take_
     assert_eq!(mutated_acl, acl, "nor the access control list");
     assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
 
-    // Red, in its own world -- and the refusal moves somewhere that has no
-    // business being able to refuse it. See this test's note.
+    // Red, in its own world: the activation completes and takes the head.
     let during = activation_world(&pool, &runtime).await;
-    let error = attempt_activation(&pool, &runtime, &during)
+    attempt_activation(&pool, &runtime, &during)
         .await
-        .expect_err("the transition header guard refuses every move into 'activated'");
-    assert_refusal(
-        error,
-        "23514",
-        "embedding transition permits only guarded progress",
-    );
+        .expect("with the gate disabled nothing else refuses an unadopted transition");
     let (_, moved_space, moved_version) = head_tuple(&pool, &during.source.accepted).await;
-    assert_eq!(
-        (moved_space, moved_version),
-        (None, 1),
-        "so the head does not move even with the gate disabled"
+    assert!(
+        moved_space.is_some(),
+        "the unsafe state is a qualification head standing on a canonical space \
+         reached by results whose credential completion blockers nobody adopted"
     );
-    assert_eq!(receipt_count(&pool, &during.source.accepted).await, 0);
+    assert_eq!(
+        moved_version, 2,
+        "and the head version advanced exactly once"
+    );
+    assert_eq!(receipt_count(&pool, &during.source.accepted).await, 1);
 
     // Restore, byte-exactly, and prove it.
     install_authority(&pool, &original).await;
@@ -2379,6 +2376,186 @@ async fn mutating_the_completion_blocker_gate_lets_an_unadopted_transition_take_
     let (_, after_space, after_version) = head_tuple(&pool, &after.source.accepted).await;
     assert_eq!((after_space, after_version), (None, 1));
     assert_eq!(receipt_count(&pool, &after.source.accepted).await, 0);
+
+    runtime.close().await;
+}
+
+async fn transition_state(
+    pool: &PgPool,
+    fixture: &common::AcceptedJob,
+    transition: Uuid,
+) -> String {
+    sqlx::query_scalar("SELECT state FROM embedding_transitions WHERE workspace_id=$1 AND id=$2")
+        .bind(fixture.context.workspace_id.as_uuid())
+        .bind(transition)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Move a transition header exactly as its authorities do: one state, one
+/// version step, under the guarded owner.
+async fn move_transition(
+    pool: &PgPool,
+    fixture: &common::AcceptedJob,
+    transition: Uuid,
+    to: &str,
+) -> Result<(), (String, String)> {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    scoped(&mut tx, fixture).await;
+    let outcome = sqlx::query(
+        "UPDATE embedding_transitions SET state=$1, version=version+1 \
+          WHERE workspace_id=$2 AND id=$3",
+    )
+    .bind(to)
+    .bind(fixture.context.workspace_id.as_uuid())
+    .bind(transition)
+    .execute(&mut *tx)
+    .await;
+    let moved = match outcome {
+        Ok(done) => done.rows_affected(),
+        Err(error) => {
+            tx.rollback().await.unwrap();
+            let database = error.as_database_error().expect("a database refusal");
+            return Err((
+                database
+                    .code()
+                    .map(|code| code.into_owned())
+                    .unwrap_or_default(),
+                database.message().to_owned(),
+            ));
+        }
+    };
+    // Under FORCE RLS a mis-scoped owner statement matches nothing and
+    // succeeds, so the count is the only proof the header actually moved.
+    assert_eq!(moved, 1, "the transition header must actually move");
+    match tx.commit().await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let database = error.as_database_error().expect("a database refusal");
+            Err((
+                database
+                    .code()
+                    .map(|code| code.into_owned())
+                    .unwrap_or_default(),
+                database.message().to_owned(),
+            ))
+        }
+    }
+}
+
+/// The header guard must admit every move this repository's own authorities
+/// write, and no more.
+///
+/// Four authorities write `embedding_transitions.state`:
+///
+/// | Authority | Move |
+/// | --- | --- |
+/// | `0200` line 771 | `planned -> rebuilding` |
+/// | `0200` line 942 | `rebuilding -> ready_to_activate` |
+/// | `0201` line 429 | `ready_to_activate -> activated` |
+/// | `0203` line 362 | `planned`, `rebuilding` or `ready_to_activate` -> `stale` |
+///
+/// `vestrace_guard_embedding_transition_header` admits the first two and
+/// refuses the last two, so both of those authorities are dead code in every
+/// deployment: activation cannot complete, and an erasure that touches a
+/// planned transition cannot commit. `activated` and `stale` are both listed
+/// among the legal states by `0188` line 42, so this is not a vocabulary
+/// question -- the guard simply was not extended when `0201` and `0203` were
+/// written.
+///
+/// The last assertion is the point of the first three: a move no authority
+/// makes stays refused. A guard widened until it admits everything would pass
+/// this test and mean nothing.
+#[sqlx::test(migrations = false)]
+async fn the_transition_header_guard_admits_every_move_its_authorities_make(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &source).await;
+
+    // `ready_to_activate -> activated`, which 0201 writes.
+    let proven = prove_one_transition(&pool, &runtime, &source).await;
+    assert_eq!(
+        transition_state(&pool, &source.accepted, proven.transition_id).await,
+        "ready_to_activate"
+    );
+    move_transition(&pool, &source.accepted, proven.transition_id, "activated")
+        .await
+        .expect("0201 writes this move, so the guard must admit it");
+    assert_eq!(
+        transition_state(&pool, &source.accepted, proven.transition_id).await,
+        "activated"
+    );
+
+    // `planned -> stale`, which 0203 writes when an erased source invalidates
+    // the recipes a transition was planned from.
+    let stale_transition = Uuid::now_v7();
+    plan(
+        &runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id: stale_transition,
+            plan_id: Uuid::now_v7(),
+            batch_id: Uuid::now_v7(),
+            recipe_identities: vec![Uuid::now_v7()],
+            inputs: serde_json::json!([[0]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        transition_state(&pool, &source.accepted, stale_transition).await,
+        "planned"
+    );
+    move_transition(&pool, &source.accepted, stale_transition, "stale")
+        .await
+        .expect("0203 writes this move, so the guard must admit it");
+    assert_eq!(
+        transition_state(&pool, &source.accepted, stale_transition).await,
+        "stale"
+    );
+
+    // And a move no authority makes stays refused, so the guard is still a
+    // guard rather than a formality.
+    let unplanned = Uuid::now_v7();
+    plan(
+        &runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id: unplanned,
+            plan_id: Uuid::now_v7(),
+            batch_id: Uuid::now_v7(),
+            recipe_identities: vec![Uuid::now_v7()],
+            inputs: serde_json::json!([[0]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
+        },
+    )
+    .await;
+    let (state, message) = move_transition(&pool, &source.accepted, unplanned, "activated")
+        .await
+        .expect_err("nothing activates a transition straight out of planned");
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("embedding transition permits only guarded progress"),
+        "{message}"
+    );
+    assert_eq!(
+        transition_state(&pool, &source.accepted, unplanned).await,
+        "planned"
+    );
 
     runtime.close().await;
 }

@@ -3483,4 +3483,78 @@ BEGIN
     END IF;
 END $retrieval_dispatch_bootstrap$;
 
+DO $transition_header_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=206 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+             WHERE oid=to_regprocedure(
+                 'public.vestrace_guard_embedding_transition_header()'))
+           <>'vestrace_guarded_owner'
+           OR has_function_privilege('vestrace',
+                'public.vestrace_guard_embedding_transition_header()','EXECUTE')
+           OR has_function_privilege('public',
+                'public.vestrace_guard_embedding_transition_header()','EXECUTE')
+        THEN
+            RAISE EXCEPTION 'embedding transition header owner or ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_transition_header_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_transition_header_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_transition_header_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=205 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=206 AND success) THEN
+                RAISE EXCEPTION 'transition header upgrade requires exact accepted 0205 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            -- 0206 forward-replaces 0200's header guard so the moves 0201 and
+            -- 0203 write become admissible, and CREATE OR REPLACE requires
+            -- ownership. Lent for the migration and handed straight back below.
+            ALTER FUNCTION public.vestrace_guard_embedding_transition_header()
+                OWNER TO vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_prepare_embedding_transition_header_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_transition_header_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_transition_header_upgrade()
+            TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_transition_header_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_guard_embedding_transition_header()'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'transition header hand-back is unavailable' USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_guard_embedding_transition_header()
+                OWNER TO vestrace_guarded_owner;
+            -- A trigger function is never called by name, so 0200 granted it no
+            -- EXECUTE and the hand-back restores none.
+            REVOKE ALL ON FUNCTION public.vestrace_guard_embedding_transition_header()
+                FROM PUBLIC,vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_finish_embedding_transition_header_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_transition_header_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_transition_header_upgrade()
+            TO vestrace;
+    END IF;
+END $transition_header_bootstrap$;
+
 SQL

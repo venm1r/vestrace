@@ -140,8 +140,10 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // private helpers a second physical job needs, plus the one-path Task 14
   // amendment for the shared delivery fixture, whose model revision and declared
   // response model contradicted each other and therefore made every canonical
-  // space unreachable to every job it builds.
-  assert.equal(changeScopePaths.length, 131);
+  // space unreachable to every job it builds, plus the one-path amendment for
+  // migration 0206, which teaches the transition header guard the two moves
+  // 0201 and 0203 write and it has always refused.
+  assert.equal(changeScopePaths.length, 132);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -295,6 +297,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'migrations/0203_embedding_erasure_propagation.sql',
     'migrations/0204_embedding_legacy_adoption.sql',
     'migrations/0205_embedding_retrieval_dispatch.sql',
+    'migrations/0206_embedding_transition_header_progress.sql',
     'scripts/p04-scope.mjs',
     'tests/embedding_fault_scenario_e2e.rs',
     'tests/p04_scope.test.mjs',

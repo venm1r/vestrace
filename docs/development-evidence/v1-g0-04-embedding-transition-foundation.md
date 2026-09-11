@@ -5940,3 +5940,105 @@ is to push after every verified increment, and every commit listed above went to
 rather than a formality, it was passed some fifty commits ago. The work is on
 `main` and reviewable there; what has not happened is acceptance, and nothing in
 this document claims it.
+
+## Completion package (2026-09-08) — migration 0206: the transition header reaches the states its authorities write
+
+Authorised by the lead as its own step, after Task 14 recorded the defect and
+before any acceptance conversation. This is a product change, made deliberately
+outside the qualification task whose subject was qualification.
+
+### The defect, stated as a table
+
+Four authorities write `embedding_transitions.state`. The header guard admitted
+two of them.
+
+| Authority | Move | Admitted by `vestrace_guard_embedding_transition_header` before 0206 |
+| --- | --- | --- |
+| `0200` line 771 | `planned -> rebuilding` | yes |
+| `0200` line 942 | `rebuilding -> ready_to_activate` | yes |
+| `0201` line 429 | `ready_to_activate -> activated` | **no** |
+| `0203` line 362 | `planned`/`rebuilding`/`ready_to_activate` -> `stale` | **no** |
+
+`activated` and `stale` are both listed among the legal states by `0188` line
+42, so this was never a vocabulary decision. The guard was written by 0200 when
+only its own two moves existed, and neither 0201 nor 0203 revisited it.
+
+Two consequences, and the second was found only while writing the test for the
+first:
+
+- **`vestrace_activate_embedding_transition` could not complete in any
+  deployment.** Every call to it in this repository is an `unwrap_err`, and that
+  was taken for a fixture problem until an activation attempt was finally
+  carried far enough to reach the real cause.
+- **`vestrace_propagate_embedding_source_erasure` cannot commit whenever an
+  erased source invalidates a planned transition** — which is exactly the case
+  its own comment gives as the reason the stale-ing exists. No test saw it
+  because no erasure fixture has a transition in it.
+
+### RED first, and what the RED test asserts
+
+`the_transition_header_guard_admits_every_move_its_authorities_make` drives all
+four moves through the guarded owner, in the shape the authorities write them:
+one state, one version step. Before 0206 it fails on the first refused move.
+
+Its last assertion is the point of the other three: a move no authority makes —
+`planned -> activated` — must stay refused. A guard widened until it admits
+everything would pass the first three assertions and mean nothing.
+
+### The migration
+
+`0206_embedding_transition_header_progress.sql` forward-replaces the guard and
+adds exactly the two missing moves. `failed` stays unreachable, because nothing
+writes it and a guard extended past its writers stops being evidence.
+
+It follows this package's established shape. A `DO $upgrade$` head calls the
+provisioner's `vestrace_prepare_embedding_transition_header_upgrade()`, which
+lends the function's ownership to `vestrace` because `CREATE OR REPLACE`
+requires it; a `DO $ownership$` tail hands it back through the matching
+`finish`. Both are added to `docker/postgres/init-runtime-role.sh`, which was
+already in scope, alongside the five pairs that came before them. The guard is a
+trigger function and is never called by name, so 0200 granted it no `EXECUTE`
+and the hand-back restores none.
+
+Two checks the shape does not require and this migration makes anyway. Before
+replacing, it reads `pg_get_functiondef` and refuses unless the body is the 0200
+definition it means to replace — a `CREATE OR REPLACE` over an unexpected
+definition would discard whatever else had been done to it and say nothing.
+After replacing, it reads the definition back and refuses unless all four moves
+are present, rather than trusting that the statement said what it meant.
+
+### What it changed downstream, including one of Task 14's own records
+
+The completion-blocker qualification's answer moved, and the record moved with
+it. Before 0206 the mutated activation was refused by the header guard, so the
+gate was recorded as outcome two — the rule held, but by a broken mechanism.
+With 0206 the mutated activation **completes**: a receipt is written and the
+qualification head advances onto the canonical registration, on the strength of
+results whose credential completion blockers nothing adopted. The gate is
+outcome one, and the unsafe state is real.
+
+That is the more useful record, and it is also the honest one. A qualification
+whose answer depends on a defect elsewhere was measuring the defect.
+
+This is also the first activation to complete anywhere in this repository. What
+it still does not demonstrate is a *lawful* activation: the completion-blocker
+rows are absent rather than adopted, and making them present needs the
+credential-backed fixture whose five blocking layers are enumerated earlier in
+this document.
+
+### Runs
+
+- RED before the migration: the guard test fails on `ready_to_activate ->
+  activated`, 23514 `embedding transition permits only guarded progress`.
+- GREEN after: the guard test passes all four moves and still refuses
+  `planned -> activated`.
+- `embedding_transition_activation` 13/13 with the completion-blocker record
+  rewritten to its new answer.
+- `embedding_schema_contract`, `p03_upgrade_provisioning`,
+  `runtime_role_cannot_write_directly`, `embedding_erasure_propagation`,
+  `embedding_transition_planning` and `embedding_transition_barriers`: 97
+  passed, 0 failed.
+- The embedded `MIGRATOR` was rebuilt before any of it, by touching
+  `crates/vestrace-infrastructure/src/postgres/pool.rs`. A new migration file
+  does not rebuild it on its own, and every result taken without that step
+  describes the previous schema.
