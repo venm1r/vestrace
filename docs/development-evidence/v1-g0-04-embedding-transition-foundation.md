@@ -6478,3 +6478,97 @@ sit under clause 947 and need the corpus-to-memory link; nine sit under 935 and
 939 on the dispatch path, in causes B, C and D, which nothing in this package
 has yet diagnosed beyond their error text. That second group is the part of the
 debt that has been described as known and has never actually been looked at.
+
+## Completion package (2026-09-12) — the dispatch-path red tests, taken apart
+
+The clause map put nine of the twenty-three standing red tests under clauses 935
+and 939, on the dispatch path, and noted that nothing in this package had
+diagnosed them beyond their error text. This is that diagnosis.
+
+### One refusal wearing three names
+
+The nine were recorded as three causes because they say three different things.
+They are one.
+
+Migration `0194` forward-replaced `vestrace_lock_embedding_job_pre_dispatch_gate`
+so that a `requested` or `running` embedding job must carry a **nonempty,
+complete, exact receipted output set** before it may be dispatched. The 0192
+body it replaced only refused a job whose material intents existed and were
+unconfigured; a job with no intents at all passed straight through.
+
+That gate is called from three places:
+
+| Caller | Migration | The adapter maps its 23514 to |
+| --- | --- | --- |
+| `vestrace_lock_provider_dispatch_routing` | `0192` line 590 | `Policy("PROVIDER_DISPATCH_ROUTING_REFUSED")` |
+| `vestrace_try_admit_provider_dispatch` | `0192` line 946 | the raw `23514` |
+| `vestrace_lock_embedding_job_recovery_authority` | `0187` line 842 | `Conflict("the embedding job is not in a recoverable governed state")` |
+
+`map_routing_error` and `map_embedding_job_recovery_error` each fold
+`23514`/`22023` into one opaque application error, so the same refusal arrives
+under a different name depending on which boundary reached it first. Three
+names were counted as three causes.
+
+That is worth stating plainly, because the previous correction in this document
+made the same kind of mistake one level up. Reading the failures' messages was
+better than reading a remembered summary. A message is still a symptom.
+
+### Why the fixture could not satisfy the gate, and could not be patched to
+
+`embedding_dispatch_is_atomic` builds P03's shape: `accept_embedding_job`
+creates the `embedding_jobs` row with no outputs at all. Since 0194 that job is
+undispatchable and unrecoverable by construction.
+
+It cannot be fixed by adding outputs afterwards either. An already accepted bare
+job cannot be backfilled with guessed identities — the rule the fault-scenario
+fixture already states in a comment of its own. The only way to a job with
+outputs is the acceptance boundary that fixes both in one transaction.
+
+So `dispatchable_embedding_job` starts from the pre-acceptance boundary:
+pre-acceptance job, three live sources attached to the evidence,
+`make_dispatchable`, `accept_delivery_outputs`, `reconcile_output_receipts`. Its
+credential-branch sibling does the same from the pinned-credential boundary. No
+delivery policy decision is recorded: the pre-dispatch gate does not read one —
+that belongs to result preparation — and recording it needs the
+provisioner-installed database this suite does not use.
+
+**13 passed / 9 failed becomes 18 passed / 4 failed**, and none of the thirteen
+that already passed was disturbed. Among the five repaired is
+`an_embedding_job_dispatches_through_the_shared_authority`, which is the oracle
+clause 935 rests on and the one the map recorded as red.
+
+### The three that remain found a further rule, and it is a real one
+
+The three cancellation tests now reach a different refusal:
+
+> `vestrace_terminate_embedding_job_pre_dispatch`: embedding pre-dispatch
+> termination requires every output material intent abandoned with its exact
+> witness
+
+A job with no outputs never had to meet that rule. A job with outputs must
+retire them before it can be cancelled, or cancellation would orphan live key
+material. The fixture has no retirement step because it never needed one.
+
+They are left red rather than worked around. Repairing them means building the
+output-retirement path into the fixture through `request_retirement` and
+`record_retirement`, which is a further piece of work and not a smaller one.
+
+### The ninth is unrelated
+
+`the_model_data_policy_leg_is_absent_from_an_embedding_dispatch` asserts against
+itself that `BeforePolicyRecord` sits on the embedding dispatch path and the
+atomicity test does not yet cover it. That is the uncovered fault point already
+recorded in this document, not a dispatch defect.
+
+### What this changes in the standing figure
+
+The debt goes from 23 to 18, in four groups: eleven under clause 947 needing the
+corpus-to-memory link, three needing the output-retirement fixture, three in
+`embedding_space_isolation` under cause A, and the one self-accusing fault-point
+test. Clause 935's central oracle is no longer red. Clause 939's
+`recovery_of_an_undispatched_embedding_job_resumes_it` is no longer red; its
+`strict no-retry-after-dispatch` row is green again as well, leaving that clause
+carried.
+
+No product change was made here. The gate is right; the fixture was eleven
+migrations out of date.

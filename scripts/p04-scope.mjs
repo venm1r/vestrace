@@ -102,6 +102,7 @@ export const changeScopePaths = [
   'crates/vestrace-infrastructure/tests/credential_activation.rs',
   'crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs',
   'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
+  'crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs',
   'crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs',
   'crates/vestrace-infrastructure/tests/embedding_erasure_propagation.rs',
   'crates/vestrace-infrastructure/tests/embedding_executor.rs',

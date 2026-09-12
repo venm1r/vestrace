@@ -150,7 +150,9 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // Plus the one-path amendment for migration 0207, which closes the
   // delivery/rebuild XOR that 0199's blanket substitution left open at both
   // of its ends.
-  assert.equal(changeScopePaths.length, 135);
+  // Plus the one-path amendment for the dispatch atomicity suite, whose
+  // fixture predates migration 0194's receipted-output-set precondition.
+  assert.equal(changeScopePaths.length, 136);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -271,6 +273,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/tests/credential_activation.rs',
     'crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs',
     'crates/vestrace-infrastructure/tests/embedding_carry_classification.rs',
+    'crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs',
     'crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs',
     'crates/vestrace-infrastructure/tests/embedding_erasure_propagation.rs',
     'crates/vestrace-infrastructure/tests/embedding_executor.rs',
