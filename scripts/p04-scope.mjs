@@ -116,6 +116,7 @@ export const changeScopePaths = [
   'crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs',
   'crates/vestrace-infrastructure/tests/embedding_transition_planning.rs',
   'crates/vestrace-infrastructure/tests/embedding_worker_restart.rs',
+  'crates/vestrace-infrastructure/tests/model_request_evidence.rs',
   'crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs',
   'crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs',
   'crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs',
@@ -138,6 +139,7 @@ export const changeScopePaths = [
   'migrations/0206_embedding_transition_header_progress.sql',
   'scripts/p04-scope.mjs',
   'tests/embedding_fault_scenario_e2e.rs',
+  'tests/model_request_semantic_observation.rs',
   'tests/p04_scope.test.mjs',
 ];
 

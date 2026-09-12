@@ -106,10 +106,22 @@ async fn client_and_observer(expected_requests: usize) -> (OpenAiCompatibleClien
                         "usage": {"prompt_tokens": 3, "completion_tokens": 1}
                     }),
                 ),
-                "/embeddings" => (
-                    "embeddings",
-                    json!({"data": [{"index": 0, "embedding": [0.25, 0.75]}]}),
-                ),
+                "/embeddings" => {
+                    let model = body["model"].as_str().expect("the adapter states a model");
+                    let outputs = body["input"]
+                        .as_array()
+                        .expect("the adapter states its inputs")
+                        .len();
+                    (
+                        "embeddings",
+                        json!({
+                            "model": model,
+                            "data": (0..outputs)
+                                .map(|index| json!({"index": index, "embedding": [0.25, 0.75]}))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                }
                 _ => panic!("unexpected provider path {path}"),
             };
             server_observer.0.lock().unwrap().push((kind.into(), body));

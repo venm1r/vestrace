@@ -2583,6 +2583,13 @@ async fn expired_check_cannot_omit_a_live_governed_input_without_bytes(pool: PgP
     .execute(&mut *corrupt)
     .await
     .unwrap();
+    sqlx::query(
+        "ALTER TABLE content_material_bytes
+         DISABLE TRIGGER content_material_bytes_finalization_complete",
+    )
+    .execute(&mut *corrupt)
+    .await
+    .unwrap();
     sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
         .bind(fixture.workspace_id.to_string())
         .fetch_one(&mut *corrupt)
@@ -2612,6 +2619,13 @@ async fn expired_check_cannot_omit_a_live_governed_input_without_bytes(pool: PgP
     sqlx::query(
         "ALTER TABLE content_material_bytes
          ENABLE TRIGGER content_material_bytes_deferred_invariant",
+    )
+    .execute(&mut *corrupt)
+    .await
+    .unwrap();
+    sqlx::query(
+        "ALTER TABLE content_material_bytes
+         ENABLE TRIGGER content_material_bytes_finalization_complete",
     )
     .execute(&mut *corrupt)
     .await

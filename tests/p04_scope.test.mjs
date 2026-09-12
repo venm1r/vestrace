@@ -142,8 +142,12 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // response model contradicted each other and therefore made every canonical
   // space unreachable to every job it builds, plus the one-path amendment for
   // migration 0206, which teaches the transition header guard the two moves
-  // 0201 and 0203 write and it has always refused.
-  assert.equal(changeScopePaths.length, 132);
+  // 0201 and 0203 write and it has always refused, plus the two-path amendment
+  // for the two red-debt fixtures whose failures were their own setup rather
+  // than the product: an evidence fixture that alters a table while a deferred
+  // trigger 0194 added is pending, and a loopback provider stub whose
+  // embeddings answer omits the model the adapter requires.
+  assert.equal(changeScopePaths.length, 134);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -278,6 +282,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_planning.rs',
     'crates/vestrace-infrastructure/tests/embedding_worker_restart.rs',
+    'crates/vestrace-infrastructure/tests/model_request_evidence.rs',
     'crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs',
     'crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs',
     'crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs',
@@ -300,6 +305,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'migrations/0206_embedding_transition_header_progress.sql',
     'scripts/p04-scope.mjs',
     'tests/embedding_fault_scenario_e2e.rs',
+    'tests/model_request_semantic_observation.rs',
     'tests/p04_scope.test.mjs',
   ]);
   assert.deepEqual(protectedAuthorityPaths, [

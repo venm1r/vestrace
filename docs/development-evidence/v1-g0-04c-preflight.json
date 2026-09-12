@@ -110,6 +110,7 @@
     "crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs",
     "crates/vestrace-infrastructure/tests/embedding_transition_planning.rs",
     "crates/vestrace-infrastructure/tests/embedding_worker_restart.rs",
+    "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
     "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
     "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
     "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
@@ -132,6 +133,7 @@
     "migrations/0206_embedding_transition_header_progress.sql",
     "scripts/p04-scope.mjs",
     "tests/embedding_fault_scenario_e2e.rs",
+    "tests/model_request_semantic_observation.rs",
     "tests/p04_scope.test.mjs"
   ],
   "dirty_files": [
@@ -1202,6 +1204,18 @@
       "removed_paths": [],
       "authorized_by": "User-confirmed lead decision to repair the transition header guard as its own step before P04 acceptance.",
       "reason": "Four authorities write embedding_transitions.state and the header guard admits two of them. 0200 line 771 writes planned->rebuilding and line 942 writes rebuilding->ready_to_activate, both admitted. 0201 line 429 writes 'activated' and 0203 line 362 writes 'stale', and vestrace_guard_embedding_transition_header refuses both with 23514, although 0188 line 42 lists each among the legal states. So vestrace_activate_embedding_transition has never been able to complete in any deployment, and vestrace_propagate_embedding_source_erasure cannot commit whenever an erased source invalidates a planned transition -- the exact case its own comment gives as the reason the stale-ing exists. 0206 forward-replaces the guard with those two moves added and nothing else; 'failed' stays unreachable because nothing writes it. The migration checks the body it is replacing before replacing it and reads back what it installed, and lends and hands back ownership through a provisioner pair in docker/postgres/init-runtime-role.sh, which is already in scope. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-12T09:05:00.000Z",
+      "added_paths": [
+        "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
+        "tests/model_request_semantic_observation.rs"
+      ],
+      "previous_change_scope_size": 132,
+      "new_change_scope_size": 134,
+      "removed_paths": [],
+      "authorized_by": "Lead direction to work the red-test debt down before the P04 acceptance conversation.",
+      "reason": "Two of the eight red suites fail in their own setup rather than on the product, and both repairs are confined to the test file. expired_check_cannot_omit_a_live_governed_input_without_bytes deliberately corrupts content_material_bytes by disabling its guards, deleting a row as the guarded owner and re-enabling them. It disables two of the three triggers on that table. The third, content_material_bytes_finalization_complete, was added by migration 0194 after the fixture was written; it is a DEFERRABLE INITIALLY DEFERRED constraint trigger on INSERT OR DELETE OR UPDATE, so the DELETE queues an event and the following ALTER TABLE ... ENABLE TRIGGER fails with 55006 cannot ALTER TABLE because it has pending trigger events. The amendment disables and re-enables that third trigger alongside the other two, symmetric with what the fixture already does, so the test reaches the assertion it was written for: the expired check is refused with 23514 and writes no rows. It is a fixture that never saw 0194, not a defect in 0194. loopback_observes_semantic_equality_with_the_production_adapter answers its own /embeddings request with a hardcoded body carrying no model field and one vector for a two-input request. GovernedEmbeddingsWireResponse requires model, and GovernedEmbeddingsResponse::new requires one vector per expected output with matching indices, so deserialization failed before any semantic comparison could run and the test's subject -- the request bodies the adapter puts on the wire -- was never reached. The amendment derives the stub's answer from the request it received, model echoed and one vector per input, so it cannot drift out of agreement with the adapter again the way a hardcoded literal did. Neither repair touches product code. Both suites were run whole after the repair: model_request_evidence 32 passed 0 failed, model_request_semantic_observation 5 passed 0 failed. The standing red-test debt goes from eight suites and 26 tests to six suites and 24 tests, and the remaining 24 all have one cause -- the retirement of the legacy corpus write path with no canonical replacement reachable, which is blocked on the missing memory link and is not repairable inside a test file. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
     }
   ],
   "previous_captures": []

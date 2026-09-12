@@ -6042,3 +6042,101 @@ this document.
   `crates/vestrace-infrastructure/src/postgres/pool.rs`. A new migration file
   does not rebuild it on its own, and every result taken without that step
   describes the previous schema.
+
+## Completion package (2026-09-12) — the red debt reduced to one cause
+
+Before the acceptance conversation, the standing debt of eight suites and 26
+tests was worked on directly. Two of its three causes were defects in test
+setup and are now repaired. The third is not repairable in a test file, and
+after this the debt has exactly one cause.
+
+### Cause 2 — a fixture that never saw migration 0194
+
+`model_request_evidence::expired_check_cannot_omit_a_live_governed_input_without_bytes`
+failed `55006 cannot ALTER TABLE "content_material_bytes" because it has
+pending trigger events`, and it failed in its own setup, six statements before
+the assertion it exists to make.
+
+The fixture deliberately corrupts state: it disables the guards on
+`content_material_bytes`, deletes a bytes row as the guarded owner, and
+re-enables them. It disables two triggers. The table carries three:
+
+| Trigger | Kind | Disabled by the fixture |
+| --- | --- | --- |
+| `content_material_bytes_reject_raw_mutation` | `BEFORE`, immediate | yes |
+| `content_material_bytes_deferred_invariant` | constraint, `INITIALLY DEFERRED` | yes |
+| `content_material_bytes_finalization_complete` | constraint, `INITIALLY DEFERRED` | **no** |
+
+The third was added by migration `0194`, after the fixture was written, and
+fires `AFTER INSERT OR DELETE OR UPDATE`. So the `DELETE` queued a deferred
+event, and the very next `ALTER TABLE ... ENABLE TRIGGER` hit
+`CheckTableNotInUse`. Postgres will not alter a table with pending trigger
+events, and the fixture's whole shape is disable-mutate-enable.
+
+The repair disables and re-enables that third trigger alongside the other two —
+symmetric with what the fixture already does, and nothing else. The test now
+reaches its subject: the expired check is refused with `23514` and writes no
+rows.
+
+This is a fixture that predates a migration, not a defect in the migration. It
+was already established, before the completion package, that the failure
+survives with `0204` held aside.
+
+### Cause 3 — a stub whose answer stopped matching the adapter
+
+`loopback_observes_semantic_equality_with_the_production_adapter` failed
+`InvalidResponse("provider returned invalid embeddings JSON")` at the embeddings
+leg, before any comparison ran. The test's subject is the request bodies the
+governed adapter puts on the wire; the response was scaffolding, and the
+scaffolding had drifted.
+
+Its `/embeddings` arm answered with a literal
+`{"data":[{"index":0,"embedding":[0.25,0.75]}]}`. Two things are wrong with that
+against the adapter as it now stands. `GovernedEmbeddingsWireResponse` has a
+required `model` field, and the literal has none, so deserialization failed
+outright. And `GovernedEmbeddingsResponse::new` requires one vector per expected
+output with matching indices, while the request states two inputs and the
+literal answers one — so even with a `model` it would have been refused a line
+later.
+
+The repair derives the answer from the request the stub just parsed: the model
+echoed back, and one vector per input. A literal can drift out of agreement with
+the adapter silently; a derived answer cannot drift the same way twice.
+
+Both files involved are otherwise unmodified, and neither repair touches product
+code.
+
+### What is left, and why it is one cause
+
+| Suite | Failed / of |
+| --- | --- |
+| `embedding_dispatch_is_atomic` | 9 / 22 |
+| `text_retriever` | 7 / 7 |
+| `embedding_space_isolation` | 3 / 4 |
+| `vector_retriever_data_policy` | 3 / 3 |
+| `embedding_output_keys` | 1 / 28 |
+| `retrieval_classification_boundary` | 1 / 1 |
+
+Six suites, 24 tests, one cause. Each seeds a corpus generation through
+`PgEmbeddingStore::upsert`, which Tasks 1–4 retired to
+`Unavailable("embedding-legacy-write-retired")`. This is not a fixture swap
+waiting to be written: `0197`'s
+`embedding_corpus_generation_members_legacy_alias` trigger refuses any member
+without an `embedding_projection_entry_id` with `23514`, so no legacy Ready
+generation can be built by anything any more, and rebuilding on the canonical
+path is blocked on the missing link from a canonical corpus back to a memory —
+the reason Task 10 was run before Task 9.
+
+So the remaining debt is a product gap with a name, not a pile of broken
+fixtures, and it belongs in the acceptance conversation rather than in another
+repair.
+
+### Scope
+
+Sixth amendment of this package, 132 → 134 paths:
+`crates/vestrace-infrastructure/tests/model_request_evidence.rs` and
+`tests/model_request_semantic_observation.rs`. Both were out of scope precisely
+because they were untouched debt. `scripts/p04-scope.mjs`,
+`tests/p04_scope.test.mjs` and the preflight's `change_scope_paths` agree at
+134; `protected_authority_paths` remains 23; the frozen contract baseline is not
+recaptured.
