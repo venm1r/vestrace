@@ -6332,3 +6332,149 @@ its real root; `node --test tests/p04_scope.test.mjs` 7 pass 0 fail;
 `node scripts/protocol-lock.mjs --check .` 0; `git diff --check` 0;
 `verify-dirty-baseline` exits 1 for exactly `Cargo.toml` and `LICENSE-APACHE`
 and nothing else, for the reason given in its own section above.
+
+## Completion package (2026-09-12) — Task 14 Step 5: the frozen-spec clauses, mapped
+
+Step 5 asks for the frozen spec's embedding clauses mapped to the tests and
+retained evidence that carry them. The `Not true yet` supersession half was
+done earlier; this is the mapping half, and it was outstanding.
+
+The spec's G0 list is at section 15, lines 933–951. Seven of its nineteen
+clauses are P04's, in whole or in part. Each is decomposed below into the
+things it actually asserts, because a clause of two hundred words maps to a
+dozen tests and a single verdict on the whole would hide which parts are
+carried.
+
+Verdicts are deliberately narrow:
+
+- **proven** — an oracle drives it and passes;
+- **red** — the oracle exists and is failing, and is in the standing debt;
+- **claimed** — an oracle passes but does not establish what the clause says;
+- **not built** — no implementation exists to test;
+- **deferred** — the named oracle cannot exist at this point in the programme.
+
+### Clause 935 — typed external effects, and the delivery/rebuild result path
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| result-prepared evidence/receipt is durable but non-success until every provisional key is bound | `embedding_result_preparation::result_preparation_commits_a_complete_non_live_two_output_tuple`, `embedding_result_finalization::partial_binding_preserves_history_and_stays_non_live` | proven |
+| then one exact-space corpus activation atomically appends `Succeeded` | `embedding_result_finalization::all_outputs_publish_with_one_corpus_event`, `embedding_executor::delivery_and_rebuild_each_call_the_provider_once_and_publish_through_the_result_chain` | proven |
+| retrieval keeps its atomic structural result/receipt/success path | `embedding_retrieval_results::a_result_lands_while_its_pinned_generation_is_current`, `a_result_and_a_generation_change_exclude_each_other` | proven |
+| the delivery/rebuild pair is a closed XOR | `embedding_output_keys::invalid_delivery_authority_and_output_identity_matrix_rolls_back_wholly`, `embedding_transition_activation::a_transition_attempt_refuses_a_delivery_job_standing_in_for_a_rebuild`, migration `0207` | proven, since 2026-09-12 only |
+| EmbeddingJobs are typed uses of the shared effect authority and add no parallel lifecycle | `embedding_dispatch_is_atomic::an_embedding_job_dispatches_through_the_shared_authority` | **red** |
+| common work takes the permit and guard first, then exact binding/policy/admission/owner/deadline/`Dispatching` | `embedding_dispatch_is_atomic::injected_write_boundaries_roll_every_embedding_dispatch_leg_back` | **red** |
+
+The two red rows are cause B, `PROVIDER_DISPATCH_ROUTING_REFUSED`. The clause's
+central claim about embedding jobs — that they are *the same* effect machinery
+rather than a parallel one — is the part without a passing oracle.
+
+### Clause 936 — ModelRequestEvidence for production Embeddings
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| every production-Embeddings effect has an immutable MRE graph and a fresh pre-dispatch `Complete` reconstruction check | `model_request_evidence`, 32/32 | proven |
+| loopback observation proves semantic equality with the actual adapter request | `model_request_semantic_observation::loopback_observes_semantic_equality_with_the_production_adapter` | proven, since 2026-09-12 only |
+| authorized erasure alone yields current `Expired` with preparation/tombstone evidence | `model_request_evidence::expired_check_*` | proven, one since 2026-09-12 only |
+| crash/`Unknown` never destroys or rewrites retained request provenance | `embedding_fault_scenario_e2e`, 6/6 | proven |
+
+Two rows say *since 2026-09-12 only* and both are uncomfortable. The loopback
+oracle is named by the spec in as many words, and it had been dying in its own
+setup for the whole package — so the clause the spec asks for by name was
+unevidenced from Task 1 until three commits ago. It was not failing loudly: it
+was sitting in the debt pile.
+
+### Clause 939 — admission, recovery, and no retry after dispatch
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| restart/lost-dispatch recovery | `embedding_worker_restart` 7/7, `embedding_worker_once` 2/2, `embedding_fault_scenario_e2e` 6/6 | proven |
+| EmbeddingJob owner/deadline recovery | `embedding_dispatch_is_atomic::recovery_of_an_undispatched_embedding_job_resumes_it` | **red** |
+| strict no-retry-after-dispatch | `embedding_dispatch_is_atomic::dispatching_first_refuses_cancellation_without_a_terminal_receipt`, `dispatching_first_blocks_cancellation_then_refuses_without_terminal_receipt` | **red** |
+
+### Clause 942 — EmbeddingSpaceTransition
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| independently exact old/new qualification and auth-binding-XOR spaces | `embedding_transition_planning` 7/7 | proven |
+| the same, at the retrieval and enrolment boundary between two same-wire spaces | `embedding_space_isolation`, 3 of 4 failing | **red** |
+| opaque recipes | `embedding_transition_planning::successor_recipes_are_exactly_the_predecessor_identities_in_order`, `successor_recipes_preserve_their_ordered_input_ordinals` | proven |
+| immutable `TransitionBatchId` logical causes versus fresh physical attempts | `embedding_transition_activation` 14/14 | proven, and only meaningfully so since `0207` |
+| one successful-or-`SatisfiedExisting` recipe satisfier | `exact_terminal_result_and_live_existing_projection_prove_ready_to_activate`, `incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514`, `mutating_the_one_satisfier_rule_proves_a_batch_whose_second_recipe_nothing_answers` | proven |
+| recipe-granular partial carry, isolated `AwaitingPredecessorTerminal` batches, closed supersession chain, only-current classifier | `embedding_transition_barriers` 10/10 | proven |
+| unrelated work proceeds | `an_open_dedicated_barrier_batch_is_refused_while_a_sibling_batch_is_admitted` | proven |
+| no provider call during a barrier | `embedding_transition_barriers` | proven |
+| completion-only DrainMutationPermit reconciliation fixes pre-Quiescing identities | — | **not built** |
+| no post-freeze write | — | **not built** |
+| browser oracles | — | **deferred** |
+| readiness oracles | — | **not built** |
+
+The *proven, and only meaningfully so since 0207* row is the honest form of
+what migration 0207 changed. Every one of these attempts previously ran on
+delivery jobs, so the clause's distinction between a logical cause and a fresh
+physical rebuild attempt was being tested with something that was not a
+rebuild.
+
+`DrainMutationPermit` and `Quiescing` appear nowhere in the repository —
+neither in Rust nor in SQL. They belong to the backup/freeze machinery that G0
+also names, and P04 does not build it. Recorded as not built rather than as
+P04's omission.
+
+### Clause 946 — recovered successors, transition retries, retrieval fence
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| transition-batch retries stay fixed to their exact transition/version/batch/recipe/target plan through their own transition-scoped snapshot | `embedding_transition_barriers`, `embedding_transition_planning::snapshot_scope_is_deferred_to_commit_and_can_be_completed_in_the_same_transaction`, `ordinary_consumers_refuse_transition_and_scopeless_snapshots` | proven |
+| the fence's only post-response orders are atomic result/`Succeeded`, or provider-success plus generation-changed with no result/vector/digest | `embedding_retrieval_results` 14/14, `mutating_the_pinned_generation_fence_lets_a_stale_answer_land` | proven |
+| followed only by an authorized one-successor current-generation retry chain | `one_confirmed_change_authorizes_exactly_one_successor`, `the_retry_queue_holds_only_unspent_confirmed_changes`, `embedding_retrieval_routes` 9/9, `embedding_retrieval` (MCP) 5/5 | proven |
+| ordinary recovered embedding jobs alone resolve a current-tuple duplicate-charge successor | `embedding_dispatch_is_atomic` recovery tests | **red** |
+| browser tests refuse fallback, retargeting, duplicate successors, automatic retry | — | **deferred** |
+
+### Clause 947 — derived-vector retention
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| stable source and encrypted derived-vector ContentMaterial guards, fresh identities and commitments | `embedding_canonical_generations` 21/21, `embedding_index_builds` 16/16 | proven |
+| one-way `Live -> ErasurePrepared -> Tombstoned` enforcement | `embedding_erasure_propagation` 10/10 | proven |
+| post-commit invalidation events | `the_invalidation_reaches_the_corpus_change_stream` | proven |
+| per-query epoch revalidation | `a_generation_that_moves_first_refuses_the_result_and_stores_nothing`, `only_a_live_fence_makes_a_retrieval_query_claimable` | proven |
+| no runtime-role bypass | `runtime_role_cannot_write_directly`, `embedding_runtime_role_refusals`, `the_runtime_role_cannot_write_*` in four suites, `mutating_the_raw_mutation_guard_lets_a_privileged_connection_move_an_adoption` | proven |
+| exclusive persisted-generation revocation | `embedding_erasure_propagation::erasing_a_source_revokes_the_generations_computed_from_it` | **claimed** |
+| prevents stale-memory use | `text_retriever` 0/7, `vector_retriever_data_policy` 0/3, `retrieval_classification_boundary` 0/1 | **red** |
+
+The **claimed** row is the finding recorded earlier in this document:
+`vestrace_validate_canonical_member_liveness` refuses any projection leaving
+Live while enrolled in an `encrypted_projection` generation, so a source with a
+canonical generation over it cannot be erased at all, and the revocation branch
+the test names is unreachable. The test passes. It does not show what the
+clause says. Whether that blocking is the intended design is the open question
+for the lead.
+
+The **red** row is eleven of the twenty-three standing red tests, and it is the
+one whose repair needs a product decision rather than a fixture.
+
+### Clause 951 — the change boundary
+
+| What it asserts | Carried by | Verdict |
+| --- | --- | --- |
+| current dirty work is preserved | `scripts/verify-dirty-baseline.mjs` against the frozen porcelain digest | proven |
+| the selected change boundary is documented | `scripts/p04-scope.mjs`, `tests/p04_scope.test.mjs`, `v1-g0-04c-preflight.json`, 135 paths and 23 protected, seven amendments each with its reason | proven |
+| …and clean | — | **partly**: the verifier exits 1 for `Cargo.toml` and `LICENSE-APACHE` |
+
+Clean is the one thing a recapture would settle, and a recapture is the act
+that says the package is closed. It is left for the acceptance conversation
+rather than taken here.
+
+### What the map says as a whole
+
+Of the seven clauses, **four are fully carried** for P04's part of them (936
+except its timing caveat, 942 except what is not built, 946 except the browser
+oracles, 951 except clean). **Two have red oracles on their central claim**:
+935's assertion that embedding jobs are the shared effect machinery, and 947's
+that stale memory cannot be used. **One row is claimed rather than proven**,
+and it is a retention guarantee.
+
+The red rows are not spread evenly over the debt. Eleven of the twenty-three
+sit under clause 947 and need the corpus-to-memory link; nine sit under 935 and
+939 on the dispatch path, in causes B, C and D, which nothing in this package
+has yet diagnosed beyond their error text. That second group is the part of the
+debt that has been described as known and has never actually been looked at.
