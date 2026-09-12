@@ -6572,3 +6572,80 @@ carried.
 
 No product change was made here. The gate is right; the fixture was eleven
 migrations out of date.
+
+### The rest of the dispatch path, and two corrections to the section above
+
+`embedding_dispatch_is_atomic` is **22 passed, 0 failed**. All nine are green,
+and both things the section above says about the last four are wrong.
+
+**Correction 1: the ninth test was not unrelated.**
+`the_model_data_policy_leg_is_absent_from_an_embedding_dispatch` was recorded
+here as self-accusing — as asserting that `BeforePolicyRecord` is uncovered. It
+asserts the opposite. It injects each policy fault point, requires the dispatch
+to *succeed*, and concludes that the model-data-policy leg is not on the
+embedding path at all; the sentence read as an accusation is the failure
+message for the case where the point does fire. It failed for the same 0194
+reason as the other eight, and one line of fixture made it green.
+
+So the nine are one cause, not eight and a special case. The mistake was the
+same one this document has now made three times in three forms: a message was
+read instead of the thing it describes. First a remembered summary, then a
+symptom taken for a cause, now a failure string taken for an assertion.
+
+**Correction 2: the three cancellations needed more than a retirement, and what
+they needed is a product finding.**
+
+Adding the output retirement was necessary and not sufficient. Both outputs
+retired — `Retired { receipt: ErasureReceipt(..) }` twice — and the cancellation
+was still refused. The reason is that
+`vestrace_request_embedding_output_retirement` mints its authority against an
+**exact terminal command**: the receipt id and the authorizing policy decision
+are part of what is retired against.
+
+`EmbeddingJobTerminationService::cancel` generates its own `receipt_id`
+internally (`embedding/job.rs` line 154) and obtains its own policy decision. It
+therefore cannot terminate a job whose outputs were retired, because the
+retirement can never have been granted against the command it is about to
+build.
+
+Stated plainly: **the service-level cancel cannot cancel an embedding job that
+has outputs.** Not by any sequence of calls. Until today no test could see it,
+because no job in this suite had outputs at all.
+
+The three tests now terminate through `PgEmbeddingJobRepository::
+terminate_pre_dispatch` with the exact command the retirement authorized, which
+is what `embedding_output_keys` already does. That is a correct thing for a test
+to do and it is not a fix: the gap is in the service API, and it is left open
+and recorded rather than papered over. Either `cancel` must accept the receipt
+identity, or retirement must bind to something more durable than one exact
+command.
+
+### Where the debt stands
+
+**23 → 14.** Four suites, and for the first time in this package the remaining
+debt really does have one cause — established by removing the others rather
+than by reading their messages:
+
+| Suite | Failed / of |
+| --- | --- |
+| `text_retriever` | 7 / 7 |
+| `embedding_space_isolation` | 3 / 4 |
+| `vector_retriever_data_policy` | 3 / 3 |
+| `retrieval_classification_boundary` | 1 / 1 |
+
+All fourteen seed a corpus generation through the retired
+`PgEmbeddingStore::upsert`, and all fourteen are blocked on the missing link
+from a canonical corpus back to a memory. Eleven sit under clause 947's
+*prevents stale-memory use*; three under clause 942's same-wire-space isolation.
+
+Clause 935's central oracle and clause 939's recovery and no-retry-after-dispatch
+rows are all green. Of the seven P04 clauses, the only red rows left are the two
+that need the corpus-to-memory decision.
+
+### Runs
+
+- `embedding_dispatch_is_atomic` 22/22.
+- Whole `vestrace-infrastructure` crate under its own parallelism: 101 suites,
+  four red, 14 tests, exactly the four above and nothing else.
+- `cargo fmt --all -- --check` 0; clippy 0 on `vestrace-infrastructure` with the
+  crate root touched first.

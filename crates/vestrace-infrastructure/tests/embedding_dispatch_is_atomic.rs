@@ -18,14 +18,16 @@ use sqlx::{
 use uuid::Uuid;
 use vestrace_application::{
     AcceptEmbeddingJob, ApplicationError, EmbeddingJobAttemptRecovery, EmbeddingJobDispatchPlan,
-    EmbeddingJobRepository, EmbeddingJobTerminationService, PolicyDecisionEngine,
+    EmbeddingJobRepository, EmbeddingJobTerminationService, EmbeddingOutputKeyService,
+    PolicyDecisionEngine, PreDispatchTerminalState, PreDispatchTerminationEvidence,
     ProviderDispatchCause, ProviderDispatchFaultPoint, ProviderDispatchRepository, RequestContext,
+    RequestEmbeddingOutputRetirement, TerminateEmbeddingJobPreDispatch,
 };
 use vestrace_domain::{
-    AuditEvent, AuthorizationRequest, EmbeddingJobId, EmbeddingSpaceId, ExternalEffectIntent,
-    ModelRequestEvidenceId, PolicyDecision, PolicyDecisionId, PolicyDecisionReason,
-    PolicyDecisionResult, PolicyInputState, PrincipalId, WorkspaceId, embedding::EmbeddingJobKind,
-    id::AuditEventId,
+    AuditEvent, AuthorizationRequest, Capability, EmbeddingJobId, EmbeddingSpaceId,
+    ExternalEffectIntent, ModelRequestEvidenceId, PolicyDecision, PolicyDecisionId,
+    PolicyDecisionReason, PolicyDecisionResult, PolicyInputState, PrincipalId, ResourceScope,
+    RiskCategory, WorkspaceId, embedding::EmbeddingJobKind, id::AuditEventId,
 };
 use vestrace_infrastructure::{PgEmbeddingJobRepository, PgStore};
 
@@ -52,12 +54,18 @@ use common::*;
 /// already accepted bare job cannot be backfilled with guessed identities. So
 /// the fixture starts from the pre-acceptance boundary rather than from
 /// `accept_embedding_job`.
-async fn dispatchable_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
+async fn dispatchable_embedding_job(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> (AcceptedJob, OutputVaultFixture) {
     dispatchable_embedding_job_of_branch(owner, runtime, false).await
 }
 
 /// The same, on the credential branch.
-async fn dispatchable_credential_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
+async fn dispatchable_credential_embedding_job(
+    owner: &PgPool,
+    runtime: &PgPool,
+) -> (AcceptedJob, OutputVaultFixture) {
     dispatchable_embedding_job_of_branch(owner, runtime, true).await
 }
 
@@ -65,7 +73,7 @@ async fn dispatchable_embedding_job_of_branch(
     owner: &PgPool,
     runtime: &PgPool,
     credential_backed: bool,
-) -> AcceptedJob {
+) -> (AcceptedJob, OutputVaultFixture) {
     let accepted = if credential_backed {
         prepare_delivery_embedding_job_with_pinned_credential(owner, runtime).await
     } else {
@@ -96,7 +104,101 @@ async fn dispatchable_embedding_job_of_branch(
     // No delivery policy decision is recorded. The pre-dispatch gate does not
     // read one -- that is a result-preparation concern -- and recording it
     // needs the provisioner-installed database this suite does not use.
-    accepted
+    //
+    // The vault comes back with the job because the envelopes reconciled into
+    // it are the ones a retirement has to erase; a fresh vault would hold
+    // nothing to retire.
+    (accepted, vault)
+}
+
+/// Retire the job's outputs so it can be cancelled.
+///
+/// `vestrace_terminate_embedding_job_pre_dispatch` (0192 line 415) refuses a
+/// pre-dispatch termination unless every output material intent is `abandoned`
+/// and carries an erasure receipt. A job with no outputs never had to meet
+/// that; a job with outputs must retire them first, or the cancellation would
+/// orphan live key material.
+async fn retire_outputs(
+    runtime: &PgPool,
+    fixture: &AcceptedJob,
+    vault: &OutputVaultFixture,
+    receipt_id: Uuid,
+    idempotency_key: &str,
+) -> TerminateEmbeddingJobPreDispatch {
+    let repository = Arc::new(
+        vestrace_infrastructure::postgres::PgEmbeddingOutputKeyRepository::new(PgStore::from_pool(
+            runtime.clone(),
+        )),
+    );
+    let service = EmbeddingOutputKeyService::new(
+        repository,
+        Arc::new(vault.vault(fixture.context.workspace_id)),
+    );
+    let termination = cancellation_termination(fixture, receipt_id, idempotency_key);
+    service
+        .request_retirement(
+            &fixture.context,
+            RequestEmbeddingOutputRetirement {
+                termination: termination.clone(),
+            },
+        )
+        .await
+        .expect("an authorized cancellation mints retirement authority");
+    for _ in 0..outputs().len() {
+        let progress = service
+            .reconcile_one(&fixture.context)
+            .await
+            .expect("each output retires through its own reconciliation");
+        assert!(matches!(
+            progress,
+            Some(vestrace_application::EmbeddingOutputKeyProgress::Retired { .. })
+        ));
+    }
+    termination
+}
+
+/// The cancellation this suite authorizes, as a command rather than through the
+/// service, so a retirement can be requested against the same terminal shape
+/// before the service builds its own.
+fn cancellation_termination(
+    fixture: &AcceptedJob,
+    receipt_id: Uuid,
+    idempotency_key: &str,
+) -> TerminateEmbeddingJobPreDispatch {
+    let request = AuthorizationRequest::new(
+        Capability::ExecutionWrite,
+        "embedding.job.cancel",
+        ResourceScope::workspace().to_string(),
+        RiskCategory::Low,
+    );
+    TerminateEmbeddingJobPreDispatch {
+        receipt_id,
+        job_id: fixture.job_id,
+        expected_version: 1,
+        idempotency_key: idempotency_key.to_owned(),
+        terminal_state: PreDispatchTerminalState::Cancelled,
+        evidence: PreDispatchTerminationEvidence::CancellationAuthorization(Box::new(
+            PolicyDecision {
+                id: PolicyDecisionId::new(),
+                policy_id: None,
+                policy_version: "embedding-cancellation-test-v1".to_owned(),
+                workspace_id: fixture.context.workspace_id,
+                subject_id: fixture.context.principal_id,
+                capability: Capability::ExecutionWrite,
+                operation: "embedding.job.cancel".to_owned(),
+                resource_scope: ResourceScope::workspace().to_string(),
+                result: PolicyDecisionResult::Allow,
+                reason: PolicyDecisionReason::ConfiguredAllowance,
+                input_state: PolicyInputState::from_request(
+                    fixture.context.workspace_id,
+                    fixture.context.principal_id,
+                    &request,
+                ),
+                matched_grant_id: None,
+                decided_at: Utc::now(),
+            },
+        )),
+    }
 }
 
 /// A repository that implements only what the trait requires, so the two new
@@ -349,7 +451,7 @@ async fn a_governed_embedding_job_is_rediscovered_by_the_dispatch_authority(pool
 #[sqlx::test(migrations = "../../migrations")]
 async fn recovery_of_an_undispatched_embedding_job_resumes_it(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
     let repository = dispatch_repository(&runtime);
 
     let recovery = repository
@@ -644,7 +746,7 @@ async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_embedding_job_dispatches_through_the_shared_authority(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
 
     let outcome = dispatching_repository(&runtime, None)
         .prepare_dispatch(embedding_dispatch_request(&fixture))
@@ -723,7 +825,7 @@ async fn an_embedding_job_dispatches_through_the_shared_authority(pool: PgPool) 
 #[sqlx::test(migrations = "../../migrations")]
 async fn dispatching_first_refuses_cancellation_without_a_terminal_receipt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
     dispatching_repository(&runtime, None)
         .prepare_dispatch(embedding_dispatch_request(&fixture))
         .await
@@ -751,10 +853,23 @@ async fn dispatching_first_refuses_cancellation_without_a_terminal_receipt(pool:
 #[sqlx::test(migrations = "../../migrations")]
 async fn admitted_but_not_dispatched_embedding_job_cancels_and_releases_its_lease(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
     let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
+    // The retirement authority is minted against an exact terminal command, so
+    // the cancellation must be that command. `EmbeddingJobTerminationService::
+    // cancel` mints its own `receipt_id`, which means it cannot terminate a job
+    // whose outputs were retired against any other.
+    let termination = retire_outputs(
+        &runtime,
+        &fixture,
+        &output_vault,
+        Uuid::now_v7(),
+        "admitted-cancellation",
+    )
+    .await;
 
-    let receipt = cancel(&runtime, &fixture, "admitted-cancellation")
+    let receipt = PgEmbeddingJobRepository::new(PgStore::from_pool(runtime.clone()))
+        .terminate_pre_dispatch(fixture.context.clone(), termination)
         .await
         .expect("an admitted but undispatched embedding job remains cancellable");
     assert_eq!(receipt.job_id, fixture.job_id);
@@ -848,7 +963,7 @@ async fn cancellation_revokes_an_unconsumed_pinned_credential_lease(pool: PgPool
 #[sqlx::test(migrations = "../../migrations")]
 async fn cancellation_audit_failure_rolls_back_terminalization_and_lease_release(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_credential_embedding_job(&pool, &runtime).await;
+    let (fixture, output_vault) = dispatchable_credential_embedding_job(&pool, &runtime).await;
     let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
     let credential_lease_id =
         issue_unconsumed_pinned_credential_lease(&pool, &runtime, &fixture).await;
@@ -884,7 +999,19 @@ async fn cancellation_audit_failure_rolls_back_terminalization_and_lease_release
     .await
     .unwrap();
 
-    let error = cancel(&runtime, &fixture, "audit-rollback-cancellation")
+    // Retired first, and terminated through the exact command the retirement
+    // authorized, so the refusal this test is about is the injected audit one
+    // rather than the output-retirement precondition in front of it.
+    let termination = retire_outputs(
+        &runtime,
+        &fixture,
+        &output_vault,
+        Uuid::now_v7(),
+        "audit-rollback-cancellation",
+    )
+    .await;
+    let error = PgEmbeddingJobRepository::new(PgStore::from_pool(runtime.clone()))
+        .terminate_pre_dispatch(fixture.context.clone(), termination)
         .await
         .expect_err("the injected audit trigger must reject cancellation");
     assert!(
@@ -1057,7 +1184,7 @@ async fn termination_first_blocks_shared_admission_then_leaves_no_admission_trac
 #[sqlx::test(migrations = "../../migrations")]
 async fn dispatching_first_blocks_cancellation_then_refuses_without_terminal_receipt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
     let lease_id = admit_embedding_without_dispatch(&runtime, &fixture).await;
     let dispatch_expires_at: chrono::DateTime<Utc> = sqlx::query_scalar(
         "SELECT dispatch_expires_at FROM connection_dispatch_admissions WHERE external_effect_id=$1",
@@ -1145,7 +1272,7 @@ async fn preexisting_cancellation_transaction_releases_a_later_admission_at_or_a
     pool: PgPool,
 ) {
     let runtime = runtime_pool(&pool).await;
-    let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+    let (fixture, output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
 
     let cancellation_runtime = runtime_pool_single(&pool).await;
     let mut cancellation = cancellation_runtime.begin().await.unwrap();
@@ -1168,17 +1295,30 @@ async fn preexisting_cancellation_transaction_releases_a_later_admission_at_or_a
     let lease_id = admit_embedding_without_dispatch(&admission_runtime, &fixture).await;
     admission_runtime.close().await;
 
+    // The terminal authority below is the one the retirement was minted
+    // against, identity for identity: the receipt and the authorizing decision
+    // are both taken from it rather than generated here.
+    let receipt_id = Uuid::now_v7();
+    let termination = retire_outputs(
+        &runtime,
+        &fixture,
+        &output_vault,
+        receipt_id,
+        "older-transaction-later-admission",
+    )
+    .await;
+
     sqlx::query_scalar::<_, Uuid>(
         "SELECT receipt_id FROM public.vestrace_terminate_embedding_job_pre_dispatch( \
           $1,$2,$3,$4,1,$5,'cancelled','cancellation_authorization',$6, \
           'embedding-cancellation-test-v1','execution.write','embedding.job.cancel','workspace://','low')",
     )
-    .bind(Uuid::now_v7())
+    .bind(receipt_id)
     .bind(fixture.context.workspace_id.as_uuid())
     .bind(fixture.context.principal_id.as_uuid())
     .bind(fixture.job_id.as_uuid())
     .bind("older-transaction-later-admission")
-    .bind(Uuid::now_v7())
+    .bind(termination.evidence.id())
     .fetch_one(&mut *cancellation)
     .await
     .expect("the older transaction must see and release the committed admission");
@@ -1220,7 +1360,7 @@ async fn injected_write_boundaries_roll_every_embedding_dispatch_leg_back(pool: 
         ProviderDispatchFaultPoint::AfterDispatching,
         ProviderDispatchFaultPoint::BeforeGovernedCommit,
     ] {
-        let fixture = dispatchable_embedding_job(&pool, &runtime).await;
+        let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
 
         let error = dispatching_repository(&runtime, Some(point))
             .prepare_dispatch(embedding_dispatch_request(&fixture))
@@ -1266,8 +1406,7 @@ async fn the_model_data_policy_leg_is_absent_from_an_embedding_dispatch(pool: Pg
         ProviderDispatchFaultPoint::BeforePolicyRecord,
         ProviderDispatchFaultPoint::AfterPolicyRecord,
     ] {
-        let fixture = accept_embedding_job(&pool, &runtime).await;
-        make_dispatchable(&pool, &runtime, &fixture).await;
+        let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
         assert!(
             dispatching_repository(&runtime, Some(point))
                 .prepare_dispatch(embedding_dispatch_request(&fixture))
