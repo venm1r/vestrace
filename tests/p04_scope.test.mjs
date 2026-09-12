@@ -147,7 +147,10 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // than the product: an evidence fixture that alters a table while a deferred
   // trigger 0194 added is pending, and a loopback provider stub whose
   // embeddings answer omits the model the adapter requires.
-  assert.equal(changeScopePaths.length, 134);
+  // Plus the one-path amendment for migration 0207, which closes the
+  // delivery/rebuild XOR that 0199's blanket substitution left open at both
+  // of its ends.
+  assert.equal(changeScopePaths.length, 135);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -303,6 +306,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'migrations/0204_embedding_legacy_adoption.sql',
     'migrations/0205_embedding_retrieval_dispatch.sql',
     'migrations/0206_embedding_transition_header_progress.sql',
+    'migrations/0207_embedding_delivery_rebuild_xor.sql',
     'scripts/p04-scope.mjs',
     'tests/embedding_fault_scenario_e2e.rs',
     'tests/model_request_semantic_observation.rs',

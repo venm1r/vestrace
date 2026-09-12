@@ -6140,3 +6140,195 @@ because they were untouched debt. `scripts/p04-scope.mjs`,
 `tests/p04_scope.test.mjs` and the preflight's `change_scope_paths` agree at
 134; `protected_authority_paths` remains 23; the frozen contract baseline is not
 recaptured.
+
+## Completion package (2026-09-12) — a correction, and migration 0207: the delivery/rebuild XOR
+
+### First, a correction to the section above
+
+The previous section says the remaining 24 red tests have one cause. That is
+wrong, and it was wrong when it was written and committed in `9ed7a49`. It was
+taken from a standing note rather than from the failures, and the failures do
+not say it.
+
+Read back from the run itself, the 24 carry at least six distinct causes:
+
+| Cause | Tests | What the failure actually says |
+| --- | --- | --- |
+| A | 14 | `Unavailable("embedding-legacy-write-retired")` |
+| B | 3 | `Policy("PROVIDER_DISPATCH_ROUTING_REFUSED")` |
+| C | 4 | `23514 embedding output execution requires a nonempty exact receipted output set`, from `vestrace_lock_embedding_job_pre_dispatch_gate` |
+| D | 1 | `Conflict("the embedding job is not in a recoverable governed state")` |
+| E | 1 | a self-accusation: *BeforePolicyRecord is on the embedding dispatch path; the atomicity test must cover it* |
+| F | 1 | `assertion failed: ...is_err()` — a refusal that did not happen |
+
+Only cause A is the retired legacy write path. B, C and D are on the embedding
+dispatch path and sit under named G0 clauses, so the debt is not peripheral to
+the gate in the way one cause would have implied.
+
+The method that produced the wrong answer is worth naming, because it is the
+same method that produced the undercounts before it: reading a remembered
+summary instead of the failures. The figures are now taken by pairing every
+`thread '...' panicked` line with the line after it.
+
+### Cause F was not debt
+
+`embedding_output_keys::invalid_delivery_authority_and_output_identity_matrix_rolls_back_wholly`
+drives sixteen invalid acceptance shapes and requires each to be refused. One
+was not: `invalid-kind`, which declares `kind = Rebuild` against a delivery
+fixture. It was accepted.
+
+Nothing about that test is stale. It was green before Task 5 and the product
+changed under it, which is exactly what a red test is for. Left in the debt
+pile under a wrong cause, it would have been retired as noise.
+
+### The hole, at both ends
+
+Task 5 was asked for *a closed delivery/rebuild acceptance XOR*. 0199 lines
+138-158 delivered it by blanket lexical substitution across sixteen
+authorities: every `kind='delivery'` became `kind IN ('delivery','rebuild')`,
+every `kind<>'delivery'` became `kind NOT IN ('delivery','rebuild')`.
+
+That substitution is right for a check whose subject is *is this one of the two
+kinds this path serves*. It is wrong for a check whose subject is *is this the
+kind THIS path serves*. Textual replacement cannot tell those apart, and
+nothing separated them afterwards.
+
+| End | Authority | What it checked after 0199 | What that allowed |
+| --- | --- | --- | --- |
+| acceptance | `vestrace_begin_delivery_embedding_outputs` | the declared kind is one of two words | mint a `rebuild` out of nothing |
+| attempt | `vestrace_create_embedding_transition_batch_attempt` (0200:754) | the job's kind is one of two words | a delivery satisfies a transition recipe |
+
+The acceptance end matters because the declared word *becomes* the job: the
+receipt carries `job_kind`, `vestrace_finalize_delivery_embedding_outputs`
+passes it into `vestrace_accept_embedding_job`, and that writes
+`embedding_jobs.kind`. There was no stored fact for the caller's word to
+contradict.
+
+The attempt end matters more. A satisfied recipe is what activation moves the
+corpus head on, so an ordinary memory write could carry a transition to
+`ready_to_activate`.
+
+### What separates the two kinds, and why it was not invented here
+
+A rebuild exists to serve a transition. The product already says so in the one
+place a rebuild is created in production: `create_rebuild` for legacy adoption
+resolves its binding through `canonical_binding`, which requires the newest
+`embedding_transition_plans` row naming the target space, and the adoption
+suite's `a_target_space_without_a_transition_binding_is_refused` holds it.
+
+So 0207 asks the same question at both ends:
+
+- a transition attempt requires `job_row.kind='rebuild'`;
+- a rebuild acceptance requires a transition plan targeting its space.
+
+What 0207 deliberately does **not** refuse is a delivery whose space happens to
+be a transition target. The target space becomes the head after activation, and
+refusing ordinary writes to it would be a rule invented in this migration
+rather than one the product already holds.
+
+### Substitution again, and how it is different this time
+
+0207 also replaces by anchored substitution rather than retyping: both bodies
+are long, and a retyped body can silently drop a line that a substitution
+cannot. The difference from 0199 is the discipline around it. Each anchor must
+occur **exactly once** in **exactly one named function**, the acceptance body
+is checked not to carry the new rule already, and both results are read back
+before the migration is allowed to finish.
+
+That precondition earned itself on the first run. The acceptance anchor matched
+twice — the four-space form is a substring of the eight-space form in the
+insert-race branch — and the migration refused with `23514` instead of
+substituting into the wrong place.
+
+### What it cost in fixtures, which is the finding rather than the side effect
+
+Closing the attempt end turned nine tests red at once, and every one of them
+was building the same fiction:
+
+- `embedding_transition_activation` planned its transitions and then registered
+  **delivery** jobs as the rebuilds answering them. The whole suite — plans,
+  attempts, observations, satisfactions, supersession, activation — ran on
+  jobs that were not rebuilds.
+- `embedding_executor::fixture(pool, Rebuild)` minted a rebuild on a plain
+  delivery space with no transition anywhere.
+- `embedding_worker_completion_crash` accepted its candidate before planning
+  the transition it was the candidate for.
+
+Each now plans first and accepts a rebuild for that plan, which is the order
+production works in. `prepare_rebuild_job` additionally reads the job kind back
+from `embedding_jobs` and asserts it, because a fixture that believes it built
+a rebuild and built a delivery is precisely how an open XOR survived a whole
+package without one red test.
+
+`a_transition_attempt_refuses_a_delivery_job_standing_in_for_a_rebuild` is the
+new test that holds the attempt end. It asserts first that its stand-in really
+is a delivery, so that it cannot pass by accident once the fixtures around it
+are rebuilds.
+
+### Runs
+
+- RED before the migration: the attempt accepted the delivery and returned its
+  job id.
+- GREEN after: `23514`, and no `embedding_transition_job_attempts` row.
+- `embedding_transition_activation` 14/14, `embedding_executor` 2/2,
+  `embedding_output_keys` 28/28, `embedding_fault_scenario_e2e` 6/6 with
+  `--ignored`, `cargo build -p vestrace-fault-scenario` clean.
+- The embedded `MIGRATOR` was rebuilt by touching
+  `crates/vestrace-infrastructure/src/postgres/pool.rs` before any of it.
+
+### What this does not settle
+
+`embedding_executor::mismatched_delivery_or_rebuild_result_acceptance_is_refused`
+still passes, and still not for the reason its name gives. It declares
+`Delivery` against a rebuild job, and there is no comparison of a declared kind
+against a stored one anywhere for it to fail — the refusal comes from the
+separate rule that an existing job cannot be backfilled with guessed outputs.
+The test is not wrong, but it proves less than it claims, and 0207 does not
+change that.
+
+The standing red-test figure becomes 23, in five causes. Cause A remains the
+largest at 14 and remains blocked on the missing link from a canonical corpus
+back to a memory.
+
+### The final measurement, and two things it caught that the tests did not
+
+The workspace run after 0207: **252 suites, six red, 24 tests.** The debt suite
+`embedding_output_keys` is green, and a suite that had been green is not:
+`embedding_result_finalization`, one test,
+`concurrent_finalizers_converge_on_one_publication`, on
+`EMBEDDING_RESULT_FINALIZATION_CONFLICT`.
+
+It did not reproduce. That suite is 17/17 alone, and 17/17 again under the
+whole `vestrace-infrastructure` crate running in parallel — which is where
+every heavy PostgreSQL suite contends. The crate run's own tally is 101 suites,
+five red, 23 tests, and those five are exactly the standing debt.
+
+So the standing figure is **five suites, 23 tests**, and the finalization
+failure is recorded as measurement instability rather than as a result in
+either direction. What supports that reading: the test is a concurrency test,
+it failed once in three observations, only under the fullest load, and 0207
+does not touch the finalization path — its only addition to the acceptance path
+is one `EXISTS` against `embedding_transition_plans`, reached only when the
+declared kind is `rebuild`. What it does not do is prove the two unrelated.
+This is the second such case in this package after `worker_once_cli`, and both
+were connection pressure under the full run.
+
+**A clippy zero that would have been a lie.** Forcing the seven-crate clippy
+re-run meant touching each crate root. `crates/vestrace-cli/src/lib.rs` was
+among the paths touched, and no such file exists: `vestrace-cli` is a
+binary-only crate rooted at `src/main.rs`. `touch` created an empty `lib.rs`,
+which did not invalidate the crate's real build, so clippy could have reported
+zero for `vestrace-cli` from cache while looking entirely honest.
+
+Nothing in the test or lint tooling caught that. `verify-dirty-baseline` did,
+by reporting a new dirty path outside P04 scope. The scope machinery earned its
+keep here as a detector of a tooling mistake rather than as a file ledger. The
+file was removed, `src/main.rs` touched instead, and `vestrace-cli` genuinely
+rebuilt (`Checking vestrace-cli`, 5m51s) to zero.
+
+**The full gate matrix on the final source:** `cargo fmt --all -- --check` 0;
+seven-crate clippy 0 with every crate root touched first, `vestrace-cli` from
+its real root; `node --test tests/p04_scope.test.mjs` 7 pass 0 fail;
+`node scripts/protocol-lock.mjs --check .` 0; `git diff --check` 0;
+`verify-dirty-baseline` exits 1 for exactly `Cargo.toml` and `LICENSE-APACHE`
+and nothing else, for the reason given in its own section above.

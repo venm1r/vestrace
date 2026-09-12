@@ -3557,4 +3557,104 @@ BEGIN
     END IF;
 END $transition_header_bootstrap$;
 
+DO $delivery_rebuild_xor_bootstrap$
+DECLARE applied BOOLEAN := false;
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        SELECT EXISTS(
+            SELECT 1 FROM public._sqlx_migrations WHERE version=207 AND success
+        ) INTO applied;
+    END IF;
+    IF applied THEN
+        IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+             WHERE oid=to_regprocedure(
+                 'public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'))
+           <>'vestrace_guarded_owner'
+           OR NOT has_function_privilege('vestrace',
+                'public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)','EXECUTE')
+           OR has_function_privilege('public',
+                'public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)','EXECUTE')
+           OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                WHERE oid=to_regprocedure(
+                    'public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)'))
+              <>'vestrace_guarded_owner'
+           OR NOT has_function_privilege('vestrace',
+                'public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)','EXECUTE')
+           OR has_function_privilege('public',
+                'public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)','EXECUTE')
+        THEN
+            RAISE EXCEPTION 'embedding delivery/rebuild XOR owner or ACL posture is unavailable'
+                USING ERRCODE='42501';
+        END IF;
+        DROP FUNCTION IF EXISTS public.vestrace_prepare_embedding_delivery_rebuild_xor_upgrade();
+        DROP FUNCTION IF EXISTS public.vestrace_finish_embedding_delivery_rebuild_xor_upgrade();
+    ELSE
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_prepare_embedding_delivery_rebuild_xor_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=206 AND success)
+               OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=207 AND success) THEN
+                RAISE EXCEPTION 'delivery/rebuild XOR upgrade requires exact accepted 0206 predecessor'
+                    USING ERRCODE='42501';
+            END IF;
+            -- 0207 forward-replaces both ends of the delivery/rebuild XOR, and
+            -- CREATE OR REPLACE requires ownership of each. Lent for the
+            -- migration and handed straight back below.
+            ALTER FUNCTION public.vestrace_create_embedding_transition_batch_attempt(
+                uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint) OWNER TO vestrace;
+            ALTER FUNCTION public.vestrace_begin_delivery_embedding_outputs(
+                uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)
+                OWNER TO vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_prepare_embedding_delivery_rebuild_xor_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_prepare_embedding_delivery_rebuild_xor_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_prepare_embedding_delivery_rebuild_xor_upgrade()
+            TO vestrace;
+
+        EXECUTE $function$
+        CREATE OR REPLACE FUNCTION public.vestrace_finish_embedding_delivery_rebuild_xor_upgrade()
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+        BEGIN
+            IF (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                 WHERE oid=to_regprocedure(
+                     'public.vestrace_create_embedding_transition_batch_attempt(uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)'))<>'vestrace'
+               OR (SELECT pg_get_userbyid(proowner) FROM pg_proc
+                    WHERE oid=to_regprocedure(
+                        'public.vestrace_begin_delivery_embedding_outputs(uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)'))<>'vestrace'
+            THEN
+                RAISE EXCEPTION 'delivery/rebuild XOR hand-back is unavailable' USING ERRCODE='42501';
+            END IF;
+            ALTER FUNCTION public.vestrace_create_embedding_transition_batch_attempt(
+                uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint)
+                OWNER TO vestrace_guarded_owner;
+            ALTER FUNCTION public.vestrace_begin_delivery_embedding_outputs(
+                uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)
+                OWNER TO vestrace_guarded_owner;
+            -- Both are called by name from the runtime role, so unlike the
+            -- header guard the hand-back restores their exact EXECUTE grant.
+            REVOKE ALL ON FUNCTION public.vestrace_create_embedding_transition_batch_attempt(
+                uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint) FROM PUBLIC,vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_create_embedding_transition_batch_attempt(
+                uuid,uuid,uuid,uuid,uuid,bigint,uuid,bigint,bigint) TO vestrace;
+            REVOKE ALL ON FUNCTION public.vestrace_begin_delivery_embedding_outputs(
+                uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)
+                FROM PUBLIC,vestrace;
+            GRANT EXECUTE ON FUNCTION public.vestrace_begin_delivery_embedding_outputs(
+                uuid,uuid,uuid,text,uuid,uuid,text,uuid,uuid,uuid,uuid,bigint,jsonb,jsonb)
+                TO vestrace;
+            REVOKE EXECUTE ON FUNCTION
+                public.vestrace_finish_embedding_delivery_rebuild_xor_upgrade() FROM vestrace;
+        END $body$
+        $function$;
+        REVOKE ALL ON FUNCTION public.vestrace_finish_embedding_delivery_rebuild_xor_upgrade()
+            FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.vestrace_finish_embedding_delivery_rebuild_xor_upgrade()
+            TO vestrace;
+    END IF;
+END $delivery_rebuild_xor_bootstrap$;
+
 SQL

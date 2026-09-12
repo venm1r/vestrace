@@ -21,7 +21,7 @@ use vestrace_application::{
     GovernedEmbeddingsResponse, ProviderError, retrieval::EmbeddingStore,
     run::GovernedModelAdapter,
 };
-use vestrace_domain::{ConnectionKind, EmbeddingJobId};
+use vestrace_domain::{ConnectionKind, EmbeddingJobId, embedding::EmbeddingJobKind};
 use vestrace_infrastructure::{
     crypto::ContentMaterialCodec,
     postgres::{
@@ -65,11 +65,52 @@ struct PreparedJob {
     vault: OutputVaultFixture,
 }
 
+/// An ordinary delivery: one memory a caller wrote, embedded once.
 async fn prepare_job(
     owner: &PgPool,
     runtime: &PgPool,
     accepted: common::AcceptedJob,
     initialize_policy: bool,
+) -> PreparedJob {
+    prepare_job_of_kind(
+        owner,
+        runtime,
+        accepted,
+        initialize_policy,
+        EmbeddingJobKind::Delivery,
+    )
+    .await
+}
+
+/// The rebuild that answers one transition recipe.
+///
+/// Since migration 0207 this is not interchangeable with the delivery above:
+/// a transition attempt refuses any job that is not a rebuild, and a rebuild
+/// acceptance refuses a space that no transition plan targets. So every caller
+/// of this helper must have planned its transition first -- which is the order
+/// production works in, and the order this suite used to have backwards.
+async fn prepare_rebuild_job(
+    owner: &PgPool,
+    runtime: &PgPool,
+    accepted: common::AcceptedJob,
+    initialize_policy: bool,
+) -> PreparedJob {
+    prepare_job_of_kind(
+        owner,
+        runtime,
+        accepted,
+        initialize_policy,
+        EmbeddingJobKind::Rebuild,
+    )
+    .await
+}
+
+async fn prepare_job_of_kind(
+    owner: &PgPool,
+    runtime: &PgPool,
+    accepted: common::AcceptedJob,
+    initialize_policy: bool,
+    kind: EmbeddingJobKind,
 ) -> PreparedJob {
     let sources = [
         live_source(runtime, &accepted).await,
@@ -82,13 +123,25 @@ async fn prepare_job(
     }
     let output_set = outputs();
     let receipt_id = Uuid::now_v7();
+    let mut command = acceptance_command(&accepted, receipt_id, output_set.clone());
+    command.acceptance.kind = kind;
     PgEmbeddingOutputKeyRepository::new(PgStore::from_pool(runtime.clone()))
-        .accept_delivery_outputs(
-            &accepted.context,
-            acceptance_command(&accepted, receipt_id, output_set.clone()),
-        )
+        .accept_delivery_outputs(&accepted.context, command)
         .await
         .expect("the result chain must accept the physical transition job");
+    // A fixture that believes it built a rebuild and built a delivery is how
+    // the open XOR survived this suite for a whole package.
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT kind FROM embedding_jobs WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(accepted.context.workspace_id.as_uuid())
+        .bind(accepted.job_id.as_uuid())
+        .fetch_one(owner)
+        .await
+        .unwrap(),
+        kind.as_str()
+    );
     let vault = OutputVaultFixture::new();
     reconcile_output_receipts(runtime, &accepted, &output_set, &vault).await;
     record_delivery_policy(runtime, receipt_id, DeliveryPolicyCase::ExactAllowed).await;
@@ -442,18 +495,14 @@ async fn proven_batch(pool: &PgPool, runtime: &PgPool) -> ProvenBatch {
     )
     .await;
     execute(runtime, &source).await;
-    let candidate = prepare_job(
-        pool,
-        runtime,
-        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
-        false,
-    )
-    .await;
     let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
 
     let transition_id = Uuid::now_v7();
     let plan_id = Uuid::now_v7();
     let batch_id = Uuid::now_v7();
+    // Planned before the rebuild exists, because since 0207 that is the only
+    // order in which a rebuild can be accepted at all: its space must already
+    // be a transition target.
     plan(
         runtime,
         &source.accepted,
@@ -466,6 +515,13 @@ async fn proven_batch(pool: &PgPool, runtime: &PgPool) -> ProvenBatch {
             target_space_registration_id: source.accepted.space_registration_id,
             target_model_qualification_revision_id: None,
         },
+    )
+    .await;
+    let candidate = prepare_rebuild_job(
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
+        false,
     )
     .await;
     let actual_attempt = Uuid::now_v7();
@@ -539,13 +595,6 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
     .unwrap();
     assert_eq!(actual_kind, "satisfied_result");
 
-    let existing = prepare_job(
-        &pool,
-        &runtime,
-        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
-        false,
-    )
-    .await;
     let existing_transition = Uuid::now_v7();
     let existing_plan = Uuid::now_v7();
     let existing_batch = Uuid::now_v7();
@@ -561,6 +610,13 @@ async fn exact_terminal_result_and_live_existing_projection_prove_ready_to_activ
             target_space_registration_id: source.accepted.space_registration_id,
             target_model_qualification_revision_id: None,
         },
+    )
+    .await;
+    let existing = prepare_rebuild_job(
+        &pool,
+        &runtime,
+        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
+        false,
     )
     .await;
     create_attempt(
@@ -629,17 +685,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
     )
     .await;
     execute(&runtime, &source).await;
-    let candidate = prepare_job(
-        &pool,
-        &runtime,
-        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
-        false,
-    )
-    .await;
-    execute(&runtime, &candidate).await;
     let old_projection = projections(&pool, &source.accepted, source.accepted.job_id).await[0];
-    let new_projection =
-        projections(&pool, &candidate.accepted, candidate.accepted.job_id).await[0];
 
     let transition_id = Uuid::now_v7();
     let plan_id = Uuid::now_v7();
@@ -659,7 +705,23 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
     )
     .await;
 
-    let omitted = prepare_job(
+    // Both rebuilds are accepted after the plan, because since 0207 that is
+    // the only order in which a rebuild can be accepted at all. The refusals
+    // this test is about are the recipe's own -- wrong input ordinal, wrong
+    // batch -- so the jobs carrying them must be the kind the attempt accepts,
+    // or every assertion here would pass for the wrong reason.
+    let candidate = prepare_rebuild_job(
+        &pool,
+        &runtime,
+        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
+        false,
+    )
+    .await;
+    execute(&runtime, &candidate).await;
+    let new_projection =
+        projections(&pool, &candidate.accepted, candidate.accepted.job_id).await[0];
+
+    let omitted = prepare_rebuild_job(
         &pool,
         &runtime,
         common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
@@ -786,7 +848,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
         "23514",
     );
 
-    let failed = prepare_job(
+    let failed = prepare_rebuild_job(
         &pool,
         &runtime,
         common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
@@ -884,6 +946,18 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
     )
     .await
     .unwrap();
+    // A second attempt on the recipe the first one already satisfied. It used
+    // to reuse the source delivery job, which since 0207 is refused by the
+    // attempt itself -- and a refusal there would prove the kind rule over
+    // again rather than the duplicate-satisfier rule this is about. So the
+    // duplicate is its own fresh rebuild.
+    let duplicate_rebuild = prepare_rebuild_job(
+        &pool,
+        &runtime,
+        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
+        false,
+    )
+    .await;
     let duplicate_attempt = Uuid::now_v7();
     create_attempt(
         &runtime,
@@ -892,7 +966,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             plan_id: duplicate_plan,
             batch_id: duplicate_batch,
             attempt_id: duplicate_attempt,
-            job_id: source.accepted.job_id,
+            job_id: duplicate_rebuild.accepted.job_id,
             recipe_ordinal: 0,
             old_projection_id: old_projection,
             target_input_ordinal: 0,
@@ -908,7 +982,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
             duplicate_batch,
             0,
             Some(duplicate_attempt),
-            job_version(&pool, &source.accepted, source.accepted.job_id).await,
+            job_version(&pool, &source.accepted, duplicate_rebuild.accepted.job_id).await,
         )
         .await
         .unwrap_err(),
@@ -919,7 +993,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
         projections(&pool, &candidate.accepted, candidate.accepted.job_id).await[0]
     );
 
-    let reuse = prepare_job(
+    let reuse = prepare_rebuild_job(
         &pool,
         &runtime,
         common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
@@ -1343,13 +1417,6 @@ async fn prove_one_transition_onto(
     target_space: Uuid,
     target_qualification: Option<Uuid>,
 ) -> ProvenTransition {
-    // Task 6 requires the physical rebuild job to live in the batch's target
-    // space, so the candidate is accepted into that space rather than the
-    // source's.
-    let mut accepted =
-        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await;
-    accepted.space_registration_id = target_space;
-    let candidate = prepare_job(pool, runtime, accepted, false).await;
     let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
     let transition_id = Uuid::now_v7();
     let plan_id = Uuid::now_v7();
@@ -1368,6 +1435,14 @@ async fn prove_one_transition_onto(
         },
     )
     .await;
+    // Task 6 requires the physical rebuild job to live in the batch's target
+    // space, so the candidate is accepted into that space rather than the
+    // source's -- and since 0207 it is accepted after the plan, because a
+    // rebuild whose space no transition targets is refused outright.
+    let mut accepted =
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await;
+    accepted.space_registration_id = target_space;
+    let candidate = prepare_rebuild_job(pool, runtime, accepted, false).await;
     let attempt = Uuid::now_v7();
     create_attempt(
         runtime,
@@ -1830,13 +1905,6 @@ async fn partly_satisfied_batch(pool: &PgPool, runtime: &PgPool) -> PartialBatch
     )
     .await;
     execute(runtime, &source).await;
-    let candidate = prepare_job(
-        pool,
-        runtime,
-        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
-        false,
-    )
-    .await;
     let source_projections = projections(pool, &source.accepted, source.accepted.job_id).await;
 
     let transition_id = Uuid::now_v7();
@@ -1858,6 +1926,13 @@ async fn partly_satisfied_batch(pool: &PgPool, runtime: &PgPool) -> PartialBatch
             target_space_registration_id: source.accepted.space_registration_id,
             target_model_qualification_revision_id: None,
         },
+    )
+    .await;
+    let candidate = prepare_rebuild_job(
+        pool,
+        runtime,
+        common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
+        false,
     )
     .await;
     let attempt = Uuid::now_v7();
@@ -1896,7 +1971,7 @@ async fn partly_satisfied_batch(pool: &PgPool, runtime: &PgPool) -> PartialBatch
     // recipe before it counts satisfiers, so a recipe left without an attempt
     // would be refused by that earlier clause and this qualification would be
     // observing the wrong predicate.
-    let unanswered = prepare_job(
+    let unanswered = prepare_rebuild_job(
         pool,
         runtime,
         common::prepare_additional_delivery_embedding_job(runtime, &source.accepted).await,
@@ -2555,6 +2630,97 @@ async fn the_transition_header_guard_admits_every_move_its_authorities_make(pool
     assert_eq!(
         transition_state(&pool, &source.accepted, unplanned).await,
         "planned"
+    );
+
+    runtime.close().await;
+}
+
+/// A transition attempt is the act of saying "this physical job is the rebuild
+/// that answers that recipe". Before migration 0207 it accepted any job at all:
+/// `0200` line 754 reads `job_row.kind NOT IN ('delivery','rebuild')`, which
+/// refuses a third word and admits both of the two. So an ordinary delivery --
+/// a job that exists to embed one memory a caller just wrote -- could satisfy a
+/// transition recipe, and a satisfied recipe is what activation moves the
+/// corpus head on.
+///
+/// The whole of this suite was built that way, which is why nothing caught it.
+#[sqlx::test(migrations = false)]
+async fn a_transition_attempt_refuses_a_delivery_job_standing_in_for_a_rebuild(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let source = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_delivery_embedding_job(&pool, &runtime).await,
+        true,
+    )
+    .await;
+    execute(&runtime, &source).await;
+    let source_projections = projections(&pool, &source.accepted, source.accepted.job_id).await;
+    let candidate = prepare_job(
+        &pool,
+        &runtime,
+        common::prepare_additional_delivery_embedding_job(&runtime, &source.accepted).await,
+        false,
+    )
+    .await;
+    let candidate_kind: String =
+        sqlx::query_scalar("SELECT kind FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(source.accepted.context.workspace_id.as_uuid())
+            .bind(candidate.accepted.job_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        candidate_kind, "delivery",
+        "the stand-in must really be an ordinary delivery, or this proves nothing"
+    );
+
+    let transition_id = Uuid::now_v7();
+    let plan_id = Uuid::now_v7();
+    let batch_id = Uuid::now_v7();
+    plan(
+        &runtime,
+        &source.accepted,
+        PlannedBatch {
+            transition_id,
+            plan_id,
+            batch_id,
+            recipe_identities: vec![Uuid::now_v7()],
+            inputs: serde_json::json!([[0]]),
+            target_space_registration_id: source.accepted.space_registration_id,
+            target_model_qualification_revision_id: None,
+        },
+    )
+    .await;
+
+    let error = create_attempt(
+        &runtime,
+        &source.accepted,
+        BatchAttempt {
+            plan_id,
+            batch_id,
+            attempt_id: Uuid::now_v7(),
+            job_id: candidate.accepted.job_id,
+            recipe_ordinal: 0,
+            old_projection_id: source_projections[0],
+            target_input_ordinal: 0,
+        },
+    )
+    .await
+    .expect_err("a transition attempt must name a rebuild");
+    assert_sqlstate(error, "23514");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM embedding_transition_job_attempts \
+              WHERE workspace_id=$1 AND job_id=$2",
+        )
+        .bind(source.accepted.context.workspace_id.as_uuid())
+        .bind(candidate.accepted.job_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
     );
 
     runtime.close().await;

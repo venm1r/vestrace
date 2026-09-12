@@ -137,6 +137,7 @@ export const changeScopePaths = [
   'migrations/0204_embedding_legacy_adoption.sql',
   'migrations/0205_embedding_retrieval_dispatch.sql',
   'migrations/0206_embedding_transition_header_progress.sql',
+  'migrations/0207_embedding_delivery_rebuild_xor.sql',
   'scripts/p04-scope.mjs',
   'tests/embedding_fault_scenario_e2e.rs',
   'tests/model_request_semantic_observation.rs',

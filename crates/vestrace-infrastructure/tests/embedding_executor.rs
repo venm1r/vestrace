@@ -82,9 +82,50 @@ struct ExecutorFixture {
     output_count: i64,
 }
 
+/// A rebuild exists to answer a transition recipe, and since migration 0207
+/// the acceptance authority says so: a `rebuild` whose space no transition
+/// plan targets is refused with 23514. This fixture used to mint one anyway,
+/// on a plain delivery space, and nothing contradicted it.
+///
+/// So the transition is planned first, exactly as the one production rebuild
+/// path does -- legacy adoption resolves its binding through the newest
+/// transition plan naming the target space before it creates the job at all.
+async fn plan_transition_for(runtime: &PgPool, accepted: &common::AcceptedJob) {
+    let mut transaction = runtime.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>("SELECT set_config('vestrace.workspace_id',$1,true)")
+        .bind(accepted.context.workspace_id.to_string())
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_plan_embedding_transition_version(          $1,$2,$3,1,$4,$5,'no_auth',NULL,$6,$4,$5,$7,$8,$9,'no_auth',          NULL,NULL,NULL,NULL,$6,$10,$11,$12,$13::uuid[],$14::jsonb)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(accepted.context.workspace_id.as_uuid())
+    .bind(accepted.connection_id)
+    .bind(accepted.connection_revision_id)
+    .bind(accepted.no_auth_binding_id)
+    .bind(accepted.connection_qualification_id)
+    .bind(accepted.model_revision_id)
+    .bind(accepted.model_qualification_id)
+    .bind(accepted.space_registration_id)
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(vec![Uuid::now_v7()])
+    .bind(sqlx::types::Json(serde_json::json!([[0]])))
+    .fetch_one(&mut *transaction)
+    .await
+    .expect("the rebuild's space must be a planned transition target");
+    transaction.commit().await.unwrap();
+}
+
 async fn fixture(pool: &PgPool, kind: EmbeddingJobKind) -> ExecutorFixture {
     let runtime = common::runtime_pool(pool).await;
     let accepted = common::prepare_delivery_embedding_job(pool, &runtime).await;
+    if matches!(kind, EmbeddingJobKind::Rebuild) {
+        plan_transition_for(&runtime, &accepted).await;
+    }
     let sources = [
         live_source(&runtime, &accepted).await,
         live_source(&runtime, &accepted).await,

@@ -411,9 +411,24 @@ pub(super) async fn prepare_dispatch_outputs(
     fixture: &dispatch::Fixture,
     context: &RequestContext,
 ) -> Result<(Arc<HostMaterialKeyVault>, Vec<DeliveryOutputIdentity>), String> {
+    prepare_dispatch_outputs_of_kind(owner, runtime, fixture, context, EmbeddingJobKind::Delivery)
+        .await
+}
+
+/// The same preparation for a rebuild. Since migration 0207 the two are not
+/// interchangeable: a rebuild is refused unless a transition plan already
+/// names its space, so a caller asking for one must have planned first.
+pub(super) async fn prepare_dispatch_outputs_of_kind(
+    owner: &PgPool,
+    runtime: &PgPool,
+    fixture: &dispatch::Fixture,
+    context: &RequestContext,
+    kind: EmbeddingJobKind,
+) -> Result<(Arc<HostMaterialKeyVault>, Vec<DeliveryOutputIdentity>), String> {
     let source = create_live_source(runtime, fixture).await?;
     attach_source_to_evidence(owner, fixture, source).await?;
-    let (vault, outputs, acceptance_receipt) = prepare_outputs(runtime, fixture, context).await?;
+    let (vault, outputs, acceptance_receipt) =
+        prepare_outputs(runtime, fixture, context, kind).await?;
     record_allowed_delivery_policy(runtime, acceptance_receipt, outputs.len()).await?;
     Ok((vault, outputs))
 }
@@ -422,6 +437,7 @@ async fn prepare_outputs(
     runtime: &PgPool,
     fixture: &dispatch::Fixture,
     context: &RequestContext,
+    kind: EmbeddingJobKind,
 ) -> Result<(Arc<HostMaterialKeyVault>, Vec<DeliveryOutputIdentity>, Uuid), String> {
     let outputs = (0..2)
         .map(|output_ordinal| DeliveryOutputIdentity {
@@ -438,7 +454,7 @@ async fn prepare_outputs(
     let acceptance = AcceptEmbeddingJob {
         job_id: EmbeddingJobId::from_uuid(fixture.job_id),
         space_registration_id: EmbeddingSpaceId::from_uuid(fixture.space_registration_id),
-        kind: EmbeddingJobKind::Delivery,
+        kind,
         model_binding_snapshot_id: fixture.snapshot_id,
         intent: fixture
             .intent

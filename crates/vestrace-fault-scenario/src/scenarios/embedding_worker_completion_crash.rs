@@ -43,7 +43,7 @@ use uuid::Uuid;
 use vestrace_application::RequestContext;
 use vestrace_application::embedding::index::EmbeddingIndexRepository;
 use vestrace_application::embedding::{EmbeddingWorkKind, EmbeddingWorkRepository};
-use vestrace_domain::{PrincipalId, WorkspaceId};
+use vestrace_domain::{PrincipalId, WorkspaceId, embedding::EmbeddingJobKind};
 use vestrace_infrastructure::postgres::{
     PgEmbeddingIndexRepository, PgEmbeddingWorkRepository, PgStore,
 };
@@ -551,15 +551,6 @@ async fn prove_one_transition(
     // projection: without this there is no corpus for one to be a transition of.
     execute_to_publication(runtime, source, source_vault, source_outputs).await?;
 
-    let candidate = dispatch::accept_additional_job(owner, runtime, source).await?;
-    let candidate_context = RequestContext::new(
-        WorkspaceId::from_uuid(candidate.workspace_id),
-        PrincipalId::from_uuid(candidate.principal_id),
-    );
-    let (candidate_vault, candidate_outputs) =
-        preparation::prepare_dispatch_outputs(owner, runtime, &candidate, &candidate_context)
-            .await?;
-
     let source_projections: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM embedding_projection_entries \
           WHERE workspace_id=$1 AND job_id=$2 AND state='live' ORDER BY input_ordinal",
@@ -605,6 +596,23 @@ async fn prove_one_transition(
     .await
     .map_err(|error| format!("the transition plan was refused: {}", dispatch::sql(error)))?;
     transaction.commit().await.map_err(dispatch::sql)?;
+
+    // The rebuild is accepted only now. Since migration 0207 a rebuild whose
+    // space no transition plan targets is refused outright, so the plan has to
+    // exist first -- which is also the order production reaches it in.
+    let candidate = dispatch::accept_additional_job(owner, runtime, source).await?;
+    let candidate_context = RequestContext::new(
+        WorkspaceId::from_uuid(candidate.workspace_id),
+        PrincipalId::from_uuid(candidate.principal_id),
+    );
+    let (candidate_vault, candidate_outputs) = preparation::prepare_dispatch_outputs_of_kind(
+        owner,
+        runtime,
+        &candidate,
+        &candidate_context,
+        EmbeddingJobKind::Rebuild,
+    )
+    .await?;
 
     let attempt_id = Uuid::now_v7();
     let mut transaction = runtime.begin().await.map_err(dispatch::sql)?;
