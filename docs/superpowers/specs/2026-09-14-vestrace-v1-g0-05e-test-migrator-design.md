@@ -81,7 +81,7 @@ drawn, not a bug to patch.
 introduced; that helper already produces a version-bounded migrator and is
 already used by `migrate_through_version`.
 
-Sixty suites change one line each, from
+Every `#[sqlx::test]` that is not migration-sensitive changes one line, from
 `#[sqlx::test(migrations = "../../migrations")]` to
 `#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]`.
 Both crates already depend on `vestrace-infrastructure`, so no manifest changes
@@ -90,33 +90,79 @@ and a borrow of a `LazyLock` static deref-coerces to one; this was proved by a
 throwaway probe that applied through 208 and passed against the ordinary test
 cluster.
 
-## The three suites that need a complete deployment
+## The migration-sensitive tests
 
-`crates/vestrace-infrastructure/tests/postgres.rs`,
-`crates/vestrace-infrastructure/tests/fingerprint_continuity_is_fail_closed.rs`,
-and `crates/vestrace-cli/tests/v1_release_gate_cli.rs` assert full-deployment
-properties: `migration_history_compatible`, `HealthRepository::check`, and
-`deployment_qualification_evidence`. Each compares the applied ledger against
-the **complete** embedded migrator, so a database stopped at 0208 is correctly
-reported incompatible.
+Writing the plan against this spec exposed two errors in the paragraph this
+section replaces. It named whole files when the real unit is the individual
+test, and it missed a second hazard entirely.
 
-Bounding these suites would be lying to them: they would assert a health
-property against a database that is, by construction, not the deployment whose
-health they describe. They instead adopt the prepared-database pattern this
-repository already uses for P05's own authority suites: the database URL is read
-from `VESTRACE_P05_TEST_DATABASE_URL` — the same variable
-`installation_safety_authority.rs` already reads — and must name a database
-taken through the real three-phase route. When the variable is absent the suite
-prints a `BLOCKED:` line and returns without asserting, exactly as the existing
-P05 suites do.
+**Bounding can make an assertion vacuous, not merely wrong.** `postgres.rs`
+contains four tests of the form "damage the ledger, then assert the health check
+refuses" -- `health_check_rejects_missing_migration`,
+`..._unsuccessful_migration`, `..._extra_migration`, and
+`..._same_count_version_mismatch`. `HealthRepository::check` calls
+`migrations_are_compatible`, which compares the applied ledger against the
+complete embedded migrator. On a database stopped at 0208 that comparison
+already fails, so the health check is unavailable *before* the test damages
+anything. All four would pass without testing what they name. A test that
+passes for the wrong reason is worse than one that fails.
 
-That blocked path is a deliberate, and imperfect, trade. A suite that returns
-without asserting reports green while proving nothing, which is how a Windows
-fsync refusal once hid seven P05-D readiness cases. It is accepted here because
-the alternative — failing when no prepared database exists — would make the
-default workspace run red for an environmental reason and train everyone to
-ignore it. The measurement step below therefore records blocked suites by name,
-separately from passing ones, so the count is never mistaken for coverage.
+**One test drives the full migrator.** `store_migrate_applies_embedded_migrations`
+calls `store.migrate()`, which runs every embedded migration including 0209, and
+would panic on its `unwrap` rather than fail an assertion.
+
+**A second class the first rule missed: tests that start the product.** The
+runtime's own startup gate calls `migrations_are_compatible`, so a database
+bounded at 0208 is one the product refuses to serve. A test that launches
+`vestrace` and asserts it starts therefore depends on a complete deployment
+without naming any ledger symbol at all. This class is invisible to a grep for
+ledger APIs and has to be found by looking for process launches.
+
+**The rule, stated as two properties rather than a file list.** A test is
+migration-sensitive when either it references `migration_history_compatible`,
+`HealthRepository::check`, `deployment_qualification_evidence`,
+`runtime_evidence`, `store.migrate()`, or `_sqlx_migrations`; or it launches a
+`vestrace` process against the test database. Twenty-nine tests across six files
+match, out of 590 migration-applying tests:
+
+| File | Migration-sensitive tests |
+| --- | --- |
+| `crates/vestrace-cli/tests/v1_release_gate_cli.rs` | 15 |
+| `crates/vestrace-infrastructure/tests/postgres.rs` | 8 |
+| `crates/vestrace-cli/tests/runtime_schema_gate.rs` | 3 |
+| `crates/vestrace-cli/tests/recovery_qualification_cli_contract.rs` | 1 |
+| `crates/vestrace-infrastructure/tests/fingerprint_continuity_is_fail_closed.rs` | 1 |
+| `crates/vestrace-infrastructure/tests/row_level_security.rs` | 1 |
+
+**Neither property is trusted as complete.** Both were derived by pattern
+matching, and the second exists only because the first proved insufficient part
+way through planning. The classification below is therefore confirmed
+empirically — by running the suites and examining what actually fails — rather
+than accepted from the patterns that produced the candidate list.
+
+**One test is already failing and is out of scope.**
+`postgres.rs::store_migrate_applies_embedded_migrations` declares a bare
+`#[sqlx::test]`, applies no migrations through the harness, and calls
+`store.migrate()` itself, which runs the complete embedded migrator and fails at
+0209 today. P05-E does not repair it; it is recorded in the measurement as a
+pre-existing failure needing a provisioned cluster.
+
+Each of the twenty-nine is audited individually and classified exactly once:
+
+* **safe** -- the test only reads `_sqlx_migrations` incidentally, such as a
+  `WHERE version <= 207` filter, and its meaning is unchanged at 0208. It takes
+  the historical migrator with the other suites.
+* **prepared** -- the test asserts a property of a complete deployment. It moves
+  to `VESTRACE_P05_TEST_DATABASE_URL` against a database taken through the real
+  three-phase route.
+* **vacuous** -- the test would pass without exercising its subject. It moves to
+  the prepared database, because its subject is the complete deployment's
+  ledger; it is never left bounded and never simply deleted.
+
+The classification of every one of the twenty-nine is recorded in the evidence
+with the reason, so a reader can check the judgement rather than trust it. The
+remaining tests in those six files are ordinary historical-schema tests and
+stay where they are: the files are not moved wholesale.
 
 ## Guards
 
@@ -155,13 +201,19 @@ G0 result remains whatever `scripts/p05-g0-gate.mjs` emits.
    observed RED while any still does.
 3. A previously blocked suite runs to its assertions against the ordinary test
    cluster, demonstrated on at least one suite that failed at 0209 before.
-4. The three full-deployment suites report blocked without a prepared database
-   and run against one taken through the three-phase route.
-5. `cargo fmt --all -- --check`, strict clippy on every touched crate, and
+4. All twenty-nine migration-sensitive tests are classified safe, prepared, or
+   vacuous, with the reason recorded for each. Every prepared test reports
+   blocked without `VESTRACE_P05_TEST_DATABASE_URL` and passes against a
+   database taken through the three-phase route. No test is left in the vacuous
+   state, and none is deleted to avoid classifying it.
+5. The four `health_check_rejects_*` tests are shown to fail for their stated
+   reason and not merely because the ledger is short: each is observed failing
+   the health check only after its own damage, on a complete deployment.
+6. `cargo fmt --all -- --check`, strict clippy on every touched crate, and
    `git diff --check` all exit 0.
-6. The dirty-baseline verifier exits 0 with no findings for the amended P05
+7. The dirty-baseline verifier exits 0 with no findings for the amended P05
    scope.
-7. The workspace red-test figure is recorded as measured, including suites that
+8. The workspace red-test figure is recorded as measured, including suites that
    still fail and the reason each fails.
 
 ## External corpus impact
