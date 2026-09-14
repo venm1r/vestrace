@@ -122,6 +122,73 @@ fn safety_supervisor_uses_only_its_host_configuration_path() {
 }
 
 #[test]
+fn safety_supervisor_readiness_uses_only_its_host_configuration_path() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args(["safety-supervisor", "readiness"])
+        .env("VESTRACE_DATABASE__URL", UNAVAILABLE_DATABASE_URL)
+        .output()
+        .expect("safety supervisor command should start");
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "readiness unexpectedly succeeded");
+    assert!(stderr.contains("VESTRACE_SAFETY_JOURNAL_ROOT"), "{stderr}");
+    assert!(
+        !stderr.contains("database is unavailable"),
+        "readiness fell through to ordinary runtime configuration: {stderr}"
+    );
+}
+
+/// Readiness is a read with no operands. A root flag would let an operator aim
+/// it at a directory nobody designated, and a repair flag would make it a
+/// mutation wearing a read's name -- so the parser must reject both rather than
+/// the command ignoring them.
+#[test]
+fn safety_supervisor_readiness_accepts_no_mutating_or_root_flags() {
+    for argument in [
+        "--repair",
+        "--reconcile",
+        "--force",
+        "--journal-root",
+        "--witness-root",
+        "--installation-id",
+        "--verifier-key",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+            .args(["safety-supervisor", "readiness", argument])
+            .output()
+            .expect("safety supervisor command should start");
+        let stderr = stderr(&output);
+        assert!(
+            !output.status.success(),
+            "readiness accepted {argument}: {stderr}"
+        );
+        assert!(
+            stderr.contains("unexpected argument"),
+            "readiness did not reject {argument} at the parser: {stderr}"
+        );
+    }
+}
+
+/// Readiness belongs to the host supervisor and nowhere else. A top-level
+/// `vestrace readiness` would be reachable from a product container.
+#[test]
+fn readiness_is_reachable_only_under_the_safety_supervisor() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args(["readiness"])
+        .output()
+        .expect("vestrace command should start");
+    assert!(
+        !output.status.success(),
+        "readiness is exposed as a top-level command"
+    );
+    assert!(
+        stderr(&output).contains("unrecognized subcommand"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn plan_is_a_read_only_operator_contract_without_database_access() {
     let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
         .args([

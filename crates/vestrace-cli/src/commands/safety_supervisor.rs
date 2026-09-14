@@ -19,10 +19,10 @@ use vestrace_application::{
     AcquireRestoreHold, AppendWal, ArchiveKeyCustody, ArchiveKeyEnvelopeRef,
     ArchiveLifecycleTransition, ArchiveObjectWrite, BackupArchiveController,
     BackupArchiveRepository, BackupObjectStore, CommitArchiveCheckpoint,
-    InitializeInstallationSafety, InstallationMutationPermit, InstallationSupervisorContext,
-    PermitMode, RegisterDatabaseGeneration, ReserveArchiveAppend, RestoreAttemptAuthorityService,
-    RestoreCutoverController, SafetyAuthorityRepository, SafetyAuthorityService,
-    StartManagedBackup,
+    InitializeInstallationSafety, InstallationMutationPermit, InstallationSafetyWitness as _,
+    InstallationSupervisorContext, PermitMode, RegisterDatabaseGeneration, ReserveArchiveAppend,
+    RestoreAttemptAuthorityService, RestoreCutoverController, SafetyAuthorityRepository,
+    SafetyAuthorityService, StartManagedBackup,
 };
 use vestrace_domain::{
     ArchiveAppendReservation, ArchiveHead, ArchiveObjectDescriptor, ArchiveObjectDescriptorInput,
@@ -2117,6 +2117,161 @@ async fn backup_lifecycle_transition(transition: ArchiveLifecycleTransition) -> 
         transition.event_kind()
     );
     Ok(())
+}
+
+/// Reports whether the protected host roots and the database agree about this
+/// installation's safety state.
+///
+/// This is a read and only a read. It opens the witness and journal without
+/// creating either, reads the bootstrap record's bytes rather than the
+/// `open_or_create` path that would write one, takes no permit, and rolls the
+/// database read back. It repairs nothing: a host head ahead of the database
+/// head is what `reconcile` exists for, and readiness reporting that condition
+/// as healthy -- or quietly fixing it -- would make both commands untrustworthy.
+///
+/// It exits zero only when every compared value matches exactly.
+pub async fn readiness() -> anyhow::Result<()> {
+    let roots = Roots::load()?;
+
+    let witness = FileInstallationSafetyWitness::open(&roots.witness_root)
+        .map_err(|error| anyhow!("witness is unavailable: {error}"))?;
+    let binding = witness.binding().clone();
+
+    // The bootstrap record is the host's own statement of which installation
+    // these roots belong to, and `SafetyBootstrapRecord` is its only decoder.
+    // That decoder writes the record when none exists, which readiness must
+    // never do, so the absent case is refused here first and the decoder is
+    // reached only on the branch where it compares and never creates.
+    let bootstrap_path = SafetyBootstrapRecord::path(&roots.bootstrap_root);
+    if !bootstrap_path.is_file() {
+        return Err(anyhow!(
+            "bootstrap record is absent at {}",
+            bootstrap_path.display()
+        ));
+    }
+    SafetyBootstrapRecord::open_or_create(&roots.bootstrap_root, &binding)
+        .map_err(|error| anyhow!("bootstrap record does not bind these roots: {error}"))?;
+
+    let receipt = witness
+        .durable_receipt()
+        .map_err(|error| anyhow!("witness receipt is unavailable: {error}"))?;
+    receipt
+        .verify_against(binding.witness_public_key())
+        .map_err(|error| anyhow!("witness receipt is not signed by the bound witness: {error}"))?;
+    let head = witness
+        .read_head()
+        .await
+        .map_err(|error| anyhow!("witness head is unavailable: {error}"))?;
+    if head.sequence() != receipt.sequence() {
+        return Err(anyhow!(
+            "witness head is at {} but its durable receipt is at {}",
+            head.sequence(),
+            receipt.sequence()
+        ));
+    }
+
+    let journal = FileSafetyJournal::open(&roots.journal_root)
+        .map_err(|error| anyhow!("journal is unavailable: {error}"))?;
+    let entry = journal
+        .read_exact(receipt.sequence(), receipt.journal_digest())
+        .map_err(|error| anyhow!("journal chain is unavailable: {error}"))?;
+    entry
+        .verify()
+        .map_err(|error| anyhow!("journal entry signature is invalid: {error}"))?;
+    if entry.signer_public_key() != binding.journal_public_key() {
+        return Err(anyhow!(
+            "journal entry is signed by a key the bootstrap binding does not name"
+        ));
+    }
+
+    let store = supervisor_store().await?;
+    let repository = PgSafetyAuthorityRepository::new(store);
+    let persisted = repository
+        .current()
+        .await
+        .map_err(|error| anyhow!("guarded safety read failed: {error}"))?
+        .ok_or_else(|| anyhow!("installation safety authority is not initialized"))?;
+
+    // Every field is compared. A readiness check that compared the sequence
+    // alone would pass an installation whose database names a different
+    // generation at the same position.
+    let mismatches = [
+        (
+            "installation_id",
+            persisted.installation_id() != binding.installation_id(),
+        ),
+        (
+            "fingerprint_key_id",
+            persisted.fingerprint_key_id() != binding.fingerprint_key_id(),
+        ),
+        (
+            "fingerprint_continuity_proof",
+            persisted.continuity_proof() != binding.continuity_proof(),
+        ),
+        (
+            "journal_signer_public_key",
+            persisted.journal_public_key() != binding.journal_public_key(),
+        ),
+        (
+            "witness_public_key",
+            persisted.witness_public_key() != binding.witness_public_key(),
+        ),
+        (
+            "witness_sequence",
+            persisted.sequence() != receipt.sequence(),
+        ),
+        (
+            "journal_digest",
+            persisted.journal_digest() != receipt.journal_digest(),
+        ),
+        (
+            "witness_state",
+            persisted.witness_state() != receipt.state().canonical_bytes(),
+        ),
+        (
+            "active_generation_id",
+            persisted.active_generation_id() != receipt.generation_id(),
+        ),
+        (
+            "activation_epoch",
+            persisted.activation_epoch() != receipt.activation_epoch(),
+        ),
+    ];
+    let divergent: Vec<&str> = mismatches
+        .iter()
+        .filter(|(_, differs)| *differs)
+        .map(|(field, _)| *field)
+        .collect();
+    if !divergent.is_empty() {
+        return Err(anyhow!(
+            "host safety roots and database diverge on: {}",
+            divergent.join(", ")
+        ));
+    }
+
+    // Identities and positions only. The signing keys stay on disk, and the
+    // continuity proof is not printed: supervisor output reaches logs.
+    println!(
+        "ready installation={} sequence={} generation={} epoch={} journal_digest={}",
+        persisted.installation_id().as_uuid(),
+        persisted.sequence(),
+        persisted.active_generation_id().as_uuid(),
+        persisted.activation_epoch(),
+        readiness_hex(persisted.journal_digest()),
+    );
+    Ok(())
+}
+
+fn readiness_hex(digest: SafetyJournalDigest) -> String {
+    use std::fmt::Write as _;
+
+    digest
+        .as_bytes()
+        .iter()
+        .fold(String::with_capacity(64), |mut encoded, byte| {
+            write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+            encoded
+        })
 }
 
 /// Persists only the exact already-durable journal entry and receipt after a

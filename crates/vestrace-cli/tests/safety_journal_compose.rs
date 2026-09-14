@@ -82,7 +82,14 @@ fn journal_initializer_has_a_read_only_root_and_no_new_privileges() {
 #[test]
 fn product_services_never_mount_safety_roots_when_compose_config_is_available() {
     let output = Command::new("docker")
-        .args(["compose", "-f", compose_file().to_str().unwrap(), "config", "--format", "json"])
+        .args([
+            "compose",
+            "-f",
+            compose_file().to_str().unwrap(),
+            "config",
+            "--format",
+            "json",
+        ])
         .output();
     let Ok(output) = output else {
         eprintln!("BLOCKED: Docker Compose is unavailable; static mount inventory was checked");
@@ -98,9 +105,18 @@ fn product_services_never_mount_safety_roots_when_compose_config_is_available() 
         let mounts = service["volumes"].as_array().cloned().unwrap_or_default();
         for mount in mounts {
             let mount = mount.to_string();
-            assert!(!mount.contains("installation-safety-journal"), "{name} gained journal custody");
-            assert!(!mount.contains("safety-witness"), "{name} gained witness custody");
-            assert!(!mount.contains("backup-archive"), "{name} gained archive custody");
+            assert!(
+                !mount.contains("installation-safety-journal"),
+                "{name} gained journal custody"
+            );
+            assert!(
+                !mount.contains("safety-witness"),
+                "{name} gained witness custody"
+            );
+            assert!(
+                !mount.contains("backup-archive"),
+                "{name} gained archive custody"
+            );
         }
     }
 }
@@ -158,7 +174,10 @@ fn every_declared_stage_names_an_explicit_ordered_prerequisite() {
         for (dependency, edge) in depends_on.unwrap() {
             let condition = edge["condition"].as_str().unwrap_or_default();
             assert!(
-                matches!(condition, "service_healthy" | "service_completed_successfully"),
+                matches!(
+                    condition,
+                    "service_healthy" | "service_completed_successfully"
+                ),
                 "{name} waits on {dependency} with the unordered condition {condition}"
             );
         }
@@ -213,7 +232,10 @@ fn only_the_journal_initializer_claims_root_and_no_service_expands_privilege() {
             "{name} requests privileged execution"
         );
         assert!(
-            service["cap_add"].as_array().map(|caps| caps.is_empty()).unwrap_or(true),
+            service["cap_add"]
+                .as_array()
+                .map(|caps| caps.is_empty())
+                .unwrap_or(true),
             "{name} requests added capabilities"
         );
         assert!(
@@ -237,9 +259,14 @@ fn only_the_journal_initializer_claims_root_and_no_service_expands_privilege() {
     let initializer = &config["services"]["vestrace-safety-journal-init"];
     assert_eq!(initializer["user"].as_str(), Some("0:0"));
     assert_eq!(initializer["read_only"].as_bool(), Some(true));
-    let security_opt = initializer["security_opt"].as_array().cloned().unwrap_or_default();
+    let security_opt = initializer["security_opt"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
-        security_opt.iter().any(|opt| opt.as_str() == Some("no-new-privileges:true")),
+        security_opt
+            .iter()
+            .any(|opt| opt.as_str() == Some("no-new-privileges:true")),
         "the journal initializer dropped no-new-privileges"
     );
 }

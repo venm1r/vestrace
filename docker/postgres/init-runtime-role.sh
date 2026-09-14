@@ -4784,6 +4784,70 @@ REVOKE ALL ON FUNCTION public.vestrace_install_p05_restore_refusal_guards() FROM
 GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_restore_refusal_guards() TO vestrace;
 SQL
 
+psql   --username "$POSTGRES_USER"   --dbname "$POSTGRES_DB"   --no-password   --no-psqlrc   --set=ON_ERROR_STOP=1 <<'SQL'
+-- P05-D least-privilege readiness read.
+--
+-- The supervisor holds no SELECT privilege on any safety table, and P05
+-- deliberately refuses to add one: a table grant would also expose every future
+-- column added to the singleton. This is the whole read surface instead -- one
+-- guarded owner function that returns exactly the columns a host continuity
+-- check compares, and nothing else.
+--
+-- It is a read. It takes no arguments, so a caller cannot steer it at another
+-- row, and it holds no key material the caller did not already have to possess
+-- to reach this role. The public keys it returns are public by construction;
+-- no private key, signature, or secret is exposed.
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_safety_readiness_read()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $readiness_installer$
+BEGIN
+  IF session_user <> 'vestrace' AND NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), FALSE) THEN
+    RAISE EXCEPTION 'P05 readiness installation requires the fixed P05 migration route' USING ERRCODE = '42501';
+  END IF;
+  EXECUTE $readiness_body$
+    CREATE OR REPLACE FUNCTION public.vestrace_read_installation_safety_readiness()
+    RETURNS JSONB
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    STABLE
+    SET search_path = pg_catalog, public
+    AS $readiness$
+    DECLARE
+      state public.installation_safety_state%ROWTYPE;
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      SELECT * INTO state FROM public.installation_safety_state WHERE singleton;
+      IF NOT FOUND THEN
+        RETURN NULL;
+      END IF;
+      -- The stored state digest is recomputed here rather than echoed, so a
+      -- row whose canonical bytes were edited without its digest -- or the
+      -- reverse -- cannot be read back as internally consistent.
+      IF state.witness_state_digest IS DISTINCT FROM digest(state.witness_state, 'sha256') THEN
+        RAISE EXCEPTION 'P05 persisted witness state does not match its digest' USING ERRCODE = '22023';
+      END IF;
+      RETURN jsonb_build_object(
+        'installation_id', state.installation_id,
+        'fingerprint_key_id', state.fingerprint_key_id,
+        'continuity_proof', encode(state.fingerprint_continuity_proof, 'hex'),
+        'journal_signer_public_key', encode(state.journal_signer_public_key, 'hex'),
+        'witness_public_key', encode(state.witness_public_key, 'hex'),
+        'witness_sequence', state.witness_sequence,
+        'journal_digest', encode(state.journal_digest, 'hex'),
+        'witness_state', encode(state.witness_state, 'hex'),
+        'active_generation_id', state.active_generation_id,
+        'activation_epoch', state.activation_epoch
+      );
+    END $readiness$;
+  $readiness_body$;
+  ALTER FUNCTION public.vestrace_read_installation_safety_readiness() OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_read_installation_safety_readiness() FROM PUBLIC, vestrace;
+  GRANT EXECUTE ON FUNCTION public.vestrace_read_installation_safety_readiness() TO vestrace_safety_supervisor;
+END $readiness_installer$;
+ALTER FUNCTION public.vestrace_install_p05_safety_readiness_read() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_safety_readiness_read() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_safety_readiness_read() TO vestrace;
+SQL
+
 # A physical base backup opens a replication connection, which PostgreSQL's
 # generic `host all ...` rule does not cover.  This script also runs from the
 # separate role-provisioner container, which cannot see PGDATA; only the

@@ -99,6 +99,13 @@ enum SafetySupervisorAction {
         action: RestoreSupervisorAction,
     },
     Reconcile,
+    /// Report whether the protected host roots and the database agree.
+    ///
+    /// Deliberately takes no arguments. Roots are environment-only, and a flag
+    /// that named one would let an operator point readiness at a directory
+    /// nobody designated; a flag that repaired a divergence would make this a
+    /// mutation wearing a read's name.
+    Readiness,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -610,6 +617,7 @@ async fn run() -> anyhow::Result<()> {
                 action: RestoreSupervisorAction::Refuse { target_root },
             } => commands::safety_supervisor::restore_refuse(target_root).await,
             SafetySupervisorAction::Reconcile => commands::safety_supervisor::reconcile().await,
+            SafetySupervisorAction::Readiness => commands::safety_supervisor::readiness().await,
         };
     }
 

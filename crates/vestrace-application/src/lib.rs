@@ -212,8 +212,8 @@ pub use identity::{
 pub use installation::{InstallationMutationPermit, PermitHandle, PermitMode};
 pub use installation_safety::{
     InitializeInstallationSafety, InstallationSafetySnapshot, InstallationSafetyWitness,
-    InstallationSupervisorContext, RegisterDatabaseGeneration, SafetyAuthorityRepository,
-    SafetyAuthorityService, SafetyJournal,
+    InstallationSupervisorContext, PersistedInstallationSafety, RegisterDatabaseGeneration,
+    SafetyAuthorityRepository, SafetyAuthorityService, SafetyJournal,
 };
 pub use jobs::*;
 pub use material::{

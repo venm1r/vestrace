@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use vestrace_domain::{
-    DatabaseGenerationId, InstallationId, JournalPublicKey, RequestId, SafetyBootstrapBinding,
-    SafetyJournalDigest, SignedJournalEntry, WitnessAdvance, WitnessError, WitnessHead,
-    WitnessPublicKey, WitnessReceipt,
+    DatabaseGenerationId, FingerprintKeyContinuityProof, FingerprintKeyId, InstallationId,
+    JournalPublicKey, RequestId, SafetyBootstrapBinding, SafetyJournalDigest, SignedJournalEntry,
+    WitnessAdvance, WitnessError, WitnessHead, WitnessPublicKey, WitnessReceipt,
 };
 
 use crate::{ApplicationError, InstallationMutationPermit, PermitMode, RequestContext, UnitOfWork};
@@ -147,6 +147,107 @@ impl InstallationSafetySnapshot {
     }
 }
 
+/// The safety singleton exactly as PostgreSQL holds it.
+///
+/// This is deliberately not an [`InstallationSafetySnapshot`]. A snapshot is
+/// what a successful mutation reports and is derived from the entry and
+/// receipt the caller already holds; this is the row itself, read back so that
+/// a host supervisor can compare the two sides byte for byte. Reporting a
+/// readiness result from the caller's own inputs would prove nothing about
+/// what was persisted.
+#[derive(Clone, Eq, PartialEq)]
+pub struct PersistedInstallationSafety {
+    installation_id: InstallationId,
+    fingerprint_key_id: FingerprintKeyId,
+    continuity_proof: FingerprintKeyContinuityProof,
+    journal_public_key: JournalPublicKey,
+    witness_public_key: WitnessPublicKey,
+    sequence: u64,
+    journal_digest: SafetyJournalDigest,
+    witness_state: Vec<u8>,
+    active_generation_id: DatabaseGenerationId,
+    activation_epoch: u64,
+}
+
+impl PersistedInstallationSafety {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        installation_id: InstallationId,
+        fingerprint_key_id: FingerprintKeyId,
+        continuity_proof: FingerprintKeyContinuityProof,
+        journal_public_key: JournalPublicKey,
+        witness_public_key: WitnessPublicKey,
+        sequence: u64,
+        journal_digest: SafetyJournalDigest,
+        witness_state: Vec<u8>,
+        active_generation_id: DatabaseGenerationId,
+        activation_epoch: u64,
+    ) -> Self {
+        Self {
+            installation_id,
+            fingerprint_key_id,
+            continuity_proof,
+            journal_public_key,
+            witness_public_key,
+            sequence,
+            journal_digest,
+            witness_state,
+            active_generation_id,
+            activation_epoch,
+        }
+    }
+    pub const fn installation_id(&self) -> InstallationId {
+        self.installation_id
+    }
+    pub const fn fingerprint_key_id(&self) -> FingerprintKeyId {
+        self.fingerprint_key_id
+    }
+    pub const fn continuity_proof(&self) -> &FingerprintKeyContinuityProof {
+        &self.continuity_proof
+    }
+    pub fn journal_public_key(&self) -> &JournalPublicKey {
+        &self.journal_public_key
+    }
+    pub fn witness_public_key(&self) -> &WitnessPublicKey {
+        &self.witness_public_key
+    }
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    pub const fn journal_digest(&self) -> SafetyJournalDigest {
+        self.journal_digest
+    }
+    pub fn witness_state(&self) -> &[u8] {
+        &self.witness_state
+    }
+    pub const fn active_generation_id(&self) -> DatabaseGenerationId {
+        self.active_generation_id
+    }
+    pub const fn activation_epoch(&self) -> u64 {
+        self.activation_epoch
+    }
+}
+
+/// The domain withholds `Debug` from `FingerprintKeyContinuityProof` so it
+/// cannot reach a log by accident. Deriving it here would have reintroduced
+/// exactly that, one field at a time, so this prints the identities and the
+/// position and redacts the proof and the canonical state.
+impl std::fmt::Debug for PersistedInstallationSafety {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PersistedInstallationSafety")
+            .field("installation_id", &self.installation_id)
+            .field("fingerprint_key_id", &self.fingerprint_key_id)
+            .field("continuity_proof", &"<redacted>")
+            .field("sequence", &self.sequence)
+            .field("journal_digest", &self.journal_digest)
+            .field("witness_state_len", &self.witness_state.len())
+            .field("active_generation_id", &self.active_generation_id)
+            .field("activation_epoch", &self.activation_epoch)
+            .finish_non_exhaustive()
+    }
+}
+
 #[async_trait]
 pub trait SafetyJournal: Send + Sync {
     /// Persist exactly one signed immutable entry before it reaches the witness.
@@ -179,7 +280,9 @@ pub trait SafetyAuthorityRepository: Send + Sync {
         signed_entry: SignedJournalEntry,
         witness_receipt: WitnessReceipt,
     ) -> Result<InstallationSafetySnapshot, ApplicationError>;
-    async fn current(&self) -> Result<Option<InstallationSafetySnapshot>, ApplicationError>;
+    /// Reads the persisted safety singleton through the guarded least-privilege
+    /// read surface. `None` means the authority has not been initialized.
+    async fn current(&self) -> Result<Option<PersistedInstallationSafety>, ApplicationError>;
 }
 
 /// Enforces the required ordering: exclusive permit, durable journal, witness
@@ -299,7 +402,7 @@ impl SafetyAuthorityService {
         })
     }
 
-    pub async fn current(&self) -> Result<Option<InstallationSafetySnapshot>, ApplicationError> {
+    pub async fn current(&self) -> Result<Option<PersistedInstallationSafety>, ApplicationError> {
         self.repository.current().await
     }
 }

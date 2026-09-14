@@ -28,6 +28,7 @@ const P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION: i64 = 211;
 const P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION: i64 = 212;
 const P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION: i64 = 213;
 const P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION: i64 = 214;
+const P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION: i64 = 215;
 const P05_MIGRATION_ADVISORY_LOCK: i64 = 0x5030_3509;
 
 #[derive(Clone, Debug)]
@@ -357,6 +358,9 @@ fn p05_assertion_migration(
         ) | (
             P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
             P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION
+        ) | (
+            P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION
         )
     );
     if !permitted {
@@ -449,7 +453,8 @@ mod tests {
         P05_HISTORY_PREFIX_VERSION, P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
-        P05_SAFETY_ASSERTION_MIGRATION_VERSION, p05_assertion_migration,
+        P05_SAFETY_ASSERTION_MIGRATION_VERSION, P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+        p05_assertion_migration,
     };
 
     #[test]
@@ -498,9 +503,24 @@ mod tests {
         )
         .expect("0214 after 0213 must be embedded");
         assert_eq!(restore_events.version, 214);
+        let readiness = p05_assertion_migration(
+            P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+        )
+        .expect("0215 after 0214 must be embedded");
+        assert_eq!(readiness.version, 215);
+        assert!(!readiness.no_tx, "0215 must commit with its ledger row");
+        assert!(
+            !readiness.sql.to_ascii_uppercase().contains("CREATE TABLE"),
+            "0215 must only assert the provisioned readiness read surface"
+        );
         assert!(p05_assertion_migration(208, 208).is_err());
         assert!(p05_assertion_migration(210, 208).is_err());
         assert!(p05_assertion_migration(211, 209).is_err());
         assert!(p05_assertion_migration(209, 207).is_err());
+        // 0215 is pinned to 0214 alone; skipping the restore-event mirror would
+        // install a read surface over a catalog that never gained its guard.
+        assert!(p05_assertion_migration(215, 213).is_err());
+        assert!(p05_assertion_migration(215, 208).is_err());
     }
 }
