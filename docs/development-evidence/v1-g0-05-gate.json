@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "gate": "G0",
+  "recorded_at_utc": "2026-09-14T00:00:00.000Z",
+  "recorded_by": "P05-D compose and G0 evidence",
+  "note": "Statuses are collected by scripts/p05-g0-gate.mjs from the digest-bound artifacts named below. No criterion is passed from prose, and no criterion is inherited from an earlier package.",
+  "criteria": [
+    {
+      "id": "g0-01",
+      "claim": "unknown",
+      "reason": "Route authority is P01 work. P05-D started no server and exercised no route.",
+      "sources": []
+    },
+    {
+      "id": "g0-02",
+      "claim": "unknown",
+      "reason": "Mutation/audit atomicity is P01 work and was not exercised by this package.",
+      "sources": []
+    },
+    {
+      "id": "g0-03",
+      "claim": "unknown",
+      "reason": "Provider effect authority is P03 work. P05-D made no provider call.",
+      "sources": []
+    },
+    {
+      "id": "g0-04",
+      "claim": "unknown",
+      "reason": "ModelRequestEvidence reconstruction is P03/P04 work and needs a live provider, which this package is forbidden to call.",
+      "sources": []
+    },
+    {
+      "id": "g0-05",
+      "claim": "unknown",
+      "reason": "Provider transport egress and Web PKI enforcement is P03 work and needs a remote endpoint.",
+      "sources": []
+    },
+    {
+      "id": "g0-06",
+      "claim": "unknown",
+      "reason": "Connection and credential guard serialization is P03 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-07",
+      "claim": "unknown",
+      "reason": "Admission, leases, and throttle behaviour is P03 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-08",
+      "claim": "unknown",
+      "reason": "MaterialKeyCreationIntent enforcement is P02 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-09",
+      "claim": "unknown",
+      "reason": "CredentialKeyCreationIntent lifecycle is P03 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-10",
+      "claim": "unknown",
+      "reason": "EmbeddingSpaceTransition oracles are P04 work and include browser evidence, which this package neither ran nor is scoped to run.",
+      "sources": []
+    },
+    {
+      "id": "g0-11",
+      "claim": "unknown",
+      "reason": "Credential abort and Candidate abandon closure is P03/P04 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-12",
+      "claim": "unknown",
+      "reason": "DrainMutationPermit reconciliation is P04 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-13",
+      "claim": "unknown",
+      "reason": "Unbound pre-Prepared drain routing is P04 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-14",
+      "claim": "unknown",
+      "reason": "Duplicate-charge successors and retrieval fences are P04 work and include browser evidence.",
+      "sources": []
+    },
+    {
+      "id": "g0-15",
+      "claim": "unknown",
+      "reason": "Append-only evidence and material lifecycle guarantees are P02/P04 work.",
+      "sources": []
+    },
+    {
+      "id": "g0-16",
+      "claim": "unknown",
+      "reason": "Witnessed backup, restore, and crypto-erasure are P05-A through P05-C work. P05-D neither re-ran nor re-verified that evidence, and inheriting a pass from an earlier package is exactly the inference this collector exists to prevent.",
+      "sources": []
+    },
+    {
+      "id": "g0-17",
+      "claim": "blocked",
+      "reason": "P05-D proves the Compose least-privilege topology, the independent host safety stores, the supervisor-only readiness read and its grants, and the forward-only 0209-0215 route. It does not re-prove the archiver or the create-only fingerprint-key identity/proof conjuncts of this criterion, which belong to P05-A and P05-B, so the conjunction is not closed here.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/compose-config.txt",
+          "sha256": "e54588cc142ca1b9a1275458db6f175f6950bebabc669f9133656b8e1cf1c71c",
+          "command": "docker compose -f docker-compose.yml config --quiet",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/compose-test.txt",
+          "sha256": "36671c9150a13f8dafbc3586e7fadd417e0973b38296f4f9236fe420d5db2a4c",
+          "command": "cargo test -p vestrace-cli --test safety_journal_compose",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/readiness-test.txt",
+          "sha256": "21ef02864b24e982a8dd5a21cd3e88eed29088e1ddf512099d7905aaa3e6ce56",
+          "command": "cargo test -p vestrace-cli --test safety_supervisor_readiness --test command_contract (Linux runner against a disposable PostgreSQL 17)",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/readiness-grants.txt",
+          "sha256": "e453bff2b62c2d6ad6b04495c89af4080cbd81e0283bec99ca2eeda7af3b7ed2",
+          "command": "psql: readiness read surface owner, volatility, and grants",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/migration-ledger.txt",
+          "sha256": "ccc89a2f82f6d1585654ec8f1a4cfd03323ec4361eb27e5e267e9984fada2fc4",
+          "command": "psql: forward-only P05 migration ledger",
+          "exit_code": 0
+        }
+      ]
+    },
+    {
+      "id": "g0-18",
+      "claim": "unknown",
+      "reason": "The pinned protocol lock and executable contract fixtures belong to a later package; P05-D produced no fixture evidence.",
+      "sources": []
+    },
+    {
+      "id": "g0-19",
+      "claim": "pass",
+      "reason": "The inherited dirty tree is preserved and the P05 change boundary is declared in scripts/p05-scope.mjs, captured byte-for-byte in the preflight, and enforced by the dirty-baseline verifier, which reports no finding.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/dirty-baseline.txt",
+          "sha256": "322fc7200b739aafafa0d109025f80e926523163e11ce04ccc68b81c0cc8c2a8",
+          "command": "node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-05-preflight.json --scope p05-scope.mjs",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/scope-test.txt",
+          "sha256": "8ba4d93b8d44822eca4f84b2ff611d286a2f4354df06b3b9b7105f37e9f86e92",
+          "command": "node --test tests/p05_scope.test.mjs",
+          "exit_code": 0
+        }
+      ]
+    }
+  ]
+}

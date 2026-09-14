@@ -1,0 +1,44 @@
+$ docker run --rm --network p05d_default ... cargo test -p vestrace-cli --test safety_supervisor_readiness --test command_contract
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.21s
+     Running tests/command_contract.rs (target-linux/debug/deps/command_contract-1ee4ded16edd4a1c)
+
+running 20 tests
+test bounded_migration_flags_are_mutually_exclusive_before_database_access ... ok
+test configured_capability_policy_warns_at_startup ... ok
+test enabled_recovery_without_workspaces_refuses_to_start ... ok
+test every_outbox_topic_produced_has_a_handler ... ok
+test mcp_fails_explicitly_when_database_is_unavailable ... ok
+test migrate_fails_when_database_is_unavailable_and_redacts_secrets ... ok
+test no_job_worker_completes_work_it_did_not_do ... ok
+test plan_is_a_read_only_operator_contract_without_database_access ... ok
+test readiness_is_reachable_only_under_the_safety_supervisor ... ok
+test rebuild_fails_explicitly_when_database_is_unavailable ... ok
+test repair_contract_does_not_start_without_an_execution_adapter ... ok
+test safety_supervisor_readiness_accepts_no_mutating_or_root_flags ... ok
+test safety_supervisor_readiness_uses_only_its_host_configuration_path ... ok
+test safety_supervisor_uses_only_its_host_configuration_path ... ok
+test server_and_worker_run_startup_recovery_before_serving_work ... ok
+test server_defaults_to_the_deny_all_policy_engine ... ok
+test subscribers_filter_globally_rather_than_per_layer ... ok
+test worker_drains_the_outbox ... ok
+test worker_fails_explicitly_when_database_is_unavailable ... ok
+test worker_polls_configured_workspaces_instead_of_a_generated_one ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.76s
+
+     Running tests/safety_supervisor_readiness.rs (target-linux/debug/deps/safety_supervisor_readiness-1fe93abc34031bf2)
+
+running 9 tests
+test a_corrupt_journal_entry_refuses_readiness ... ok
+test a_forged_witness_record_refuses_readiness ... ok
+test a_mismatched_fingerprint_refuses_readiness ... ok
+test a_relative_host_root_refuses_readiness ... ok
+test a_stale_database_sequence_and_digest_refuse_readiness ... ok
+test absent_host_roots_refuse_readiness ... ok
+test an_exact_healthy_state_reports_ready ... ok
+test an_uninitialized_authority_refuses_readiness ... ok
+test readiness_never_mutates_the_authority ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.68s
+
+exit: 0

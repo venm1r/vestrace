@@ -1,7 +1,7 @@
-# V1 G0-05 P05-A through P05-C: backup and restore qualification evidence
+# V1 G0-05 P05-A through P05-D: backup, restore, Compose, and G0 evidence
 
-**Recorded:** 2026-09-13  
-**Acceptance boundary:** P05-A through P05-C. This records the implemented archive and restore/cutover qualification; it is not deployment qualification or full G0 completion.
+**Recorded:** 2026-09-13, extended 2026-09-14 for P05-D.  
+**Acceptance boundary:** P05-A through P05-D. This records the implemented archive, restore/cutover, Compose topology, and host readiness qualification; it is not deployment qualification or full G0 completion. The aggregate G0 result is whatever `scripts/p05-g0-gate.mjs` emits, and it is not a pass.
 
 ## Observed verification
 
@@ -200,3 +200,56 @@ This intermediate probe proved source-volume non-mutation across an independent 
 | Physical encrypted capture toward Task 6 | Exit 0 in the isolated `p05c-physical-supervisor`: `pg_basebackup` connected to a separate PostgreSQL 17 source through a replication DSN, with no source-data volume mounted in the supervisor. Its guarded set `01a09d5b-2f08-7153-b652-e3c9c061df2e` began with the encrypted physical base and two receiver-streamed 16 MiB WAL members, with descriptor ranges `100663336→117440512→134217728`; the next row records its frozen manifest and target result. |
 | Physical encrypted restore, freeze, and activation | Exit 0 in the separate `p05c-physical-supervisor`, source, and target containers. The source quiescer terminated active `vestrace` sessions, denied new `vestrace` connections, checkpointed and switched WAL, then recorded a receipt at `150994944` (`0/9000000`). The guarded manifest added its third 16 MiB WAL member through that point. `restore materialize` subsequently recovered its exact existing target receipt, rather than rerunning the target tool. PostgreSQL 17 started from the fresh target volume, recovered through `0/9000028`, retained system identifier `7685079405851729958`, and contained all 20,000 rows of the WAL-created `postgres.p05c_wal_fill` table. Source PGDATA hash was `ffe1e8bbef3efaf60de07e7491de6066c96e9f22c61c1ff00aac85e85bde1cbb` before and after activation and target startup. Guarded state finished with target generation `82b74b76-ad36-4e87-908b-a8c952419127` at epoch 1, restore state `released`, and zero live restore holds. |
 | Correctness defects found by the live harness | The harness exposed and the increment fixes two defects: restore descriptor queries omitted `backup_set_id`, and pre-CAS restore witness advances were not mirrored to PostgreSQL, causing the generation guard to reject a sequence gap. Neither fix weakens the generation CAS or host custody boundary. |
+
+## P05-D Compose topology, host readiness, and the G0 aggregate
+
+**Recorded:** 2026-09-14. Every row below is a command that was run, with its
+observed exit. Nothing here is inferred from an earlier package.
+
+### Task 2 — least-privilege Compose topology
+
+| Evidence | Observed result |
+| --- | --- |
+| `docker compose -f docker-compose.yml config --quiet` | Exit 0 against Docker Compose v5.3.1. |
+| `cargo test -p vestrace-cli --test safety_journal_compose` | Exit 0; 7 tests passed. Four assertions are new: every named stage declares an explicit prerequisite with an ordered condition, every health-gated edge names a service that actually declares a health check, only `vestrace-safety-journal-init` claims a root effective user, and no service requests privileged execution, added capabilities, or the host PID/network namespace. |
+| Observed RED before repair | `every_declared_stage_names_an_explicit_ordered_prerequisite` failed with `vestrace-fingerprint-vault-init starts without an explicit prerequisite`. That service had no `depends_on` at all, so Compose was free to create the installation-fingerprint vault root before migration 0209 created the safety authority its continuity record binds to. |
+| Repair | `vestrace-fingerprint-vault-init` now waits for `vestrace-migrate-p05` to complete successfully. No volume, mount, or privilege was added; `installation-safety-journal` still has exactly one declared consumer, and no supervisor, witness, archive, or host-key volume exists in Compose. |
+
+### Task 3 — host-supervisor continuity readiness
+
+| Evidence | Observed result |
+| --- | --- |
+| Clean forward-only route on a disposable PostgreSQL 17 | A fresh `p05d-postgres` built from the current `docker/postgres` applied `migrate --through-version 208` (exit 0, ledger 138/208), then the bootstrap stage installed the P05 safety schema while `vestrace` was `NOLOGIN`, then `migrate --only-version` applied 209, 210, 211, 212, 213, 214 and 215 one at a time, each exit 0. The final ledger was 145 rows, head 215, all successful. |
+| Migration 0215 grant surface | `vestrace` EXECUTE `false`, `vestrace_safety_supervisor` EXECUTE `true`, supervisor `SELECT` on `installation_safety_state` `false`, volatility `s`, `SECURITY DEFINER` true, owner `vestrace_guarded_owner`. |
+| `cargo test -p vestrace-cli --test safety_supervisor_readiness --test command_contract` (Linux runner) | Exit 0; 9 readiness tests and 20 command contracts passed with no BLOCKED path. The readiness cases cover absent roots, a relative root, an exact healthy state, non-mutation across two runs, a corrupt journal entry, a forged witness record, a mismatched persisted fingerprint, a stale persisted sequence and digest, and an uninitialized authority. |
+| Windows | The seven database-backed readiness cases report blocked on this host: the bootstrap record's parent-directory fsync fails with `os error 5`, the same durability refusal P05-C recorded. They are proved in the Linux runner instead, and the refusal is not weakened to make them run. |
+| Readiness is a read | `readiness_never_mutates_the_authority` runs readiness twice and compares the witness sequence, the journal entry count, and the persisted journal digest before and after. Readiness takes no permit, opens the witness and journal without creating either, reaches the bootstrap decoder only on the branch that compares, and rolls its database read back. |
+
+### Task 4 — the G0 aggregate, exactly as emitted
+
+| Evidence | Observed result |
+| --- | --- |
+| `node --test tests/p05_g0_gate.test.mjs` | Exit 0; 16 tests passed. The mutations each fail closed: a missing source file, a source whose bytes no longer match its digest, a nonzero recorded exit, evidence marked blocked and relabelled as a pass, a claim with no source at all, and an omitted criterion are all non-pass; an undeclared criterion id, a duplicated criterion, an unsupported schema version or gate, an unrecognised claim, and an absolute or escaping source path are refused outright with a nonzero exit. |
+| `node scripts/p05-g0-gate.mjs --evidence docs/development-evidence/v1-g0-05-gate.json` | **Exit 1. Aggregate `blocked`: 1 pass, 1 blocked, 17 unknown.** |
+| `g0-19` — current dirty work preserved, change boundary documented | `pass`. Sources: the dirty-baseline verifier (exit 0, no findings) and `tests/p05_scope.test.mjs` (exit 0, 9 tests). |
+| `g0-17` — installer and Compose provision least-privilege roles, stores, readiness, grants | `blocked`. P05-D proves the Compose topology, the independent host safety stores, the supervisor-only readiness read and its grants, and the forward-only route. It does not re-prove the archiver or the create-only fingerprint-key identity/proof conjuncts, which belong to P05-A and P05-B, so the conjunction is not closed. |
+| The other 17 criteria | `unknown`, each with a reason naming the package that owns it. In particular `g0-16` — permit, witnessed backup/restore, and crypto-erasure — is `unknown` even though P05-A through P05-C recorded evidence for it, because inheriting a pass from an earlier package is precisely the inference this collector exists to prevent. |
+
+This is the whole G0 result P05 may report. It is not a G0 pass, and no part of
+it should be read as one.
+
+### Two inherited defects repaired
+
+| Evidence | Observed result |
+| --- | --- |
+| Unadmitted P05-B manifest edit | P05-B gave `vestrace-application` a `ring` dev-dependency for the archive signing tests in `backup_archive.rs` and never admitted `crates/vestrace-application/Cargo.toml`. P05-C recorded the resulting verifier exit 1 as expected and left it. It is now admitted, with a `scope_amendments` entry stating what it is and why. |
+| Preflight/scope collation divergence | The captured `change_scope_paths` held the same paths as `scripts/p05-scope.mjs` in a different collation. The verifier compares the two element by element, so this was a standing finding; the capture is now the module verbatim, and a regression test asserts it. |
+| `node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-05-preflight.json --scope p05-scope.mjs` | Exit 0, no findings. This is the first P05 package for which the verifier is clean. |
+
+### What P05-D does not claim
+
+No product server or worker was started, and no Compose service was brought up:
+the topology is proved as resolved configuration only. No provider call was
+made. Readiness was exercised against a disposable instance, not a deployment.
+The archive, restore, and crypto-erasure criteria are not revisited. Full G0
+closure is not claimed, inferred, or implied by any row above.

@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 73);
+  assert.equal(changeScopePaths.length, 81);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -181,6 +181,17 @@ test('P05-C admits only the reviewed restore/cutover implementation increment', 
 test('P05-D admits only the reviewed Compose and G0-evidence plan boundary', () => {
   const p05dPaths = [
     'crates/vestrace-cli/tests/safety_supervisor_readiness.rs',
+    // The G0 collector reads a declarative manifest and the digest-bound
+    // artifacts it names. Prose is never proof, so the captured command
+    // outputs are themselves reviewed paths.
+    'docs/development-evidence/v1-g0-05-gate.json',
+    'docs/development-evidence/v1-g0-05-gate/compose-config.txt',
+    'docs/development-evidence/v1-g0-05-gate/compose-test.txt',
+    'docs/development-evidence/v1-g0-05-gate/dirty-baseline.txt',
+    'docs/development-evidence/v1-g0-05-gate/migration-ledger.txt',
+    'docs/development-evidence/v1-g0-05-gate/readiness-grants.txt',
+    'docs/development-evidence/v1-g0-05-gate/readiness-test.txt',
+    'docs/development-evidence/v1-g0-05-gate/scope-test.txt',
     'docs/superpowers/plans/2026-09-14-vestrace-v1-g0-05d-compose-g0-evidence.md',
     'migrations/0215_managed_safety_readiness.sql',
     'scripts/p05-g0-gate.mjs',
