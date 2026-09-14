@@ -3385,6 +3385,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "regex",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
@@ -3428,6 +3429,7 @@ name = "vestrace-domain"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "ring",
  "schemars",
  "secrecy",
  "serde",

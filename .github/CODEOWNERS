@@ -1,7 +1,0 @@
-# Default ownership for the repository.
-* @venm1r
-
-# Keep explicit ownership visible for high-impact project surfaces.
-/docs/specs/ @venm1r
-/migrations/ @venm1r
-/.github/ @venm1r

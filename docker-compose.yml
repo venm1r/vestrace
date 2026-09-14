@@ -1,12 +1,36 @@
 services:
+  # This is the only Compose service allowed to mount the P05 journal volume.
+  # The host-only safety supervisor receives the engine-resolved mount path;
+  # PostgreSQL and product services deliberately never see this volume.
+  vestrace-safety-journal-init:
+    image: alpine:3.20
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        install -d -m 0700 -o 10001 -g 10001 /var/lib/vestrace/safety-journal/entries;
+        printf 'vestrace-safety-journal-initialized-v1\n' > /var/lib/vestrace/safety-journal/.initializer-receipt;
+        chown 10001:10001 /var/lib/vestrace/safety-journal/.initializer-receipt;
+        chmod 0600 /var/lib/vestrace/safety-journal/.initializer-receipt;
+        sync
+    volumes:
+      - installation-safety-journal:/var/lib/vestrace/safety-journal
+    restart: "no"
+
   postgres:
-    image: pgvector/pgvector:pg17-bookworm
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     environment:
       POSTGRES_DB: vestrace
       POSTGRES_USER: vestrace_bootstrap
       POSTGRES_PASSWORD: bootstrap-local-development-only
       VESTRACE_RUNTIME_PASSWORD: runtime-local-development-only
       VESTRACE_GUARDED_OWNER: vestrace_guarded_owner
+      VESTRACE_SAFETY_SUPERVISOR_PASSWORD: safety-supervisor-local-development-only
       VESTRACE_RUNTIME_DATABASE_URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vestrace_bootstrap -d vestrace"]
@@ -19,7 +43,9 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   vestrace-role-provision:
-    image: pgvector/pgvector:pg17-bookworm
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,13 +56,27 @@ services:
       POSTGRES_USER: vestrace_bootstrap
       VESTRACE_RUNTIME_PASSWORD: runtime-local-development-only
       VESTRACE_GUARDED_OWNER: vestrace_guarded_owner
+      VESTRACE_SAFETY_SUPERVISOR_PASSWORD: safety-supervisor-local-development-only
     volumes:
       - ./docker/postgres/init-runtime-role.sh:/opt/vestrace/init-runtime-role.sh:ro
-    entrypoint: ["bash"]
-    command: ["/opt/vestrace/init-runtime-role.sh"]
+    # pg_isready can report accepting connections before docker-entrypoint has
+    # finished its initialization scripts.  The provisioner therefore waits
+    # for a real authenticated query and fails closed after a bounded window.
+    entrypoint: ["bash", "-ec"]
+    command:
+      - |
+        attempts=60
+        for ((attempt = 1; attempt <= attempts; attempt++)); do
+          if psql --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" --no-password --no-psqlrc --set=ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+            exec /opt/vestrace/init-runtime-role.sh
+          fi
+          sleep 1
+        done
+        echo 'P05 role provisioner timed out waiting for PostgreSQL initialization' >&2
+        exit 1
     restart: "no"
 
-  vestrace-migrate:
+  vestrace-migrate-history:
     build:
       context: .
       dockerfile: Dockerfile
@@ -48,11 +88,57 @@ services:
     environment:
       VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
       VESTRACE_DATABASE__MAX_CONNECTIONS: 5
-    command: ["migrate"]
+    command: ["migrate", "--through-version", "208"]
     restart: "no"
 
+  vestrace-safety-bootstrap:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    depends_on:
+      vestrace-migrate-history:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: bootstrap-local-development-only
+      POSTGRES_DB: vestrace
+      POSTGRES_USER: vestrace_bootstrap
+    entrypoint: ["bash"]
+    command:
+      - -ec
+      - >-
+        psql --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" --no-password --no-psqlrc
+        --set=ON_ERROR_STOP=1 -c "ALTER ROLE vestrace NOLOGIN;"
+        -c "DO \$\$ BEGIN IF (SELECT count(*) FROM _sqlx_migrations WHERE success) <> 138 OR EXISTS (SELECT 1 FROM _sqlx_migrations WHERE NOT success OR version > 208) THEN RAISE EXCEPTION 'P05 bootstrap requires exact 0208 migration ledger'; END IF; END \$\$;"
+        -c "SELECT public.vestrace_install_p05_safety_schema();"
+        -c "ALTER ROLE vestrace LOGIN;"
+    restart: "no"
+
+  vestrace-migrate-p05:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-safety-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "209"]
+    restart: "no"
+
+  # The installation fingerprint this vault holds is bound to the safety
+  # authority's continuity record, which 0209 creates. Without an explicit
+  # prerequisite Compose is free to create the vault root before that authority
+  # exists, so the stage states what it waits for rather than relying on
+  # start order.
   vestrace-fingerprint-vault-init:
     image: busybox:1.36.1
+    depends_on:
+      vestrace-migrate-p05:
+        condition: service_completed_successfully
     entrypoint:
       - sh
       - -ec
@@ -357,7 +443,7 @@ services:
   dev-seed:
     image: pgvector/pgvector:pg17-bookworm
     depends_on:
-      vestrace-migrate:
+      vestrace-migrate-p05:
         condition: service_completed_successfully
     environment:
       PGPASSWORD: bootstrap-local-development-only
@@ -367,6 +453,7 @@ services:
     restart: "no"
 
 volumes:
+  installation-safety-journal:
   installation-fingerprint-vault:
   provider-material-vault:
   # Provision this externally with the exact mounted-secret-store layout.  It

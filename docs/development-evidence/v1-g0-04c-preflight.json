@@ -18,6 +18,7 @@
     "crates/vestrace-application/src/embedding/transition.rs",
     "crates/vestrace-application/src/embedding/transition_coordinator.rs",
     "crates/vestrace-application/src/embedding/work.rs",
+    "crates/vestrace-application/src/embedding_data_policy.rs",
     "crates/vestrace-application/src/material/erasure.rs",
     "crates/vestrace-application/src/model_request_evidence.rs",
     "crates/vestrace-application/src/provider_dispatch.rs",
@@ -70,6 +71,7 @@
     "crates/vestrace-infrastructure/src/lib.rs",
     "crates/vestrace-infrastructure/src/postgres/credential_activation.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_adoption_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_erasure_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_index_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs",
@@ -90,6 +92,7 @@
     "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
     "crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
     "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
     "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
     "crates/vestrace-infrastructure/tests/common/mod.rs",
@@ -107,14 +110,18 @@
     "crates/vestrace-infrastructure/tests/embedding_retrieval_results.rs",
     "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
     "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
     "crates/vestrace-infrastructure/tests/embedding_transition_activation.rs",
     "crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs",
     "crates/vestrace-infrastructure/tests/embedding_transition_planning.rs",
     "crates/vestrace-infrastructure/tests/embedding_worker_restart.rs",
     "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
     "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
+    "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
     "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
     "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
+    "crates/vestrace-infrastructure/tests/text_retriever.rs",
+    "crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs",
     "crates/vestrace-mcp/src/server.rs",
     "crates/vestrace-mcp/tests/embedding_retrieval.rs",
     "docker/postgres/init-runtime-role.sh",
@@ -133,6 +140,7 @@
     "migrations/0205_embedding_retrieval_dispatch.sql",
     "migrations/0206_embedding_transition_header_progress.sql",
     "migrations/0207_embedding_delivery_rebuild_xor.sql",
+    "migrations/0208_embedding_memory_references.sql",
     "scripts/p04-scope.mjs",
     "tests/embedding_fault_scenario_e2e.rs",
     "tests/model_request_semantic_observation.rs",
@@ -1240,6 +1248,64 @@
       "removed_paths": [],
       "authorized_by": "User-confirmed lead decision to take apart the nine untouched red tests on the embedding dispatch path.",
       "reason": "The dispatch atomicity suite's nine red tests were described as three causes on the strength of their error text, and they are one. Migration 0194 forward-replaced vestrace_lock_embedding_job_pre_dispatch_gate so that a requested or running embedding job must carry a nonempty, complete, exact receipted output set before it can be dispatched; the pre-0194 body only refused a job whose material intents existed but were unconfigured. That gate is called from three places -- vestrace_lock_provider_dispatch_routing at 0192 line 590, vestrace_try_admit_provider_dispatch at 0192 line 946, and vestrace_lock_embedding_job_recovery_authority at 0187 line 842 -- and the adapter maps its 23514 differently at each: map_routing_error yields Policy PROVIDER_DISPATCH_ROUTING_REFUSED, map_embedding_job_recovery_error yields Conflict the embedding job is not in a recoverable governed state, and the admission path surfaces the raw 23514. One refusal, three names, and the three names were counted as three causes. Reading the messages was better than reading a remembered summary, but a message is still a symptom. The suite builds P03's bare accepted job -- accept_embedding_job creates the embedding_jobs row with no outputs at all -- and since 0194 that job is undispatchable and unrecoverable by construction. It cannot be repaired by adding outputs afterwards either: an already accepted bare job cannot be backfilled with guessed identities, which is the rule the fault-scenario fixture already documents in a comment. So the repair starts from the pre-acceptance boundary and lets accept_delivery_outputs fix the job and its outputs in one transaction, exactly as production does. dispatchable_embedding_job and its credential-branch sibling do that: pre-acceptance job, three live sources attached to the evidence, make_dispatchable, accept_delivery_outputs, reconcile_output_receipts. No delivery policy decision is recorded, because the pre-dispatch gate does not read one -- that is a result-preparation concern -- and recording it needs the provisioner-installed database this suite does not use. Five of the eight are green on that alone, including an_embedding_job_dispatches_through_the_shared_authority, which is the oracle clause 935 rests on. The suite goes from 13 passed 9 failed to 18 passed 4 failed, and none of the thirteen that already passed was disturbed. Three remain, and they revealed a further real rule rather than a fixture accident: vestrace_terminate_embedding_job_pre_dispatch refuses a cancellation unless every output material intent is abandoned with its exact witness. A job with no outputs never met that rule because it never had to; a job with outputs must retire them first. Those three need the output-retirement path built into the fixture through request_retirement and record_retirement, and they are left red rather than worked around. The ninth test, the_model_data_policy_leg_is_absent_from_an_embedding_dispatch, is unrelated to all of this: it asserts against itself that BeforePolicyRecord is on the dispatch path and the atomicity test does not yet cover it, which is the uncovered fault point already recorded in this document. No product change. No protected authority path changes; protected_authority_paths remains 23. The frozen contract baseline is not recaptured: head, dirty_files, status_porcelain_v1_z_base64, status_porcelain_v1_z_sha256, and all 126 historical migration digests through 0196 are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-12T09:40:14Z",
+      "authorized_by": "User replied yes to continuing P04 with the four retrieval test files added to scope and designing the corpus-to-memory link.",
+      "added_paths": [
+        "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
+        "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
+        "crates/vestrace-infrastructure/tests/text_retriever.rs",
+        "crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs"
+      ],
+      "previous_change_scope_size": 136,
+      "new_change_scope_size": 140,
+      "removed_paths": [],
+      "reason": "Permit migration of the four remaining retrieval debt suites to the canonical governed path while preserving their behavioral oracles. The existing ordinary material reference already records memory_revision ownership; the follow-on design must reuse and validate that provenance rather than infer a link from vector contents. No new SQL migration is authorized by this four-file amendment. The captured HEAD, dirty_files, raw porcelain, protected paths and digests are unchanged. Cargo.toml and LICENSE-APACHE are pre-existing out-of-scope changes and remain untouched; they are not silently incorporated into the frozen baseline."
+    },
+    {
+      "amended_at_utc": "2026-09-12T09:46:19.010631+00:00",
+      "authorized_by": "User agreed to the section 12 canonical memory reference design and migration 0208 implementation.",
+      "added_paths": [
+        "migrations/0208_embedding_memory_references.sql"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 140,
+      "new_change_scope_size": 141,
+      "reason": "Implement the approved canonical memory reference and durable provenance boundary; existing migration bytes, captured baseline and unrelated Cargo.toml/LICENSE-APACHE drift remain unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-12T10:06:42.355119+00:00",
+      "authorized_by": "User explicitly approved adding embedding_data_policy.rs and repairing the governed worker policy boundary.",
+      "added_paths": [
+        "crates/vestrace-application/src/embedding_data_policy.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 141,
+      "new_change_scope_size": 142,
+      "reason": "Extract and reuse the existing classification, destination and durable policy decision checks before governed worker network dispatch; preserve RetrievalQuery request lineage and denial behavior. Frozen capture, protected paths, historical migrations and unrelated dirty files are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-12T10:18:57.557960+00:00",
+      "authorized_by": "User explicitly approved adding revision_hydrator.rs and closing the final hydration erasure race.",
+      "added_paths": [
+        "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 142,
+      "new_change_scope_size": 143,
+      "reason": "Carry exact canonical request pin into final hydration and validate generation, live source membership, revision eligibility and content under one transaction. Preserve general hydration callers and classification withholding. Frozen capture, protected paths and historical migration bytes are unchanged."
+    },
+    {
+      "amended_at_utc": "2026-09-12T10:30:00.000000+00:00",
+      "authorized_by": "User explicitly approved adding embedding_data_policy_decision_repository.rs and moving policy-decision recording into the governed dispatch transaction.",
+      "added_paths": [
+        "crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs"
+      ],
+      "removed_paths": [],
+      "previous_change_scope_size": 143,
+      "new_change_scope_size": 144,
+      "reason": "Use the caller-owned PostgreSQL transaction to record a retrieval-query policy decision, avoiding a second pool checkout while the dispatch permit holds the first. An enforced denial commits its decision and returns before admission or network dispatch; a recording failure rolls the transaction back. Frozen capture, protected paths, historical migrations and unrelated Cargo.toml/LICENSE-APACHE drift remain unchanged."
     }
   ],
   "previous_captures": []

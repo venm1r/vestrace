@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Documentation
-    url: https://github.com/venm1r/vestrace/tree/main/docs
-    about: Check the documentation, implementation status, and guides before opening an issue.
-  - name: Security policy
-    url: https://github.com/venm1r/vestrace/security/policy
-    about: Do not disclose vulnerabilities in public issues. Follow the private reporting guidance in SECURITY.md.

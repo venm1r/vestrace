@@ -3,6 +3,7 @@
 pub mod a2a;
 pub mod ag_ui;
 pub mod artifact;
+pub mod backup_archive;
 pub mod budget;
 pub mod claim;
 pub mod cognitive;
@@ -29,6 +30,7 @@ pub mod id;
 pub mod identity;
 #[path = "installation/fingerprint.rs"]
 pub mod installation;
+pub mod installation_safety;
 pub mod job;
 pub mod learning;
 pub mod material;
@@ -42,6 +44,7 @@ pub mod product;
 pub mod provenance;
 pub mod relation;
 pub mod release;
+pub mod restore_cutover;
 pub mod retrieval;
 pub mod run;
 pub mod security;
@@ -52,6 +55,12 @@ pub mod tool;
 pub mod trust;
 pub mod webhook;
 
+pub use backup_archive::{
+    ArchiveAppendReservation, ArchiveHead, ArchiveObjectDescriptor, ArchiveObjectDescriptorInput,
+    ArchiveObjectKind, BackupArchiveError, BackupArchiveStateV1, BackupObjectId, BackupSetId,
+    BackupSetIdentity, BackupSetLifecycle, RestoreHold, RestoreHoldId, RestoreHoldReleaseReason,
+    WalArchiveCheckpoint,
+};
 pub use claim::{
     AssessmentKind, Claim, ClaimAssessment, ClaimEvidenceLink, ClaimStatus, CognitiveMutation,
     Conflict, ConflictKind, ConflictStatus, MutationKind, MutationTargetKind, ReconciliationClass,
@@ -107,6 +116,12 @@ pub use installation::{
     FingerprintKeyContinuityProof, FingerprintKeyId, FingerprintKeyVersion, FingerprintScope,
     InstallationFingerprintKey, InstallationId, continuity_proof, external_id_fingerprint,
 };
+pub use installation_safety::{
+    DatabaseGenerationId, InstallationSafetyError, JournalEntryToSign, JournalPublicKey,
+    SafetyBootstrapBinding, SafetyBootstrapError, SafetyBootstrapRecord, SafetyEventKind,
+    SafetyJournalDigest, SignedJournalEntry, WitnessAdvance, WitnessError, WitnessHead,
+    WitnessPublicKey, WitnessReceipt, WitnessStateV1,
+};
 pub use job::{Job, JobState};
 pub use learning::{
     LearnedProjection, LearningChange, LearningProposal, LearningProposalStatus, LearningTarget,
@@ -137,6 +152,10 @@ pub use policy::{ActivationDecision, MemoryWritePolicy};
 pub use provenance::{Derivation, DerivationMethod, EvidenceRef, EvidenceRole, MemorySource};
 pub use relation::{KnowledgeRelation, RelationType};
 pub use release::VestraceCapabilityManifest;
+pub use restore_cutover::{
+    RestoreAttemptId, RestoreAttemptProgress, RestoreCutoverError, RestoreTargetId,
+    RestoreTargetRoots, RestoreTerminalReceipt, SourceFreezePoint, TargetActivationPlan,
+};
 pub use retrieval::{
     ContextItem, ContextPack, ContextSection, RepresentationLevel, RetrievalCandidate,
     RetrievalIntent, ScoreComponents, TimePerspective,

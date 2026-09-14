@@ -75,7 +75,7 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
                     registration.adapter_profile_revision, registration.returned_model, \
                     registration.encoding_format, registration.dimensions, \
                     generation.id, generation.generation_epoch, \
-                    generation.captured_guard_version, generation.corpus_revision, \
+                    generation.captured_guard_version + 1, generation.corpus_revision, \
                     generation.built_through_projection_ordinal, generation.member_count \
                FROM embedding_retrieval_fences AS fence \
                JOIN embedding_space_registrations AS registration \
@@ -116,7 +116,7 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
             space,
             CorpusGenerationId::from_uuid(row.9),
             non_negative(row.10, "generation epoch")?,
-            positive(row.11, "captured guard version")?,
+            positive(row.11, "published guard version")?,
             non_negative(row.12, "corpus revision")?,
             // Zero is lawful: a generation captured from an empty corpus has
             // reached no projection ordinal, and the snapshot's own validator
@@ -131,6 +131,7 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
     async fn resolve_members(
         &self,
         context: &RequestContext,
+        generation_id: uuid::Uuid,
         projection_ids: &[uuid::Uuid],
     ) -> Result<Vec<RetrievalMemberReference>, ApplicationError> {
         if projection_ids.is_empty() {
@@ -146,28 +147,20 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
         // that intent names as its owner. A projection whose source has been
         // erased has no row here, which is why the caller drops rather than
         // guesses.
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
-            "SELECT DISTINCT dependency.projection_id, revision.memory_id, revision.id \
-               FROM embedding_projection_source_dependencies AS dependency \
-               JOIN content_materials AS material \
-                 ON material.workspace_id = dependency.workspace_id \
-                AND material.id = dependency.source_material_id \
-               JOIN material_key_creation_intents AS intent \
-                 ON intent.workspace_id = material.workspace_id \
-                AND intent.id = material.intent_id \
-                AND intent.owner_kind = 'memory_revision' \
-               JOIN memory_revisions AS revision \
-                 ON revision.workspace_id = intent.workspace_id \
-                AND revision.id = intent.owner_id \
-              WHERE dependency.workspace_id = $1 \
-                AND dependency.projection_id = ANY($2) \
-                AND material.state = 'live'",
-        )
-        .bind(context.workspace_id.as_uuid())
-        .bind(projection_ids)
-        .fetch_all(transaction.connection())
-        .await
-        .map_err(map_retrieval_error)?;
+        let mut rows = Vec::<(uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid)>::new();
+        for chunk in projection_ids.chunks(100_000) {
+            let chunk_rows: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
+                "SELECT projection_id, source_material_id, memory_id, revision_id FROM \
+             vestrace_resolve_embedding_memory_references($1,$2,$3)",
+            )
+            .bind(context.workspace_id.as_uuid())
+            .bind(generation_id)
+            .bind(chunk)
+            .fetch_all(transaction.connection())
+            .await
+            .map_err(map_retrieval_error)?;
+            rows.extend(chunk_rows);
+        }
         transaction
             .commit()
             .await
@@ -175,10 +168,13 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
         Ok(rows
             .into_iter()
             .map(
-                |(projection_id, memory_id, revision_id)| RetrievalMemberReference {
-                    projection_id,
-                    memory_id,
-                    revision_id,
+                |(projection_id, source_material_id, memory_id, revision_id)| {
+                    RetrievalMemberReference {
+                        projection_id,
+                        source_material_id,
+                        memory_id,
+                        revision_id,
+                    }
                 },
             )
             .collect())
@@ -282,12 +278,13 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         let fence_id: uuid::Uuid = sqlx::query_scalar(
-            "SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$3,$4,$5)",
+            "SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$3,$4,$5,$6)",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(command.job_id.as_uuid())
         .bind(command.request_id.as_uuid())
         .bind(command.space_registration_id)
+        .bind(command.expected_generation_id)
         .bind(command.deadline)
         .fetch_one(transaction.connection())
         .await
@@ -320,6 +317,8 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
         context: &RequestContext,
         command: FinalizeRetrievalResult,
     ) -> Result<(), ApplicationError> {
+        let mut projection_ids = Vec::with_capacity(command.references.len());
+        let mut source_material_ids = Vec::with_capacity(command.references.len());
         let mut memory_ids = Vec::with_capacity(command.references.len());
         let mut revision_ids = Vec::with_capacity(command.references.len());
         let mut ranks = Vec::with_capacity(command.references.len());
@@ -335,6 +334,8 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
                     "retrieval result scores must be finite".to_owned(),
                 ));
             }
+            projection_ids.push(reference.projection_id);
+            source_material_ids.push(reference.source_material_id);
             memory_ids.push(reference.memory_id);
             revision_ids.push(reference.revision_id);
             ranks.push(i64::from(reference.rank));
@@ -346,11 +347,13 @@ impl EmbeddingRetrievalRepository for PgEmbeddingRetrievalRepository {
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7)",
+            "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         )
         .bind(context.workspace_id.as_uuid())
         .bind(command.job_id.as_uuid())
         .bind(command.fence_id)
+        .bind(projection_ids)
+        .bind(source_material_ids)
         .bind(memory_ids)
         .bind(revision_ids)
         .bind(ranks)

@@ -152,7 +152,9 @@ test('P04 scope declares unique, sorted, disjoint change and protected paths', (
   // of its ends.
   // Plus the one-path amendment for the dispatch atomicity suite, whose
   // fixture predates migration 0194's receipted-output-set precondition.
-  assert.equal(changeScopePaths.length, 136);
+  // User-approved 2026-09-12 amendments: retrieval debt suites, transaction-
+  // bound policy decision recording, and the final hydration race closure.
+  assert.equal(changeScopePaths.length, 144);
   assert.equal(protectedAuthorityPaths.length, 23);
   for (const path of protectedAuthorityPaths) assert.ok(!changeScopePaths.includes(path));
 });
@@ -195,6 +197,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-application/src/embedding/transition.rs',
     'crates/vestrace-application/src/embedding/transition_coordinator.rs',
     'crates/vestrace-application/src/embedding/work.rs',
+    'crates/vestrace-application/src/embedding_data_policy.rs',
     'crates/vestrace-application/src/material/erasure.rs',
     'crates/vestrace-application/src/model_request_evidence.rs',
     'crates/vestrace-application/src/provider_dispatch.rs',
@@ -247,6 +250,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/lib.rs',
     'crates/vestrace-infrastructure/src/postgres/credential_activation.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_adoption_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_erasure_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_index_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs',
@@ -267,6 +271,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs',
     'crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs',
+    'crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs',
     'crates/vestrace-infrastructure/src/postgres/text_retriever.rs',
     'crates/vestrace-infrastructure/src/postgres/vector_retriever.rs',
     'crates/vestrace-infrastructure/tests/common/mod.rs',
@@ -284,14 +289,18 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'crates/vestrace-infrastructure/tests/embedding_retrieval_results.rs',
     'crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs',
     'crates/vestrace-infrastructure/tests/embedding_schema_contract.rs',
+    'crates/vestrace-infrastructure/tests/embedding_space_isolation.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_activation.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs',
     'crates/vestrace-infrastructure/tests/embedding_transition_planning.rs',
     'crates/vestrace-infrastructure/tests/embedding_worker_restart.rs',
     'crates/vestrace-infrastructure/tests/model_request_evidence.rs',
     'crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs',
+    'crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs',
     'crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs',
     'crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs',
+    'crates/vestrace-infrastructure/tests/text_retriever.rs',
+    'crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs',
     'crates/vestrace-mcp/src/server.rs',
     'crates/vestrace-mcp/tests/embedding_retrieval.rs',
     'docker/postgres/init-runtime-role.sh',
@@ -310,6 +319,7 @@ test('P04 completion scope is exactly the approved literal task paths', () => {
     'migrations/0205_embedding_retrieval_dispatch.sql',
     'migrations/0206_embedding_transition_header_progress.sql',
     'migrations/0207_embedding_delivery_rebuild_xor.sql',
+    'migrations/0208_embedding_memory_references.sql',
     'scripts/p04-scope.mjs',
     'tests/embedding_fault_scenario_e2e.rs',
     'tests/model_request_semantic_observation.rs',

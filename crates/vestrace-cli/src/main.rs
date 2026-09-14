@@ -40,7 +40,16 @@ enum Command {
         once: bool,
     },
     Mcp,
-    Migrate,
+    Migrate {
+        #[arg(long, conflicts_with = "only_version")]
+        through_version: Option<i64>,
+        #[arg(long, conflicts_with = "through_version")]
+        only_version: Option<i64>,
+    },
+    SafetySupervisor {
+        #[command(subcommand)]
+        action: SafetySupervisorAction,
+    },
     Doctor,
     Plan {
         #[arg(long = "finding-id", required = true)]
@@ -63,6 +72,141 @@ enum Command {
     Conformance {
         #[command(subcommand)]
         action: ConformanceAction,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum SafetySupervisorAction {
+    Initialize {
+        #[arg(long)]
+        installation_id: uuid::Uuid,
+        #[arg(long)]
+        fingerprint_key_id: uuid::Uuid,
+        #[arg(long)]
+        continuity_proof_hex: String,
+        #[arg(long)]
+        generation_id: uuid::Uuid,
+        /// Abort after the durable witness receipt and before guarded SQL.
+        #[arg(long)]
+        fault_after_witness_advance: bool,
+    },
+    Backup {
+        #[command(subcommand)]
+        action: BackupSupervisorAction,
+    },
+    Restore {
+        #[command(subcommand)]
+        action: RestoreSupervisorAction,
+    },
+    Reconcile,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum BackupSupervisorAction {
+    Begin,
+    CaptureBase {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+    AppendBase {
+        /// Host-local base archive. The supervisor refuses relative paths.
+        #[arg(long)]
+        segment: PathBuf,
+        #[arg(long)]
+        set_id: uuid::Uuid,
+        #[arg(long)]
+        timeline: u32,
+        #[arg(long)]
+        start_lsn: u64,
+        #[arg(long)]
+        end_lsn: u64,
+    },
+    AppendWal {
+        /// Host-local WAL segment. The supervisor refuses relative paths.
+        #[arg(long)]
+        segment: PathBuf,
+        #[arg(long)]
+        set_id: uuid::Uuid,
+        #[arg(long)]
+        timeline: u32,
+        #[arg(long)]
+        start_lsn: u64,
+        #[arg(long)]
+        end_lsn: u64,
+    },
+    AcquireHold {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+        #[arg(long)]
+        hold_id: uuid::Uuid,
+    },
+    BeginSeal {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+    CommitSeal {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+    /// Bind the current sealed signed manifest to one deletion preparation.
+    PrepareDelete {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+    /// Erase only the envelope named by a signed deletion preparation. The
+    /// command resumes the same intent after a host crash.
+    EraseKey {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+    /// Remove only objects from the guarded manifest after key erasure, then
+    /// record the terminal deleted state.
+    FinalizeDelete {
+        #[arg(long)]
+        set_id: uuid::Uuid,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum RestoreSupervisorAction {
+    /// Record a restore attempt and create one new, protected target root.
+    Prepare {
+        #[arg(long)]
+        attempt_id: uuid::Uuid,
+        #[arg(long)]
+        backup_set_id: uuid::Uuid,
+        #[arg(long)]
+        hold_id: uuid::Uuid,
+        #[arg(long)]
+        target_id: uuid::Uuid,
+        #[arg(long)]
+        target_generation_id: uuid::Uuid,
+        /// Absolute, formerly absent target directory selected for this attempt.
+        #[arg(long)]
+        target_root: PathBuf,
+    },
+    /// Record only the fixed source-freeze receipt written by the source
+    /// quiescer beneath VESTRACE_RESTORE_SOURCE_ROOT.
+    FreezeSource,
+    /// Decrypt the exact frozen manifest into the already prepared target and
+    /// run the configured target-only PostgreSQL restore tool.
+    Materialize {
+        #[arg(long)]
+        target_root: PathBuf,
+    },
+    /// Pin the immutable target generation and exact frozen archive head.
+    PlanActivation,
+    /// Record the target receipt, activate its pinned generation, and release
+    /// only the matching restore hold.
+    Activate {
+        #[arg(long)]
+        target_root: PathBuf,
+    },
+    /// Destroy the locator-bound failed target, resume the source through its
+    /// configured tool, and release only the resulting terminal hold.
+    Refuse {
+        #[arg(long)]
+        target_root: PathBuf,
     },
 }
 
@@ -320,8 +464,26 @@ enum ConformanceAction {
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // The supervisor surface contains the complete archive and restore command
+    // tree. Clap builds that tree while parsing, which exceeds the small native
+    // Windows main-thread stack once all guarded subcommands are present. Keep
+    // the operational entry point on an explicitly sized Rust thread so help
+    // and refusal paths have the same reliable command surface as mutations.
+    std::thread::Builder::new()
+        .name("vestrace-cli".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Runtime::new()
+                .map_err(anyhow::Error::from)?
+                .block_on(run())
+        })
+        .map_err(anyhow::Error::from)?
+        .join()
+        .map_err(|_| anyhow::anyhow!("vestrace CLI execution thread panicked"))?
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if let Command::Schema { format } = &cli.command {
@@ -337,6 +499,118 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .await;
+    }
+
+    if let Command::SafetySupervisor { action } = &cli.command {
+        return match action {
+            SafetySupervisorAction::Initialize {
+                installation_id,
+                fingerprint_key_id,
+                continuity_proof_hex,
+                generation_id,
+                fault_after_witness_advance,
+            } => {
+                commands::safety_supervisor::initialize(
+                    *installation_id,
+                    *fingerprint_key_id,
+                    continuity_proof_hex,
+                    *generation_id,
+                    *fault_after_witness_advance,
+                )
+                .await
+            }
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::Begin,
+            } => commands::safety_supervisor::backup_begin().await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::CaptureBase { set_id },
+            } => commands::safety_supervisor::backup_capture_base(*set_id).await,
+            SafetySupervisorAction::Backup {
+                action:
+                    BackupSupervisorAction::AppendBase {
+                        segment,
+                        set_id,
+                        timeline,
+                        start_lsn,
+                        end_lsn,
+                    },
+            } => {
+                commands::safety_supervisor::backup_append_base(
+                    *set_id, segment, *timeline, *start_lsn, *end_lsn,
+                )
+                .await
+            }
+            SafetySupervisorAction::Backup {
+                action:
+                    BackupSupervisorAction::AppendWal {
+                        segment,
+                        set_id,
+                        timeline,
+                        start_lsn,
+                        end_lsn,
+                    },
+            } => {
+                commands::safety_supervisor::backup_append_wal(
+                    *set_id, segment, *timeline, *start_lsn, *end_lsn,
+                )
+                .await
+            }
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::AcquireHold { set_id, hold_id },
+            } => commands::safety_supervisor::backup_acquire_hold(*set_id, *hold_id).await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::BeginSeal { set_id },
+            } => commands::safety_supervisor::backup_begin_sealing(*set_id).await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::CommitSeal { set_id },
+            } => commands::safety_supervisor::backup_commit_sealed(*set_id).await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::PrepareDelete { set_id },
+            } => commands::safety_supervisor::backup_prepare_deletion(*set_id).await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::EraseKey { set_id },
+            } => commands::safety_supervisor::backup_erase_key(*set_id).await,
+            SafetySupervisorAction::Backup {
+                action: BackupSupervisorAction::FinalizeDelete { set_id },
+            } => commands::safety_supervisor::backup_finalize_delete(*set_id).await,
+            SafetySupervisorAction::Restore {
+                action:
+                    RestoreSupervisorAction::Prepare {
+                        attempt_id,
+                        backup_set_id,
+                        hold_id,
+                        target_id,
+                        target_generation_id,
+                        target_root,
+                    },
+            } => {
+                commands::safety_supervisor::restore_prepare(
+                    *attempt_id,
+                    *backup_set_id,
+                    *hold_id,
+                    *target_id,
+                    *target_generation_id,
+                    target_root,
+                )
+                .await
+            }
+            SafetySupervisorAction::Restore {
+                action: RestoreSupervisorAction::FreezeSource,
+            } => commands::safety_supervisor::restore_freeze_source().await,
+            SafetySupervisorAction::Restore {
+                action: RestoreSupervisorAction::Materialize { target_root },
+            } => commands::safety_supervisor::restore_materialize(target_root).await,
+            SafetySupervisorAction::Restore {
+                action: RestoreSupervisorAction::PlanActivation,
+            } => commands::safety_supervisor::restore_plan_activation().await,
+            SafetySupervisorAction::Restore {
+                action: RestoreSupervisorAction::Activate { target_root },
+            } => commands::safety_supervisor::restore_activate(target_root).await,
+            SafetySupervisorAction::Restore {
+                action: RestoreSupervisorAction::Refuse { target_root },
+            } => commands::safety_supervisor::restore_refuse(target_root).await,
+            SafetySupervisorAction::Reconcile => commands::safety_supervisor::reconcile().await,
+        };
     }
 
     match &cli.command {
@@ -370,8 +644,12 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Mcp => commands::mcp::run(&config).await,
-        Command::Migrate => commands::migrate::run(&config).await,
+        Command::Migrate {
+            through_version,
+            only_version,
+        } => commands::migrate::run(&config, through_version, only_version).await,
         Command::Doctor => commands::doctor::run(&config).await,
+        Command::SafetySupervisor { .. } => unreachable!(),
         Command::Plan { .. } | Command::Repair { .. } => unreachable!(),
         Command::Rebuild { target } => commands::rebuild::run(&config, &target).await,
         Command::Schema { .. } => unreachable!(),

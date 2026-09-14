@@ -169,6 +169,7 @@ pub struct PgProviderDispatchRepository {
     governed: Arc<dyn GovernedMutationRepository<ProviderDispatchGovernedApply>>,
     policy: Arc<dyn ProviderDispatchPolicyEvaluator>,
     faults: Arc<dyn ProviderDispatchFaultInjector>,
+    embedding_policy: Option<Arc<vestrace_application::EmbeddingDataPolicyGate>>,
 }
 
 impl PgProviderDispatchRepository {
@@ -214,7 +215,16 @@ impl PgProviderDispatchRepository {
             governed,
             policy,
             faults,
+            embedding_policy: None,
         }
+    }
+
+    pub fn with_embedding_policy(
+        mut self,
+        policy: Arc<vestrace_application::EmbeddingDataPolicyGate>,
+    ) -> Self {
+        self.embedding_policy = Some(policy);
+        self
     }
 
     fn fault(&self, point: ProviderDispatchFaultPoint) -> Result<(), ApplicationError> {
@@ -535,6 +545,61 @@ impl ProviderDispatchRepository for PgProviderDispatchRepository {
                 };
                 (request, None)
             };
+
+        if let ProviderDispatchCause::EmbeddingJob { job_id, .. } = &cause {
+            let query_job: (String, Option<uuid::Uuid>) = sqlx::query_as(
+                "SELECT job.kind, fence.request_id FROM embedding_jobs job LEFT JOIN embedding_retrieval_fences fence \
+                  ON fence.workspace_id=job.workspace_id AND fence.job_id=job.id \
+                 WHERE job.workspace_id=$1 AND job.id=$2",
+            ).bind(context.workspace_id.as_uuid()).bind(job_id.as_uuid())
+                .fetch_one(postgres_transaction(permit.unit_of_work_mut())?.connection()).await.map_err(storage_error)?;
+            if query_job.0 == "retrieval_query" {
+                let request_id = query_job.1.ok_or_else(|| {
+                    ApplicationError::Policy(
+                        "retrieval query has no exact request fence".to_owned(),
+                    )
+                })?;
+                let gate = self.embedding_policy.as_ref().ok_or_else(|| {
+                    ApplicationError::Unavailable(
+                        "retrieval query disclosure policy is not configured".to_owned(),
+                    )
+                })?;
+                let vestrace_application::EffectiveModelRequest::Embeddings(embedding) =
+                    &effective_request
+                else {
+                    return Err(ApplicationError::Policy(
+                        "retrieval query requires reconstructed embedding inputs".to_owned(),
+                    ));
+                };
+                let inputs: Vec<_> = embedding
+                    .inputs()
+                    .map(|text| vestrace_application::EmbeddingInput::new(text, None))
+                    .collect();
+                let decision = gate
+                    .authorize_in(
+                        permit.unit_of_work_mut(),
+                        vestrace_application::EmbeddingPurpose::RetrievalQuery,
+                        request_id,
+                        None,
+                        None,
+                        &vestrace_application::ProviderEgress::new(
+                            &target.runtime_base_url,
+                            target.destination,
+                            true,
+                            true,
+                        ),
+                        &inputs,
+                    )
+                    .await?;
+                if let Err(error) = gate.enforce(&decision) {
+                    // A denial is evidence, not a failed attempt: persist the
+                    // decision in this same transaction, then refuse before
+                    // admission can make an external request possible.
+                    permit.commit().await?;
+                    return Err(error);
+                }
+            }
+        }
 
         let evaluation = self
             .policy

@@ -2943,7 +2943,7 @@ BEGIN
               ]::REGPROCEDURE[]) AS required(target)
              WHERE required.target IS NULL
                 OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=required.target)<>'vestrace_guarded_owner'
-                OR NOT has_function_privilege('vestrace',required.target,'EXECUTE')
+                OR (has_function_privilege('vestrace',required.target,'EXECUTE') IS DISTINCT FROM (NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=208 AND success) OR required.target NOT IN ('vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'::regprocedure,'vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'::regprocedure)))
                 OR has_function_privilege('public',required.target,'EXECUTE')
         ) THEN
             RAISE EXCEPTION 'embedding retrieval results owner or runtime ACL posture is unavailable'
@@ -3657,4 +3657,1138 @@ BEGIN
     END IF;
 END $delivery_rebuild_xor_bootstrap$;
 
+
+DO $memory_references_bootstrap$
+DECLARE applied BOOLEAN:=false; item REGPROCEDURE;
+BEGIN
+ IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+  SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=208 AND success) INTO applied;
+ END IF;
+ IF applied THEN
+  FOREACH item IN ARRAY ARRAY[
+    to_regprocedure('vestrace_issue_canonical_retrieval_snapshot(uuid,uuid,uuid,uuid)'),
+    to_regprocedure('vestrace_resolve_embedding_memory_references(uuid,uuid,uuid[])'),
+    to_regprocedure('vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,uuid,timestamptz)'),
+    to_regprocedure('vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],uuid[],uuid[],bigint[],double precision[])')
+  ] LOOP
+   IF item IS NULL OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=item)<>'vestrace_guarded_owner'
+    OR NOT has_function_privilege('vestrace',item,'EXECUTE') OR has_function_privilege('public',item,'EXECUTE') THEN
+    RAISE EXCEPTION 'embedding memory reference authority posture is unavailable' USING ERRCODE='42501'; END IF;
+  END LOOP;
+  IF (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='vestrace_validate_canonical_member_liveness()'::regprocedure)<>'vestrace_guarded_owner'
+   OR has_function_privilege('vestrace','vestrace_validate_canonical_member_liveness()','EXECUTE')
+   OR has_function_privilege('public','vestrace_validate_canonical_member_liveness()','EXECUTE') THEN
+   RAISE EXCEPTION 'canonical member retirement trigger posture is unavailable' USING ERRCODE='42501'; END IF;
+  DROP FUNCTION IF EXISTS vestrace_prepare_embedding_memory_references_upgrade();
+  DROP FUNCTION IF EXISTS vestrace_finish_embedding_memory_references_upgrade();
+ ELSE
+  EXECUTE $function$
+  CREATE OR REPLACE FUNCTION vestrace_prepare_embedding_memory_references_upgrade()
+  RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+  DECLARE item REGPROCEDURE; relation REGCLASS;
+  BEGIN
+   IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=207 AND success)
+    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=208 AND success) THEN
+    RAISE EXCEPTION 'memory references upgrade requires exact 0207 predecessor' USING ERRCODE='42501'; END IF;
+   FOREACH relation IN ARRAY ARRAY['embedding_retrieval_results'::regclass,'embedding_retrieval_result_references'::regclass,'embedding_retrieval_fences'::regclass] LOOP
+    EXECUTE format('ALTER TABLE %s OWNER TO vestrace',relation);
+   END LOOP;
+   FOREACH item IN ARRAY ARRAY[
+    'vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'::regprocedure,
+    'vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'::regprocedure,
+    'vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)'::regprocedure,
+    'vestrace_finalize_bound_content_material(uuid)'::regprocedure,
+    'vestrace_prepare_content_material_erasure(uuid)'::regprocedure,
+    'vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)'::regprocedure,
+    'vestrace_fence_embedding_job_dispatching()'::regprocedure,
+    'vestrace_validate_canonical_member_liveness()'::regprocedure
+   ] LOOP
+    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace',item);
+   END LOOP;
+   REVOKE EXECUTE ON FUNCTION vestrace_prepare_embedding_memory_references_upgrade() FROM vestrace;
+  END $body$
+  $function$;
+  REVOKE ALL ON FUNCTION vestrace_prepare_embedding_memory_references_upgrade() FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION vestrace_prepare_embedding_memory_references_upgrade() TO vestrace;
+  EXECUTE $function$
+  CREATE OR REPLACE FUNCTION vestrace_finish_embedding_memory_references_upgrade()
+  RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+  DECLARE
+   item REGPROCEDURE; relation REGCLASS;
+   allowed_targets REGPROCEDURE[] := ARRAY[
+    'public.vestrace_issue_canonical_retrieval_snapshot(uuid,uuid,uuid,uuid)'::regprocedure,
+    'public.vestrace_resolve_embedding_memory_references(uuid,uuid,uuid[])'::regprocedure,
+    'public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,uuid,timestamptz)'::regprocedure,
+    'public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],uuid[],uuid[],bigint[],double precision[])'::regprocedure,
+    'public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)'::regprocedure,
+    'public.vestrace_finalize_bound_content_material(uuid)'::regprocedure,
+    'public.vestrace_prepare_content_material_erasure(uuid)'::regprocedure,
+    'public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)'::regprocedure,
+    'public.vestrace_fence_embedding_job_dispatching()'::regprocedure,
+    'public.vestrace_validate_canonical_member_liveness()'::regprocedure,
+    'public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)'::regprocedure,
+    'public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])'::regprocedure
+   ];
+   runtime_executable_targets REGPROCEDURE[] := ARRAY[
+    'public.vestrace_issue_canonical_retrieval_snapshot(uuid,uuid,uuid,uuid)'::regprocedure,
+    'public.vestrace_resolve_embedding_memory_references(uuid,uuid,uuid[])'::regprocedure,
+    'public.vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,uuid,timestamptz)'::regprocedure,
+    'public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],uuid[],uuid[],bigint[],double precision[])'::regprocedure,
+    'public.vestrace_propagate_embedding_source_erasure(uuid,uuid,uuid)'::regprocedure,
+    'public.vestrace_finalize_bound_content_material(uuid)'::regprocedure,
+    'public.vestrace_prepare_content_material_erasure(uuid)'::regprocedure
+   ];
+  BEGIN
+   IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=207 AND success)
+    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=208 AND success) THEN
+    RAISE EXCEPTION 'memory references hand-back requires exact 0207 predecessor' USING ERRCODE='42501'; END IF;
+   FOREACH relation IN ARRAY ARRAY['embedding_retrieval_results'::regclass,'embedding_retrieval_result_references'::regclass,'embedding_retrieval_fences'::regclass] LOOP
+    EXECUTE format('ALTER TABLE %s OWNER TO vestrace_guarded_owner',relation);
+    EXECUTE format('GRANT ALL ON TABLE %s TO vestrace_guarded_owner',relation);
+    EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC,vestrace',relation);
+    EXECUTE format('GRANT SELECT,REFERENCES ON TABLE %s TO vestrace',relation);
+   END LOOP;
+   GRANT SELECT,UPDATE ON memories,memory_revisions TO vestrace_guarded_owner;
+   FOREACH item IN ARRAY allowed_targets LOOP
+    EXECUTE format('ALTER FUNCTION %s OWNER TO vestrace_guarded_owner',item);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,vestrace',item);
+    IF item = ANY(runtime_executable_targets) THEN
+     EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO vestrace',item);
+    END IF;
+   END LOOP;
+   REVOKE EXECUTE ON FUNCTION vestrace_finish_embedding_memory_references_upgrade() FROM vestrace;
+  END $body$
+  $function$;
+  REVOKE ALL ON FUNCTION vestrace_finish_embedding_memory_references_upgrade() FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION vestrace_finish_embedding_memory_references_upgrade() TO vestrace;
+ END IF;
+END $memory_references_bootstrap$;
+
 SQL
+# P05 safety supervisor role — do not move
+: "${VESTRACE_SAFETY_SUPERVISOR_PASSWORD:?VESTRACE_SAFETY_SUPERVISOR_PASSWORD is required}"
+
+psql \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --no-password \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 \
+  --set=safety_supervisor_password="$VESTRACE_SAFETY_SUPERVISOR_PASSWORD" <<'SQL'
+SELECT 'CREATE ROLE vestrace_safety_supervisor LOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'vestrace_safety_supervisor')
+\gexec
+
+ALTER ROLE vestrace_safety_supervisor WITH
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
+  PASSWORD :'safety_supervisor_password';
+
+CREATE EXTENSION IF NOT EXISTS vestrace_safety_verify;
+ALTER FUNCTION public.vestrace_safety_ed25519_verify(BYTEA, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_safety_ed25519_verify(BYTEA, BYTEA, BYTEA) FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_safety_ed25519_verify(BYTEA, BYTEA, BYTEA) TO vestrace_guarded_owner;
+
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_safety_schema()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $installer$
+BEGIN
+  IF session_user <> 'vestrace_bootstrap' AND NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), FALSE) THEN
+    RAISE EXCEPTION 'P05 safety installation requires bootstrap custody' USING ERRCODE = '42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE usename = 'vestrace' AND pid <> pg_backend_pid()) THEN
+    RAISE EXCEPTION 'P05 safety installation requires quiesced runtime sessions' USING ERRCODE = '55006';
+  END IF;
+  ALTER SCHEMA public OWNER TO vestrace_guarded_owner;
+  REVOKE CREATE ON SCHEMA public FROM PUBLIC, vestrace;
+  GRANT USAGE ON SCHEMA public TO vestrace;
+  IF has_schema_privilege('vestrace', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'P05 safety installation failed to remove runtime schema CREATE' USING ERRCODE = '42501';
+  END IF;
+
+  CREATE TABLE IF NOT EXISTS public.installation_safety_state (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    installation_id UUID NOT NULL UNIQUE,
+    fingerprint_key_id UUID NOT NULL,
+    fingerprint_continuity_proof BYTEA NOT NULL CHECK (octet_length(fingerprint_continuity_proof) = 32),
+    journal_signer_public_key BYTEA NOT NULL CHECK (octet_length(journal_signer_public_key) = 32),
+    witness_public_key BYTEA NOT NULL CHECK (octet_length(witness_public_key) = 32),
+    witness_sequence BIGINT NOT NULL CHECK (witness_sequence >= 0),
+    journal_digest BYTEA NOT NULL CHECK (octet_length(journal_digest) = 32),
+    witness_state BYTEA NOT NULL,
+    witness_state_digest BYTEA NOT NULL CHECK (octet_length(witness_state_digest) = 32),
+    active_generation_id UUID NOT NULL,
+    activation_epoch BIGINT NOT NULL CHECK (activation_epoch >= 0),
+    supervisor_workspace_id UUID NOT NULL,
+    supervisor_principal_id UUID NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS public.installation_safety_generations (
+    installation_id UUID NOT NULL REFERENCES public.installation_safety_state(installation_id),
+    generation_id UUID NOT NULL,
+    activation_epoch BIGINT NOT NULL CHECK (activation_epoch >= 0),
+    journal_sequence BIGINT NOT NULL CHECK (journal_sequence >= 0),
+    journal_digest BYTEA NOT NULL CHECK (octet_length(journal_digest) = 32),
+    PRIMARY KEY (installation_id, generation_id),
+    UNIQUE (installation_id, activation_epoch),
+    UNIQUE (installation_id, journal_sequence)
+  );
+  CREATE TABLE IF NOT EXISTS public.installation_safety_journal_events (
+    installation_id UUID NOT NULL REFERENCES public.installation_safety_state(installation_id),
+    sequence BIGINT NOT NULL CHECK (sequence > 0),
+    request_id UUID NOT NULL,
+    event_kind SMALLINT NOT NULL CHECK (event_kind IN (0, 1)),
+    generation_id UUID NOT NULL,
+    activation_epoch BIGINT NOT NULL CHECK (activation_epoch >= 0),
+    previous_digest BYTEA NOT NULL CHECK (octet_length(previous_digest) = 32),
+    journal_digest BYTEA NOT NULL CHECK (octet_length(journal_digest) = 32),
+    journal_signature BYTEA NOT NULL CHECK (octet_length(journal_signature) = 64),
+    PRIMARY KEY (installation_id, sequence),
+    UNIQUE (installation_id, request_id),
+    UNIQUE (installation_id, journal_digest)
+  );
+  ALTER TABLE public.installation_safety_state OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.installation_safety_generations OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.installation_safety_journal_events OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.installation_safety_state ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.installation_safety_state FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.installation_safety_generations ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.installation_safety_generations FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.installation_safety_journal_events ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.installation_safety_journal_events FORCE ROW LEVEL SECURITY;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.installation_safety_state'::REGCLASS AND polname = 'installation_safety_state_guarded_owner_only') THEN
+    CREATE POLICY installation_safety_state_guarded_owner_only
+      ON public.installation_safety_state
+      TO vestrace_guarded_owner
+      USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.installation_safety_generations'::REGCLASS AND polname = 'installation_safety_generations_guarded_owner_only') THEN
+    CREATE POLICY installation_safety_generations_guarded_owner_only
+      ON public.installation_safety_generations
+      TO vestrace_guarded_owner
+      USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.installation_safety_journal_events'::REGCLASS AND polname = 'installation_safety_journal_events_guarded_owner_only') THEN
+    CREATE POLICY installation_safety_journal_events_guarded_owner_only
+      ON public.installation_safety_journal_events
+      TO vestrace_guarded_owner
+      USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  REVOKE ALL ON TABLE public.installation_safety_state, public.installation_safety_generations, public.installation_safety_journal_events FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  EXECUTE $p05_context$
+    CREATE OR REPLACE FUNCTION public.vestrace_assert_installation_supervisor_context()
+    RETURNS VOID
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, public
+    AS $context$
+    BEGIN
+      IF session_user <> 'vestrace_safety_supervisor'
+         OR current_setting('vestrace.workspace_id', TRUE) IS DISTINCT FROM '00000000-0000-0000-0000-000000000005'
+         OR current_setting('vestrace.principal_id', TRUE) IS DISTINCT FROM '00000000-0000-0000-0000-000000000006' THEN
+        RAISE EXCEPTION 'P05 installation supervisor context is required' USING ERRCODE = '42501';
+      END IF;
+    END
+    $context$;
+  $p05_context$;
+  ALTER FUNCTION public.vestrace_assert_installation_supervisor_context() OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_assert_installation_supervisor_context() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  EXECUTE $p05_helpers$
+    CREATE OR REPLACE FUNCTION public.vestrace_p05_field(value BYTEA)
+    RETURNS BYTEA LANGUAGE sql IMMUTABLE STRICT
+    SET search_path = pg_catalog
+    AS $$ SELECT int8send(octet_length(value)::BIGINT) || value $$;
+
+    CREATE OR REPLACE FUNCTION public.vestrace_p05_receipt_payload(
+      installation UUID, fingerprint UUID, proof BYTEA, sequence BIGINT,
+      journal BYTEA, generation UUID, epoch BIGINT, state BYTEA, witness_key BYTEA
+    ) RETURNS BYTEA LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog, public AS $$
+      SELECT public.vestrace_p05_field(convert_to('vestrace-installation-witness-receipt-v1', 'UTF8'))
+        || public.vestrace_p05_field(uuid_send(installation))
+        || public.vestrace_p05_field(uuid_send(fingerprint))
+        || public.vestrace_p05_field(proof)
+        || int8send(sequence)
+        || public.vestrace_p05_field(journal)
+        || public.vestrace_p05_field(uuid_send(generation))
+        || int8send(epoch)
+        || public.vestrace_p05_field(state)
+        || public.vestrace_p05_field(witness_key)
+    $$;
+
+    CREATE OR REPLACE FUNCTION public.vestrace_p05_journal_payload(
+      installation UUID, fingerprint UUID, proof BYTEA, request UUID, sequence BIGINT,
+      previous BYTEA, event_kind SMALLINT, generation UUID, epoch BIGINT, state BYTEA,
+      journal_key BYTEA
+    ) RETURNS BYTEA LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog, public AS $$
+      SELECT public.vestrace_p05_field(convert_to('vestrace-installation-safety-journal-v1', 'UTF8'))
+        || public.vestrace_p05_field(uuid_send(installation))
+        || public.vestrace_p05_field(uuid_send(fingerprint))
+        || public.vestrace_p05_field(proof)
+        || public.vestrace_p05_field(uuid_send(request))
+        || int8send(sequence)
+        || public.vestrace_p05_field(previous)
+        || set_byte(decode('00', 'hex'), 0, event_kind)
+        || public.vestrace_p05_field(uuid_send(generation))
+        || int8send(epoch)
+        || public.vestrace_p05_field(state)
+        || public.vestrace_p05_field(journal_key)
+    $$;
+  $p05_helpers$;
+  ALTER FUNCTION public.vestrace_p05_field(BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_p05_receipt_payload(UUID, UUID, BYTEA, BIGINT, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_p05_journal_payload(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, SMALLINT, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_p05_field(BYTEA), public.vestrace_p05_receipt_payload(UUID, UUID, BYTEA, BIGINT, BYTEA, UUID, BIGINT, BYTEA, BYTEA), public.vestrace_p05_journal_payload(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, SMALLINT, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  EXECUTE $p05_mutations$
+    CREATE OR REPLACE FUNCTION public.vestrace_initialize_installation_safety(
+      p_bootstrap_digest BYTEA, p_installation UUID, p_fingerprint UUID, p_proof BYTEA,
+      p_request UUID, p_journal_key BYTEA, p_witness_key BYTEA, p_sequence BIGINT,
+      p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID,
+      p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+    ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $init$
+    DECLARE
+      expected_bootstrap BYTEA;
+      previous BYTEA := decode('fffed62a80e302ee8dc20e064cc576f7fb945ae8097fb44d61d6be6a217e2bbe', 'hex');
+      journal_payload BYTEA;
+      expected_journal BYTEA;
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      IF octet_length(p_bootstrap_digest) <> 32 OR octet_length(p_proof) <> 32
+         OR octet_length(p_journal_key) <> 32 OR octet_length(p_witness_key) <> 32
+         OR octet_length(p_journal_digest) <> 32 OR octet_length(p_journal_signature) <> 64
+         OR octet_length(p_receipt_signature) <> 64 OR p_sequence <> 1 OR p_epoch <> 0 THEN
+        RAISE EXCEPTION 'P05 initializer has malformed or out-of-order authority data' USING ERRCODE = '22023';
+      END IF;
+      expected_bootstrap := digest(
+        public.vestrace_p05_field(convert_to('vestrace-installation-safety-bootstrap-v1', 'UTF8'))
+        || public.vestrace_p05_field(uuid_send(p_installation))
+        || public.vestrace_p05_field(uuid_send(p_fingerprint))
+        || public.vestrace_p05_field(p_proof)
+        || public.vestrace_p05_field(p_journal_key)
+        || public.vestrace_p05_field(p_witness_key), 'sha256');
+      IF expected_bootstrap <> p_bootstrap_digest
+         OR NOT public.vestrace_safety_ed25519_verify(
+              public.vestrace_p05_receipt_payload(p_installation, p_fingerprint, p_proof, p_sequence, p_journal_digest, p_generation, p_epoch, p_state, p_witness_key),
+              p_receipt_signature, p_witness_key) THEN
+        RAISE EXCEPTION 'P05 initializer signature or bootstrap binding is invalid' USING ERRCODE = '42501';
+      END IF;
+      journal_payload := public.vestrace_p05_journal_payload(p_installation, p_fingerprint, p_proof, p_request, p_sequence, previous, 0::SMALLINT, p_generation, p_epoch, p_state, p_journal_key);
+      expected_journal := digest(journal_payload, 'sha256');
+      IF expected_journal <> p_journal_digest
+         OR NOT public.vestrace_safety_ed25519_verify(journal_payload, p_journal_signature, p_journal_key) THEN
+        RAISE EXCEPTION 'P05 initializer journal entry is invalid' USING ERRCODE = '42501';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM public.installation_fingerprint_continuity WHERE installation_id = p_installation AND fingerprint_key_id = p_fingerprint AND fingerprint_key_version = 1 AND continuity_proof = p_proof) THEN
+        RAISE EXCEPTION 'P05 initializer fingerprint continuity does not match' USING ERRCODE = '42501';
+      END IF;
+      IF EXISTS (SELECT 1 FROM public.installation_safety_state) THEN
+        IF NOT EXISTS (SELECT 1 FROM public.installation_safety_state WHERE installation_id = p_installation AND fingerprint_key_id = p_fingerprint AND fingerprint_continuity_proof = p_proof AND journal_signer_public_key = p_journal_key AND witness_public_key = p_witness_key AND witness_sequence = p_sequence AND journal_digest = p_journal_digest AND witness_state = p_state AND active_generation_id = p_generation AND activation_epoch = p_epoch) THEN
+          RAISE EXCEPTION 'P05 initializer refuses a different binding or retry' USING ERRCODE = '23505';
+        END IF;
+        RETURN jsonb_build_object('installation_id', p_installation, 'sequence', p_sequence, 'journal_digest', encode(p_journal_digest, 'hex'), 'generation_id', p_generation, 'activation_epoch', p_epoch);
+      END IF;
+      INSERT INTO public.installation_safety_state(singleton, installation_id, fingerprint_key_id, fingerprint_continuity_proof, journal_signer_public_key, witness_public_key, witness_sequence, journal_digest, witness_state, witness_state_digest, active_generation_id, activation_epoch, supervisor_workspace_id, supervisor_principal_id)
+      VALUES (TRUE, p_installation, p_fingerprint, p_proof, p_journal_key, p_witness_key, p_sequence, p_journal_digest, p_state, digest(p_state, 'sha256'), p_generation, p_epoch, '00000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000006');
+      INSERT INTO public.installation_safety_journal_events VALUES (p_installation, p_sequence, p_request, 0, p_generation, p_epoch, previous, p_journal_digest, p_journal_signature);
+      INSERT INTO public.installation_safety_generations VALUES (p_installation, p_generation, p_epoch, p_sequence, p_journal_digest);
+      RETURN jsonb_build_object('installation_id', p_installation, 'sequence', p_sequence, 'journal_digest', encode(p_journal_digest, 'hex'), 'generation_id', p_generation, 'activation_epoch', p_epoch);
+    END $init$;
+
+    CREATE OR REPLACE FUNCTION public.vestrace_register_database_generation(
+      p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID,
+      p_sequence BIGINT, p_journal_digest BYTEA, p_journal_signature BYTEA,
+      p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+    ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $register$
+    DECLARE
+      current_state public.installation_safety_state%ROWTYPE;
+      journal_payload BYTEA;
+      expected_journal BYTEA;
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      SELECT * INTO current_state FROM public.installation_safety_state WHERE singleton FOR UPDATE;
+      IF NOT FOUND OR current_state.installation_id <> p_installation OR current_state.fingerprint_key_id <> p_fingerprint OR current_state.fingerprint_continuity_proof <> p_proof THEN
+        RAISE EXCEPTION 'P05 generation registration identity does not match singleton' USING ERRCODE = '42501';
+      END IF;
+      IF octet_length(p_journal_digest) <> 32 OR octet_length(p_journal_signature) <> 64 OR octet_length(p_receipt_signature) <> 64
+         OR p_sequence <> current_state.witness_sequence + 1 OR p_epoch <> current_state.activation_epoch + 1
+         OR p_state = current_state.witness_state THEN
+        RAISE EXCEPTION 'P05 generation registration is not a permitted monotonic transition' USING ERRCODE = '22023';
+      END IF;
+      IF NOT public.vestrace_safety_ed25519_verify(
+           public.vestrace_p05_receipt_payload(p_installation, p_fingerprint, p_proof, p_sequence, p_journal_digest, p_generation, p_epoch, p_state, current_state.witness_public_key),
+           p_receipt_signature, current_state.witness_public_key) THEN
+        RAISE EXCEPTION 'P05 generation receipt signature is invalid' USING ERRCODE = '42501';
+      END IF;
+      journal_payload := public.vestrace_p05_journal_payload(p_installation, p_fingerprint, p_proof, p_request, p_sequence, current_state.journal_digest, 1::SMALLINT, p_generation, p_epoch, p_state, current_state.journal_signer_public_key);
+      expected_journal := digest(journal_payload, 'sha256');
+      IF expected_journal <> p_journal_digest OR NOT public.vestrace_safety_ed25519_verify(journal_payload, p_journal_signature, current_state.journal_signer_public_key) THEN
+        RAISE EXCEPTION 'P05 generation journal entry is invalid' USING ERRCODE = '42501';
+      END IF;
+      INSERT INTO public.installation_safety_journal_events VALUES (p_installation, p_sequence, p_request, 1, p_generation, p_epoch, current_state.journal_digest, p_journal_digest, p_journal_signature);
+      INSERT INTO public.installation_safety_generations VALUES (p_installation, p_generation, p_epoch, p_sequence, p_journal_digest);
+      UPDATE public.installation_safety_state SET witness_sequence = p_sequence, journal_digest = p_journal_digest, witness_state = p_state, witness_state_digest = digest(p_state, 'sha256'), active_generation_id = p_generation, activation_epoch = p_epoch WHERE singleton;
+      RETURN jsonb_build_object('installation_id', p_installation, 'sequence', p_sequence, 'journal_digest', encode(p_journal_digest, 'hex'), 'generation_id', p_generation, 'activation_epoch', p_epoch);
+    END $register$;
+  $p05_mutations$;
+  ALTER FUNCTION public.vestrace_initialize_installation_safety(BYTEA, UUID, UUID, BYTEA, UUID, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_register_database_generation(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_initialize_installation_safety(BYTEA, UUID, UUID, BYTEA, UUID, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA), public.vestrace_register_database_generation(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+  GRANT EXECUTE ON FUNCTION public.vestrace_initialize_installation_safety(BYTEA, UUID, UUID, BYTEA, UUID, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA), public.vestrace_register_database_generation(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+  PERFORM public.vestrace_install_p05_backup_archive_schema();
+END
+$installer$;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_safety_schema() FROM PUBLIC, vestrace, vestrace_guarded_owner, vestrace_safety_supervisor;
+SQL
+
+psql \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --no-password \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 <<'SQL'
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_backup_archive_schema()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $archive_installer$
+BEGIN
+  IF session_user <> 'vestrace_bootstrap' AND NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), FALSE) THEN
+    RAISE EXCEPTION 'P05 archive installation requires bootstrap custody' USING ERRCODE = '42501';
+  END IF;
+  ALTER TABLE public.installation_safety_journal_events
+    DROP CONSTRAINT IF EXISTS installation_safety_journal_events_event_kind_check;
+  ALTER TABLE public.installation_safety_journal_events
+    ADD CONSTRAINT installation_safety_journal_events_event_kind_check
+      CHECK (event_kind IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
+  CREATE TABLE IF NOT EXISTS public.managed_backup_sets (
+    backup_set_id UUID PRIMARY KEY,
+    installation_id UUID NOT NULL REFERENCES public.installation_safety_state(installation_id),
+    generation_id UUID NOT NULL,
+    lifecycle TEXT NOT NULL CHECK (lifecycle IN ('streaming','sealing','sealed','deletion_prepared','archive_key_erased','deleted')),
+    envelope_reference UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+  );
+  CREATE TABLE IF NOT EXISTS public.managed_backup_archive_heads (
+    backup_set_id UUID PRIMARY KEY REFERENCES public.managed_backup_sets(backup_set_id),
+    checkpoint_ordinal BIGINT NOT NULL CHECK (checkpoint_ordinal >= 0),
+    checkpoint_digest BYTEA NOT NULL CHECK (octet_length(checkpoint_digest) = 32)
+  );
+  CREATE TABLE IF NOT EXISTS public.managed_backup_archive_objects (
+    backup_set_id UUID NOT NULL REFERENCES public.managed_backup_sets(backup_set_id),
+    ordinal BIGINT NOT NULL CHECK (ordinal > 0), object_id UUID NOT NULL, object_kind SMALLINT NOT NULL CHECK (object_kind BETWEEN 0 AND 2), timeline INTEGER NOT NULL CHECK (timeline > 0), start_lsn BIGINT NOT NULL, end_lsn BIGINT NOT NULL CHECK (end_lsn >= start_lsn), object_digest BYTEA NOT NULL CHECK (octet_length(object_digest) = 32), plaintext_digest BYTEA NOT NULL CHECK (octet_length(plaintext_digest) = 32), object_length BIGINT NOT NULL CHECK (object_length > 0), predecessor_head_digest BYTEA NOT NULL CHECK (octet_length(predecessor_head_digest) = 32), checkpoint_digest BYTEA NOT NULL CHECK (octet_length(checkpoint_digest) = 32),
+    PRIMARY KEY (backup_set_id, ordinal), UNIQUE (backup_set_id, object_id), UNIQUE (backup_set_id, object_digest)
+  );
+  CREATE TABLE IF NOT EXISTS public.managed_backup_append_intents (intent_id UUID PRIMARY KEY, backup_set_id UUID NOT NULL REFERENCES public.managed_backup_sets(backup_set_id), ordinal BIGINT NOT NULL, expected_head_digest BYTEA NOT NULL CHECK (octet_length(expected_head_digest) = 32), object_digest BYTEA NOT NULL CHECK (octet_length(object_digest) = 32), UNIQUE (backup_set_id, ordinal));
+  CREATE TABLE IF NOT EXISTS public.managed_backup_restore_holds (hold_id UUID PRIMARY KEY, backup_set_id UUID NOT NULL REFERENCES public.managed_backup_sets(backup_set_id), released_at TIMESTAMPTZ);
+  CREATE TABLE IF NOT EXISTS public.managed_backup_deletion_preparations (backup_set_id UUID PRIMARY KEY REFERENCES public.managed_backup_sets(backup_set_id), preparation_digest BYTEA NOT NULL CHECK (octet_length(preparation_digest) = 32));
+  CREATE TABLE IF NOT EXISTS public.managed_backup_events (event_id BIGSERIAL PRIMARY KEY, backup_set_id UUID NOT NULL REFERENCES public.managed_backup_sets(backup_set_id), event_kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
+  ALTER TABLE public.managed_backup_sets OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_archive_heads OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_archive_objects OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_append_intents OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_restore_holds OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_deletion_preparations OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_events OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_backup_sets ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_sets FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_archive_heads ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_archive_heads FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_archive_objects ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_archive_objects FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_append_intents ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_append_intents FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_restore_holds ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_restore_holds FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_deletion_preparations ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_deletion_preparations FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_backup_events ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_backup_events FORCE ROW LEVEL SECURITY;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.managed_backup_sets'::regclass AND polname = 'managed_backup_sets_guarded_owner_only') THEN
+    CREATE POLICY managed_backup_sets_guarded_owner_only ON public.managed_backup_sets TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_archive_heads_guarded_owner_only ON public.managed_backup_archive_heads TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_archive_objects_guarded_owner_only ON public.managed_backup_archive_objects TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_append_intents_guarded_owner_only ON public.managed_backup_append_intents TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_restore_holds_guarded_owner_only ON public.managed_backup_restore_holds TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_deletion_preparations_guarded_owner_only ON public.managed_backup_deletion_preparations TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+    CREATE POLICY managed_backup_events_guarded_owner_only ON public.managed_backup_events TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  REVOKE ALL ON TABLE public.managed_backup_sets, public.managed_backup_archive_heads, public.managed_backup_archive_objects, public.managed_backup_append_intents, public.managed_backup_restore_holds, public.managed_backup_deletion_preparations, public.managed_backup_events FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  CREATE OR REPLACE FUNCTION public.vestrace_reject_managed_backup_event_mutation()
+  RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $immutable$
+  BEGIN
+    RAISE EXCEPTION 'managed backup events are immutable' USING ERRCODE = '55000';
+  END $immutable$;
+  ALTER FUNCTION public.vestrace_reject_managed_backup_event_mutation() OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_reject_managed_backup_event_mutation() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.managed_backup_events'::regclass AND tgname = 'managed_backup_events_immutable') THEN
+    CREATE TRIGGER managed_backup_events_immutable BEFORE UPDATE OR DELETE ON public.managed_backup_events FOR EACH ROW EXECUTE FUNCTION public.vestrace_reject_managed_backup_event_mutation();
+  END IF;
+  CREATE OR REPLACE FUNCTION public.vestrace_assert_archive_safety_authority(
+    p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT,
+    p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA,
+    p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA,
+    p_event_kind SMALLINT
+  ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $archive_authority$
+  DECLARE safety public.installation_safety_state%ROWTYPE; journal_payload BYTEA;
+  BEGIN
+    PERFORM public.vestrace_assert_installation_supervisor_context();
+    IF p_event_kind NOT BETWEEN 2 AND 10
+       OR octet_length(p_proof) <> 32 OR octet_length(p_previous_digest) <> 32
+       OR octet_length(p_journal_digest) <> 32 OR octet_length(p_journal_signature) <> 64
+       OR octet_length(p_receipt_signature) <> 64 THEN
+      RAISE EXCEPTION 'archive transition has malformed signed authority data' USING ERRCODE = '22023';
+    END IF;
+    SELECT * INTO safety FROM public.installation_safety_state WHERE singleton FOR UPDATE;
+    IF NOT FOUND OR safety.installation_id <> p_installation
+       OR safety.fingerprint_key_id <> p_fingerprint
+       OR safety.fingerprint_continuity_proof <> p_proof
+       OR p_sequence <> safety.witness_sequence + 1
+       OR p_previous_digest <> safety.journal_digest
+       OR p_generation <> safety.active_generation_id
+       OR p_epoch <> safety.activation_epoch
+       OR NOT public.vestrace_safety_ed25519_verify(
+            public.vestrace_p05_receipt_payload(p_installation,p_fingerprint,p_proof,p_sequence,p_journal_digest,p_generation,p_epoch,p_state,safety.witness_public_key),
+            p_receipt_signature,safety.witness_public_key) THEN
+      RAISE EXCEPTION 'archive transition receipt does not match pinned safety authority' USING ERRCODE = '42501';
+    END IF;
+    journal_payload := public.vestrace_p05_journal_payload(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_event_kind,p_generation,p_epoch,p_state,safety.journal_signer_public_key);
+    IF digest(journal_payload,'sha256') <> p_journal_digest
+       OR NOT public.vestrace_safety_ed25519_verify(journal_payload,p_journal_signature,safety.journal_signer_public_key) THEN
+      RAISE EXCEPTION 'archive transition journal signature is invalid' USING ERRCODE = '42501';
+    END IF;
+  END $archive_authority$;
+  ALTER FUNCTION public.vestrace_assert_archive_safety_authority(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA, SMALLINT) OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_assert_archive_safety_authority(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA, SMALLINT) FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  CREATE OR REPLACE FUNCTION public.vestrace_record_archive_safety_authority(
+    p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT,
+    p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA,
+    p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA,
+    p_event_kind SMALLINT
+  ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $archive_record$
+  BEGIN
+    PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,p_event_kind);
+    UPDATE public.installation_safety_state
+    SET witness_sequence = p_sequence, journal_digest = p_journal_digest,
+        witness_state = p_state, witness_state_digest = digest(p_state, 'sha256')
+    WHERE singleton;
+    INSERT INTO public.installation_safety_journal_events
+    VALUES (p_installation,p_sequence,p_request,p_event_kind,p_generation,p_epoch,p_previous_digest,p_journal_digest,p_journal_signature);
+  END $archive_record$;
+  ALTER FUNCTION public.vestrace_record_archive_safety_authority(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA, SMALLINT) OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_record_archive_safety_authority(UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA, SMALLINT) FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_start_managed_backup_set(
+  p_set UUID, p_initial_head_digest BYTEA, p_envelope UUID,
+  p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT,
+  p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA,
+  p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $start$
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,3::SMALLINT);
+  IF octet_length(p_initial_head_digest) <> 32 THEN
+    RAISE EXCEPTION 'managed backup start has malformed initial archive head' USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.managed_backup_sets(backup_set_id,installation_id,generation_id,lifecycle,envelope_reference)
+  VALUES (p_set,p_installation,p_generation,'streaming',p_envelope);
+  INSERT INTO public.managed_backup_archive_heads(backup_set_id,checkpoint_ordinal,checkpoint_digest)
+  VALUES (p_set,0,p_initial_head_digest);
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'backup_started');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,3::SMALLINT);
+END $start$;
+ALTER FUNCTION public.vestrace_start_managed_backup_set(UUID, BYTEA, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_start_managed_backup_set(UUID, BYTEA, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_start_managed_backup_set(UUID, BYTEA, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_reserve_backup_archive_append(
+  p_set UUID, p_expected_ordinal BIGINT, p_expected_digest BYTEA, p_intent UUID, p_object_digest BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $reserve$
+DECLARE current_head public.managed_backup_archive_heads%ROWTYPE; current_set public.managed_backup_sets%ROWTYPE;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  SELECT * INTO current_set FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  SELECT * INTO current_head FROM public.managed_backup_archive_heads WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_set.lifecycle <> 'streaming' OR current_head.checkpoint_ordinal <> p_expected_ordinal OR current_head.checkpoint_digest <> p_expected_digest OR octet_length(p_object_digest) <> 32 THEN
+    RAISE EXCEPTION 'backup archive append reservation does not match live head' USING ERRCODE = '23514';
+  END IF;
+  INSERT INTO public.managed_backup_append_intents(intent_id, backup_set_id, ordinal, expected_head_digest, object_digest)
+  VALUES (p_intent, p_set, p_expected_ordinal + 1, p_expected_digest, p_object_digest);
+END $reserve$;
+ALTER FUNCTION public.vestrace_reserve_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_reserve_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_reserve_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) TO vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_abandon_backup_archive_append(
+  p_set UUID, p_expected_ordinal BIGINT, p_expected_digest BYTEA, p_intent UUID, p_object_digest BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $abandon$
+DECLARE current_head public.managed_backup_archive_heads%ROWTYPE; current_set public.managed_backup_sets%ROWTYPE;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  SELECT * INTO current_set FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  SELECT * INTO current_head FROM public.managed_backup_archive_heads WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_set.lifecycle <> 'streaming' OR current_head.checkpoint_ordinal <> p_expected_ordinal OR current_head.checkpoint_digest <> p_expected_digest THEN
+    RAISE EXCEPTION 'backup archive append abandonment does not match live head' USING ERRCODE = '23514';
+  END IF;
+  DELETE FROM public.managed_backup_append_intents
+  WHERE intent_id = p_intent AND backup_set_id = p_set
+    AND ordinal = p_expected_ordinal + 1
+    AND expected_head_digest = p_expected_digest
+    AND object_digest = p_object_digest;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'backup archive append abandonment does not match exact intent' USING ERRCODE = '23514';
+  END IF;
+END $abandon$;
+ALTER FUNCTION public.vestrace_abandon_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_abandon_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_abandon_backup_archive_append(UUID, BIGINT, BYTEA, UUID, BYTEA) TO vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_list_pending_backup_archive_appends()
+RETURNS TABLE(backup_set_id UUID, intent_id UUID, ordinal BIGINT, expected_head_digest BYTEA, object_digest BYTEA)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $pending$
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  RETURN QUERY
+  SELECT intent.backup_set_id, intent.intent_id, intent.ordinal, intent.expected_head_digest, intent.object_digest
+  FROM public.managed_backup_append_intents AS intent
+  ORDER BY intent.backup_set_id, intent.ordinal, intent.intent_id;
+END $pending$;
+ALTER FUNCTION public.vestrace_list_pending_backup_archive_appends() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_list_pending_backup_archive_appends() FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_list_pending_backup_archive_appends() TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_commit_backup_archive_checkpoint(
+  p_set UUID, p_intent UUID, p_ordinal BIGINT, p_object_id UUID, p_object_kind SMALLINT, p_timeline INTEGER, p_start_lsn BIGINT, p_end_lsn BIGINT, p_object_digest BYTEA, p_plaintext_digest BYTEA, p_object_length BIGINT, p_predecessor_head_digest BYTEA, p_checkpoint_digest BYTEA,
+  p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA,
+  p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $commit$
+DECLARE head public.managed_backup_archive_heads%ROWTYPE; safety public.installation_safety_state%ROWTYPE; journal_payload BYTEA;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  IF octet_length(p_proof) <> 32 OR octet_length(p_previous_digest) <> 32 OR octet_length(p_journal_digest) <> 32 OR octet_length(p_journal_signature) <> 64 OR octet_length(p_receipt_signature) <> 64 OR octet_length(p_object_digest) <> 32 OR octet_length(p_plaintext_digest) <> 32 OR octet_length(p_predecessor_head_digest) <> 32 OR octet_length(p_checkpoint_digest) <> 32 THEN
+    RAISE EXCEPTION 'backup checkpoint has malformed signed authority data' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO safety FROM public.installation_safety_state WHERE singleton FOR UPDATE;
+  -- A crash after this guarded transaction commits but before host object
+  -- promotion must be recoverable.  Accept a retry only when every durable
+  -- database fact is already the exact checkpoint named by this receipt.
+  IF FOUND
+     AND safety.installation_id = p_installation
+     AND safety.fingerprint_key_id = p_fingerprint
+     AND safety.fingerprint_continuity_proof = p_proof
+     AND safety.witness_sequence = p_sequence
+     AND safety.journal_digest = p_journal_digest
+     AND safety.witness_state = p_state
+     AND EXISTS (
+       SELECT 1 FROM public.installation_safety_journal_events event
+       WHERE event.installation_id = p_installation AND event.sequence = p_sequence
+         AND event.request_id = p_request AND event.event_kind = 2
+         AND event.generation_id = p_generation AND event.activation_epoch = p_epoch
+         AND event.previous_digest = p_previous_digest AND event.journal_digest = p_journal_digest
+         AND event.journal_signature = p_journal_signature
+     ) THEN
+    SELECT * INTO head FROM public.managed_backup_archive_heads WHERE backup_set_id = p_set FOR UPDATE;
+    IF head.checkpoint_ordinal = p_ordinal AND head.checkpoint_digest = p_checkpoint_digest
+       AND EXISTS (
+         SELECT 1 FROM public.managed_backup_archive_objects object
+         WHERE object.backup_set_id = p_set AND object.ordinal = p_ordinal
+           AND object.object_id = p_object_id AND object.object_kind = p_object_kind
+           AND object.timeline = p_timeline AND object.start_lsn = p_start_lsn
+           AND object.end_lsn = p_end_lsn AND object.object_digest = p_object_digest
+           AND object.plaintext_digest = p_plaintext_digest AND object.object_length = p_object_length
+           AND object.predecessor_head_digest = p_predecessor_head_digest
+           AND object.checkpoint_digest = p_checkpoint_digest
+       ) THEN
+      RETURN;
+    END IF;
+    RAISE EXCEPTION 'backup checkpoint retry does not match its durable receipt' USING ERRCODE = '23514';
+  END IF;
+  IF NOT FOUND OR safety.installation_id <> p_installation OR safety.fingerprint_key_id <> p_fingerprint OR safety.fingerprint_continuity_proof <> p_proof
+     OR p_sequence <> safety.witness_sequence + 1 OR p_previous_digest <> safety.journal_digest
+     OR p_generation <> safety.active_generation_id OR p_epoch <> safety.activation_epoch
+     OR NOT public.vestrace_safety_ed25519_verify(public.vestrace_p05_receipt_payload(p_installation,p_fingerprint,p_proof,p_sequence,p_journal_digest,p_generation,p_epoch,p_state,safety.witness_public_key),p_receipt_signature,safety.witness_public_key) THEN
+    RAISE EXCEPTION 'backup checkpoint receipt does not match pinned safety authority' USING ERRCODE = '42501';
+  END IF;
+  journal_payload := public.vestrace_p05_journal_payload(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,2::SMALLINT,p_generation,p_epoch,p_state,safety.journal_signer_public_key);
+  IF digest(journal_payload,'sha256') <> p_journal_digest OR NOT public.vestrace_safety_ed25519_verify(journal_payload,p_journal_signature,safety.journal_signer_public_key) THEN
+    RAISE EXCEPTION 'backup checkpoint journal signature is invalid' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO head FROM public.managed_backup_archive_heads WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR p_ordinal <> head.checkpoint_ordinal + 1 OR p_timeline <= 0 OR p_end_lsn < p_start_lsn OR p_object_length <= 0 OR p_object_kind NOT BETWEEN 0 AND 2 OR p_predecessor_head_digest <> head.checkpoint_digest
+     OR NOT EXISTS (SELECT 1 FROM public.managed_backup_append_intents WHERE intent_id = p_intent AND backup_set_id = p_set AND ordinal = p_ordinal AND expected_head_digest = head.checkpoint_digest AND object_digest = p_object_digest) THEN
+    RAISE EXCEPTION 'backup checkpoint does not match exact reserved archive head' USING ERRCODE = '23514';
+  END IF;
+  INSERT INTO public.managed_backup_archive_objects(backup_set_id, ordinal, object_id, object_kind, timeline, start_lsn, end_lsn, object_digest, plaintext_digest, object_length, predecessor_head_digest, checkpoint_digest) VALUES (p_set,p_ordinal,p_object_id,p_object_kind,p_timeline,p_start_lsn,p_end_lsn,p_object_digest,p_plaintext_digest,p_object_length,p_predecessor_head_digest,p_checkpoint_digest);
+  UPDATE public.managed_backup_archive_heads SET checkpoint_ordinal=p_ordinal, checkpoint_digest=p_checkpoint_digest WHERE backup_set_id=p_set;
+  DELETE FROM public.managed_backup_append_intents WHERE intent_id=p_intent;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'checkpoint_committed');
+  UPDATE public.installation_safety_state
+  SET witness_sequence = p_sequence,
+      journal_digest = p_journal_digest,
+      witness_state = p_state,
+      witness_state_digest = digest(p_state, 'sha256')
+  WHERE singleton;
+  INSERT INTO public.installation_safety_journal_events
+  VALUES (p_installation, p_sequence, p_request, 2, p_generation, p_epoch, p_previous_digest, p_journal_digest, p_journal_signature);
+END $commit$;
+ALTER FUNCTION public.vestrace_commit_backup_archive_checkpoint(UUID, UUID, BIGINT, UUID, SMALLINT, INTEGER, BIGINT, BIGINT, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_commit_backup_archive_checkpoint(UUID, UUID, BIGINT, UUID, SMALLINT, INTEGER, BIGINT, BIGINT, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_commit_backup_archive_checkpoint(UUID, UUID, BIGINT, UUID, SMALLINT, INTEGER, BIGINT, BIGINT, BYTEA, BYTEA, BIGINT, BYTEA, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_acquire_managed_backup_restore_hold(
+  p_set UUID, p_hold UUID, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $hold$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,4::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'streaming' THEN
+    RAISE EXCEPTION 'managed backup is not restore-eligible' USING ERRCODE = '23514';
+  END IF;
+  INSERT INTO public.managed_backup_restore_holds(hold_id,backup_set_id) VALUES (p_hold,p_set);
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'restore_hold_acquired');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,4::SMALLINT);
+END $hold$;
+ALTER FUNCTION public.vestrace_acquire_managed_backup_restore_hold(UUID, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_acquire_managed_backup_restore_hold(UUID, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_acquire_managed_backup_restore_hold(UUID, UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_begin_managed_backup_sealing(
+  p_set UUID, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $sealing$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,5::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'streaming' OR EXISTS (SELECT 1 FROM public.managed_backup_restore_holds WHERE backup_set_id=p_set AND released_at IS NULL) THEN
+    RAISE EXCEPTION 'managed backup cannot begin sealing while restore-held or non-streaming' USING ERRCODE = '23514';
+  END IF;
+  UPDATE public.managed_backup_sets SET lifecycle='sealing' WHERE backup_set_id=p_set;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'sealing_started');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,5::SMALLINT);
+END $sealing$;
+ALTER FUNCTION public.vestrace_begin_managed_backup_sealing(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_begin_managed_backup_sealing(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_begin_managed_backup_sealing(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_commit_managed_backup_sealed(
+  p_set UUID, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $sealed$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,6::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'sealing' OR EXISTS (SELECT 1 FROM public.managed_backup_restore_holds WHERE backup_set_id=p_set AND released_at IS NULL) OR EXISTS (SELECT 1 FROM public.managed_backup_append_intents WHERE backup_set_id=p_set) THEN
+    RAISE EXCEPTION 'managed backup cannot seal before holds and append intents drain' USING ERRCODE = '23514';
+  END IF;
+  UPDATE public.managed_backup_sets SET lifecycle='sealed' WHERE backup_set_id=p_set;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'sealed');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,6::SMALLINT);
+END $sealed$;
+ALTER FUNCTION public.vestrace_commit_managed_backup_sealed(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_commit_managed_backup_sealed(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_commit_managed_backup_sealed(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+CREATE OR REPLACE FUNCTION public.vestrace_prepare_managed_backup_deletion(
+  p_set UUID, p_preparation_digest BYTEA, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $prepare_delete$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,7::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'sealed' OR octet_length(p_preparation_digest) <> 32 OR EXISTS (SELECT 1 FROM public.managed_backup_restore_holds WHERE backup_set_id=p_set AND released_at IS NULL) THEN
+    RAISE EXCEPTION 'managed backup is not eligible for deletion preparation' USING ERRCODE = '23514';
+  END IF;
+  INSERT INTO public.managed_backup_deletion_preparations(backup_set_id,preparation_digest) VALUES (p_set,p_preparation_digest);
+  UPDATE public.managed_backup_sets SET lifecycle='deletion_prepared' WHERE backup_set_id=p_set;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'deletion_prepared');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,7::SMALLINT);
+END $prepare_delete$;
+ALTER FUNCTION public.vestrace_prepare_managed_backup_deletion(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_prepare_managed_backup_deletion(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_prepare_managed_backup_deletion(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_prepare_archive_key_erasure(
+  p_set UUID, p_preparation_digest BYTEA, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $prepare_key_erasure$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,8::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'deletion_prepared' OR NOT EXISTS (SELECT 1 FROM public.managed_backup_deletion_preparations WHERE backup_set_id=p_set AND preparation_digest=p_preparation_digest) THEN
+    RAISE EXCEPTION 'archive key erasure is not bound to the prepared deletion' USING ERRCODE = '23514';
+  END IF;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'archive_key_erasure_prepared');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,8::SMALLINT);
+END $prepare_key_erasure$;
+ALTER FUNCTION public.vestrace_prepare_archive_key_erasure(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_prepare_archive_key_erasure(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_prepare_archive_key_erasure(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_record_archive_key_erased(
+  p_set UUID, p_preparation_digest BYTEA, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $key_erased$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,9::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'deletion_prepared' OR NOT EXISTS (SELECT 1 FROM public.managed_backup_deletion_preparations WHERE backup_set_id=p_set AND preparation_digest=p_preparation_digest) OR NOT EXISTS (SELECT 1 FROM public.managed_backup_events WHERE backup_set_id=p_set AND event_kind='archive_key_erasure_prepared') THEN
+    RAISE EXCEPTION 'archive key erasure is not bound to the prepared deletion' USING ERRCODE = '23514';
+  END IF;
+  UPDATE public.managed_backup_sets SET lifecycle='archive_key_erased' WHERE backup_set_id=p_set;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'archive_key_erased');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,9::SMALLINT);
+END $key_erased$;
+ALTER FUNCTION public.vestrace_record_archive_key_erased(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_record_archive_key_erased(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_record_archive_key_erased(UUID, BYTEA, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_list_prepared_backup_archive_objects(
+  p_set UUID, p_preparation_digest BYTEA
+) RETURNS TABLE(
+  object_id UUID, ordinal BIGINT, object_kind SMALLINT, timeline INTEGER,
+  start_lsn BIGINT, end_lsn BIGINT, object_digest BYTEA, plaintext_digest BYTEA,
+  object_length BIGINT, predecessor_head_digest BYTEA
+) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $prepared_manifest$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id=p_set FOR SHARE;
+  IF NOT FOUND OR current_lifecycle <> 'archive_key_erased'
+     OR NOT EXISTS (SELECT 1 FROM public.managed_backup_deletion_preparations WHERE backup_set_id=p_set AND preparation_digest=p_preparation_digest) THEN
+    RAISE EXCEPTION 'prepared archive manifest is not available for exact deletion' USING ERRCODE = '23514';
+  END IF;
+  RETURN QUERY
+    SELECT object.object_id, object.ordinal, object.object_kind, object.timeline,
+           object.start_lsn, object.end_lsn, object.object_digest, object.plaintext_digest,
+           object.object_length, object.predecessor_head_digest
+    FROM public.managed_backup_archive_objects object
+    WHERE object.backup_set_id=p_set
+    ORDER BY object.ordinal;
+END $prepared_manifest$;
+ALTER FUNCTION public.vestrace_list_prepared_backup_archive_objects(UUID, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_list_prepared_backup_archive_objects(UUID, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_list_prepared_backup_archive_objects(UUID, BYTEA) TO vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_finalize_managed_backup_deleted(
+  p_set UUID, p_installation UUID, p_fingerprint UUID, p_proof BYTEA, p_request UUID, p_sequence BIGINT, p_previous_digest BYTEA, p_journal_digest BYTEA, p_journal_signature BYTEA, p_generation UUID, p_epoch BIGINT, p_state BYTEA, p_receipt_signature BYTEA
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $deleted$
+DECLARE current_lifecycle TEXT;
+BEGIN
+  PERFORM public.vestrace_assert_installation_supervisor_context();
+  PERFORM public.vestrace_assert_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,10::SMALLINT);
+  SELECT lifecycle INTO current_lifecycle FROM public.managed_backup_sets WHERE backup_set_id = p_set FOR UPDATE;
+  IF NOT FOUND OR current_lifecycle <> 'archive_key_erased' THEN
+    RAISE EXCEPTION 'managed backup is not ready for final deletion' USING ERRCODE = '23514';
+  END IF;
+  UPDATE public.managed_backup_sets SET lifecycle='deleted' WHERE backup_set_id=p_set;
+  INSERT INTO public.managed_backup_events(backup_set_id,event_kind) VALUES (p_set,'deleted');
+  PERFORM public.vestrace_record_archive_safety_authority(p_installation,p_fingerprint,p_proof,p_request,p_sequence,p_previous_digest,p_journal_digest,p_journal_signature,p_generation,p_epoch,p_state,p_receipt_signature,10::SMALLINT);
+END $deleted$;
+ALTER FUNCTION public.vestrace_finalize_managed_backup_deleted(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_finalize_managed_backup_deleted(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) FROM PUBLIC, vestrace;
+GRANT EXECUTE ON FUNCTION public.vestrace_finalize_managed_backup_deleted(UUID, UUID, UUID, BYTEA, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID, BIGINT, BYTEA, BYTEA) TO vestrace_safety_supervisor;
+END
+$archive_installer$;
+ALTER FUNCTION public.vestrace_install_p05_backup_archive_schema() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_backup_archive_schema() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+
+-- P05-B base-capture completion. These guards apply to every existing
+-- guarded procedure, including a stale supervisor binary that still calls
+-- the former reservation signature.
+CREATE OR REPLACE FUNCTION public.vestrace_enforce_managed_backup_base_checkpoint()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $base_object$
+BEGIN
+  IF (NEW.ordinal = 1 AND NEW.object_kind <> 0)
+     OR (NEW.ordinal > 1 AND NEW.object_kind = 0)
+     OR (NEW.ordinal > 1 AND NOT EXISTS (
+       SELECT 1 FROM public.managed_backup_archive_objects
+       WHERE backup_set_id = NEW.backup_set_id AND ordinal = 1 AND object_kind = 0
+     ))
+     OR (NEW.object_kind = 1 AND EXISTS (
+       SELECT 1 FROM public.managed_backup_archive_objects
+       WHERE backup_set_id = NEW.backup_set_id AND ordinal = 1 AND object_kind = 0
+         AND (timeline <> NEW.timeline OR NEW.start_lsn < start_lsn)
+     )) THEN
+    RAISE EXCEPTION 'managed backup object violates the first-base checkpoint invariant' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $base_object$;
+ALTER FUNCTION public.vestrace_enforce_managed_backup_base_checkpoint() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_enforce_managed_backup_base_checkpoint() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_enforce_managed_backup_base_ready()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $base_ready$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.managed_backup_archive_objects
+    WHERE backup_set_id = NEW.backup_set_id AND ordinal = 1 AND object_kind = 0
+  ) THEN
+    RAISE EXCEPTION 'managed backup is not base-checkpoint ready' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $base_ready$;
+ALTER FUNCTION public.vestrace_enforce_managed_backup_base_ready() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_enforce_managed_backup_base_ready() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_enforce_managed_backup_lifecycle_base_ready()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $base_lifecycle$
+BEGIN
+  IF NEW.lifecycle <> 'streaming' AND NOT EXISTS (
+    SELECT 1 FROM public.managed_backup_archive_objects
+    WHERE backup_set_id = NEW.backup_set_id AND ordinal = 1 AND object_kind = 0
+  ) THEN
+    RAISE EXCEPTION 'managed backup lifecycle cannot leave streaming before its base checkpoint' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $base_lifecycle$;
+ALTER FUNCTION public.vestrace_enforce_managed_backup_lifecycle_base_ready() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_enforce_managed_backup_lifecycle_base_ready() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_base_capture_guards()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $base_guards$
+BEGIN
+  IF to_regclass('public.managed_backup_archive_objects') IS NULL
+     OR to_regclass('public.managed_backup_restore_holds') IS NULL
+     OR to_regclass('public.managed_backup_sets') IS NULL THEN
+    RAISE EXCEPTION 'P05 base capture guards require the archive schema' USING ERRCODE = '42501';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.managed_backup_archive_objects'::regclass AND tgname='managed_backup_base_checkpoint_required') THEN
+    EXECUTE 'CREATE TRIGGER managed_backup_base_checkpoint_required BEFORE INSERT ON public.managed_backup_archive_objects FOR EACH ROW EXECUTE FUNCTION public.vestrace_enforce_managed_backup_base_checkpoint()';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.managed_backup_restore_holds'::regclass AND tgname='managed_backup_hold_requires_base_checkpoint') THEN
+    EXECUTE 'CREATE TRIGGER managed_backup_hold_requires_base_checkpoint BEFORE INSERT ON public.managed_backup_restore_holds FOR EACH ROW EXECUTE FUNCTION public.vestrace_enforce_managed_backup_base_ready()';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.managed_backup_sets'::regclass AND tgname='managed_backup_lifecycle_requires_base_checkpoint') THEN
+    EXECUTE 'CREATE TRIGGER managed_backup_lifecycle_requires_base_checkpoint BEFORE UPDATE OF lifecycle ON public.managed_backup_sets FOR EACH ROW EXECUTE FUNCTION public.vestrace_enforce_managed_backup_lifecycle_base_ready()';
+  END IF;
+END $base_guards$;
+ALTER FUNCTION public.vestrace_install_p05_base_capture_guards() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_base_capture_guards() FROM PUBLIC, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_base_capture_guards() TO vestrace;
+
+SQL
+
+psql \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --no-password \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 <<'SQL'
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_restore_cutover_guards()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $restore_installer$
+BEGIN
+  IF session_user <> 'vestrace' AND NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), FALSE) THEN
+    RAISE EXCEPTION 'P05 restore installation requires the fixed P05 migration route' USING ERRCODE = '42501';
+  END IF;
+  ALTER TABLE public.installation_safety_journal_events
+    DROP CONSTRAINT IF EXISTS installation_safety_journal_events_event_kind_check;
+  ALTER TABLE public.installation_safety_journal_events
+    ADD CONSTRAINT installation_safety_journal_events_event_kind_check
+      CHECK (event_kind IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15));
+  CREATE TABLE IF NOT EXISTS public.managed_restore_attempts (
+    attempt_id UUID PRIMARY KEY, backup_set_id UUID NOT NULL REFERENCES public.managed_backup_sets(backup_set_id),
+    hold_id UUID NOT NULL REFERENCES public.managed_backup_restore_holds(hold_id), target_id UUID NOT NULL UNIQUE,
+    source_generation_id UUID NOT NULL, target_generation_id UUID NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('prepared','source_frozen','target_initialized','source_resume_prepared','released')),
+    freeze_timeline INTEGER, freeze_lsn BIGINT, mutation_watermark BIGINT,
+    terminal_receipt BYTEA CHECK (terminal_receipt IS NULL OR octet_length(terminal_receipt)=32),
+    CHECK (source_generation_id <> target_generation_id),
+    CHECK ((state='prepared' AND freeze_timeline IS NULL AND freeze_lsn IS NULL AND mutation_watermark IS NULL AND terminal_receipt IS NULL)
+      OR (state='source_frozen' AND freeze_timeline > 0 AND freeze_lsn > 0 AND mutation_watermark >= 0 AND terminal_receipt IS NULL)
+      OR (state IN ('target_initialized','source_resume_prepared','released') AND freeze_timeline > 0 AND freeze_lsn > 0 AND mutation_watermark >= 0 AND terminal_receipt IS NOT NULL))
+  );
+  -- PostgreSQL leaves the two inline state checks in place when this installer
+  -- upgrades an existing P05-C table. Replace just those checks by their
+  -- stable names so a source-resume terminal state is accepted on upgrade as
+  -- well as on a freshly provisioned instance.
+  ALTER TABLE public.managed_restore_attempts DROP CONSTRAINT IF EXISTS managed_restore_attempts_state_check;
+  ALTER TABLE public.managed_restore_attempts DROP CONSTRAINT IF EXISTS managed_restore_attempts_check1;
+  ALTER TABLE public.managed_restore_attempts DROP CONSTRAINT IF EXISTS managed_restore_attempts_freeze_state_check;
+  ALTER TABLE public.managed_restore_attempts
+    ADD CONSTRAINT managed_restore_attempts_state_check
+    CHECK (state IN ('prepared','source_frozen','target_initialized','source_resume_prepared','released'));
+  ALTER TABLE public.managed_restore_attempts
+    ADD CONSTRAINT managed_restore_attempts_freeze_state_check
+    CHECK ((state='prepared' AND freeze_timeline IS NULL AND freeze_lsn IS NULL AND mutation_watermark IS NULL AND terminal_receipt IS NULL)
+      OR (state='source_frozen' AND freeze_timeline > 0 AND freeze_lsn > 0 AND mutation_watermark >= 0 AND terminal_receipt IS NULL)
+      OR (state IN ('target_initialized','source_resume_prepared','released') AND freeze_timeline > 0 AND freeze_lsn > 0 AND mutation_watermark >= 0 AND terminal_receipt IS NOT NULL));
+  CREATE UNIQUE INDEX IF NOT EXISTS managed_restore_attempts_one_live_source
+    ON public.managed_restore_attempts(source_generation_id) WHERE state <> 'released';
+  CREATE TABLE IF NOT EXISTS public.managed_restore_events (
+    event_id BIGSERIAL PRIMARY KEY, attempt_id UUID NOT NULL REFERENCES public.managed_restore_attempts(attempt_id),
+    event_kind TEXT NOT NULL, receipt BYTEA, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK (receipt IS NULL OR octet_length(receipt)=32)
+  );
+  ALTER TABLE public.managed_restore_attempts OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_restore_events OWNER TO vestrace_guarded_owner;
+  ALTER TABLE public.managed_restore_attempts ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_restore_attempts FORCE ROW LEVEL SECURITY;
+  ALTER TABLE public.managed_restore_events ENABLE ROW LEVEL SECURITY; ALTER TABLE public.managed_restore_events FORCE ROW LEVEL SECURITY;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid='public.managed_restore_attempts'::regclass AND polname='managed_restore_attempts_guarded_owner_only') THEN
+    CREATE POLICY managed_restore_attempts_guarded_owner_only ON public.managed_restore_attempts TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid='public.managed_restore_events'::regclass AND polname='managed_restore_events_guarded_owner_only') THEN
+    CREATE POLICY managed_restore_events_guarded_owner_only ON public.managed_restore_events TO vestrace_guarded_owner USING (TRUE) WITH CHECK (TRUE);
+  END IF;
+  REVOKE ALL ON TABLE public.managed_restore_attempts, public.managed_restore_events FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  CREATE OR REPLACE FUNCTION public.vestrace_reject_managed_restore_event_mutation()
+  RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $event_append_only$
+  BEGIN
+    RAISE EXCEPTION 'managed restore events are append-only' USING ERRCODE='42501';
+  END $event_append_only$;
+  ALTER FUNCTION public.vestrace_reject_managed_restore_event_mutation() OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_reject_managed_restore_event_mutation() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.managed_restore_events'::regclass AND tgname='managed_restore_events_append_only') THEN
+    CREATE TRIGGER managed_restore_events_append_only BEFORE UPDATE OR DELETE ON public.managed_restore_events
+      FOR EACH ROW EXECUTE FUNCTION public.vestrace_reject_managed_restore_event_mutation();
+  END IF;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_prepare_restore_attempt(p_attempt UUID,p_set UUID,p_hold UUID,p_target UUID,p_source UUID,p_target_generation UUID)
+    RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      IF NOT EXISTS (SELECT 1 FROM public.managed_backup_sets s WHERE s.backup_set_id=p_set AND s.lifecycle='streaming' AND s.generation_id=p_source)
+         OR NOT EXISTS (SELECT 1 FROM public.managed_backup_restore_holds h WHERE h.hold_id=p_hold AND h.backup_set_id=p_set AND h.released_at IS NULL)
+         OR NOT EXISTS (SELECT 1 FROM public.managed_backup_archive_objects o WHERE o.backup_set_id=p_set AND o.ordinal=1 AND o.object_kind=0) THEN
+        RAISE EXCEPTION 'restore attempt is not bound to a live base-complete streaming source' USING ERRCODE='23514';
+      END IF;
+      INSERT INTO public.managed_restore_attempts(attempt_id,backup_set_id,hold_id,target_id,source_generation_id,target_generation_id,state)
+      VALUES(p_attempt,p_set,p_hold,p_target,p_source,p_target_generation,'prepared');
+      INSERT INTO public.managed_restore_events(attempt_id,event_kind) VALUES(p_attempt,'prepared');
+    END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_record_source_resume_prepared(p_attempt UUID,p_receipt BYTEA)
+    RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    BEGIN PERFORM public.vestrace_assert_installation_supervisor_context();
+      IF EXISTS (SELECT 1 FROM public.managed_restore_attempts WHERE attempt_id=p_attempt AND state IN ('source_resume_prepared','released') AND terminal_receipt=p_receipt) THEN RETURN; END IF;
+      UPDATE public.managed_restore_attempts SET state='source_resume_prepared',terminal_receipt=p_receipt WHERE attempt_id=p_attempt AND state='source_frozen' AND octet_length(p_receipt)=32;
+      IF NOT FOUND THEN RAISE EXCEPTION 'source resume is not an exact frozen successor' USING ERRCODE='23514'; END IF;
+      INSERT INTO public.managed_restore_events(attempt_id,event_kind,receipt) VALUES(p_attempt,'source_resume_prepared',p_receipt); END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_record_source_freeze(p_attempt UUID,p_timeline INTEGER,p_lsn BIGINT,p_watermark BIGINT)
+    RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    BEGIN PERFORM public.vestrace_assert_installation_supervisor_context();
+      UPDATE public.managed_restore_attempts SET state='source_frozen',freeze_timeline=p_timeline,freeze_lsn=p_lsn,mutation_watermark=p_watermark WHERE attempt_id=p_attempt AND state='prepared' AND p_timeline>0 AND p_lsn>0 AND p_watermark>=0;
+      IF NOT FOUND THEN RAISE EXCEPTION 'restore source freeze is not an exact prepared successor' USING ERRCODE='23514'; END IF;
+      INSERT INTO public.managed_restore_events(attempt_id,event_kind) VALUES(p_attempt,'source_frozen'); END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_record_target_initialized(p_attempt UUID,p_receipt BYTEA)
+    RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    BEGIN PERFORM public.vestrace_assert_installation_supervisor_context();
+      IF EXISTS (SELECT 1 FROM public.managed_restore_attempts WHERE attempt_id=p_attempt AND state IN ('target_initialized','released') AND terminal_receipt=p_receipt) THEN RETURN; END IF;
+      UPDATE public.managed_restore_attempts SET state='target_initialized',terminal_receipt=p_receipt WHERE attempt_id=p_attempt AND state='source_frozen' AND octet_length(p_receipt)=32;
+      IF NOT FOUND THEN RAISE EXCEPTION 'target initialization is not an exact frozen successor' USING ERRCODE='23514'; END IF;
+      INSERT INTO public.managed_restore_events(attempt_id,event_kind,receipt) VALUES(p_attempt,'target_initialized',p_receipt); END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_list_restore_archive_objects(p_attempt UUID)
+    RETURNS TABLE(
+      backup_set_id UUID, object_id UUID, ordinal BIGINT, object_kind SMALLINT, timeline INTEGER,
+      start_lsn BIGINT, end_lsn BIGINT, object_digest BYTEA, plaintext_digest BYTEA,
+      object_length BIGINT, predecessor_head_digest BYTEA
+    ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    DECLARE v_set UUID; v_timeline INTEGER; v_lsn BIGINT; v_state TEXT;
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      SELECT attempt.backup_set_id, attempt.freeze_timeline, attempt.freeze_lsn, attempt.state
+        INTO v_set, v_timeline, v_lsn, v_state
+        FROM public.managed_restore_attempts AS attempt
+        WHERE attempt.attempt_id=p_attempt FOR SHARE;
+      IF NOT FOUND OR v_state <> 'source_frozen' THEN
+        RAISE EXCEPTION 'restore archive manifest requires the exact frozen attempt' USING ERRCODE='23514';
+      END IF;
+      RETURN QUERY
+        SELECT object.backup_set_id, object.object_id, object.ordinal, object.object_kind,
+               object.timeline, object.start_lsn, object.end_lsn, object.object_digest,
+               object.plaintext_digest, object.object_length, object.predecessor_head_digest
+        FROM public.managed_backup_archive_objects object
+        WHERE object.backup_set_id=v_set
+          AND (object.object_kind IN (0,2)
+               OR (object.object_kind=1 AND object.timeline=v_timeline AND object.start_lsn <= v_lsn))
+        ORDER BY object.ordinal;
+      IF NOT EXISTS (
+        SELECT 1 FROM public.managed_backup_archive_objects object
+        WHERE object.backup_set_id=v_set AND object.object_kind=1
+          AND object.timeline=v_timeline AND object.start_lsn <= v_lsn AND object.end_lsn >= v_lsn
+      ) THEN
+        RAISE EXCEPTION 'restore archive manifest does not cover the witnessed source freeze' USING ERRCODE='23514';
+      END IF;
+    END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_release_restore_hold(p_attempt UUID,p_receipt BYTEA)
+    RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    DECLARE v_hold UUID; BEGIN PERFORM public.vestrace_assert_installation_supervisor_context();
+      IF EXISTS (SELECT 1 FROM public.managed_restore_attempts WHERE attempt_id=p_attempt AND state='released' AND terminal_receipt=p_receipt) THEN RETURN; END IF;
+      UPDATE public.managed_restore_attempts SET state='released' WHERE attempt_id=p_attempt AND state IN ('target_initialized','source_resume_prepared') AND terminal_receipt=p_receipt RETURNING hold_id INTO v_hold;
+      IF NOT FOUND THEN RAISE EXCEPTION 'restore hold release does not match its terminal receipt' USING ERRCODE='23514'; END IF;
+      UPDATE public.managed_backup_restore_holds SET released_at=clock_timestamp() WHERE hold_id=v_hold AND released_at IS NULL;
+      IF NOT FOUND THEN RAISE EXCEPTION 'restore hold is not live' USING ERRCODE='23514'; END IF;
+      INSERT INTO public.managed_restore_events(attempt_id,event_kind,receipt) VALUES(p_attempt,'hold_released',p_receipt); END $body$;
+  $fn$;
+  EXECUTE $fn$
+    CREATE OR REPLACE FUNCTION public.vestrace_record_restore_safety_event(
+      p_installation UUID,p_fingerprint UUID,p_proof BYTEA,p_request UUID,p_sequence BIGINT,
+      p_journal_digest BYTEA,p_journal_signature BYTEA,p_event_kind SMALLINT,p_generation UUID,
+      p_epoch BIGINT,p_state BYTEA,p_receipt_signature BYTEA
+    ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $body$
+    DECLARE current_state public.installation_safety_state%ROWTYPE; journal_payload BYTEA; expected_journal BYTEA;
+    BEGIN
+      PERFORM public.vestrace_assert_installation_supervisor_context();
+      SELECT * INTO current_state FROM public.installation_safety_state WHERE singleton FOR UPDATE;
+      IF NOT FOUND OR current_state.installation_id<>p_installation OR current_state.fingerprint_key_id<>p_fingerprint OR current_state.fingerprint_continuity_proof<>p_proof THEN
+        RAISE EXCEPTION 'P05 restore safety event identity does not match singleton' USING ERRCODE='42501';
+      END IF;
+      IF current_state.witness_sequence=p_sequence AND current_state.journal_digest=p_journal_digest AND current_state.witness_state=p_state AND current_state.active_generation_id=p_generation AND current_state.activation_epoch=p_epoch THEN
+        RETURN jsonb_build_object('installation_id',p_installation,'sequence',p_sequence,'journal_digest',encode(p_journal_digest,'hex'),'generation_id',p_generation,'activation_epoch',p_epoch);
+      END IF;
+      IF p_event_kind NOT IN (11,12,13,14,15) OR octet_length(p_journal_digest)<>32 OR octet_length(p_journal_signature)<>64 OR octet_length(p_receipt_signature)<>64
+         OR p_sequence<>current_state.witness_sequence+1 OR p_generation<>current_state.active_generation_id OR p_epoch<>current_state.activation_epoch OR p_state=current_state.witness_state THEN
+        RAISE EXCEPTION 'P05 restore safety event is not an exact monotonic successor' USING ERRCODE='22023';
+      END IF;
+      IF NOT public.vestrace_safety_ed25519_verify(public.vestrace_p05_receipt_payload(p_installation,p_fingerprint,p_proof,p_sequence,p_journal_digest,p_generation,p_epoch,p_state,current_state.witness_public_key),p_receipt_signature,current_state.witness_public_key) THEN
+        RAISE EXCEPTION 'P05 restore safety receipt signature is invalid' USING ERRCODE='42501';
+      END IF;
+      journal_payload:=public.vestrace_p05_journal_payload(p_installation,p_fingerprint,p_proof,p_request,p_sequence,current_state.journal_digest,p_event_kind,p_generation,p_epoch,p_state,current_state.journal_signer_public_key);
+      expected_journal:=digest(journal_payload,'sha256');
+      IF expected_journal<>p_journal_digest OR NOT public.vestrace_safety_ed25519_verify(journal_payload,p_journal_signature,current_state.journal_signer_public_key) THEN
+        RAISE EXCEPTION 'P05 restore safety journal entry is invalid' USING ERRCODE='42501';
+      END IF;
+      INSERT INTO public.installation_safety_journal_events VALUES(p_installation,p_sequence,p_request,p_event_kind,p_generation,p_epoch,current_state.journal_digest,p_journal_digest,p_journal_signature);
+      UPDATE public.installation_safety_state SET witness_sequence=p_sequence,journal_digest=p_journal_digest,witness_state=p_state,witness_state_digest=digest(p_state,'sha256') WHERE singleton;
+      RETURN jsonb_build_object('installation_id',p_installation,'sequence',p_sequence,'journal_digest',encode(p_journal_digest,'hex'),'generation_id',p_generation,'activation_epoch',p_epoch);
+    END $body$
+  $fn$;
+  ALTER FUNCTION public.vestrace_prepare_restore_attempt(UUID,UUID,UUID,UUID,UUID,UUID) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_record_source_freeze(UUID,INTEGER,BIGINT,BIGINT) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_record_target_initialized(UUID,BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_record_source_resume_prepared(UUID,BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_record_restore_safety_event(UUID,UUID,BYTEA,UUID,BIGINT,BYTEA,BYTEA,SMALLINT,UUID,BIGINT,BYTEA,BYTEA) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_list_restore_archive_objects(UUID) OWNER TO vestrace_guarded_owner;
+  ALTER FUNCTION public.vestrace_release_restore_hold(UUID,BYTEA) OWNER TO vestrace_guarded_owner;
+  REVOKE ALL ON FUNCTION public.vestrace_prepare_restore_attempt(UUID,UUID,UUID,UUID,UUID,UUID),public.vestrace_record_source_freeze(UUID,INTEGER,BIGINT,BIGINT),public.vestrace_record_target_initialized(UUID,BYTEA),public.vestrace_record_source_resume_prepared(UUID,BYTEA),public.vestrace_record_restore_safety_event(UUID,UUID,BYTEA,UUID,BIGINT,BYTEA,BYTEA,SMALLINT,UUID,BIGINT,BYTEA,BYTEA),public.vestrace_list_restore_archive_objects(UUID),public.vestrace_release_restore_hold(UUID,BYTEA) FROM PUBLIC,vestrace;
+  GRANT EXECUTE ON FUNCTION public.vestrace_prepare_restore_attempt(UUID,UUID,UUID,UUID,UUID,UUID),public.vestrace_record_source_freeze(UUID,INTEGER,BIGINT,BIGINT),public.vestrace_record_target_initialized(UUID,BYTEA),public.vestrace_record_source_resume_prepared(UUID,BYTEA),public.vestrace_record_restore_safety_event(UUID,UUID,BYTEA,UUID,BIGINT,BYTEA,BYTEA,SMALLINT,UUID,BIGINT,BYTEA,BYTEA),public.vestrace_list_restore_archive_objects(UUID),public.vestrace_release_restore_hold(UUID,BYTEA) TO vestrace_safety_supervisor;
+  REVOKE ALL ON FUNCTION public.vestrace_install_p05_restore_cutover_guards() FROM PUBLIC, vestrace;
+END $restore_installer$;
+ALTER FUNCTION public.vestrace_install_p05_restore_cutover_guards() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_restore_cutover_guards() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_restore_cutover_guards() TO vestrace;
+GRANT CREATE ON SCHEMA public TO vestrace_guarded_owner;
+
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_restore_refusal_guards()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $restore_refusal_installer$
+BEGIN
+  IF session_user <> 'vestrace' AND NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), FALSE) THEN
+    RAISE EXCEPTION 'P05 refusal installation requires the fixed P05 migration route' USING ERRCODE = '42501';
+  END IF;
+  PERFORM public.vestrace_install_p05_restore_cutover_guards();
+END $restore_refusal_installer$;
+ALTER FUNCTION public.vestrace_install_p05_restore_refusal_guards() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_restore_refusal_guards() FROM PUBLIC, vestrace, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_restore_refusal_guards() TO vestrace;
+SQL
+
+# A physical base backup opens a replication connection, which PostgreSQL's
+# generic `host all ...` rule does not cover.  This script also runs from the
+# separate role-provisioner container, which cannot see PGDATA; only the
+# initialization invocation may alter this instance-owned configuration.
+if [ -f "$PGDATA/PG_VERSION" ] && ! grep -qxF 'host replication all all scram-sha-256' "$PGDATA/pg_hba.conf"; then
+  printf '%s\n' 'host replication all all scram-sha-256' >> "$PGDATA/pg_hba.conf"
+  psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-password --no-psqlrc --set=ON_ERROR_STOP=1 -c 'SELECT pg_reload_conf();' >/dev/null
+fi

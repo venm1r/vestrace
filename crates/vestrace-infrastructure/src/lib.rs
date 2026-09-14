@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod backup_archive;
 pub mod config;
 pub mod crypto;
 pub mod embedding_index;
@@ -8,6 +9,8 @@ mod http_read_back;
 pub mod openai_q1;
 pub mod postgres;
 pub mod providers;
+pub mod restore_target;
+pub mod safety;
 pub mod token_entropy;
 
 pub use config::{

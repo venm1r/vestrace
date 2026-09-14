@@ -1045,3 +1045,194 @@ async fn after_erasure_the_corpus_a_build_would_draw_holds_only_what_remains(poo
     );
     runtime.close().await;
 }
+
+// The second sealed candidate uses the guarded preparation/binding SQL chain.
+// Ciphertext is opaque to this provenance boundary; these probes never decrypt it.
+async fn bound_revision_candidate(
+    runtime: &PgPool,
+    workspace: Uuid,
+    revision: Uuid,
+) -> (Uuid, Uuid) {
+    let intent = Uuid::now_v7();
+    let material = Uuid::now_v7();
+    let mut ciphertext = vec![0x51_u8; 4096];
+    ciphertext[..5].copy_from_slice(b"VMRF\x01");
+    let mut tx = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut tx, workspace).await;
+    sqlx::query("SELECT vestrace_reserve_material_key_creation_intent($1,$2,$3,$4,$5,'memory_revision',$6,0)")
+        .bind(intent).bind(workspace).bind(material).bind(Uuid::now_v7()).bind(Uuid::now_v7()).bind(revision)
+        .execute(&mut *tx).await.unwrap();
+    sqlx::query("SELECT vestrace_record_material_key_provisional_created($1)")
+        .bind(intent)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_record_material_key_provisional_receipt($1,$2)")
+        .bind(intent)
+        .bind(Uuid::now_v7())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_prepare_content_material($1,$2,$3,4096)")
+        .bind(intent)
+        .bind(Uuid::now_v7())
+        .bind(ciphertext)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT vestrace_bind_material_key_creation_intent($1,$2)")
+        .bind(intent)
+        .bind(Uuid::now_v7())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    (intent, material)
+}
+
+async fn unprojected_revision_source(pool: &PgPool) -> (PgPool, Uuid, Uuid, Uuid) {
+    provision_result_behavior_database(pool).await;
+    let runtime = common::runtime_pool(pool).await;
+    let accepted = common::prepare_delivery_embedding_job(pool, &runtime).await;
+    let workspace = accepted.context.workspace_id.as_uuid();
+    let memory = Uuid::now_v7();
+    let revision = Uuid::now_v7();
+    sqlx::query("INSERT INTO memories(id,workspace_id,kind,status,state_revision) VALUES($1,$2,'fact','candidate',1)")
+        .bind(memory).bind(workspace).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO memory_revisions(id,workspace_id,memory_id,revision_number,content,confidence,importance) VALUES($1,$2,$3,1,'source whose erasure must prevent republication',1,1)")
+        .bind(revision).bind(workspace).bind(memory).execute(pool).await.unwrap();
+    sqlx::query("UPDATE memories SET active_revision_id=$1 WHERE id=$2")
+        .bind(revision)
+        .bind(memory)
+        .execute(pool)
+        .await
+        .unwrap();
+    let vault = OutputVaultFixture::new();
+    let materializer = vestrace_infrastructure::postgres::PgGovernedContentMaterializer::new(
+        PgStore::from_pool(runtime.clone()),
+        Arc::new(vault.vault(accepted.context.workspace_id)),
+        Arc::new(ContentMaterialCodec::new()),
+    );
+    let source = materializer
+        .materialize_revision(&accepted.context, revision)
+        .await
+        .unwrap()
+        .unwrap();
+    let dependencies: i64 = sqlx::query_scalar("SELECT count(*) FROM embedding_projection_source_dependencies WHERE workspace_id=$1 AND source_material_id=$2")
+        .bind(workspace).bind(source.material_id).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        dependencies, 0,
+        "generic erasure must be tested without a projection"
+    );
+    (runtime, workspace, revision, source.material_id)
+}
+
+async fn wait_for_owner_lock(pool: &PgPool, pid: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)")
+                .bind(pid).fetch_one(pool).await.unwrap();
+            if waiting { return; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the competing operation must wait on the common revision owner lock");
+}
+
+#[sqlx::test(migrations = false)]
+async fn unprojected_erasure_wins_before_revision_republication(pool: PgPool) {
+    let (runtime, workspace, revision, source) = unprojected_revision_source(&pool).await;
+    let (intent, candidate) = bound_revision_candidate(&runtime, workspace, revision).await;
+    let mut erasing = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut erasing, workspace).await;
+    sqlx::query("SELECT * FROM vestrace_prepare_content_material_erasure($1)")
+        .bind(source)
+        .execute(&mut *erasing)
+        .await
+        .unwrap();
+    let mut publishing = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut publishing, workspace).await;
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *publishing)
+        .await
+        .unwrap();
+    let publication = tokio::spawn(async move {
+        let result = sqlx::query("SELECT vestrace_finalize_bound_content_material($1)")
+            .bind(intent)
+            .execute(&mut *publishing)
+            .await;
+        publishing.rollback().await.unwrap();
+        result
+    });
+    wait_for_owner_lock(&pool, pid).await;
+    erasing.commit().await.unwrap();
+    let error = publication
+        .await
+        .unwrap()
+        .expect_err("erasure committed while ciphertext was already sealed");
+    let database = error.as_database_error().unwrap();
+    assert_eq!(database.code().as_deref(), Some("23514"));
+    assert!(database.message().contains("requires an eligible revision"));
+    let state: String = sqlx::query_scalar("SELECT state FROM content_materials WHERE id=$1")
+        .bind(candidate)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        state, "prepared",
+        "the losing candidate was never made Live"
+    );
+    runtime.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn revision_publication_wins_before_unprojected_erasure(pool: PgPool) {
+    let (runtime, workspace, revision, source) = unprojected_revision_source(&pool).await;
+    let (intent, candidate) = bound_revision_candidate(&runtime, workspace, revision).await;
+    let mut publishing = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut publishing, workspace).await;
+    sqlx::query("SELECT vestrace_finalize_bound_content_material($1)")
+        .bind(intent)
+        .execute(&mut *publishing)
+        .await
+        .unwrap();
+    let mut erasing = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut erasing, workspace).await;
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *erasing)
+        .await
+        .unwrap();
+    let erasure = tokio::spawn(async move {
+        sqlx::query("SELECT * FROM vestrace_prepare_content_material_erasure($1)")
+            .bind(source)
+            .execute(&mut *erasing)
+            .await
+            .unwrap();
+        erasing.commit().await.unwrap();
+    });
+    wait_for_owner_lock(&pool, pid).await;
+    publishing.commit().await.unwrap();
+    erasure.await.unwrap();
+    let states: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id,state FROM content_materials WHERE id=ANY($1) ORDER BY id")
+            .bind(vec![source, candidate])
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(states.contains(&(candidate, "live".to_owned())));
+    assert!(states.contains(&(source, "erasure_prepared".to_owned())));
+    // A third candidate after the erase cannot resurrect the same revision.
+    let (later, _) = bound_revision_candidate(&runtime, workspace, revision).await;
+    let mut tx = runtime.begin().await.unwrap();
+    common::result_preparation_fixture::scoped(&mut tx, workspace).await;
+    let error = sqlx::query("SELECT vestrace_finalize_bound_content_material($1)")
+        .bind(later)
+        .execute(&mut *tx)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+    tx.rollback().await.unwrap();
+    runtime.close().await;
+}

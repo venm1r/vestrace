@@ -34,256 +34,210 @@ fn assert_refusal(error: sqlx::Error, expected_state: &str, expected_message: &s
     );
 }
 
-/// Seeds the exact q1 structural evidence `vestrace_assert_canonical_embedding_space`
-/// demands, for the shared delivery fixture's own world, then registers one
-/// canonical space through the real guarded authority.
-///
-/// The evidence chain is not faked past its own guard: the registration still
-/// goes through `vestrace_register_canonical_embedding_space`, which asserts
-/// every join below.  What is seeded here is the durable evidence a real q1
-/// qualification would have left behind.
-async fn register_canonical_space(
-    pool: &PgPool,
-    runtime: &PgPool,
-    fixture: &common::AcceptedJob,
-) -> (Uuid, Uuid) {
-    let workspace = fixture.context.workspace_id.as_uuid();
-    let qualification_job: Uuid = sqlx::query_scalar(
-        "SELECT qualification_job_id FROM model_qualification_revisions \
-         WHERE workspace_id=$1 AND id=$2",
-    )
-    .bind(workspace)
-    .bind(fixture.model_qualification_id)
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    let wire_model: String = sqlx::query_scalar(
-        "SELECT wire_model_id FROM model_revisions WHERE workspace_id=$1 AND id=$2",
-    )
-    .bind(workspace)
-    .bind(fixture.model_revision_id)
-    .fetch_one(pool)
-    .await
-    .unwrap();
-
-    let canonical_qualification = Uuid::now_v7();
-    let probe_effect = Uuid::now_v7();
-    let evidence_root = Uuid::now_v7();
-    let evidence_check = Uuid::now_v7();
-    let target_binding = Uuid::now_v7();
-
-    // external_effect_intents predates the P03 guarded ownership and the
-    // guarded owner holds no privilege on it, so it is written before the role
-    // switch rather than under that role.
-    sqlx::query(
-        "INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) \
-         VALUES($1,$2,'local','{}'::jsonb)",
-    )
-    .bind(probe_effect)
-    .bind(workspace)
-    .execute(pool)
-    .await
-    .expect("one probe external effect intent");
-
-    let mut owner = pool.begin().await.unwrap();
-    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
-        .execute(&mut *owner)
-        .await
-        .unwrap();
-    scoped(&mut owner, workspace).await;
-    // model_qualification_revisions is immutable P03 evidence, so the shared
-    // fixture's 'embedding' capability cannot be widened in place.  A second
-    // qualification revision over the same job and model states the
-    // 'embeddings' request capability the canonical assertion reads, and the
-    // transition targets that revision.
-    sqlx::query(
-        "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,         connection_revision_id,connection_qualification_revision_id,qualification_job_id,         capabilities,valid_until)          SELECT $1,workspace_id,model_revision_id,connection_revision_id,         connection_qualification_revision_id,qualification_job_id,         ARRAY['embedding','embeddings']::TEXT[],NOW()+INTERVAL '1 hour'          FROM model_qualification_revisions WHERE workspace_id=$2 AND id=$3",
-    )
-    .bind(canonical_qualification)
-    .bind(workspace)
-    .bind(fixture.model_qualification_id)
-    .execute(&mut *owner)
-    .await
-    .expect("one further qualification revision stating the embeddings capability");
-    sqlx::query(
-        "INSERT INTO qualification_target_bindings(id,workspace_id,qualification_job_id,\
-         connection_id,connection_revision_id,branch,no_auth_binding_revision_id,\
-         embedding_model_revision_id) VALUES($1,$2,$3,$4,$5,'no_auth',$6,$7)",
-    )
-    .bind(target_binding)
-    .bind(workspace)
-    .bind(qualification_job)
-    .bind(fixture.connection_id)
-    .bind(fixture.connection_revision_id)
-    .bind(fixture.no_auth_binding_id)
-    .bind(fixture.model_revision_id)
-    .execute(&mut *owner)
-    .await
-    .expect("one q1 target binding naming the embedding model revision");
-    sqlx::query(
-        "INSERT INTO model_request_evidence_roots(id,workspace_id,external_effect_id,\
-         request_kind,binding_snapshot_id,qualification_target_binding_id,cause_kind,cause_id) \
-         VALUES($1,$2,$3,'embeddings',NULL,$4,'qualification_probe',$5)",
-    )
-    .bind(evidence_root)
-    .bind(workspace)
-    .bind(probe_effect)
-    .bind(target_binding)
-    .bind(qualification_job)
-    .execute(&mut *owner)
-    .await
-    .expect("one embeddings evidence root rooted at the q1 probe");
-    sqlx::query(
-        "INSERT INTO model_request_evidence_checks(id,workspace_id,evidence_root_id,status) \
-         VALUES($1,$2,$3,'complete')",
-    )
-    .bind(evidence_check)
-    .bind(workspace)
-    .bind(evidence_root)
-    .execute(&mut *owner)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO qualification_probe_results(id,workspace_id,qualification_job_id,\
-         probe_ordinal,result,external_effect_id,model_request_evidence_id) \
-         VALUES($1,$2,$3,'90','pass',$4,$5)",
-    )
-    .bind(Uuid::now_v7())
-    .bind(workspace)
-    .bind(qualification_job)
-    .bind(probe_effect)
-    .bind(evidence_root)
-    .execute(&mut *owner)
-    .await
-    .expect("the passing embeddings probe at ordinal 90");
-    sqlx::query(
-        "INSERT INTO provider_dispatch_causes(external_effect_id,workspace_id,\
-         model_request_evidence_id,model_request_evidence_check_id,cause_kind,\
-         qualification_job_id,qualification_target_binding_id,qualification_probe_ordinal) \
-         VALUES($1,$2,$3,$4,'qualification_probe',$5,$6,'90')",
-    )
-    .bind(probe_effect)
-    .bind(workspace)
-    .bind(evidence_root)
-    .bind(evidence_check)
-    .bind(qualification_job)
-    .bind(target_binding)
-    .execute(&mut *owner)
-    .await
-    .expect("the dispatch cause binding the probe to its evidence");
-    sqlx::query(
-        "INSERT INTO qualification_q1_mre_sources(evidence_root_id,workspace_id,probe_ordinal,\
-         message_layout,tool_choice,parallel_tool_calls,response_format,stream,stream_include_usage) \
-         VALUES($1,$2,'90','plain_text','none',false,'none',false,false)",
-    )
-    .bind(evidence_root)
-    .bind(workspace)
-    .execute(&mut *owner)
-    .await
-    .expect("the q1 source describing the embeddings probe shape");
-    owner.commit().await.unwrap();
-
-    let shape = Uuid::now_v7();
-    let registration = Uuid::now_v7();
-    let mut governed = runtime.begin().await.unwrap();
-    scoped(&mut governed, workspace).await;
-    sqlx::query_scalar::<_, Uuid>(
-        "SELECT vestrace_create_model_request_shape_revision($1,$2,1,'embeddings',false,ARRAY[]::TEXT[])",
-    )
-    .bind(shape)
-    .bind(workspace)
-    .fetch_one(&mut *governed)
-    .await
-    .expect("one embeddings request shape revision");
-    let registered: Uuid = sqlx::query_scalar(
-        "SELECT vestrace_register_canonical_embedding_space($1,$2,'activation-canonical',$3,$4,$5,$6,'float',768)",
-    )
-    .bind(registration)
-    .bind(workspace)
-    .bind(fixture.model_revision_id)
-    .bind(canonical_qualification)
-    .bind(shape)
-    .bind(&wire_model)
-    .fetch_one(&mut *governed)
-    .await
-    .expect("the real guarded authority must accept a fully evidenced canonical space");
-    governed.commit().await.unwrap();
-
-    // vestrace_register_canonical_embedding_space writes the registration
-    // alone; the corpus state and generation guard that every result path
-    // reads are seeded here so the canonical space behaves like a real one.
-    let mut owner = pool.begin().await.unwrap();
-    sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
-        .execute(&mut *owner)
-        .await
-        .unwrap();
-    scoped(&mut owner, workspace).await;
-    sqlx::query(
-        "INSERT INTO embedding_space_corpus_states(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
-    )
-    .bind(workspace)
-    .bind(registered)
-    .execute(&mut *owner)
-    .await
-    .expect("one canonical corpus state");
-    sqlx::query(
-        "INSERT INTO embedding_index_generation_guards(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
-    )
-    .bind(workspace)
-    .bind(registered)
-    .execute(&mut *owner)
-    .await
-    .expect("one canonical generation guard");
-    owner.commit().await.unwrap();
-
-    (registered, canonical_qualification)
-}
-
 struct Attempt {
     workspace: Uuid,
     space: Uuid,
     job: Uuid,
     generation: Uuid,
+    corpus: common::canonical_memory_fixture::Corpus,
+    references: Vec<(Uuid, Uuid, Uuid, Uuid)>,
 }
 
-/// Publishes one Ready generation on the fixture's space and accepts one
-/// `retrieval_query` job against it.
-async fn attempt(pool: &PgPool, runtime: &PgPool) -> Attempt {
-    let accepted = common::prepare_delivery_embedding_job(pool, runtime).await;
-    let workspace = accepted.context.workspace_id.as_uuid();
-    // A Ready generation may only exist on a canonical registration: 0197
-    // refuses one on a legacy space until governed adoption has run, which is
-    // exactly the LegacyAdoptionPending degradation this package models.
-    let (space, _qualification) = register_canonical_space(pool, runtime, &accepted).await;
-
-    // The canonical capture/publish pair, not the legacy opener: 0197 refuses a
-    // Ready generation whose members are a legacy_upgrade representation.
-    let generation = Uuid::now_v7();
-    let mut governed = runtime.begin().await.unwrap();
-    scoped(&mut governed, workspace).await;
-    sqlx::query("SELECT vestrace_capture_embedding_generation($1,$2,$3,1::BIGINT)")
-        .bind(generation)
-        .bind(workspace)
-        .bind(space)
-        .execute(&mut *governed)
-        .await
-        .expect("one captured canonical generation");
-    sqlx::query("SELECT vestrace_publish_embedding_generation($1,$2,$3,1::BIGINT)")
-        .bind(workspace)
-        .bind(space)
-        .bind(generation)
-        .execute(&mut *governed)
-        .await
-        .expect("the captured generation must publish Ready");
-    governed.commit().await.unwrap();
-
-    let job = accept_retrieval_job(pool, runtime, &accepted).await;
+async fn attempt(pool: &PgPool, _runtime: &PgPool) -> Attempt {
+    use std::sync::Arc;
+    use vestrace_infrastructure::postgres::*;
+    let mut corpus =
+        common::canonical_memory_fixture::new_in_database(pool, "result-canonical").await;
+    let workspace = corpus.accepted.context.workspace_id.as_uuid();
+    for content in ["first canonical answer", "second canonical answer"] {
+        let memory = Uuid::now_v7();
+        let revision = Uuid::now_v7();
+        sqlx::query("INSERT INTO memories(id,workspace_id,kind,status,state_revision) VALUES($1,$2,'fact','candidate',1)").bind(memory).bind(workspace).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO memory_revisions(id,memory_id,workspace_id,revision_number,content,confidence,importance) VALUES($1,$2,$3,1,$4,1,0.5)").bind(revision).bind(memory).bind(workspace).bind(content).execute(pool).await.unwrap();
+        sqlx::query("UPDATE memories SET active_revision_id=$1 WHERE id=$2")
+            .bind(revision)
+            .bind(memory)
+            .execute(pool)
+            .await
+            .unwrap();
+        corpus.publish_revision(pool, revision).await;
+    }
+    let generation = corpus.capture().await.as_uuid();
+    let mut tx = corpus.runtime.begin().await.unwrap();
+    scoped(&mut tx, workspace).await;
+    let references: Vec<(Uuid,Uuid,Uuid,Uuid)>=sqlx::query_as("SELECT DISTINCT ON(revision_id) projection_id,source_material_id,memory_id,revision_id FROM vestrace_resolve_embedding_memory_references($1,$2,NULL) ORDER BY revision_id,projection_id")
+        .bind(workspace).bind(generation).fetch_all(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(references.len(), 2);
+    assert_ne!(references[0].2, references[1].2);
+    assert_ne!(references[0].3, references[1].3);
+    let store = PgStore::from_pool(corpus.runtime.clone());
+    let vault = Arc::new(corpus.vault.vault(corpus.accepted.context.workspace_id));
+    let source = PgGovernedContentMaterializer::new(
+        store.clone(),
+        vault.clone(),
+        Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+    )
+    .materialize_bytes(
+        &corpus.accepted.context,
+        "retrieval_query",
+        Uuid::now_v7(),
+        b"canonical answer",
+    )
+    .await
+    .unwrap();
+    let job = PgGovernedEmbeddingJobFactory::new(
+        store.clone(),
+        Arc::new(PgEmbeddingJobRepository::new(store)),
+        Arc::new(PgModelRequestEvidenceRepository::new(vault)),
+        vestrace_application::EffectiveRequestLimits::new(8, 1, 2048).unwrap(),
+    )
+    .create_retrieval_job(
+        &corpus.accepted.context,
+        corpus.accepted.space_registration_id,
+        source,
+        GovernedEmbeddingJobPurpose {
+            kind: vestrace_domain::embedding::EmbeddingJobKind::RetrievalQuery,
+            subject_id: Uuid::now_v7(),
+            cause: "canonical-result-probe",
+            action: "embedding.job.retrieval_accepted",
+            summary: "query canonical result fixture",
+            detail: serde_json::json!({}),
+        },
+        generation,
+    )
+    .await
+    .unwrap()
+    .as_uuid();
     Attempt {
         workspace,
-        space,
+        space: corpus.accepted.space_registration_id,
         job,
         generation,
+        corpus,
+        references,
     }
+}
+
+/// The provider response is durably acknowledged; the test controls the next
+/// terminal transaction to probe malformed references and concurrent invalidation.
+struct HeldQueryResponse;
+#[async_trait::async_trait]
+impl vestrace_application::embedding::EmbeddingRetrievalSink for HeldQueryResponse {
+    async fn complete(
+        &self,
+        _: &vestrace_application::RequestContext,
+        _: vestrace_domain::EmbeddingJobId,
+        _: vestrace_application::embedding::QueryEmbedding,
+    ) -> Result<(), vestrace_application::ApplicationError> {
+        Ok(())
+    }
+}
+struct QueryAdapter(std::sync::atomic::AtomicUsize);
+#[async_trait::async_trait]
+impl vestrace_application::run::GovernedModelAdapter for QueryAdapter {
+    async fn execute(
+        &self,
+        _: vestrace_domain::ConnectionKind,
+        _: &str,
+        _: vestrace_application::ConnectionAuth,
+        request: vestrace_application::EffectiveModelRequest,
+    ) -> Result<vestrace_application::EffectiveModelResponse, vestrace_application::ProviderError>
+    {
+        assert!(matches!(
+            request,
+            vestrace_application::EffectiveModelRequest::Embeddings(_)
+        ));
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(vestrace_application::EffectiveModelResponse::Embeddings(
+            vestrace_application::GovernedEmbeddingsResponse::new(
+                common::result_preparation_fixture::RESULT_MODEL,
+                common::result_preparation_fixture::RESULT_MODEL.into(),
+                vec![
+                    vestrace_application::GovernedEmbeddingVector::from_provider_components(
+                        0,
+                        vec![1.0; 768],
+                    )?,
+                ],
+                1,
+            )?,
+        ))
+    }
+}
+async fn dispatch_query(a: &Attempt) {
+    use std::sync::Arc;
+    use vestrace_infrastructure::postgres::*;
+    let store = PgStore::from_pool(a.corpus.runtime.clone());
+    let vault = Arc::new(a.corpus.vault.vault(a.corpus.accepted.context.workspace_id));
+    let gate = Arc::new(vestrace_application::EmbeddingDataPolicyGate::new(
+        vestrace_application::EmbeddingDataPolicySettings {
+            classification_policy: vestrace_domain::retrieval::ClassificationPolicy::new(
+                Vec::<String>::new(),
+                true,
+            )
+            .unwrap(),
+            classification: vestrace_domain::Sensitivity::Internal,
+            policy: vestrace_domain::trust::DataPolicy::new(
+                vestrace_domain::DataPolicyId::new(),
+                "result-query-policy",
+                vestrace_domain::Sensitivity::Internal,
+                std::collections::BTreeSet::from([vestrace_domain::DataDestination::LocalModel]),
+                None,
+            )
+            .unwrap(),
+            mode: vestrace_application::EmbeddingDataPolicyMode::Enforce,
+        },
+        Arc::new(PgEmbeddingDataPolicyDecisionRepository::new(store.clone())),
+    ));
+    let dispatch = Arc::new(
+        PgProviderDispatchRepository::new(
+            Arc::new(PgInstallationMutationPermit::new(store.clone())),
+            Arc::new(PgModelRequestEvidenceRepository::new(vault.clone())),
+            Arc::new(PgExternalEffectRepository::new(store.clone())),
+            Arc::new(common::UnusedCredentialLeases),
+            Arc::new(PgModelDataPolicyDecisionRepository::new(store.clone())),
+            Arc::new(PgGovernedMutationRepository::new(store.clone())),
+            Arc::new(common::AllowEmbeddingPolicy),
+        )
+        .with_embedding_policy(gate),
+    );
+    let preparation = Arc::new(
+        vestrace_application::EmbeddingResultPreparationService::new(
+            Arc::new(PgEmbeddingResultRepository::new(
+                store.clone(),
+                dispatch.clone(),
+            )),
+            vault.clone(),
+            Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+        ),
+    );
+    let finalization = Arc::new(
+        vestrace_application::EmbeddingResultFinalizationService::new(
+            Arc::new(PgEmbeddingResultFinalizationRepository::new(store)),
+            vault,
+            Arc::new(EmbeddingOutputHmacCommitter::new()),
+        ),
+    );
+    let adapter = Arc::new(QueryAdapter(std::sync::atomic::AtomicUsize::new(0)));
+    let outcome = vestrace_application::embedding::EmbeddingExecutor::new(
+        dispatch,
+        preparation,
+        finalization,
+        adapter.clone(),
+        vestrace_domain::WorkerId::new(),
+    )
+    .with_retrieval_sink(Arc::new(HeldQueryResponse))
+    .execute(
+        &a.corpus.accepted.context,
+        vestrace_domain::EmbeddingJobId::from_uuid(a.job),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        outcome,
+        vestrace_application::embedding::EmbeddingExecutionOutcome::Succeeded
+    );
+    assert_eq!(adapter.0.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 /// Accepts one retrieval_query job over its own effect and evidence root.
@@ -342,12 +296,13 @@ async fn accept_fence(runtime: &PgPool, a: &Attempt, request: Uuid) -> Result<Uu
     let mut transaction = runtime.begin().await?;
     scoped(&mut transaction, a.workspace).await;
     let result = sqlx::query_scalar(
-        "SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$3,$4,NOW()+INTERVAL '30 seconds')",
+        "SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$3,$4,$5,NOW()+INTERVAL '30 seconds')",
     )
     .bind(a.workspace)
     .bind(a.job)
     .bind(request)
     .bind(a.space)
+    .bind(a.generation)
     .fetch_one(&mut *transaction)
     .await;
     finish(transaction, result).await
@@ -359,6 +314,29 @@ async fn finalize(
     fence: Uuid,
     references: &[(Uuid, Uuid, i64, f64)],
 ) -> Result<Uuid, sqlx::Error> {
+    if job_state(runtime, a).await == "requested" {
+        dispatch_query(a).await;
+    }
+    let projections: Vec<Uuid> = references
+        .iter()
+        .map(|r| {
+            a.references
+                .iter()
+                .find(|p| p.2 == r.0 && p.3 == r.1)
+                .map(|p| p.0)
+                .unwrap_or_else(Uuid::now_v7)
+        })
+        .collect();
+    let sources: Vec<Uuid> = references
+        .iter()
+        .map(|r| {
+            a.references
+                .iter()
+                .find(|p| p.2 == r.0 && p.3 == r.1)
+                .map(|p| p.1)
+                .unwrap_or_else(Uuid::now_v7)
+        })
+        .collect();
     let memories: Vec<Uuid> = references.iter().map(|r| r.0).collect();
     let revisions: Vec<Uuid> = references.iter().map(|r| r.1).collect();
     let ranks: Vec<i64> = references.iter().map(|r| r.2).collect();
@@ -366,11 +344,13 @@ async fn finalize(
     let mut transaction = runtime.begin().await?;
     scoped(&mut transaction, a.workspace).await;
     let result = sqlx::query_scalar(
-        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7)",
+        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7,$8,$9)",
     )
     .bind(a.workspace)
     .bind(a.job)
     .bind(fence)
+    .bind(projections)
+    .bind(sources)
     .bind(memories)
     .bind(revisions)
     .bind(ranks)
@@ -493,12 +473,17 @@ async fn counts(pool: &PgPool, a: &Attempt) -> (i64, i64) {
 }
 
 async fn job_state(pool: &PgPool, a: &Attempt) -> String {
-    sqlx::query_scalar("SELECT state FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
-        .bind(a.workspace)
-        .bind(a.job)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    let mut transaction = pool.begin().await.unwrap();
+    scoped(&mut transaction, a.workspace).await;
+    let state =
+        sqlx::query_scalar("SELECT state FROM embedding_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(a.workspace)
+            .bind(a.job)
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+    transaction.commit().await.unwrap();
+    state
 }
 
 /// Query-first order: the attempt cashes its fence while the pinned generation
@@ -525,8 +510,8 @@ async fn a_result_lands_while_its_pinned_generation_is_current(pool: PgPool) {
     .unwrap();
     assert_eq!(pinned, a.generation);
 
-    let first = (Uuid::now_v7(), Uuid::now_v7(), 0_i64, 0.75_f64);
-    let second = (Uuid::now_v7(), Uuid::now_v7(), 1_i64, 0.25_f64);
+    let first = (a.references[0].2, a.references[0].3, 0_i64, 0.75_f64);
+    let second = (a.references[1].2, a.references[1].3, 2_i64, 0.25_f64);
     finalize(&runtime, &a, fence, &[first, second])
         .await
         .expect("the pinned generation is still current, so the answer is terminal");
@@ -550,7 +535,7 @@ async fn a_result_lands_while_its_pinned_generation_is_current(pool: PgPool) {
         stored,
         vec![
             (0, first.0, first.1, 0, 0.75),
-            (1, second.0, second.1, 1, 0.25)
+            (1, second.0, second.1, 2, 0.25)
         ]
     );
 
@@ -569,13 +554,14 @@ async fn a_generation_that_moves_first_refuses_the_result_and_stores_nothing(poo
     let a = attempt(&pool, &runtime).await;
     let fence = accept_fence(&runtime, &a, Uuid::now_v7()).await.unwrap();
 
+    dispatch_query(&a).await;
     advance_generation(&pool, &runtime, &a).await;
 
     let error = finalize(
         &runtime,
         &a,
         fence,
-        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 1.0)],
+        &[(a.references[0].2, a.references[0].3, 0, 1.0)],
     )
     .await
     .unwrap_err();
@@ -606,7 +592,7 @@ async fn a_result_and_a_generation_change_exclude_each_other(pool: PgPool) {
         &runtime,
         &a,
         fence,
-        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+        &[(a.references[0].2, a.references[0].3, 0, 0.5)],
     )
     .await
     .unwrap();
@@ -629,14 +615,14 @@ async fn a_result_and_a_generation_change_exclude_each_other(pool: PgPool) {
         &runtime,
         &b,
         other,
-        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+        &[(b.references[0].2, b.references[0].3, 0, 0.5)],
     )
     .await
     .unwrap_err();
     assert_refusal(
         error,
         "23514",
-        "embedding retrieval attempt already closed as generation changed",
+        "embedding retrieval result requires completed query dispatch authority",
     );
     assert_eq!(counts(&pool, &b).await, (0, 1));
     runtime.close().await;
@@ -876,7 +862,8 @@ async fn the_worker_reads_back_the_generation_the_fence_pinned(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(i64::try_from(snapshot.generation_epoch).unwrap(), stored.0);
-    assert_eq!(i64::try_from(snapshot.guard_version).unwrap(), stored.1);
+    assert_eq!(i64::try_from(snapshot.guard_version).unwrap(), stored.1 + 1);
+    assert_ne!(i64::try_from(snapshot.guard_version).unwrap(), stored.1);
     assert_eq!(i64::try_from(snapshot.corpus_revision).unwrap(), stored.2);
     assert_eq!(
         i64::try_from(snapshot.built_through_projection_ordinal).unwrap(),
@@ -1001,6 +988,7 @@ async fn e2e_publish_projections(
     runtime: &PgPool,
     accepted: &common::AcceptedJob,
     memory_source: Uuid,
+    additional_memory_source: Option<Uuid>,
 ) {
     use common::result_preparation_fixture::{
         DeliveryPolicyCase, OutputVaultFixture, acceptance_command, attach_source_to_evidence,
@@ -1015,6 +1003,15 @@ async fn e2e_publish_projections(
     common::make_dispatchable_with_policy(pool, runtime, accepted, true).await;
     for (ordinal, source) in sources.into_iter().enumerate() {
         attach_source_to_evidence(pool, accepted, source, 8 + ordinal as i64).await;
+    }
+    if let Some(source) = additional_memory_source {
+        attach_source_to_evidence(
+            pool,
+            accepted,
+            vestrace_domain::ContentMaterialId::from_uuid(source),
+            10,
+        )
+        .await;
     }
     let output_set = outputs();
     let receipt_id = Uuid::now_v7();
@@ -1093,13 +1090,15 @@ async fn e2e_publish_projections(
 async fn a_published_projection_resolves_to_its_memory_revision(pool: PgPool) {
     use vestrace_application::embedding::EmbeddingRetrievalRepository;
 
-    provision_result_behavior_database(&pool).await;
-    let runtime = common::runtime_pool(&pool).await;
-    let accepted = common::prepare_delivery_embedding_job(&pool, &runtime).await;
-    let workspace = accepted.context.workspace_id;
+    let mut corpus = common::canonical_memory_fixture::new(&pool, "memory-resolution").await;
+    let runtime = corpus.runtime.clone();
+    let workspace = corpus.accepted.context.workspace_id;
 
-    let (memory, revision, memory_source) = e2e_memory_source(&pool, &runtime, &accepted).await;
-    e2e_publish_projections(&pool, &runtime, &accepted, memory_source).await;
+    let (memory, revision, memory_source) =
+        e2e_memory_source(&pool, &runtime, &corpus.accepted).await;
+    e2e_publish_projections(&pool, &runtime, &corpus.accepted, memory_source, None).await;
+
+    let generation = corpus.capture().await.as_uuid();
 
     // Two projections, and only one of them was computed from a memory.
     let all: Vec<Uuid> = sqlx::query_scalar(
@@ -1130,7 +1129,7 @@ async fn a_published_projection_resolves_to_its_memory_revision(pool: PgPool) {
         vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
     );
     let resolved = repository
-        .resolve_members(&accepted.context, &all)
+        .resolve_members(&corpus.accepted.context, generation, &all)
         .await
         .expect("resolution must not fail");
 
@@ -1151,7 +1150,7 @@ async fn a_published_projection_resolves_to_its_memory_revision(pool: PgPool) {
 
     // An unknown projection resolves to nothing rather than to something.
     let absent = repository
-        .resolve_members(&accepted.context, &[Uuid::now_v7()])
+        .resolve_members(&corpus.accepted.context, generation, &[Uuid::now_v7()])
         .await
         .expect("an unknown projection is not a failure");
     assert!(absent.is_empty());
@@ -1284,7 +1283,7 @@ async fn a_terminal_attempt_reads_back_as_its_outcome_and_its_lineage(pool: PgPo
         .unwrap();
     // The reference table names identities and does not resolve them; what a
     // reference means is `resolve_members`' job, proven in its own test.
-    let (memory, revision) = (Uuid::now_v7(), Uuid::now_v7());
+    let (memory, revision) = (answered.references[0].2, answered.references[0].3);
     finalize(
         &runtime,
         &answered,
@@ -1430,7 +1429,7 @@ async fn the_retry_queue_holds_only_unspent_confirmed_changes(pool: PgPool) {
         &runtime,
         &answered,
         answered_fence,
-        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+        &[(answered.references[0].2, answered.references[0].3, 0, 0.5)],
     )
     .await
     .expect("a result lands on a current generation");
@@ -1682,7 +1681,7 @@ async fn mutating_the_one_successor_lookup_moves_the_refusal_and_restores_exactl
     runtime.close().await;
 }
 
-const FINALIZE_AUTHORITY: &str = "public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])";
+const FINALIZE_AUTHORITY: &str = "public.vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],uuid[],uuid[],bigint[],double precision[])";
 
 /// The pinned-generation revalidation, and the edit that disables all of it.
 ///
@@ -1705,12 +1704,13 @@ async fn land_on_a_moved_generation(
 ) -> (Attempt, Result<Uuid, (String, String)>) {
     let a = attempt(pool, runtime).await;
     let fence = accept_fence(runtime, &a, Uuid::now_v7()).await.unwrap();
+    dispatch_query(&a).await;
     advance_generation(pool, runtime, &a).await;
     let landed = finalize(
         runtime,
         &a,
         fence,
-        &[(Uuid::now_v7(), Uuid::now_v7(), 0, 0.5)],
+        &[(a.references[0].2, a.references[0].3, 0, 0.5)],
     )
     .await;
     let outcome = match landed {
@@ -1729,21 +1729,12 @@ async fn land_on_a_moved_generation(
     (a, outcome)
 }
 
-/// Mutation qualification: the pinned-generation fence is the only thing
-/// between a moved corpus and a stored answer.
-///
-/// With the predicate disabled the result *lands*. Nothing else refuses it: no
-/// constraint, no trigger, no later check. So unlike the one-successor rule --
-/// which the table's primary key also enforces -- this rule rests on this
-/// predicate alone, and that is what the run records.
-///
-/// It is worth saying plainly what the mutated world contains, because it is
-/// the thing the fence prevents: a terminal retrieval result, attributed to a
-/// job, whose fence names a generation the corpus has already replaced. A
-/// caller reading it would be told what the corpus used to say, with nothing
-/// marking it stale.
+/// Removing the first generation fence remains contained by the additional snapshot guard.
+/// This records the independent refusal boundary and restores the original authority.
 #[sqlx::test(migrations = false)]
-async fn mutating_the_pinned_generation_fence_lets_a_stale_answer_land(pool: PgPool) {
+async fn mutating_the_pinned_generation_fence_is_contained_by_additional_snapshot_guard(
+    pool: PgPool,
+) {
     provision_result_behavior_database(&pool).await;
     let runtime = common::runtime_pool(&pool).await;
 
@@ -1780,18 +1771,8 @@ async fn mutating_the_pinned_generation_fence_lets_a_stale_answer_land(pool: PgP
     assert_eq!(mutated_acl, acl, "nor the access control list");
     assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
 
-    // Red, and red in the sharpest way: the answer lands.
+    // The additional corpus/epoch/watermark guard still refuses the replacement.
     let (mutated_attempt, landed) = land_on_a_moved_generation(&pool, &runtime).await;
-    landed.expect(
-        "with the fence disabled nothing else refuses a stale answer; if this is a \
-         refusal, some other defence exists and the qualification must say which",
-    );
-    assert_eq!(
-        counts(&pool, &mutated_attempt).await,
-        (1, 0),
-        "the unsafe state is a stored terminal result against a generation the \
-         corpus has already replaced"
-    );
 
     // Restore, byte-exactly, and prove it.
     install_authority(&pool, &original).await;
@@ -1805,6 +1786,15 @@ async fn mutating_the_pinned_generation_fence_lets_a_stale_answer_land(pool: PgP
     assert_eq!(restored_acl, acl);
     assert_eq!(restored_execute, runtime_execute);
 
+    let (state, message) = landed
+        .expect_err("the additional snapshot guard independently refuses the replaced generation");
+    assert_eq!(state, "23514");
+    assert_eq!(
+        message,
+        "embedding retrieval result requires its exact pinned generation"
+    );
+    assert_eq!(counts(&pool, &mutated_attempt).await, (0, 0));
+
     // Green after: the same refusal, and nothing stored.
     let (after_attempt, after) = land_on_a_moved_generation(&pool, &runtime).await;
     let (after_state, after_message) = after.expect_err("the fence must refuse again");
@@ -1813,4 +1803,442 @@ async fn mutating_the_pinned_generation_fence_lets_a_stale_answer_land(pool: PgP
     assert_eq!(counts(&pool, &after_attempt).await, (0, 0));
 
     runtime.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn unchecked_result_overloads_are_retired(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    for signature in [
+        "vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)",
+        "vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])",
+    ] {
+        let (definition, owner, _, executable) = authority_state(&pool, signature).await;
+        assert_eq!(owner, "vestrace_guarded_owner");
+        assert!(
+            !executable,
+            "unchecked overload remains executable: {signature}"
+        );
+        assert!(
+            definition.contains("retired"),
+            "unchecked body must refuse even its owner"
+        );
+    }
+    let version: i32 = sqlx::query_scalar("SELECT column_default::integer FROM information_schema.columns WHERE table_name='embedding_retrieval_results' AND column_name='provenance_version'")
+        .fetch_one(&pool).await.expect("old empty results have explicit historical provenance");
+    assert_eq!(version, 0);
+}
+
+#[sqlx::test(migrations = false)]
+async fn canonical_reference_entrypoints_require_workspace_context(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    // Owner bypasses runtime ACLs, so each SECURITY DEFINER body must reject
+    // missing context itself even when every caller-supplied UUID is absent.
+    for statement in [
+        "SELECT * FROM vestrace_resolve_embedding_memory_references($1,$2,ARRAY[]::uuid[])",
+        "SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$2,$2,$2,NOW())",
+        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$2,ARRAY[]::uuid[],ARRAY[]::uuid[],ARRAY[]::uuid[],ARRAY[]::uuid[],ARRAY[]::bigint[],ARRAY[]::float8[])",
+    ] {
+        let mut transaction = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        sqlx::query("SELECT set_config('vestrace.workspace_id','',true)")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        let error = sqlx::query(statement)
+            .bind(Uuid::now_v7())
+            .bind(Uuid::now_v7())
+            .execute(&mut *transaction)
+            .await
+            .expect_err("context is mandatory independently of RLS");
+        assert_refusal(error, "42501", "workspace context is required");
+        transaction.rollback().await.unwrap();
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn distinct_projections_of_one_revision_cannot_form_two_result_references(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let a = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &a, Uuid::now_v7()).await.unwrap();
+    dispatch_query(&a).await;
+    let mut tx = runtime.begin().await.unwrap();
+    scoped(&mut tx, a.workspace).await;
+    let members:Vec<(Uuid,Uuid,Uuid,Uuid)>=sqlx::query_as("SELECT projection_id,source_material_id,memory_id,revision_id FROM vestrace_resolve_embedding_memory_references($1,$2,NULL) WHERE revision_id=$3 ORDER BY projection_id")
+        .bind(a.workspace).bind(a.generation).bind(a.references[0].3).fetch_all(&mut *tx).await.unwrap();
+    assert_eq!(
+        members.len(),
+        2,
+        "the governed delivery really published two projections of one revision"
+    );
+    assert_ne!(members[0].0, members[1].0);
+    let result = sqlx::query_scalar(
+        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(a.workspace)
+    .bind(a.job)
+    .bind(fence)
+    .bind(members.iter().map(|m| m.0).collect::<Vec<_>>())
+    .bind(members.iter().map(|m| m.1).collect::<Vec<_>>())
+    .bind(members.iter().map(|m| m.2).collect::<Vec<_>>())
+    .bind(members.iter().map(|m| m.3).collect::<Vec<_>>())
+    .bind(vec![0_i64, 1])
+    .bind(vec![0.75_f64, 0.5])
+    .fetch_one(&mut *tx)
+    .await;
+    assert_refusal(
+        finish(tx, result).await.unwrap_err(),
+        "23514",
+        "embedding retrieval result requires unique canonical memory references",
+    );
+    assert_eq!(counts(&pool, &a).await, (0, 0));
+    assert_eq!(job_state(&runtime, &a).await, "running");
+}
+
+async fn finalize_wrong_memory(
+    runtime: &PgPool,
+    a: &Attempt,
+    fence: Uuid,
+) -> Result<Uuid, sqlx::Error> {
+    dispatch_query(a).await;
+    let reference = a.references[0];
+    let mut tx = runtime.begin().await.unwrap();
+    scoped(&mut tx, a.workspace).await;
+    let result = sqlx::query_scalar(
+        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(a.workspace)
+    .bind(a.job)
+    .bind(fence)
+    .bind(vec![reference.0])
+    .bind(vec![reference.1])
+    .bind(vec![Uuid::now_v7()])
+    .bind(vec![reference.3])
+    .bind(vec![0_i64])
+    .bind(vec![0.75_f64])
+    .fetch_one(&mut *tx)
+    .await;
+    finish(tx, result).await
+}
+
+#[sqlx::test(migrations = false)]
+async fn mutating_memory_provenance_makes_a_wrong_memory_reference_persist(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let needle = "target_memory_ids[position] IS DISTINCT FROM resolved.memory_id";
+    let before = authority_state(&pool, FINALIZE_AUTHORITY).await;
+    assert_eq!(before.0.matches(needle).count(), 1);
+    let baseline = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &baseline, Uuid::now_v7())
+        .await
+        .unwrap();
+    assert_refusal(
+        finalize_wrong_memory(&runtime, &baseline, fence)
+            .await
+            .unwrap_err(),
+        "23514",
+        "embedding retrieval result requires exact canonical memory provenance",
+    );
+    assert_eq!(counts(&pool, &baseline).await, (0, 0));
+    install_authority(&pool, &before.0.replace(needle, "FALSE")).await;
+    let mutant = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &mutant, Uuid::now_v7())
+        .await
+        .unwrap();
+    let result = finalize_wrong_memory(&runtime, &mutant, fence).await;
+    // Restore before inspecting the mutation outcome, including its owner and grants.
+    install_authority(&pool, &before.0).await;
+    assert_eq!(authority_state(&pool, FINALIZE_AUTHORITY).await, before);
+    result.expect("without exact memory ownership validation a forged memory identity persists");
+    assert_eq!(counts(&pool, &mutant).await, (1, 0));
+    let stored:Uuid=sqlx::query_scalar("SELECT reference.memory_id FROM embedding_retrieval_result_references reference JOIN embedding_retrieval_results result ON result.workspace_id=reference.workspace_id AND result.id=reference.result_id WHERE result.workspace_id=$1 AND result.job_id=$2")
+        .bind(mutant.workspace).bind(mutant.job).fetch_one(&pool).await.unwrap();
+    assert_ne!(stored, mutant.references[0].2);
+    let restored = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &restored, Uuid::now_v7())
+        .await
+        .unwrap();
+    assert_refusal(
+        finalize_wrong_memory(&runtime, &restored, fence)
+            .await
+            .unwrap_err(),
+        "23514",
+        "embedding retrieval result requires exact canonical memory provenance",
+    );
+    assert_eq!(counts(&pool, &restored).await, (0, 0));
+}
+
+#[sqlx::test(migrations = false)]
+async fn ambiguous_revision_owners_remain_ambiguous_after_owner_deletion(pool: PgPool) {
+    let mut corpus =
+        common::canonical_memory_fixture::new(&pool, "ambiguous-revision-owners").await;
+    let runtime = corpus.runtime.clone();
+    let workspace = corpus.accepted.context.workspace_id.as_uuid();
+    let (_, _, first_source) = e2e_memory_source(&pool, &runtime, &corpus.accepted).await;
+    let (second_memory, second_revision, second_source) =
+        e2e_memory_source(&pool, &runtime, &corpus.accepted).await;
+    // Delivery acceptance captures every evidenced source for every output.
+    // Thus both revisions are authentic owners of these aggregate projections.
+    e2e_publish_projections(
+        &pool,
+        &runtime,
+        &corpus.accepted,
+        first_source,
+        Some(second_source),
+    )
+    .await;
+    let generation = corpus.capture().await.as_uuid();
+    for stage in ["both_present", "one_soft_deleted", "one_physically_deleted"] {
+        let mut tx = runtime.begin().await.unwrap();
+        scoped(&mut tx, workspace).await;
+        let error =
+            sqlx::query("SELECT * FROM vestrace_resolve_embedding_memory_references($1,$2,NULL)")
+                .bind(workspace)
+                .bind(generation)
+                .fetch_all(&mut *tx)
+                .await
+                .expect_err(
+                    "owner eligibility must never choose the surviving owner of an aggregate",
+                );
+        assert_refusal(error, "23514", "owner is ambiguous");
+        tx.rollback().await.unwrap();
+        match stage {
+            "both_present" => {
+                sqlx::query("UPDATE memories SET status='deleted' WHERE workspace_id=$1 AND id=$2")
+                    .bind(workspace)
+                    .bind(second_memory)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            "one_soft_deleted" => {
+                let mut deletion = pool.begin().await.unwrap();
+                scoped(&mut deletion, workspace).await;
+                sqlx::query("DELETE FROM memory_revisions WHERE workspace_id=$1 AND id=$2")
+                    .bind(workspace)
+                    .bind(second_revision)
+                    .execute(&mut *deletion)
+                    .await
+                    .unwrap();
+                sqlx::query("DELETE FROM memories WHERE workspace_id=$1 AND id=$2")
+                    .bind(workspace)
+                    .bind(second_memory)
+                    .execute(&mut *deletion)
+                    .await
+                    .unwrap();
+                deletion.commit().await.unwrap();
+            }
+            _ => {}
+        }
+    }
+    let still_live: i64 = sqlx::query_scalar("SELECT count(*) FROM content_materials WHERE workspace_id=$1 AND id=ANY($2) AND state='live'")
+        .bind(workspace).bind(vec![first_source,second_source]).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        still_live, 2,
+        "this probes owner deletion, not material erasure"
+    );
+    runtime.close().await;
+}
+
+const REFERENCE_ARGUMENTS: &str =
+    "$4::uuid[],$5::uuid[],$6::uuid[],$7::uuid[],$8::bigint[],$9::double precision[]";
+
+async fn finalize_arguments_in(
+    tx: &mut Transaction<'_, Postgres>,
+    a: &Attempt,
+    fence: Uuid,
+    arguments: &str,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,{arguments})"
+    ))
+    .bind(a.workspace)
+    .bind(a.job)
+    .bind(fence)
+    .bind(a.references.iter().map(|r| r.0).collect::<Vec<_>>())
+    .bind(a.references.iter().map(|r| r.1).collect::<Vec<_>>())
+    .bind(a.references.iter().map(|r| r.2).collect::<Vec<_>>())
+    .bind(a.references.iter().map(|r| r.3).collect::<Vec<_>>())
+    .bind(vec![0_i64, 2])
+    .bind(vec![0.75_f64, 0.25])
+    .fetch_one(&mut **tx)
+    .await
+}
+
+async fn terminal_branch_in(
+    tx: &mut Transaction<'_, Postgres>,
+    a: &Attempt,
+    fence: Uuid,
+    result: bool,
+) -> Result<Uuid, sqlx::Error> {
+    if result {
+        finalize_arguments_in(tx, a, fence, REFERENCE_ARGUMENTS).await
+    } else {
+        sqlx::query_scalar(
+            "SELECT vestrace_observe_embedding_retrieval_generation_change($1,$2,$3,'replaced')",
+        )
+        .bind(a.workspace)
+        .bind(a.job)
+        .bind(fence)
+        .fetch_one(&mut **tx)
+        .await
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn terminal_branches_exclude_each_other_in_both_blocked_commit_orders(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    for result_first in [true, false] {
+        let a = attempt(&pool, &runtime).await;
+        let fence = accept_fence(&runtime, &a, Uuid::now_v7()).await.unwrap();
+        dispatch_query(&a).await;
+        let mut winner = runtime.begin().await.unwrap();
+        scoped(&mut winner, a.workspace).await;
+        let winner_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *winner)
+            .await
+            .unwrap();
+        let mut loser = runtime.begin().await.unwrap();
+        scoped(&mut loser, a.workspace).await;
+        let loser_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *loser)
+            .await
+            .unwrap();
+        assert_ne!(winner_pid, loser_pid);
+        terminal_branch_in(&mut winner, &a, fence, result_first)
+            .await
+            .unwrap();
+        let waiting = async {
+            let outcome = terminal_branch_in(&mut loser, &a, fence, !result_first).await;
+            finish(loser, outcome).await
+        };
+        tokio::pin!(waiting);
+        let blocked=tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {
+                tokio::select! {
+                    premature=&mut waiting=>panic!("competing terminal transaction did not wait for the winner: {premature:?}"),
+                    _=tokio::time::sleep(std::time::Duration::from_millis(10))=> {
+                        let blockers:Vec<i32>=sqlx::query_scalar("SELECT pg_blocking_pids($1)").bind(loser_pid).fetch_one(&pool).await.unwrap();
+                        if blockers.contains(&winner_pid) { break; }
+                    }
+                }
+            }
+        }).await;
+        // Release the winner even if the blocking assertion times out.
+        winner.commit().await.unwrap();
+        blocked.expect(
+            "the second connection must demonstrably block on the first terminal transaction",
+        );
+        let failure = tokio::time::timeout(std::time::Duration::from_secs(5), &mut waiting)
+            .await
+            .expect("the losing terminal transaction must finish without a deadlock")
+            .unwrap_err();
+        assert_eq!(
+            failure.as_database_error().unwrap().code().as_deref(),
+            Some("23514")
+        );
+        if result_first {
+            assert!(
+                failure
+                    .to_string()
+                    .contains("already produced a terminal result")
+            );
+            assert_eq!(counts(&pool, &a).await, (1, 0));
+            assert_eq!(job_state(&runtime, &a).await, "succeeded");
+        } else {
+            assert!(
+                failure.to_string().contains("exact unfinished job"),
+                "{failure}"
+            );
+            assert_eq!(counts(&pool, &a).await, (0, 1));
+            assert_eq!(job_state(&runtime, &a).await, "failed_definite");
+        }
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn malformed_references_roll_back_before_a_valid_finish(pool: PgPool) {
+    provision_result_behavior_database(&pool).await;
+    let runtime = common::runtime_pool(&pool).await;
+    let a = attempt(&pool, &runtime).await;
+    let fence = accept_fence(&runtime, &a, Uuid::now_v7()).await.unwrap();
+    dispatch_query(&a).await;
+    // Fixed SQL expressions are test cases, never caller input. Each retains
+    // all bind parameters so malformed-array checks exercise PostgreSQL itself.
+    let cases = [
+        (
+            "$4::uuid[]",
+            "CASE WHEN cardinality($4::uuid[])>0 THEN NULL::uuid[] ELSE $4::uuid[] END",
+            "22023",
+        ),
+        ("$4::uuid[]", "ARRAY[NULL::uuid,($4::uuid[])[2]]", "22023"),
+        ("$5::uuid[]", "($5::uuid[])[1:1]", "22023"),
+        (
+            "$5::uuid[]",
+            "ARRAY[gen_random_uuid(),($5::uuid[])[2]]",
+            "23514",
+        ),
+        ("$6::uuid[]", "ARRAY[NULL::uuid,($6::uuid[])[2]]", "23514"),
+        (
+            "$7::uuid[]",
+            "ARRAY[gen_random_uuid(),($7::uuid[])[2]]",
+            "23514",
+        ),
+        (
+            "$8::bigint[]",
+            "ARRAY[-1::bigint,($8::bigint[])[2]]",
+            "22023",
+        ),
+        (
+            "$8::bigint[]",
+            "ARRAY[($8::bigint[])[1],($8::bigint[])[1]]",
+            "22023",
+        ),
+        (
+            "$8::bigint[]",
+            "ARRAY[NULL::bigint,($8::bigint[])[2]]",
+            "22023",
+        ),
+        (
+            "$9::double precision[]",
+            "ARRAY['NaN'::float8,($9::float8[])[2]]",
+            "22023",
+        ),
+        (
+            "$9::double precision[]",
+            "ARRAY['Infinity'::float8,($9::float8[])[2]]",
+            "22023",
+        ),
+    ];
+    for (needle, replacement, expected) in cases {
+        let mut tx = runtime.begin().await.unwrap();
+        scoped(&mut tx, a.workspace).await;
+        let result = finalize_arguments_in(
+            &mut tx,
+            &a,
+            fence,
+            &REFERENCE_ARGUMENTS.replace(needle, replacement),
+        )
+        .await;
+        let error = finish(tx, result).await.expect_err(replacement);
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some(expected),
+            "{replacement}: {error}"
+        );
+        assert_eq!(counts(&pool, &a).await, (0, 0), "{replacement}");
+        assert_eq!(job_state(&runtime, &a).await, "running");
+    }
+    let mut tx = runtime.begin().await.unwrap();
+    scoped(&mut tx, a.workspace).await;
+    let result = finalize_arguments_in(&mut tx, &a, fence, REFERENCE_ARGUMENTS).await;
+    finish(tx, result)
+        .await
+        .expect("the exact same acknowledged attempt remains eligible after every rejected probe");
+    assert_eq!(counts(&pool, &a).await, (1, 0));
+    assert_eq!(job_state(&runtime, &a).await, "succeeded");
 }

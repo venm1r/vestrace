@@ -200,7 +200,7 @@ pub struct PinnedCredential {
 /// qualification head and immutable snapshot in that fixture boundary; it
 /// publishes Candidate and Active credential state through the guarded path.
 pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
-    accept_embedding_job_inner(owner, runtime, false, true, false).await
+    accept_embedding_job_inner(owner, runtime, false, true, false, false).await
 }
 
 /// Builds every immutable prerequisite for a delivery embedding job but leaves
@@ -208,7 +208,7 @@ pub async fn accept_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJ
 /// installed before the job/output/audit mutation rather than backfilling an
 /// already accepted job.
 pub async fn prepare_delivery_embedding_job(owner: &PgPool, runtime: &PgPool) -> AcceptedJob {
-    accept_embedding_job_inner(owner, runtime, false, false, false).await
+    accept_embedding_job_inner(owner, runtime, false, false, false, false).await
 }
 
 /// A second delivery owns a new effect/evidence/job while retaining the same
@@ -246,7 +246,7 @@ pub async fn prepare_delivery_embedding_job_with_pinned_credential(
     owner: &PgPool,
     runtime: &PgPool,
 ) -> AcceptedJob {
-    accept_embedding_job_inner(owner, runtime, true, false, false).await
+    accept_embedding_job_inner(owner, runtime, true, false, false, false).await
 }
 
 /// Builds an accepted embedding job whose immutable binding snapshot carries a
@@ -258,7 +258,7 @@ pub async fn accept_embedding_job_with_pinned_credential(
     owner: &PgPool,
     runtime: &PgPool,
 ) -> AcceptedJob {
-    accept_embedding_job_inner(owner, runtime, true, true, false).await
+    accept_embedding_job_inner(owner, runtime, true, true, false, false).await
 }
 
 /// Historical 0194 allowed a nonterminal lease as credential protection.
@@ -268,7 +268,7 @@ pub async fn prepare_legacy_delivery_with_expiring_credential_lease(
     owner: &PgPool,
     runtime: &PgPool,
 ) -> AcceptedJob {
-    accept_embedding_job_inner(owner, runtime, true, false, true).await
+    accept_embedding_job_inner(owner, runtime, true, false, true, false).await
 }
 
 async fn accept_embedding_job_inner(
@@ -277,6 +277,7 @@ async fn accept_embedding_job_inner(
     credential_backed: bool,
     accept_job: bool,
     legacy_expiring_lease: bool,
+    canonical_capability: bool,
 ) -> AcceptedJob {
     let workspace_id = WorkspaceId::new();
     let principal_id = PrincipalId::new();
@@ -597,12 +598,17 @@ async fn accept_embedding_job_inner(
     sqlx::query(
         "INSERT INTO connection_qualification_revisions(id,workspace_id,connection_revision_id,\
          qualification_job_id,profile_revision,valid_until,capabilities) \
-         VALUES($1,$2,$3,$4,'q1',NOW()+INTERVAL '1 hour',ARRAY['embedding']::TEXT[])",
+         VALUES($1,$2,$3,$4,'q1',NOW()+INTERVAL '1 hour',$5::TEXT[])",
     )
     .bind(connection_qualification_id)
     .bind(workspace_id.as_uuid())
     .bind(connection_revision_id)
     .bind(qualification_job_id)
+    .bind(if canonical_capability {
+        vec!["embedding", "embeddings"]
+    } else {
+        vec!["embedding"]
+    })
     .execute(&mut *seeded)
     .await
     .unwrap();
@@ -623,7 +629,7 @@ async fn accept_embedding_job_inner(
         "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,\
          connection_revision_id,connection_qualification_revision_id,qualification_job_id,\
          capabilities,valid_until) \
-         VALUES($1,$2,$3,$4,$5,$6,ARRAY['embedding']::TEXT[],NOW()+INTERVAL '1 hour')",
+         VALUES($1,$2,$3,$4,$5,$6,$7::TEXT[],NOW()+INTERVAL '1 hour')",
     )
     .bind(model_qualification_id)
     .bind(workspace_id.as_uuid())
@@ -631,6 +637,11 @@ async fn accept_embedding_job_inner(
     .bind(connection_revision_id)
     .bind(connection_qualification_id)
     .bind(qualification_job_id)
+    .bind(if canonical_capability {
+        vec!["embedding", "embeddings"]
+    } else {
+        vec!["embedding"]
+    })
     .execute(&mut *seeded)
     .await
     .unwrap();
@@ -1760,5 +1771,810 @@ pub(crate) mod result_preparation_fixture {
         try_commit_result(fixture, preparation, receipt, &exact_attempt(fixture))
             .await
             .unwrap()
+    }
+}
+
+/// Canonical memory corpus built through the production materializer and delivery executor.
+pub(crate) mod canonical_memory_fixture {
+    use crate::common;
+    use common::result_preparation_fixture::{OutputVaultFixture, scoped};
+    use sqlx::PgPool;
+    use uuid::Uuid;
+    use vestrace_domain::{CorpusGenerationId, MemoryId, embedding::EmbeddingSpaceKey};
+
+    pub(crate) struct Corpus {
+        pub(crate) runtime: PgPool,
+        pub(crate) accepted: common::AcceptedJob,
+        pub(crate) vault: OutputVaultFixture,
+        pub(crate) generation: CorpusGenerationId,
+        pub(crate) space_key: EmbeddingSpaceKey,
+        initialized_policy: bool,
+    }
+
+    pub(crate) async fn new(pool: &PgPool, name: &str) -> Corpus {
+        common::result_preparation_fixture::provision_result_behavior_database(pool).await;
+        new_in_database(pool, name).await
+    }
+
+    pub(crate) async fn new_in_database(pool: &PgPool, name: &str) -> Corpus {
+        let runtime = common::runtime_pool(pool).await;
+        let mut accepted =
+            common::accept_embedding_job_inner(pool, &runtime, false, false, false, true).await;
+        let (registration, qualification) = register_space(pool, &runtime, &accepted, name).await;
+        accepted.space_registration_id = registration;
+        accepted = canonical_snapshot(pool, &runtime, &accepted, qualification).await;
+        let space_key = space_key(&runtime, &accepted, name).await;
+        seed_qualification_heads(pool, &accepted).await;
+        let mut initial = runtime.begin().await.unwrap();
+        scoped(&mut initial, accepted.context.workspace_id.as_uuid()).await;
+        sqlx::query("SELECT vestrace_set_initial_embedding_active_space($1,$2,1,$3)")
+            .bind(accepted.context.workspace_id.as_uuid())
+            .bind(accepted.model_revision_id)
+            .bind(accepted.space_registration_id)
+            .execute(&mut *initial)
+            .await
+            .unwrap();
+        initial.commit().await.unwrap();
+        Corpus {
+            runtime,
+            accepted,
+            vault: OutputVaultFixture::new(),
+            generation: CorpusGenerationId::new(),
+            space_key,
+            initialized_policy: false,
+        }
+    }
+
+    /// A second registration reuses the exact qualified wire model and shape.
+    /// The different name gives it its own identity and independent corpus.
+    pub(crate) async fn additional_space(pool: &PgPool, base: &Corpus, name: &str) -> Corpus {
+        let mut accepted =
+            common::prepare_additional_delivery_embedding_job(&base.runtime, &base.accepted).await;
+        let identity = base.space_key.canonical_identity().unwrap();
+        let mut tx = base.runtime.begin().await.unwrap();
+        scoped(&mut tx, accepted.context.workspace_id.as_uuid()).await;
+        accepted.space_registration_id = sqlx::query_scalar(
+            "SELECT vestrace_register_canonical_embedding_space($1,$2,$3,$4,$5,$6,$7,'float',768)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(accepted.context.workspace_id.as_uuid())
+        .bind(name)
+        .bind(identity.model_revision_id.as_uuid())
+        .bind(identity.model_qualification_revision_id.as_uuid())
+        .bind(identity.request_shape_revision_id)
+        .bind(&identity.returned_model)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        scoped(&mut tx, accepted.context.workspace_id.as_uuid()).await;
+        sqlx::query("INSERT INTO embedding_space_corpus_states(workspace_id,space_registration_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+            .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.space_registration_id).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO embedding_index_generation_guards(workspace_id,space_registration_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+            .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.space_registration_id).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let space_key = space_key(&base.runtime, &accepted, name).await;
+        Corpus {
+            runtime: base.runtime.clone(),
+            accepted,
+            vault: OutputVaultFixture::new(),
+            generation: CorpusGenerationId::new(),
+            space_key,
+            initialized_policy: true,
+        }
+    }
+
+    // This is fixture qualification evidence, not a live qualification-publisher proof.
+    async fn seed_qualification_heads(pool: &PgPool, accepted: &common::AcceptedJob) {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        scoped(&mut tx, accepted.context.workspace_id.as_uuid()).await;
+        sqlx::query("INSERT INTO connection_qualification_heads(workspace_id,connection_revision_id,current_qualification_revision_id,version) VALUES($1,$2,$3,1)")
+            .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.connection_revision_id).bind(accepted.connection_qualification_id).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO model_qualification_heads(workspace_id,model_revision_id,current_qualification_revision_id,version) VALUES($1,$2,$3,1)")
+            .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.model_revision_id).bind(accepted.model_qualification_id).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    pub(crate) async fn space_key(
+        runtime: &PgPool,
+        accepted: &common::AcceptedJob,
+        name: &str,
+    ) -> EmbeddingSpaceKey {
+        let mut tx = runtime.begin().await.unwrap();
+        scoped(&mut tx, accepted.context.workspace_id.as_uuid()).await;
+        let row: (Uuid,Uuid,String,Uuid,String,String,i32) = sqlx::query_as("SELECT model_revision_id,model_qualification_revision_id,adapter_profile_revision,request_shape_revision_id,returned_model,encoding_format,dimensions FROM embedding_space_registrations WHERE workspace_id=$1 AND id=$2")
+            .bind(accepted.context.workspace_id.as_uuid()).bind(accepted.space_registration_id).fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        EmbeddingSpaceKey::canonical(
+            accepted.context.workspace_id,
+            name,
+            vestrace_domain::embedding::CanonicalEmbeddingSpace {
+                model_revision_id: vestrace_domain::ModelRevisionId::from_uuid(row.0),
+                model_qualification_revision_id:
+                    vestrace_domain::ModelQualificationRevisionId::from_uuid(row.1),
+                adapter_profile_revision: row.2,
+                request_shape_revision_id: row.3,
+                returned_model: row.4,
+                encoding_format: row.5,
+                dimensions: row.6 as u32,
+            },
+        )
+        .unwrap()
+    }
+
+    pub(crate) async fn canonical_snapshot(
+        pool: &PgPool,
+        runtime: &PgPool,
+        base: &common::AcceptedJob,
+        qualification: Uuid,
+    ) -> common::AcceptedJob {
+        let snapshot = Uuid::now_v7();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        scoped(&mut tx, base.context.workspace_id.as_uuid()).await;
+        sqlx::query("INSERT INTO model_binding_snapshots(id,workspace_id,connection_id,connection_revision_id,connection_qualification_revision_id,model_revision_id,model_qualification_revision_id,branch,no_auth_binding_revision_id) SELECT $1,workspace_id,connection_id,connection_revision_id,connection_qualification_revision_id,model_revision_id,$2,branch,no_auth_binding_revision_id FROM model_binding_snapshots WHERE workspace_id=$3 AND id=$4")
+            .bind(snapshot).bind(qualification).bind(base.context.workspace_id.as_uuid()).bind(base.snapshot_id).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO model_binding_snapshot_scopes(workspace_id,snapshot_id,scope,transition_plan_id) VALUES($1,$2,'ordinary',NULL)")
+            .bind(base.context.workspace_id.as_uuid()).bind(snapshot).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let mut accepted = common::prepare_additional_delivery_embedding_job(runtime, base).await;
+        accepted.snapshot_id = snapshot;
+        accepted.model_qualification_id = qualification;
+        // Rebuild the effect against the new immutable snapshot before any evidence is published.
+        common::prepare_additional_delivery_embedding_job(runtime, &accepted).await
+    }
+
+    impl Corpus {
+        pub(crate) async fn publish_memories(
+            &mut self,
+            pool: &PgPool,
+            memories: &[MemoryId],
+        ) -> CorpusGenerationId {
+            for memory in memories {
+                let revision: Uuid = sqlx::query_scalar(
+                    "SELECT active_revision_id FROM memories WHERE workspace_id=$1 AND id=$2",
+                )
+                .bind(self.accepted.context.workspace_id.as_uuid())
+                .bind(memory.as_uuid())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                self.publish_revision(pool, revision).await;
+            }
+            self.capture().await
+        }
+
+        pub(crate) async fn publish_revision(&mut self, pool: &PgPool, revision: Uuid) -> Uuid {
+            let materializer =
+                vestrace_infrastructure::postgres::PgGovernedContentMaterializer::new(
+                    vestrace_infrastructure::postgres::PgStore::from_pool(self.runtime.clone()),
+                    std::sync::Arc::new(self.vault.vault(self.accepted.context.workspace_id)),
+                    std::sync::Arc::new(
+                        vestrace_infrastructure::crypto::ContentMaterialCodec::new(),
+                    ),
+                );
+            let source = materializer
+                .materialize_revision(&self.accepted.context, revision)
+                .await
+                .unwrap()
+                .expect("intact revision materializes");
+            let job =
+                common::prepare_additional_delivery_embedding_job(&self.runtime, &self.accepted)
+                    .await;
+            publish_projections(
+                pool,
+                &self.runtime,
+                &job,
+                source.material_id,
+                &self.vault,
+                !self.initialized_policy,
+            )
+            .await;
+            self.initialized_policy = true;
+            source.material_id
+        }
+
+        pub(crate) async fn capture(&mut self) -> CorpusGenerationId {
+            let workspace = self.accepted.context.workspace_id.as_uuid();
+            let registration = self.accepted.space_registration_id;
+            let generation = Uuid::now_v7();
+            let mut tx = self.runtime.begin().await.unwrap();
+            scoped(&mut tx, workspace).await;
+            let version: i64 = sqlx::query_scalar("SELECT guard_version FROM embedding_index_generation_guards WHERE workspace_id=$1 AND space_registration_id=$2")
+                .bind(workspace).bind(registration).fetch_one(&mut *tx).await.unwrap();
+            sqlx::query("SELECT vestrace_capture_embedding_generation($1,$2,$3,$4)")
+                .bind(generation)
+                .bind(workspace)
+                .bind(registration)
+                .bind(version)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            sqlx::query("SELECT vestrace_publish_embedding_generation($1,$2,$3,$4)")
+                .bind(workspace)
+                .bind(registration)
+                .bind(generation)
+                .bind(version)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            self.generation = CorpusGenerationId::from_uuid(generation);
+            self.generation
+        }
+    }
+    pub(crate) async fn register_space(
+        pool: &PgPool,
+        runtime: &PgPool,
+        fixture: &common::AcceptedJob,
+        name: &str,
+    ) -> (Uuid, Uuid) {
+        let workspace = fixture.context.workspace_id.as_uuid();
+        let qualification_job: Uuid = sqlx::query_scalar(
+            "SELECT qualification_job_id FROM model_qualification_revisions \
+         WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(workspace)
+        .bind(fixture.model_qualification_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let wire_model: String = sqlx::query_scalar(
+            "SELECT wire_model_id FROM model_revisions WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(workspace)
+        .bind(fixture.model_revision_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+        let canonical_qualification = Uuid::now_v7();
+        let probe_effect = Uuid::now_v7();
+        let evidence_root = Uuid::now_v7();
+        let evidence_check = Uuid::now_v7();
+        let target_binding = Uuid::now_v7();
+
+        // external_effect_intents predates the P03 guarded ownership and the
+        // guarded owner holds no privilege on it, so it is written before the role
+        // switch rather than under that role.
+        sqlx::query(
+            "INSERT INTO external_effect_intents(id,workspace_id,adapter,payload) \
+         VALUES($1,$2,'local','{}'::jsonb)",
+        )
+        .bind(probe_effect)
+        .bind(workspace)
+        .execute(pool)
+        .await
+        .expect("one probe external effect intent");
+
+        let mut owner = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *owner)
+            .await
+            .unwrap();
+        scoped(&mut owner, workspace).await;
+        // model_qualification_revisions is immutable P03 evidence, so the shared
+        // fixture's 'embedding' capability cannot be widened in place.  A second
+        // qualification revision over the same job and model states the
+        // 'embeddings' request capability the canonical assertion reads, and the
+        // transition targets that revision.
+        sqlx::query(
+        "INSERT INTO model_qualification_revisions(id,workspace_id,model_revision_id,         connection_revision_id,connection_qualification_revision_id,qualification_job_id,         capabilities,valid_until)          SELECT $1,workspace_id,model_revision_id,connection_revision_id,         connection_qualification_revision_id,qualification_job_id,         ARRAY['embedding','embeddings']::TEXT[],NOW()+INTERVAL '1 hour'          FROM model_qualification_revisions WHERE workspace_id=$2 AND id=$3",
+    )
+    .bind(canonical_qualification)
+    .bind(workspace)
+    .bind(fixture.model_qualification_id)
+    .execute(&mut *owner)
+    .await
+    .expect("one further qualification revision stating the embeddings capability");
+        sqlx::query(
+            "INSERT INTO qualification_target_bindings(id,workspace_id,qualification_job_id,\
+         connection_id,connection_revision_id,branch,no_auth_binding_revision_id,\
+         embedding_model_revision_id) VALUES($1,$2,$3,$4,$5,'no_auth',$6,$7)",
+        )
+        .bind(target_binding)
+        .bind(workspace)
+        .bind(qualification_job)
+        .bind(fixture.connection_id)
+        .bind(fixture.connection_revision_id)
+        .bind(fixture.no_auth_binding_id)
+        .bind(fixture.model_revision_id)
+        .execute(&mut *owner)
+        .await
+        .expect("one q1 target binding naming the embedding model revision");
+        sqlx::query(
+            "INSERT INTO model_request_evidence_roots(id,workspace_id,external_effect_id,\
+         request_kind,binding_snapshot_id,qualification_target_binding_id,cause_kind,cause_id) \
+         VALUES($1,$2,$3,'embeddings',NULL,$4,'qualification_probe',$5)",
+        )
+        .bind(evidence_root)
+        .bind(workspace)
+        .bind(probe_effect)
+        .bind(target_binding)
+        .bind(qualification_job)
+        .execute(&mut *owner)
+        .await
+        .expect("one embeddings evidence root rooted at the q1 probe");
+        sqlx::query(
+            "INSERT INTO model_request_evidence_checks(id,workspace_id,evidence_root_id,status) \
+         VALUES($1,$2,$3,'complete')",
+        )
+        .bind(evidence_check)
+        .bind(workspace)
+        .bind(evidence_root)
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO qualification_probe_results(id,workspace_id,qualification_job_id,\
+         probe_ordinal,result,external_effect_id,model_request_evidence_id) \
+         VALUES($1,$2,$3,'90','pass',$4,$5)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(workspace)
+        .bind(qualification_job)
+        .bind(probe_effect)
+        .bind(evidence_root)
+        .execute(&mut *owner)
+        .await
+        .expect("the passing embeddings probe at ordinal 90");
+        sqlx::query(
+            "INSERT INTO provider_dispatch_causes(external_effect_id,workspace_id,\
+         model_request_evidence_id,model_request_evidence_check_id,cause_kind,\
+         qualification_job_id,qualification_target_binding_id,qualification_probe_ordinal) \
+         VALUES($1,$2,$3,$4,'qualification_probe',$5,$6,'90')",
+        )
+        .bind(probe_effect)
+        .bind(workspace)
+        .bind(evidence_root)
+        .bind(evidence_check)
+        .bind(qualification_job)
+        .bind(target_binding)
+        .execute(&mut *owner)
+        .await
+        .expect("the dispatch cause binding the probe to its evidence");
+        sqlx::query(
+        "INSERT INTO qualification_q1_mre_sources(evidence_root_id,workspace_id,probe_ordinal,\
+         message_layout,tool_choice,parallel_tool_calls,response_format,stream,stream_include_usage) \
+         VALUES($1,$2,'90','plain_text','none',false,'none',false,false)",
+    )
+    .bind(evidence_root)
+    .bind(workspace)
+    .execute(&mut *owner)
+    .await
+    .expect("the q1 source describing the embeddings probe shape");
+        owner.commit().await.unwrap();
+
+        let shape = Uuid::now_v7();
+        let registration = Uuid::now_v7();
+        let mut governed = runtime.begin().await.unwrap();
+        scoped(&mut governed, workspace).await;
+        sqlx::query_scalar::<_, Uuid>(
+        "SELECT vestrace_create_model_request_shape_revision($1,$2,1,'embeddings',false,ARRAY[]::TEXT[])",
+    )
+    .bind(shape)
+    .bind(workspace)
+    .fetch_one(&mut *governed)
+    .await
+    .expect("one embeddings request shape revision");
+        let registered: Uuid = sqlx::query_scalar(
+            "SELECT vestrace_register_canonical_embedding_space($1,$2,$7,$3,$4,$5,$6,'float',768)",
+        )
+        .bind(registration)
+        .bind(workspace)
+        .bind(fixture.model_revision_id)
+        .bind(canonical_qualification)
+        .bind(shape)
+        .bind(&wire_model)
+        .bind(name)
+        .fetch_one(&mut *governed)
+        .await
+        .expect("the real guarded authority must accept a fully evidenced canonical space");
+        governed.commit().await.unwrap();
+
+        // vestrace_register_canonical_embedding_space writes the registration
+        // alone; the corpus state and generation guard that every result path
+        // reads are seeded here so the canonical space behaves like a real one.
+        let mut owner = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL ROLE vestrace_guarded_owner")
+            .execute(&mut *owner)
+            .await
+            .unwrap();
+        scoped(&mut owner, workspace).await;
+        sqlx::query(
+        "INSERT INTO embedding_space_corpus_states(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace)
+    .bind(registered)
+    .execute(&mut *owner)
+    .await
+    .expect("one canonical corpus state");
+        sqlx::query(
+        "INSERT INTO embedding_index_generation_guards(workspace_id,space_registration_id)          VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace)
+    .bind(registered)
+    .execute(&mut *owner)
+    .await
+    .expect("one canonical generation guard");
+        owner.commit().await.unwrap();
+
+        (registered, canonical_qualification)
+    }
+
+    const E2E_MODEL: &str = "text-embedding-nomic-embed-text-v1.5";
+    const E2E_OUTPUT_COUNT: usize = 2;
+
+    #[derive(Default)]
+    struct E2eAdapter {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl vestrace_application::run::GovernedModelAdapter for E2eAdapter {
+        async fn execute(
+            &self,
+            _kind: vestrace_domain::ConnectionKind,
+            _runtime_base_url: &str,
+            _auth: vestrace_application::ConnectionAuth,
+            request: vestrace_application::EffectiveModelRequest,
+        ) -> Result<vestrace_application::EffectiveModelResponse, vestrace_application::ProviderError>
+        {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(matches!(
+                request,
+                vestrace_application::EffectiveModelRequest::Embeddings(_)
+            ));
+            let data = (0..E2E_OUTPUT_COUNT)
+                .map(|ordinal| {
+                    vestrace_application::GovernedEmbeddingVector::from_provider_components(
+                        ordinal,
+                        vec![1.0; 768],
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(vestrace_application::EffectiveModelResponse::Embeddings(
+                vestrace_application::GovernedEmbeddingsResponse::new(
+                    E2E_MODEL,
+                    E2E_MODEL.into(),
+                    data,
+                    E2E_OUTPUT_COUNT,
+                )?,
+            ))
+        }
+    }
+
+    async fn publish_projections(
+        pool: &PgPool,
+        runtime: &PgPool,
+        accepted: &common::AcceptedJob,
+        memory_source: Uuid,
+        vault: &OutputVaultFixture,
+        initialize_policy: bool,
+    ) {
+        use common::result_preparation_fixture::{
+            DeliveryPolicyCase, acceptance_command, attach_source_to_evidence, live_source,
+            outputs, reconcile_output_receipts, record_delivery_policy,
+        };
+        use vestrace_application::EmbeddingOutputKeyRepository;
+
+        let sources = [
+            vestrace_domain::ContentMaterialId::from_uuid(memory_source),
+            live_source(runtime, accepted).await,
+        ];
+        common::make_dispatchable_with_policy(pool, runtime, accepted, initialize_policy).await;
+        for (ordinal, source) in sources.into_iter().enumerate() {
+            attach_source_to_evidence(pool, accepted, source, 8 + ordinal as i64).await;
+        }
+        let output_set = outputs();
+        let receipt_id = Uuid::now_v7();
+        vestrace_infrastructure::postgres::PgEmbeddingOutputKeyRepository::new(
+            vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone()),
+        )
+        .accept_delivery_outputs(
+            &accepted.context,
+            acceptance_command(accepted, receipt_id, output_set.clone()),
+        )
+        .await
+        .expect("the result chain must accept the delivery job");
+        reconcile_output_receipts(runtime, accepted, &output_set, vault).await;
+        record_delivery_policy(runtime, receipt_id, DeliveryPolicyCase::ExactAllowed).await;
+
+        let store = vestrace_infrastructure::postgres::PgStore::from_pool(runtime.clone());
+        let dispatch = std::sync::Arc::new(common::dispatching_repository(runtime, None));
+        let output_vault = std::sync::Arc::new(vault.vault(accepted.context.workspace_id));
+        let preparation = std::sync::Arc::new(
+            vestrace_application::EmbeddingResultPreparationService::new(
+                std::sync::Arc::new(
+                    vestrace_infrastructure::postgres::PgEmbeddingResultRepository::new(
+                        store.clone(),
+                        dispatch.clone(),
+                    ),
+                ),
+                output_vault.clone(),
+                std::sync::Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+            ),
+        );
+        let finalization = std::sync::Arc::new(
+            vestrace_application::EmbeddingResultFinalizationService::new(
+                std::sync::Arc::new(
+                    vestrace_infrastructure::postgres::PgEmbeddingResultFinalizationRepository::new(
+                        store,
+                    ),
+                ),
+                output_vault,
+                std::sync::Arc::new(
+                    vestrace_infrastructure::postgres::EmbeddingOutputHmacCommitter::new(),
+                ),
+            ),
+        );
+        let adapter = std::sync::Arc::new(E2eAdapter::default());
+        let outcome = vestrace_application::embedding::EmbeddingExecutor::new(
+            dispatch,
+            preparation,
+            finalization,
+            adapter.clone(),
+            vestrace_domain::WorkerId::new(),
+        )
+        .execute(&accepted.context, accepted.job_id)
+        .await
+        .expect("the delivery job must finalize");
+        assert_eq!(
+            outcome,
+            vestrace_application::embedding::EmbeddingExecutionOutcome::Succeeded
+        );
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+/// The production client and worker, with a real HTTP provider observed at its pinned endpoint.
+pub(crate) mod canonical_query_fixture {
+    use super::{AllowEmbeddingPolicy, UnusedCredentialLeases, canonical_memory_fixture::Corpus};
+    use sqlx::PgPool;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use vestrace_application::{
+        EffectiveRequestLimits, MaterialErasureService, NormalizedRetrievalRequest,
+        embedding::{EmbeddingRetrievalJobClient, EmbeddingRetrievalOutcome, EmbeddingWorkKind},
+    };
+    use vestrace_infrastructure::postgres::*;
+
+    pub(crate) async fn retrieve(
+        _pool: &PgPool,
+        corpus: &Corpus,
+        request: &NormalizedRetrievalRequest,
+    ) -> (EmbeddingRetrievalOutcome, usize) {
+        retrieve_with_policy(_pool, corpus, request, true).await
+    }
+
+    pub(crate) async fn retrieve_with_policy(
+        _pool: &PgPool,
+        corpus: &Corpus,
+        request: &NormalizedRetrievalRequest,
+        allow_unclassified: bool,
+    ) -> (EmbeddingRetrievalOutcome, usize) {
+        retrieve_configured(&corpus.runtime, corpus, request, allow_unclassified, false).await
+    }
+    pub(crate) async fn retrieve_with_recording_failure(
+        _pool: &PgPool,
+        corpus: &Corpus,
+        request: &NormalizedRetrievalRequest,
+    ) -> (EmbeddingRetrievalOutcome, usize) {
+        retrieve_configured(&corpus.runtime, corpus, request, true, true).await
+    }
+    pub(crate) async fn retrieve_on_runtime(
+        runtime: &PgPool,
+        corpus: &Corpus,
+        request: &NormalizedRetrievalRequest,
+    ) -> (EmbeddingRetrievalOutcome, usize) {
+        retrieve_configured(runtime, corpus, request, true, false).await
+    }
+    struct FailedDecisionRepository;
+    #[async_trait::async_trait]
+    impl vestrace_application::EmbeddingDataPolicyDecisionRepository for FailedDecisionRepository {
+        async fn record(
+            &self,
+            _: &vestrace_application::EmbeddingDataPolicyDecisionRecord,
+        ) -> Result<(), vestrace_application::ApplicationError> {
+            Err(vestrace_application::ApplicationError::Storage(
+                "injected decision write failure".to_owned(),
+            ))
+        }
+
+        async fn record_in(
+            &self,
+            _: &mut dyn vestrace_application::UnitOfWork,
+            _: &vestrace_application::EmbeddingDataPolicyDecisionRecord,
+        ) -> Result<(), vestrace_application::ApplicationError> {
+            Err(vestrace_application::ApplicationError::Storage(
+                "injected transaction-bound decision write failure".to_owned(),
+            ))
+        }
+    }
+    async fn retrieve_configured(
+        runtime: &PgPool,
+        corpus: &Corpus,
+        request: &NormalizedRetrievalRequest,
+        allow_unclassified: bool,
+        fail_record: bool,
+    ) -> (EmbeddingRetrievalOutcome, usize) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:1234")
+            .await
+            .expect("the fixture's exact pinned endpoint must be available");
+        let observed = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let requests = observed.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let body_start;
+                let content_length;
+                loop {
+                    let mut chunk = [0u8; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    assert!(bytes.len() < 1_048_576);
+                    if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        body_start = end + 4;
+                        let headers = std::str::from_utf8(&bytes[..end]).unwrap();
+                        assert!(headers.starts_with("POST /v1/embeddings "));
+                        content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        break;
+                    }
+                }
+                while bytes.len() < body_start + content_length {
+                    let mut chunk = [0u8; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                }
+                let request: serde_json::Value =
+                    serde_json::from_slice(&bytes[body_start..body_start + content_length])
+                        .unwrap();
+                requests.lock().unwrap().push(request);
+                let body = serde_json::json!({"object":"list","model":"text-embedding-nomic-embed-text-v1.5","data":[{"object":"embedding","index":0,"embedding":vec![1.0;768]}],"usage":{"prompt_tokens":1,"total_tokens":1}}).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let store = PgStore::from_pool(runtime.clone());
+        let vault = Arc::new(corpus.vault.vault(corpus.accepted.context.workspace_id));
+        let evidence = Arc::new(PgModelRequestEvidenceRepository::new(vault.clone()));
+        let decisions: vestrace_application::SharedEmbeddingDataPolicyDecisionRepository =
+            if fail_record {
+                Arc::new(FailedDecisionRepository)
+            } else {
+                Arc::new(PgEmbeddingDataPolicyDecisionRepository::new(store.clone()))
+            };
+        let gate = Arc::new(vestrace_application::EmbeddingDataPolicyGate::new(
+            vestrace_application::EmbeddingDataPolicySettings {
+                classification_policy: vestrace_domain::retrieval::ClassificationPolicy::new(
+                    Vec::<String>::new(),
+                    allow_unclassified,
+                )
+                .unwrap(),
+                classification: vestrace_domain::Sensitivity::Internal,
+                policy: vestrace_domain::trust::DataPolicy::new(
+                    vestrace_domain::DataPolicyId::new(),
+                    "vector-query-policy-v1",
+                    vestrace_domain::Sensitivity::Internal,
+                    std::collections::BTreeSet::from([
+                        vestrace_domain::DataDestination::LocalModel,
+                    ]),
+                    None,
+                )
+                .unwrap(),
+                mode: vestrace_application::EmbeddingDataPolicyMode::Enforce,
+            },
+            decisions,
+        ));
+        let dispatch = Arc::new(
+            PgProviderDispatchRepository::new(
+                Arc::new(PgInstallationMutationPermit::new(store.clone())),
+                evidence.clone(),
+                Arc::new(PgExternalEffectRepository::new(store.clone())),
+                Arc::new(UnusedCredentialLeases),
+                Arc::new(PgModelDataPolicyDecisionRepository::new(store.clone())),
+                Arc::new(PgGovernedMutationRepository::new(store.clone())),
+                Arc::new(AllowEmbeddingPolicy),
+            )
+            .with_embedding_policy(gate),
+        );
+        let worker = EmbeddingWorkerRuntime::new(
+            store.clone(),
+            vault.clone(),
+            dispatch,
+            &vestrace_infrastructure::config::EmbeddingWorkerLimits::default(),
+            "canonical-query-test",
+            vestrace_domain::WorkerId::new(),
+        )
+        .unwrap();
+        let client = PgEmbeddingRetrievalJobClient::new(
+            store.clone(),
+            Arc::new(PgGovernedContentMaterializer::new(
+                store.clone(),
+                vault.clone(),
+                Arc::new(vestrace_infrastructure::crypto::ContentMaterialCodec::new()),
+            )),
+            Arc::new(PgGovernedEmbeddingJobFactory::new(
+                store.clone(),
+                Arc::new(PgEmbeddingJobRepository::new(store.clone())),
+                evidence,
+                EffectiveRequestLimits::new(8, 1, 2048).unwrap(),
+            )),
+            Arc::new(MaterialErasureService::new(
+                PgMaterialErasureRepository::new(store),
+                vault,
+            )),
+        );
+        let context = &corpus.accepted.context;
+        let client_future = client.retrieve(
+            context,
+            request.request_id,
+            request,
+            chrono::Utc::now()
+                + chrono::Duration::seconds(if allow_unclassified && !fail_record {
+                    20
+                } else {
+                    2
+                }),
+        );
+        // Drive the worker independently so the waiting client keeps polling and
+        // releases its scoped connections while dispatch records disclosure.
+        let worker_context = context.clone();
+        let worker_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                let cycle = worker
+                    .run_cycle(&worker_context, EmbeddingWorkKind::Dispatch)
+                    .await
+                    .unwrap();
+                if allow_unclassified && !fail_record {
+                    assert!(
+                        !cycle.failed,
+                        "the production worker must complete its query"
+                    );
+                } else if cycle.failed {
+                    break;
+                }
+            }
+        });
+        let outcome = client_future.await.expect("canonical client must answer");
+        if worker_task.is_finished() {
+            worker_task.await.unwrap();
+        } else {
+            worker_task.abort();
+        }
+        server.abort();
+        let requests = observed.lock().unwrap();
+        for body in requests.iter() {
+            assert_eq!(body["input"], serde_json::json!([request.query]));
+        }
+        (outcome, requests.len())
     }
 }

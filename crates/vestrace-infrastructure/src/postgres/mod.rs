@@ -3,6 +3,7 @@ pub mod ag_ui_repository;
 pub mod agent_repository;
 pub mod artifact_repository;
 pub mod audit_repository;
+pub mod backup_archive_repository;
 pub mod capability_grant_repository;
 pub mod cognitive_mutation_repository;
 pub mod connection_repository;
@@ -53,6 +54,7 @@ pub mod qualification_repository;
 pub mod recovery_qualification_evidence_repository;
 pub mod recovery_repository;
 pub mod relation_repository;
+pub mod restore_cutover_repository;
 pub mod retrieval_journal;
 pub mod revision_hydrator;
 pub mod routing_decision_repository;
@@ -61,6 +63,7 @@ pub mod run_command_committer;
 pub mod run_event_store;
 pub mod run_recovery_store;
 pub mod run_repository;
+pub mod safety_authority_repository;
 pub mod secret_store;
 pub mod settings_repository;
 pub mod shared_memory_revision_reader;
@@ -78,6 +81,7 @@ pub use ag_ui_repository::PgAgUiRepository;
 pub use agent_repository::PgAgentRepository;
 pub use artifact_repository::PgArtifactRepository;
 pub use audit_repository::PgAuditRepository;
+pub use backup_archive_repository::PgBackupArchiveRepository;
 pub use capability_grant_repository::PgCapabilityGrantRepository;
 pub use cognitive_mutation_repository::PgCognitiveMutationRepository;
 pub use connection_repository::PgConnectionRepository;
@@ -137,6 +141,7 @@ pub use qualification_repository::PgQualificationRepository;
 pub use recovery_qualification_evidence_repository::PgRecoveryQualificationEvidenceRepository;
 pub use recovery_repository::PgRecoveryRepository;
 pub use relation_repository::PgRelationRepository;
+pub use restore_cutover_repository::PgRestoreCutoverRepository;
 pub use retrieval_journal::PgRetrievalJournal;
 pub use revision_hydrator::PgRevisionHydrator;
 pub use routing_decision_repository::PgRoutingDecisionRepository;
@@ -145,6 +150,7 @@ pub use run_command_committer::PgRunCommandCommitter;
 pub use run_event_store::PgRunEventStore;
 pub use run_recovery_store::PgRunRecoveryStore;
 pub use run_repository::PgRunRepository;
+pub use safety_authority_repository::PgSafetyAuthorityRepository;
 pub use secret_store::PgSecretStore;
 pub use settings_repository::PgWorkspaceSettingsRepository;
 pub use shared_memory_revision_reader::PgSharedMemoryRevisionReader;
@@ -193,41 +199,55 @@ impl GovernedProviderRuntime {
         data_policy: vestrace_application::ModelDataPolicySettings,
         runs: std::sync::Arc<dyn vestrace_application::run::RunStorePort>,
     ) -> Self {
+        Self::new_with_embedding_policy(store, vault, policy, data_policy, runs, None)
+    }
+
+    pub fn new_with_embedding_policy(
+        store: PgStore,
+        vault: std::sync::Arc<crate::crypto::HostMaterialKeyVault>,
+        policy: vestrace_application::SharedPolicyDecisionEngine,
+        data_policy: vestrace_application::ModelDataPolicySettings,
+        runs: std::sync::Arc<dyn vestrace_application::run::RunStorePort>,
+        embedding_policy: Option<std::sync::Arc<vestrace_application::EmbeddingDataPolicyGate>>,
+    ) -> Self {
         use std::sync::Arc;
 
-        let dispatch: vestrace_application::SharedProviderDispatchRepository = Arc::new(
-            provider_dispatch_repository::PgProviderDispatchRepository::new(
-                Arc::new(installation_permit::PgInstallationMutationPermit::new(
+        let dispatch = provider_dispatch_repository::PgProviderDispatchRepository::new(
+            Arc::new(installation_permit::PgInstallationMutationPermit::new(
+                store.clone(),
+            )),
+            Arc::new(
+                model_request_evidence_repository::PgModelRequestEvidenceRepository::new(
+                    vault.clone(),
+                ),
+            ),
+            Arc::new(external_effect_repository::PgExternalEffectRepository::new(
+                store.clone(),
+            )),
+            Arc::new(
+                credential_dispatch_lease::PgCredentialDispatchLeaseRepository::new(
                     store.clone(),
-                )),
-                Arc::new(
-                    model_request_evidence_repository::PgModelRequestEvidenceRepository::new(
-                        vault.clone(),
-                    ),
+                    vault.clone(),
                 ),
-                Arc::new(external_effect_repository::PgExternalEffectRepository::new(
+            ),
+            Arc::new(
+                model_data_policy_decision_repository::PgModelDataPolicyDecisionRepository::new(
                     store.clone(),
-                )),
-                Arc::new(
-                    credential_dispatch_lease::PgCredentialDispatchLeaseRepository::new(
-                        store.clone(),
-                        vault.clone(),
-                    ),
                 ),
-                Arc::new(
-                    model_data_policy_decision_repository::PgModelDataPolicyDecisionRepository::new(
-                        store.clone(),
-                    ),
-                ),
-                Arc::new(pool::PgGovernedMutationRepository::new(store.clone())),
-                Arc::new(
-                    vestrace_application::ConfiguredProviderDispatchPolicyEvaluator::new(
-                        policy.clone(),
-                        data_policy,
-                    ),
+            ),
+            Arc::new(pool::PgGovernedMutationRepository::new(store.clone())),
+            Arc::new(
+                vestrace_application::ConfiguredProviderDispatchPolicyEvaluator::new(
+                    policy.clone(),
+                    data_policy,
                 ),
             ),
         );
+        let dispatch: vestrace_application::SharedProviderDispatchRepository =
+            Arc::new(match embedding_policy {
+                Some(policy) => dispatch.with_embedding_policy(policy),
+                None => dispatch,
+            });
         let embedding_jobs: vestrace_application::SharedEmbeddingJobRepository = Arc::new(
             embedding_job_repository::PgEmbeddingJobRepository::new(store.clone()),
         );
@@ -644,8 +664,8 @@ mod embedding_index_repository;
 mod embedding_retrieval_client;
 mod embedding_write_route;
 pub use embedding_adoption_repository::{
-    PgEmbeddingLegacyAdoptionRepository, PgGovernedContentMaterializer,
-    PgGovernedEmbeddingJobFactory,
+    GovernedEmbeddingJobPurpose, PgEmbeddingLegacyAdoptionRepository,
+    PgGovernedContentMaterializer, PgGovernedEmbeddingJobFactory,
 };
 pub use embedding_erasure_repository::PgEmbeddingErasureRepository;
 pub use embedding_index_repository::PgEmbeddingIndexRepository;

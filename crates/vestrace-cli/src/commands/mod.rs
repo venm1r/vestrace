@@ -22,6 +22,7 @@ pub mod migrate;
 pub mod operator;
 pub mod rebuild;
 pub mod recovery;
+pub mod safety_supervisor;
 pub mod schema;
 pub mod server;
 pub mod worker;

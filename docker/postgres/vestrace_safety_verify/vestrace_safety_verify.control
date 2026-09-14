@@ -1,0 +1,5 @@
+comment = 'Vestrace P05 server-side Ed25519 verification'
+default_version = '1.0'
+relocatable = false
+schema = public
+module_pathname = '$libdir/vestrace_safety_verify'

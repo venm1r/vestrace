@@ -133,7 +133,7 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
     // Nothing is optional: a missing vault, policy or repository refuses
     // startup instead of registering a handler that would report success
     // having called nothing.
-    let governed = vestrace_infrastructure::GovernedProviderRuntime::new(
+    let governed = vestrace_infrastructure::GovernedProviderRuntime::new_with_embedding_policy(
         store.clone(),
         super::server::build_material_vault(config, &storage_roots)?,
         super::server::build_policy_engine(
@@ -144,6 +144,13 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
         )?,
         super::server::build_model_data_policy_settings(config)?,
         run_store.clone(),
+        if config.embedding.enabled {
+            Some(Arc::new(super::server::build_embedding_data_policy_gate(
+                config, &store,
+            )?))
+        } else {
+            None
+        },
     );
     registry.register(Arc::new(
         ExecuteStepHandler::new(run_store.clone(), clock.clone())

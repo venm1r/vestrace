@@ -271,7 +271,7 @@ impl RetrievalService {
             .revision_hydrator
             .as_ref()
             .expect("hydrator was checked above")
-            .hydrate(context, &references)
+            .hydrate_for_retrieval(context, &normalized, &references)
             .await?;
         let outcome = HydrationOutcome::apply_policy(
             resolved,

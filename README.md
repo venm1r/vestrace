@@ -39,12 +39,3 @@ The English edition separates tutorials, reference, explanations, implementation
 **Input snapshot:** `3e05dfbdce063aa44a3a9e5a7a84c274597e8188`, identified by the supplied ZIP's archive comment. Older observations retain their source pins. See the [source register](docs/maintenance/sources.md) and [refactor report](docs/maintenance/english-validation-report.md).
 
 This refactor changes documentation only, not runtime code, migrations, API schemas served by the product, or release gates.
-
-## Community
-
-Contributions and issue reports are welcome within the project's current implementation and support boundaries.
-
-- [Contributing guide](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Security policy](SECURITY.md)
-- [Support and issue guidance](.github/SUPPORT.md)

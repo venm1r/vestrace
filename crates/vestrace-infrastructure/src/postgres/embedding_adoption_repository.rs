@@ -716,12 +716,44 @@ impl PgGovernedEmbeddingJobFactory {
         &self,
         context: &RequestContext,
         registration: Uuid,
+        expected_generation: Option<Uuid>,
     ) -> Result<CanonicalBinding, ApplicationError> {
         let mut transaction = self
             .store
             .begin_scoped(context)
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+        if let Some(generation) = expected_generation {
+            let snapshot: Uuid = sqlx::query_scalar(
+                "SELECT vestrace_issue_canonical_retrieval_snapshot($1,$2,$3,$4)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(context.workspace_id.as_uuid())
+            .bind(registration)
+            .bind(generation)
+            .fetch_one(transaction.connection())
+            .await
+            .map_err(map_adoption_error)?;
+            let row: (Uuid,Uuid,Uuid,Uuid,String,String) = sqlx::query_as(
+                "SELECT snapshot.connection_revision_id,snapshot.connection_qualification_revision_id, \
+                 snapshot.model_revision_id,snapshot.model_qualification_revision_id,revision.runtime_base_url,revision.adapter_profile_revision \
+                 FROM model_binding_snapshots snapshot JOIN connection_revisions revision ON revision.workspace_id=snapshot.workspace_id \
+                  AND revision.id=snapshot.connection_revision_id WHERE snapshot.workspace_id=$1 AND snapshot.id=$2")
+                .bind(context.workspace_id.as_uuid()).bind(snapshot).fetch_one(transaction.connection()).await.map_err(map_adoption_error)?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+            return Ok(CanonicalBinding {
+                snapshot_id: snapshot,
+                connection_revision_id: row.0,
+                connection_qualification_revision_id: row.1,
+                model_revision_id: row.2,
+                model_qualification_revision_id: row.3,
+                runtime_base_url: row.4,
+                adapter_profile_revision: row.5,
+            });
+        }
         // The newest transition plan for this space names the binding it was
         // most recently established under; an older plan's snapshot would pin a
         // qualification the space has since moved off.
@@ -826,8 +858,48 @@ impl PgGovernedEmbeddingJobFactory {
         source: MaterializedSource,
         purpose: GovernedEmbeddingJobPurpose,
     ) -> Result<EmbeddingJobId, ApplicationError> {
+        if purpose.kind == EmbeddingJobKind::RetrievalQuery {
+            return Err(ApplicationError::Policy(
+                "retrieval job creation requires an expected canonical generation".to_owned(),
+            ));
+        }
+        self.create_job_with_pin(context, target_space_registration_id, source, purpose, None)
+            .await
+    }
+
+    pub async fn create_retrieval_job(
+        &self,
+        context: &RequestContext,
+        target_space_registration_id: Uuid,
+        source: MaterializedSource,
+        purpose: GovernedEmbeddingJobPurpose,
+        expected_generation: Uuid,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
+        if purpose.kind != EmbeddingJobKind::RetrievalQuery {
+            return Err(ApplicationError::Policy(
+                "ordinary retrieval snapshot requires a retrieval query".to_owned(),
+            ));
+        }
+        self.create_job_with_pin(
+            context,
+            target_space_registration_id,
+            source,
+            purpose,
+            Some(expected_generation),
+        )
+        .await
+    }
+
+    async fn create_job_with_pin(
+        &self,
+        context: &RequestContext,
+        target_space_registration_id: Uuid,
+        source: MaterializedSource,
+        purpose: GovernedEmbeddingJobPurpose,
+        expected_generation: Option<Uuid>,
+    ) -> Result<EmbeddingJobId, ApplicationError> {
         let binding = self
-            .canonical_binding(context, target_space_registration_id)
+            .canonical_binding(context, target_space_registration_id, expected_generation)
             .await?;
         let job_id = EmbeddingJobId::new();
         let evidence_id = ModelRequestEvidenceId::new();

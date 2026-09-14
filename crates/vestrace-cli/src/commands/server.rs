@@ -530,6 +530,14 @@ pub(crate) fn build_embedding_provider(
     )
     .map_err(|error| anyhow!("invalid embedding configuration: {error}"))?;
     let egress = client.egress().clone();
+    let gate = build_embedding_data_policy_gate(config, store)?;
+    Ok(Some(gate.govern(Arc::new(client), egress)))
+}
+
+pub(crate) fn build_embedding_data_policy_gate(
+    config: &AppConfig,
+    store: &PgStore,
+) -> anyhow::Result<vestrace_application::EmbeddingDataPolicyGate> {
     let Some(data_policy) = config
         .policy
         .data
@@ -540,6 +548,7 @@ pub(crate) fn build_embedding_provider(
             "policy.data.embedding.mode, policy.data.embedding.admissible_labels, policy.data.embedding.allow_unclassified, policy.data.embedding.classification, policy.data.embedding.maximum_sensitivity, and policy.data.embedding.allowed_destinations are required when embedding.enabled is true"
         ));
     };
+
     let classification_policy = vestrace_domain::retrieval::ClassificationPolicy::new(
         data_policy.admissible_labels.iter().cloned(),
         data_policy.allow_unclassified,
@@ -570,7 +579,7 @@ pub(crate) fn build_embedding_provider(
         },
         Arc::new(PgEmbeddingDataPolicyDecisionRepository::new(store.clone())),
     );
-    Ok(Some(gate.govern(Arc::new(client), egress)))
+    Ok(gate)
 }
 
 /// Give the bootstrap principal the grants its configuration says it should

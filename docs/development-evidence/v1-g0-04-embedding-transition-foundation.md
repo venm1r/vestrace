@@ -6649,3 +6649,158 @@ that need the corpus-to-memory decision.
   four red, 14 tests, exactly the four above and nothing else.
 - `cargo fmt --all -- --check` 0; clippy 0 on `vestrace-infrastructure` with the
   crate root touched first.
+
+### 2026-09-12 continuation: scope and canonical memory reference design
+
+The user approved adding the four remaining retrieval debt test files to the
+scope and designing the corpus-to-memory path. The scope/preflight/literal
+test now agree on 140 allowed paths (previously 136), with the same 23 protected
+paths. No product source, migration or retrieval test body changed in this
+continuation. The original HEAD, two-file dirty capture, raw porcelain and
+historical migration digests remain unchanged. No commit or push was made.
+
+The previous statement that the memory link is missing is too broad.
+`PgGovernedContentMaterializer::materialize_revision` already publishes a source
+material owned by its memory revision, and the ordinary finalizer records that
+owner in `content_material_ordinary_references`. Adoption checks that row.
+`PgEmbeddingRetrievalRepository::resolve_members` already traverses the intent
+to the revision, although it does not take the pinned generation and its caller
+uses an arbitrary first match for ambiguous ownership. Text retrieval still
+uses the legacy join. The SQL result finalizer trusts memory/revision arrays
+without checking their membership or retaining their projection provenance.
+These findings come from current source inspection, not from the earlier test
+failure messages or a claim that the absent guard was exploited in this run.
+
+Section 12 of the completion design proposes reusing the existing provenance,
+pinning both channels to the same exact generation, preserving revision and
+erasure semantics, and validating durable references in a forward migration.
+`0208_embedding_memory_references.sql` is a proposed path only, absent from the
+live scope until approved. The design was checked against its source pointers
+and scope locally; it has not received independent review or user acceptance.
+P04 remains open.
+
+The focused baseline was rerun with plain Cargo against the existing
+`vestrace-test-postgres` on `127.0.0.1:55432`. SQLx created disposable test
+databases; runtime connections used the existing non-superuser `vestrace` role.
+No PostgreSQL server was started, restarted or reconfigured.
+
+```text
+cargo test -p vestrace-infrastructure --test text_retriever --test embedding_space_isolation --test vector_retriever_data_policy --test retrieval_classification_boundary --no-fail-fast -- --test-threads=1
+```
+
+| Suite | Passed | Failed | Reported duration |
+| --- | ---: | ---: | ---: |
+| embedding_space_isolation | 1 | 3 | 39.62 s |
+| retrieval_classification_boundary | 0 | 1 | 5.32 s |
+| text_retriever | 0 | 7 | 92.60 s |
+| vector_retriever_data_policy | 0 | 3 | 31.90 s |
+
+The command exited **1**, not an assumed 101. All 14 failures reached
+`Unavailable("embedding-legacy-write-retired")` at fixture seeding. The passing
+case is `an_embedding_job_dispatch_plan_remains_pinned_to_its_registered_space`.
+An earlier attempt without configured `DATABASE_URL` also exited 1, with all
+15 cases blocked at SQLx setup; that attempt is not product RED evidence.
+
+- `node --test tests/p02_scope.test.mjs tests/p03_scope.test.mjs tests/p04_scope.test.mjs`:
+  exit 0, 17 passed, 0 failed, 8.307 s; includes all 126 historical migration
+  digest comparisons.
+- `node scripts/protocol-lock.mjs --check .`: exit 0.
+- `git diff --check` under repository settings: exit 0. A diagnostic override
+  with `core.autocrlf=false` reported CRLF as trailing whitespace in existing
+  files; no line-ending normalization was applied to unrelated work.
+- Frozen P04 baseline verifier: exit 1, exactly the pre-existing out-of-scope
+  `Cargo.toml` and `LICENSE-APACHE` changes. Neither was added to edit scope or
+  folded into a new capture. Their observed SHA-256 values are respectively
+  `c977d9296fdd2fca0740fc27fd6dbee69adeb7e53b1f5818539e70ad1e7375ea` and
+  `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08`.
+- No new Rust implementation, so no new formatting/Clippy or mutation-GREEN
+  claim is made. The 14 failing retrieval tests are still unresolved.
+
+
+### 2026-09-12 canonical memory provenance implementation checkpoint (not accepted)
+
+The user approved section 12 and migration 0208, then the one-file policy extraction and final-hydrator amendments. Current scope: 143 paths; the decision-repository transaction amendment is still awaiting explicit approval. Root acts as cdx lead; agents implement. No commit or push.
+
+Verification executed by root on existing test PostgreSQL, serialized SQLx databases:
+
+- Application retrieval unit tests: 3 passed, exit 0. Existing embedding_data_policy integration tests after extraction: 9 passed, exit 0.
+- cargo check for infrastructure and CLI: exit 0 (62 seconds), before the later final-hydration changes.
+- Scope P02/P03/P04: 17 passed at the earlier 141-path checkpoint; P04 alone rerun after approved amendments: 7 passed at 143 paths. protocol-lock exit 0.
+- Initial 0208 smoke attempts stopped before database validation on resolver type inference, private purpose type export, then provisioner LF->CRLF drift. These were failures, not migration passes. Original LF restored. Retired-overload smoke subsequently passed 1/1, exit 0; DB phase 8.17 seconds.
+- First canonical positive text query passed 1/1, exit 0; DB phase 11.80 seconds.
+- Five-suite baseline command: cargo test -p vestrace-infrastructure --test text_retriever --test embedding_space_isolation --test vector_retriever_data_policy --test retrieval_classification_boundary --test embedding_retrieval_results --no-fail-fast -- --nocapture --test-threads=1. Exit 1, 28 passed / 14 failed. Results: 11/6 (221.15s); space isolation: 3/1 (45.12s); classification: 0/5 (55.66s); text: 9/1 (123.97s); vector policy: 5/1 (54.16s). This is a diagnostic baseline, not acceptance.
+- Six result failures were a helper reading a runtime pool without workspace scope. Classification fixtures lacked the initial active-space pointer. Positive vector/space queries exposed the production pinned snapshot using captured guard version instead of publication version +1. Source-erasure commit exposed a deferred liveness trigger that did not admit exactly witnessed retired historical members. Fixes are in progress and require rerun.
+- Passed mutation probe proved removing exact memory provenance allows a forged memory ID to persist, then restored the function definition, owner and ACL exactly and restored refusal. Successor mutation/refusal probes passed. Generation containment probe was blocked by the helper error and is not qualified yet.
+- Independent review additionally found owner ambiguity could collapse after owner deletion, and policy recording used a second connection while holding the first; neither is accepted as closed at this checkpoint.
+- Original 126 migrations through 0196 passed scope digest checks. Saved pre-0208 snapshots of all 11 migrations 0197-0207 are byte-identical. Cargo.toml and LICENSE-APACHE match the saved turn snapshot and remain the two pre-existing frozen-baseline drift reports.
+
+Qualification setup uses seeded immutable Q1 fixture evidence and initial heads; these tests do not claim a live qualification-publisher proof. Real retrieval provider HTTP is covered by the canonical query helper; malformed-terminal SQL probes use the production executor with a controlled adapter and held response sink. Full final matrix, new concurrency/upgrade probes and final independent acceptance remain outstanding.
+
+### 2026-09-12 provenance qualification rerun (not accepted)
+
+The serial PostgreSQL rerun closed the migrated retrieval/erasure fixtures and
+found two provisioner issues before acceptance. The memory-reference hand-back
+was granting `vestrace_lock_embedding_job_pre_dispatch_gate` to runtime; it now
+preserves the predecessor's no-EXECUTE posture. The same hand-back now declares
+its twelve exact guarded targets and seven runtime-executable targets explicitly,
+so fresh-bootstrap auditing covers the new snapshot and resolver entrypoints.
+
+The obsolete canonical-generation mutation expected all source erasure to be
+refused. Migration 0208 instead permits witnessed retirement only after it
+revokes the affected generation and clears the current guard. The rewritten
+mutation proves that removing revocation restores the deferred liveness refusal,
+then restores the function definition, owner, ACL and runtime EXECUTE exactly.
+
+Verified by root on the existing serialized PostgreSQL fixture:
+
+- Canonical retrieval/erasure/upgrade suites: erasure 12/12, retrieval results
+  21/21, space isolation 4/4, classification boundary 5/5, text retriever
+  10/10, policy/vector 6/6, and upgrade provisioning 10/10.
+- The complete focused infrastructure matrix was run component-wise: canonical
+  generations 21/21, index builds 16/16, executor 2/2, transition activation
+  14/14, legacy adoption 11/11, schema contract 16/16, runtime refusals 4/4,
+  and direct-write refusal 45/45. The initially failing canonical mutation and
+  schema bootstrap inventory were each rerun after their fixes.
+- Domain contract 24/24; application retrieval 44/44 plus one matching policy
+  integration test; CLI 22/22; HTTP 17/17; MCP 5/5; ignored fault E2E 6/6.
+  `cargo build -p vestrace-fault-scenario`, `cargo fmt --all -- --check`, and
+  the specified all-target Clippy command exited 0.
+- P02/P03/P04 scope checks passed 17/17; protocol-lock and `git diff --check`
+  exited 0. The frozen verifier still exits 1 only for pre-existing out-of-scope
+  `Cargo.toml` and `LICENSE-APACHE`; neither was changed or recaptured.
+
+The transaction-aware policy-decision recording fix remains out of scope:
+`crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs`
+is not yet approved. Without it, the worker can wait for a second pool
+connection while it holds the dispatch transaction; P04 cannot be accepted.
+
+### 2026-09-12 transaction-bound retrieval policy closure
+
+The user approved the one-file scope amendment for
+`embedding_data_policy_decision_repository.rs`. The embedding policy gate now
+builds the existing decision without a provider call, records it through the
+caller-owned dispatch transaction, and leaves enforcement to the dispatch
+boundary. An enforced denial commits its evidence and returns before admission;
+a record-write failure rolls the transaction back and reaches no provider.
+
+The PostgreSQL adapter shares one generic INSERT for ordinary and transaction-
+bound recording, downcasting only to the existing scoped PostgreSQL transaction.
+It never acquires a second `PgPool` connection while the dispatch permit is
+held. The P04 scope now contains 144 paths and records this user-approved
+amendment without recapturing the frozen baseline.
+
+Verified by root on the existing serialized PostgreSQL fixture:
+
+- `embedding_data_policy`: 9/9; `vector_retriever_data_policy`: 7/7. The
+  latter includes a ten-second bounded production retrieval through a runtime
+  pool with `max_connections(1)`: it completed, stored the exact request ID
+  with verdict `allowed`, and made one provider call.
+- The existing denial test stores verdict `denied` and observes zero dispatches;
+  the injected transaction-bound recording failure observes zero provider
+  calls.
+- P02/P03/P04 scope tests: 17/17; `protocol-lock`, `git diff --check`, format
+  check, and the specified all-target Clippy command exited 0.
+
+The frozen baseline verifier remains intentionally non-green only for the two
+pre-existing out-of-scope files `Cargo.toml` and `LICENSE-APACHE`. They were
+not modified or recaptured.

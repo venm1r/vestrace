@@ -2,6 +2,7 @@
 
 pub mod ag_ui;
 pub mod artifacts;
+pub mod backup_archive;
 pub mod capability_restoration;
 pub mod cognitive;
 pub mod cognitive_mutation;
@@ -33,6 +34,7 @@ pub mod idempotency;
 pub mod identity;
 #[path = "installation/permit.rs"]
 pub mod installation;
+pub mod installation_safety;
 pub mod jobs;
 #[path = "material/vault.rs"]
 pub mod material;
@@ -52,6 +54,7 @@ pub mod qualification;
 pub mod recovery;
 pub mod recovery_reconciliation;
 pub mod release_approval;
+pub mod restore_cutover;
 pub mod retrieval;
 pub mod run;
 pub mod runs;
@@ -66,6 +69,13 @@ pub use ag_ui::{AgUiEndpoint, AgUiRepository, AgUiRunEvent, SharedAgUiRepository
 pub use artifacts::{
     ArtifactContent, ArtifactListing, ArtifactRepository, GovernedArtifactMaterial,
     ProviderArtifactMediaClass, SharedArtifactRepository, StoredArtifact,
+};
+pub use backup_archive::{
+    AbandonArchiveAppend, AcquireRestoreHold, AppendWal, ArchiveKeyCustody, ArchiveKeyEnvelopeRef,
+    ArchiveKeyErasureReceipt, ArchiveLifecycleTransition, ArchiveObjectWrite, ArchiveStagingId,
+    BackupArchiveController, BackupArchiveRepository, BackupArchiveSnapshot, BackupObjectStore,
+    CommitArchiveCheckpoint, ManagedBackupDeletionPrepared, PendingArchiveAppend,
+    ReserveArchiveAppend, StagedArchiveObject, StartManagedBackup,
 };
 pub use capability_restoration::{
     CapabilityRestorationDecision, CapabilityRestorationPolicy, CapabilityRestorationService,
@@ -200,6 +210,11 @@ pub use identity::{
     TokenEntropySource,
 };
 pub use installation::{InstallationMutationPermit, PermitHandle, PermitMode};
+pub use installation_safety::{
+    InitializeInstallationSafety, InstallationSafetySnapshot, InstallationSafetyWitness,
+    InstallationSupervisorContext, RegisterDatabaseGeneration, SafetyAuthorityRepository,
+    SafetyAuthorityService, SafetyJournal,
+};
 pub use jobs::*;
 pub use material::{
     EmbeddingOutputKeyBinding, FenceReceipt, MaterialKeyVault, VaultError,
@@ -248,6 +263,10 @@ pub use recovery_reconciliation::ExternalEffectReconciliationService;
 pub use release_approval::{
     ReleaseApprovalDecision, ReleaseApprovalFailure, ReleaseApprovalService,
     ReleaseSignatureEvidence,
+};
+pub use restore_cutover::{
+    FreshRestoreTargetCustody, RestoreAttemptAuthority, RestoreAttemptAuthorityService,
+    RestoreCutoverController,
 };
 pub use retrieval::{
     ContextPackBuilder, ExactRetriever, NormalizedRetrievalRequest, RetrievalJournal,

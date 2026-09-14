@@ -406,3 +406,176 @@ Historical migrations, the frozen full-product specification, protocol-lock auth
 ## 11. Completion boundary
 
 This design closes the reopened P04 package. It does not by itself declare the entire v1.0 gate program complete. Later packages may rely on P04 only after all verification and mutation evidence above passes and the final P04 evidence explicitly records acceptance.
+
+## 12. Approved amendment: canonical members and memory revisions (2026-09-12)
+
+**Status: user-approved design; implementation in progress, not accepted.**
+The user approved this section and migration 0208 after the four-file retrieval
+test amendment. Both approvals are recorded in the preflight; the live scope
+contains 143 paths. Subsequent user direction applies the cdx workflow with the
+current assistant acting in the lead-engineer role and Codex agents implementing.
+
+### What the current code actually contains
+
+The link is not wholly absent. `PgGovernedContentMaterializer::materialize_revision`
+reads a memory revision and publishes a governed material with owner kind
+`memory_revision` and owner ID equal to that revision. The ordinary finalizer
+creates `content_material_ordinary_references` with that ownership, and legacy
+adoption already checks the reference. `PgEmbeddingRetrievalRepository::resolve_members`
+follows the source material's intent to a revision, but does not constrain its
+query to the pinned generation. Its caller picks the first matching row with
+`find`, so multiple revision owners have no defined selection order.
+
+`PgTextRetriever` still joins `memory_embeddings` and legacy generation members.
+The durable result finalizer in migration 0202 validates a generation fence but
+inserts caller-supplied memory/revision arrays without proving membership or
+storing the projection that produced the reference. The client independently
+chooses a qualification head using `ORDER BY version DESC LIMIT 1`; this need
+not be the space/generation already pinned by the normalized request.
+
+These are distinct gaps. Replacing the legacy fixture alone cannot close them.
+
+### Alternatives and decision
+
+1. **Reuse ordinary material ownership (recommended).** Resolve canonical
+   membership through projection dependencies, Live source material and its
+   exact published ordinary reference to a memory revision. This uses the
+   provenance the production materializer already creates.
+2. Add a second memory-to-projection mapping table. This duplicates ownership
+   and introduces another writer, erasure path and consistency obligation.
+   It is unnecessary for one-revision memory embeddings.
+3. Keep the legacy memory-to-vector join. This would restore a retired storage
+   path and cannot satisfy canonical generation isolation or encrypted storage.
+
+Use option 1. Do not infer identity by content, UUID coincidence, a vector
+digest, the active revision pointer, or a caller-supplied memory ID alone.
+
+### Identity and read semantics
+
+The relation is:
+
+```text
+workspace + canonical generation + space
+  -> exact generation member -> Live projection -> Live vector material
+  -> source dependency -> Live source material + Live creation intent
+  -> exact ordinary reference (owner_kind = memory_revision)
+  -> memory revision -> its memory, in the same workspace
+```
+
+The reference's material, intent, owner and ordinal must agree with the material
+and intent rows. This proves relational provenance; PostgreSQL cannot prove
+that encrypted plaintext equals `memory_revisions.content`. The production
+materializer remains responsible for reading and sealing that exact revision.
+This amendment does not claim to solve arbitrary malicious ciphertext input.
+
+One retrievable memory projection must resolve to exactly one distinct memory
+revision. Multiple dependencies naming that same revision collapse; a projection
+with no memory owner is not a memory candidate. Multiple distinct memory-revision
+owners are refused as ambiguous, never resolved with `find` or arbitrary `LIMIT 1`.
+General multi-memory aggregate attribution is outside this amendment. Duplicate
+projections for one revision select the best ranked hit, with projection UUID
+as the tie-breaker, before the result limit; scores and ranks remain tied to
+that selected projection. Text membership uses `EXISTS` to avoid duplicate rows.
+
+Both channels must consume the normalized request's exact canonical space and
+generation. Admission compares that expected generation with the current guard
+inside the acceptance transaction. A concurrent replacement produces an explicit
+generation-change refusal, never a new pin silently substituted by the client.
+The existing full space identity, guard version, epoch, corpus revision,
+watermark and member-count checks remain mandatory at finalization.
+
+For `Current`, the represented revision must still be the memory's active
+revision. Updating a memory cannot cause its old generation to represent its
+new content: a new projection and published generation are needed. `AsOf`,
+`Timeline` and `AllHistory` keep their existing temporal selection and ordering,
+intersected with represented revision IDs. They do not gain unrepresented
+historical revisions through a memory-level join. Status/kind filtering and
+the existing hydration/classification policy still apply; a withheld revision
+must remain visible as a safe withholding record, without its content.
+
+Source/vector erasure, generation revocation and memory deletion must be
+rechecked before exposing stored content, including erasure after the terminal
+result committed. Historical reference metadata may remain; it grants no right
+to hydrate erased content. A new materialization must not resurrect a deleted
+memory or an erased source revision merely because old revision text remains.
+Publication must recheck the revision's eligibility after sealing; no provider
+call is made while a database transaction is held open.
+
+### Database boundary and compatibility
+
+Implement `migrations/0208_embedding_memory_references.sql` and corresponding
+provisioner changes. Keep existing migration bytes unchanged. Install one
+workspace-scoped resolver over the relation above, used by text lookup, vector
+resolution and result validation, with a pinned generation argument and bounded
+input/output cardinality. Pin and lock checks must use the existing canonical
+corpus/guard and material lock order shared by publication and erasure; test
+both winner orders rather than adding a conflicting result-first lock order.
+
+Extend result reference provenance with projection and source material IDs.
+The new finalizer accepts those IDs and proves the entire relation, the exact
+memory/revision pair, finite score, unique revision, contiguous ordinal and
+bounded count under the same transaction that marks the job successful.
+Malformed or out-of-generation references roll back the whole terminal write.
+It must check the workspace context and exact job/fence ownership independently
+of RLS, including missing rows and NULL inputs; a privileged function must not
+turn missing rows into a NULL comparison that passes.
+
+Retire the old unchecked finalizer signature: revoke runtime/PUBLIC execution
+and replace its body with an explicit refusal so no alternate writer bypasses
+the new validation. Audit all overloads and grants after fresh provisioning
+and upgrade. New objects remain guarded-owner controlled and FORCE RLS where
+applicable. Runtime receives only the necessary SELECT/EXECUTE privileges.
+
+Existing results lack stored projection provenance. Preserve them as historical
+unverified records; do not fabricate projection IDs or serve their content as
+validated canonical results. Add a result-level provenance version so even an
+old empty result is distinguishable; new writes must carry the validated
+version. Upgrade tests must cover both nonempty and empty old results. An
+attempt already terminal remains terminal, with no automatic provider retry.
+
+### Acceptance and permitted implementation footprint
+
+The implementation may use existing scoped application/repository/client,
+materializer, provisioner and P04 test files. The only new path is
+`migrations/0208_embedding_memory_references.sql`, now explicitly approved and
+included in the live allowlist. The four newly allowed suites must preserve their
+oracles while moving to production-shaped canonical fixtures:
+
+- `text_retriever`: matching, no-match, ranking, workspace and generation
+  exclusion; revision 2 is absent under revision 1's pin and becomes searchable
+  under the new generation. Add temporal, duplicate and erasure cases.
+- `embedding_space_isolation`: two canonical spaces with the same wire model;
+  reject cross-space enrollment/pins and prove a nonempty correct-space result.
+  Keep the existing passing dispatch-plan isolation case.
+- `vector_retriever_data_policy`: exercise the governed job client and worker,
+  observe the real request's causal policy/evidence chain and exact provider
+  call count. Retain separate no-provider-call proof for the retired adapter;
+  do not replace positive canonical retrieval with an expected legacy refusal.
+- `retrieval_classification_boundary`: retain the composed PostgreSQL
+  hydration, withholding and journal assertions for admissible and restricted
+  revisions, now backed by canonical sources.
+
+Extend the existing `embedding_retrieval_results` and
+`embedding_erasure_propagation` suites with wrong-workspace, wrong-generation,
+wrong-revision, ambiguous-owner, duplicate-hit, admission/replacement,
+finalization/erasure and post-result-erasure probes. Include a direct runtime
+SQL forgery attempt so a Rust-only defense cannot satisfy acceptance. Exercise
+runtime EXECUTE/owner parity after upgrade and verify the old signature refuses.
+For each primary membership, liveness and revision predicate, remove it alone,
+require the unchanged test to fail, restore byte-exactly, then require GREEN.
+
+Run the focused PostgreSQL suites serially, plus scope, baseline, formatting and
+Clippy checks appropriate to the final implementation. The recorded 14 failing
+tests are the starting debt, not a complete acceptance matrix or P04 closure.
+`Cargo.toml` and `LICENSE-APACHE` remain untouched baseline drift; no recapture
+or widening of their edit permissions is implied by this design.
+
+
+### Approved governed embedding policy amendment, 2026-09-12
+
+The user explicitly approved adding `crates/vestrace-application/src/embedding_data_policy.rs` (142 scoped paths). Extract its existing decision-only classification/destination/record/enforcement logic and reuse it in the governed worker before network execution. Preserve the RetrievalQuery decision with the exact request ID, and prove denial causes zero provider calls. Do not replace this oracle with capability authorization alone. Protected paths and the frozen baseline are unchanged.
+
+
+### Approved final hydration amendment, 2026-09-12
+
+The user explicitly approved adding `crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs` (143 scoped paths). RetrievalService passes the normalized canonical request to final hydration. The production hydrator validates exact space/generation and live source-to-revision membership, deletion and temporal eligibility under the same transaction as the authoritative content/classification read. Canonical hydration defaults fail closed; general hydration remains available. Preserve structured classification withholding. Add deterministic tests for erasure, revocation and deletion between channel discovery and final hydration; no provider retry.

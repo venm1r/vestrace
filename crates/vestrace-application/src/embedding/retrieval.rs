@@ -217,6 +217,7 @@ pub struct AcceptRetrievalAttempt {
     pub job_id: EmbeddingJobId,
     pub request_id: RetrievalRunId,
     pub space_registration_id: uuid::Uuid,
+    pub expected_generation_id: uuid::Uuid,
     pub deadline: DateTime<Utc>,
 }
 
@@ -236,6 +237,8 @@ pub struct RetrievalAttemptAdmission {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RetrievalResultReference {
     pub ordinal: u32,
+    pub projection_id: uuid::Uuid,
+    pub source_material_id: uuid::Uuid,
     pub memory_id: uuid::Uuid,
     pub revision_id: uuid::Uuid,
     pub rank: u32,
@@ -283,6 +286,7 @@ pub struct RetryRetrievalGenerationChanged {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetrievalMemberReference {
     pub projection_id: uuid::Uuid,
+    pub source_material_id: uuid::Uuid,
     pub memory_id: uuid::Uuid,
     pub revision_id: uuid::Uuid,
 }
@@ -340,6 +344,7 @@ pub trait EmbeddingRetrievalRepository: Send + Sync {
     async fn resolve_members(
         &self,
         _context: &RequestContext,
+        _generation_id: uuid::Uuid,
         _projection_ids: &[uuid::Uuid],
     ) -> Result<Vec<RetrievalMemberReference>, ApplicationError> {
         Err(ApplicationError::Unavailable(
@@ -539,40 +544,26 @@ where
         // The only place the components are read, and they are borrowed for
         // exactly this call.
         use crate::embedding::index::LocalEmbeddingIndex;
-        let hits = query.with_values(|values| index.search(values, self.limit))?;
+        let search_limit = usize::try_from(snapshot.member_count).map_err(|_| {
+            ApplicationError::Policy("generation exceeds local search capacity".to_owned())
+        })?;
+        let mut hits = query.with_values(|values| index.search(values, search_limit))?;
+        hits.sort_by(|left, right| {
+            left.distance
+                .total_cmp(&right.distance)
+                .then_with(|| left.projection_id.cmp(&right.projection_id))
+        });
         let projection_ids: Vec<uuid::Uuid> = hits.iter().map(|hit| hit.projection_id).collect();
         let resolved = self
             .repository
-            .resolve_members(context, &projection_ids)
+            .resolve_members(context, snapshot.generation_id.as_uuid(), &projection_ids)
             .await?;
 
         // Rank follows the search order; a hit whose source no longer resolves
         // is dropped rather than reported as something it is not, and the
         // ordinals close over the gap because a result's ordinals must be
         // contiguous.
-        let mut references = Vec::with_capacity(resolved.len());
-        for (rank, hit) in hits.iter().enumerate() {
-            let Some(member) = resolved
-                .iter()
-                .find(|member| member.projection_id == hit.projection_id)
-            else {
-                continue;
-            };
-            references.push(RetrievalResultReference {
-                ordinal: u32::try_from(references.len()).map_err(|_| {
-                    ApplicationError::Internal("retrieval result is larger than u32".to_owned())
-                })?,
-                memory_id: member.memory_id,
-                revision_id: member.revision_id,
-                rank: u32::try_from(rank).map_err(|_| {
-                    ApplicationError::Internal("retrieval rank is larger than u32".to_owned())
-                })?,
-                // The stored score is the similarity a caller may see. The raw
-                // distance is not it: a distance is a property of the vector
-                // pair, and one of that pair is the query.
-                score: 1.0_f32 - (hit.distance as f32),
-            });
-        }
+        let references = select_references(&hits, &resolved, self.limit)?;
 
         self.repository
             .finalize_result(
@@ -587,9 +578,96 @@ where
     }
 }
 
+fn select_references(
+    hits: &[crate::embedding::index::IndexHit],
+    resolved: &[RetrievalMemberReference],
+    limit: usize,
+) -> Result<Vec<RetrievalResultReference>, ApplicationError> {
+    let mut references = Vec::with_capacity(resolved.len().min(limit));
+    let mut seen_revisions = std::collections::HashSet::new();
+    let mut members = std::collections::HashMap::new();
+    for member in resolved {
+        if members.insert(member.projection_id, member).is_some() {
+            return Err(ApplicationError::Policy(
+                "ambiguous projection owner".to_owned(),
+            ));
+        }
+    }
+    for (rank, hit) in hits.iter().enumerate() {
+        let Some(member) = members.get(&hit.projection_id) else {
+            continue;
+        };
+        if !seen_revisions.insert(member.revision_id) {
+            continue;
+        }
+        if references.len() == limit {
+            break;
+        }
+        references.push(RetrievalResultReference {
+            projection_id: member.projection_id,
+            source_material_id: member.source_material_id,
+            ordinal: u32::try_from(references.len()).map_err(|_| {
+                ApplicationError::Internal("retrieval result is larger than u32".to_owned())
+            })?,
+            memory_id: member.memory_id,
+            revision_id: member.revision_id,
+            rank: u32::try_from(rank).map_err(|_| {
+                ApplicationError::Internal("retrieval rank is larger than u32".to_owned())
+            })?,
+            // The stored score is the similarity a caller may see. The raw
+            // distance is not it: a distance is a property of the vector
+            // pair, and one of that pair is the query.
+            score: 1.0_f32 - (hit.distance as f32),
+        });
+    }
+
+    Ok(references)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_projection_hits_do_not_consume_revision_limit() {
+        use crate::embedding::index::IndexHit;
+        let revision_a = uuid::Uuid::from_u128(100);
+        let revision_b = uuid::Uuid::from_u128(101);
+        let hits: Vec<_> = (1..=3)
+            .map(|id| IndexHit {
+                projection_id: uuid::Uuid::from_u128(id),
+                projection_ordinal: id as u64,
+                material_id: vestrace_domain::ContentMaterialId::new(),
+                distance: id as f64 / 10.0,
+            })
+            .collect();
+        let members: Vec<_> = hits
+            .iter()
+            .enumerate()
+            .map(|(index, hit)| RetrievalMemberReference {
+                projection_id: hit.projection_id,
+                source_material_id: uuid::Uuid::now_v7(),
+                memory_id: uuid::Uuid::now_v7(),
+                revision_id: if index < 2 { revision_a } else { revision_b },
+            })
+            .collect();
+        let selected = select_references(&hits, &members, 2).unwrap();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].projection_id, hits[0].projection_id);
+        assert_eq!(selected[1].revision_id, revision_b);
+        assert_eq!(selected[1].rank, 2);
+        assert_eq!(selected[1].ordinal, 1);
+        assert_eq!(
+            selected[1].source_material_id,
+            members[2].source_material_id
+        );
+        let mut ambiguous = members.clone();
+        ambiguous.push(RetrievalMemberReference {
+            revision_id: revision_b,
+            ..members[0]
+        });
+        assert!(select_references(&hits, &ambiguous, 2).is_err());
+    }
 
     #[test]
     fn a_query_embedding_refuses_an_unusable_vector() {

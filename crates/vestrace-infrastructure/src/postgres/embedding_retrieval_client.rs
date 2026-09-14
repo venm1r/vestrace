@@ -70,27 +70,44 @@ impl<V, C> PgEmbeddingRetrievalJobClient<V, C> {
     }
 
     /// The canonical space retrieval is currently answered from.
-    async fn active_registration(
+    async fn request_registration(
         &self,
         context: &RequestContext,
+        request: &NormalizedRetrievalRequest,
     ) -> Result<Option<Uuid>, ApplicationError> {
+        let Some(identity) = request.embedding_space_key.canonical_identity() else {
+            return Ok(None);
+        };
+        if request.embedding_space_key.workspace_id() != context.workspace_id {
+            return Err(ApplicationError::Policy(
+                "retrieval workspace differs from canonical space".to_owned(),
+            ));
+        }
         let mut transaction = self
             .store
             .begin_scoped(context)
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
         let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT head.active_space_registration_id \
-               FROM model_qualification_heads AS head \
-               JOIN embedding_space_registrations AS registration \
-                 ON registration.workspace_id = head.workspace_id \
-                AND registration.id = head.active_space_registration_id \
-              WHERE head.workspace_id = $1 \
-                AND head.active_space_registration_id IS NOT NULL \
-                AND registration.registration_kind = 'canonical' \
-              ORDER BY head.version DESC LIMIT 1",
+            "SELECT registration.id FROM embedding_space_registrations registration \
+             JOIN embedding_corpus_generations generation ON generation.workspace_id=registration.workspace_id \
+              AND generation.space_registration_id=registration.id \
+             WHERE registration.workspace_id=$1 AND generation.id=$2 \
+              AND registration.registration_kind='canonical' AND registration.name=$3 \
+              AND registration.model_revision_id=$4 AND registration.model_qualification_revision_id=$5 \
+              AND registration.request_shape_revision_id=$6 AND registration.adapter_profile_revision=$7 \
+              AND registration.returned_model=$8 AND registration.encoding_format=$9 AND registration.dimensions=$10",
         )
         .bind(context.workspace_id.as_uuid())
+        .bind(request.corpus_generation_id.as_uuid())
+        .bind(request.embedding_space_key.name())
+        .bind(identity.model_revision_id.as_uuid())
+        .bind(identity.model_qualification_revision_id.as_uuid())
+        .bind(identity.request_shape_revision_id)
+        .bind(&identity.adapter_profile_revision)
+        .bind(&identity.returned_model)
+        .bind(&identity.encoding_format)
+        .bind(i64::from(identity.dimensions))
         .fetch_optional(transaction.connection())
         .await
         .map_err(|error| ApplicationError::Storage(error.to_string()))?;
@@ -132,13 +149,66 @@ impl<V, C> PgEmbeddingRetrievalJobClient<V, C> {
         .map_err(|error| ApplicationError::Storage(error.to_string()))?;
 
         let outcome = if let Some(result_id) = row.0 {
+            let verified: bool = sqlx::query_scalar(
+                "SELECT result.provenance_version=1 AND fence.generation_id=$3 FROM embedding_retrieval_results result JOIN embedding_retrieval_fences fence ON fence.workspace_id=result.workspace_id AND fence.id=result.fence_id WHERE result.workspace_id=$1 AND result.id=$2",
+            )
+            .bind(context.workspace_id.as_uuid())
+            .bind(result_id)
+            .bind(request.corpus_generation_id.as_uuid())
+            .fetch_one(transaction.connection())
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+            if !verified {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| ApplicationError::Storage(error.to_string()))?;
+                return Ok(Some(EmbeddingRetrievalOutcome::Degraded(
+                    DegradedRetrievalAttempt::of(
+                        job_id,
+                        EmbeddingRetrievalDegradation::GenerationNotReady,
+                    ),
+                )));
+            }
+            // Validate the pinned generation even for an empty verified result.
+            // The resolver takes the corpus and generation locks in this transaction.
+            sqlx::query(
+                "SELECT * FROM vestrace_resolve_embedding_memory_references($1,$2,ARRAY[]::uuid[])",
+            )
+            .bind(context.workspace_id.as_uuid())
+            .bind(request.corpus_generation_id.as_uuid())
+            .fetch_all(transaction.connection())
+            .await
+            .map_err(|error| ApplicationError::Storage(error.to_string()))?;
             // The stored result names references, ranks and scores and nothing
             // else, which is the whole point of it. A candidate is a hydrated
             // thing, so the memory and its exact revision are read here -- and
             // filtered by what the request allows, because a channel that
             // returned a status the caller excluded would be answering a
             // different question.
-            let rows: Vec<HydratedReference> = sqlx::query_as(
+            let (temporal, at, ordering) = match request.time_perspective {
+                vestrace_domain::TimePerspective::Current => (
+                    "revision.id=memory.active_revision_id",
+                    None,
+                    "reference.ordinal",
+                ),
+                vestrace_domain::TimePerspective::AsOf(at) => (
+                    "revision.id=(SELECT historical.id FROM memory_revisions historical WHERE historical.workspace_id=memory.workspace_id AND historical.memory_id=memory.id AND (historical.valid_from IS NULL OR historical.valid_from <= $6) AND (historical.valid_until IS NULL OR $6 < historical.valid_until) ORDER BY historical.revision_number DESC, historical.created_at DESC LIMIT 1)",
+                    Some(at),
+                    "reference.ordinal",
+                ),
+                vestrace_domain::TimePerspective::Timeline => (
+                    "TRUE",
+                    None,
+                    "revision.created_at ASC, revision.revision_number ASC, reference.ordinal",
+                ),
+                vestrace_domain::TimePerspective::AllHistory => (
+                    "TRUE",
+                    None,
+                    "revision.created_at DESC, revision.revision_number DESC, reference.ordinal",
+                ),
+            };
+            let rows: Vec<HydratedReference> = sqlx::query_as(&format!(
                 "SELECT reference.memory_id, reference.revision_id, reference.rank, \
                         reference.score, memory.kind, memory.status, memory.state_revision, \
                         revision.revision_number, revision.content, revision.valid_from, \
@@ -154,16 +224,24 @@ impl<V, C> PgEmbeddingRetrievalJobClient<V, C> {
                     AND memory.id = reference.memory_id \
                    JOIN memory_revisions AS revision \
                      ON revision.workspace_id = reference.workspace_id \
-                    AND revision.id = reference.revision_id \
+                    AND revision.id = reference.revision_id AND revision.memory_id=memory.id \
                   WHERE reference.workspace_id = $1 AND reference.result_id = $2 \
+                    AND result.provenance_version=1 AND fence.generation_id=$5 \
+                    AND memory.status <> 'deleted' \
+                    AND EXISTS (SELECT 1 FROM vestrace_resolve_embedding_memory_references($1,$5,ARRAY[reference.projection_id]) represented \
+                      WHERE represented.projection_id=reference.projection_id AND represented.source_material_id=reference.source_material_id \
+                        AND represented.memory_id=reference.memory_id AND represented.revision_id=reference.revision_id) \
+                    AND ({temporal}) AND ($6::timestamptz IS NULL OR TRUE) \
                     AND memory.status = ANY($3) \
                     AND (cardinality($4::text[]) = 0 OR memory.kind = ANY($4)) \
-                  ORDER BY reference.ordinal",
-            )
+                  ORDER BY {ordering}",
+            ))
             .bind(context.workspace_id.as_uuid())
             .bind(result_id)
             .bind(statuses(request))
             .bind(kinds(request))
+            .bind(request.corpus_generation_id.as_uuid())
+            .bind(at)
             .fetch_all(transaction.connection())
             .await
             .map_err(|error| ApplicationError::Storage(error.to_string()))?;
@@ -217,6 +295,16 @@ struct HydratedReference {
     generation_id: Uuid,
 }
 
+fn candidate_score(score: f64) -> Result<f32, ApplicationError> {
+    let score = score as f32;
+    if !score.is_finite() {
+        return Err(ApplicationError::Storage(
+            "stored retrieval score exceeds finite candidate precision".to_owned(),
+        ));
+    }
+    Ok(score)
+}
+
 fn candidate(
     row: HydratedReference,
     position: usize,
@@ -237,7 +325,7 @@ fn candidate(
         source_generation: u32::try_from(row.state_revision)
             .map_err(|error| ApplicationError::Storage(error.to_string()))?,
         corpus_generation_id: vestrace_domain::CorpusGenerationId::from_uuid(row.generation_id),
-        score: row.score as f32,
+        score: candidate_score(row.score)?,
         // The stored rank is where the search put it; the channel rank is where
         // it sits in what this channel is actually returning, and a reference
         // the request filtered out leaves a gap in the first but not the
@@ -253,7 +341,7 @@ fn candidate(
 /// The stored spellings, matching the text channel's exactly. Two channels
 /// filtering one request by different vocabularies would answer different
 /// questions and fuse the results as if they had not.
-fn statuses(request: &NormalizedRetrievalRequest) -> Vec<&'static str> {
+pub(super) fn statuses(request: &NormalizedRetrievalRequest) -> Vec<&'static str> {
     use vestrace_domain::MemoryStatus;
     request
         .allowed_statuses
@@ -269,7 +357,7 @@ fn statuses(request: &NormalizedRetrievalRequest) -> Vec<&'static str> {
         .collect()
 }
 
-fn kinds(request: &NormalizedRetrievalRequest) -> Vec<&'static str> {
+pub(super) fn kinds(request: &NormalizedRetrievalRequest) -> Vec<&'static str> {
     use vestrace_domain::MemoryKind;
     request
         .allowed_kinds
@@ -315,7 +403,7 @@ where
         // Nothing canonical to answer from. Reported rather than refused: a
         // deployment mid-transition still answers from its other channels, and
         // the journal records that this one declined and why.
-        let Some(registration) = self.active_registration(context).await? else {
+        let Some(registration) = self.request_registration(context, request).await? else {
             // No attempt was admitted, so the degradation names none. A
             // caller cannot retry what was never tried.
             return Ok(EmbeddingRetrievalOutcome::Degraded(
@@ -383,9 +471,9 @@ where
         request: &NormalizedRetrievalRequest,
         deadline: DateTime<Utc>,
     ) -> Result<EmbeddingRetrievalOutcome, ApplicationError> {
-        let job_id = self
+        let job = self
             .jobs
-            .create_job(
+            .create_retrieval_job(
                 context,
                 registration,
                 vestrace_application::embedding::MaterializedSource {
@@ -403,23 +491,57 @@ where
                     summary: "embed one retrieval query through the governed provider path",
                     detail: serde_json::json!({ "request_id": request_id.as_uuid() }),
                 },
+                request.corpus_generation_id.as_uuid(),
             )
-            .await?;
+            .await;
+        let job_id = match job {
+            Ok(job_id) => job_id,
+            Err(ApplicationError::Policy(reason))
+                if reason
+                    == "embedding memory references require exact current canonical generation" =>
+            {
+                return Ok(EmbeddingRetrievalOutcome::Degraded(
+                    DegradedRetrievalAttempt::unattempted(
+                        EmbeddingRetrievalDegradation::GenerationChanged(
+                            RetrievalGenerationChangedReason::Replaced,
+                        ),
+                    ),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
 
         // The fence pins the generation this attempt must answer from. It is
         // taken before any worker can claim the job, because the claim itself
         // requires a live fence.
-        self.retrieval
+        let admission = self
+            .retrieval
             .accept_attempt(
                 context,
                 AcceptRetrievalAttempt {
                     job_id,
                     request_id,
                     space_registration_id: registration,
+                    expected_generation_id: request.corpus_generation_id.as_uuid(),
                     deadline,
                 },
             )
-            .await?;
+            .await;
+        match admission {
+            Ok(_) => {}
+            Err(ApplicationError::Policy(reason))
+                if reason == "embedding retrieval acceptance generation changed" =>
+            {
+                return Ok(EmbeddingRetrievalOutcome::Degraded(
+                    DegradedRetrievalAttempt::unattempted(
+                        EmbeddingRetrievalDegradation::GenerationChanged(
+                            RetrievalGenerationChangedReason::Replaced,
+                        ),
+                    ),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
 
         loop {
             if let Some(outcome) = self.settled(context, request, job_id).await? {
@@ -435,5 +557,17 @@ where
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod score_tests {
+    #[test]
+    fn stored_score_must_remain_finite_at_candidate_precision() {
+        assert!(super::candidate_score(f64::MAX).is_err());
+        assert!(super::candidate_score(f64::NAN).is_err());
+        assert!(super::candidate_score(f64::INFINITY).is_err());
+        assert_eq!(super::candidate_score(-0.5).unwrap(), -0.5);
+        assert_eq!(super::candidate_score(1.0).unwrap(), 1.0);
     }
 }

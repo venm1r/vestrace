@@ -81,6 +81,47 @@ fn migrate_fails_when_database_is_unavailable_and_redacts_secrets() {
 }
 
 #[test]
+fn bounded_migration_flags_are_mutually_exclusive_before_database_access() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args([
+            "migrate",
+            "--through-version",
+            "208",
+            "--only-version",
+            "209",
+        ])
+        .output()
+        .expect("vestrace command should start");
+    let stderr = stderr(&output);
+
+    assert!(
+        !output.status.success(),
+        "conflicting migration flags unexpectedly succeeded"
+    );
+    assert!(stderr.contains("cannot be used with"), "{stderr}");
+    assert!(!stderr.contains("database is unavailable"), "{stderr}");
+}
+
+#[test]
+fn safety_supervisor_uses_only_its_host_configuration_path() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
+        .args(["safety-supervisor", "reconcile"])
+        .output()
+        .expect("safety supervisor command should start");
+    let stderr = stderr(&output);
+
+    assert!(
+        !output.status.success(),
+        "supervisor unexpectedly succeeded"
+    );
+    assert!(stderr.contains("VESTRACE_SAFETY_JOURNAL_ROOT"), "{stderr}");
+    assert!(
+        !stderr.contains("database is unavailable"),
+        "supervisor fell through to ordinary runtime configuration: {stderr}"
+    );
+}
+
+#[test]
 fn plan_is_a_read_only_operator_contract_without_database_access() {
     let output = Command::new(env!("CARGO_BIN_EXE_vestrace"))
         .args([

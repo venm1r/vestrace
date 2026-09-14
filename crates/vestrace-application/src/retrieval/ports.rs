@@ -278,6 +278,21 @@ pub trait RevisionHydrator: Send + Sync {
         context: &RequestContext,
         references: &[RevisionRef],
     ) -> Result<Vec<HydratedRevision>, ApplicationError>;
+    /// Revalidate the exact canonical pin at the authoritative content read.
+    /// General hydration remains available to callers without a canonical pin.
+    async fn hydrate_for_retrieval(
+        &self,
+        context: &RequestContext,
+        request: &NormalizedRetrievalRequest,
+        references: &[RevisionRef],
+    ) -> Result<Vec<HydratedRevision>, ApplicationError> {
+        if request.embedding_space_key.is_canonical() {
+            return Err(ApplicationError::Unavailable(
+                "canonical retrieval hydration is not configured".to_owned(),
+            ));
+        }
+        self.hydrate(context, references).await
+    }
 }
 
 pub type SharedRevisionHydrator = Arc<dyn RevisionHydrator>;

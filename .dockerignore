@@ -13,6 +13,11 @@
 !crates/**/src/
 !crates/**/src/**
 
+# P05-B qualification compiles this one opt-in Linux pg_basebackup integration
+# test into an isolated image; runtime containers still receive no source mount.
+!crates/vestrace-cli/tests/
+!crates/vestrace-cli/tests/safety_archive_recovery.rs
+
 !migrations/
 !migrations/**
 

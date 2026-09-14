@@ -129,6 +129,52 @@ fn temporal_query_plan(perspective: TimePerspective) -> TemporalQueryPlan {
     }
 }
 
+pub(super) async fn validate_canonical_retrieval_pin(
+    scoped: &mut super::PgScopedTransaction,
+    context: &RequestContext,
+    request: &NormalizedRetrievalRequest,
+) -> Result<(), ApplicationError> {
+    let identity = request
+        .embedding_space_key
+        .canonical_identity()
+        .ok_or_else(|| {
+            ApplicationError::Policy("text retrieval requires a canonical space".to_owned())
+        })?;
+    if request.embedding_space_key.workspace_id() != context.workspace_id {
+        return Err(ApplicationError::Policy(
+            "text retrieval workspace differs from canonical space".to_owned(),
+        ));
+    }
+    let exact: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM embedding_corpus_generations generation \
+             JOIN embedding_space_registrations registration ON registration.workspace_id=generation.workspace_id \
+              AND registration.id=generation.space_registration_id \
+             WHERE generation.workspace_id=$1 AND generation.id=$2 AND registration.registration_kind='canonical' \
+              AND registration.name=$3 AND registration.model_revision_id=$4 AND registration.model_qualification_revision_id=$5 \
+              AND registration.request_shape_revision_id=$6 AND registration.adapter_profile_revision=$7 \
+              AND registration.returned_model=$8 AND registration.encoding_format=$9 AND registration.dimensions=$10)")
+            .bind(context.workspace_id.as_uuid()).bind(request.corpus_generation_id.as_uuid())
+            .bind(request.embedding_space_key.name()).bind(identity.model_revision_id.as_uuid())
+            .bind(identity.model_qualification_revision_id.as_uuid()).bind(identity.request_shape_revision_id)
+            .bind(&identity.adapter_profile_revision).bind(&identity.returned_model).bind(&identity.encoding_format)
+            .bind(i64::from(identity.dimensions)).fetch_one(scoped.connection()).await.map_err(storage_error)?;
+    if !exact {
+        return Err(ApplicationError::Policy(
+            "text retrieval generation differs from exact canonical space".to_owned(),
+        ));
+    }
+    sqlx::query(
+        "SELECT * FROM vestrace_resolve_embedding_memory_references($1,$2,ARRAY[]::uuid[])",
+    )
+    .bind(context.workspace_id.as_uuid())
+    .bind(request.corpus_generation_id.as_uuid())
+    .fetch_all(scoped.connection())
+    .await
+    .map_err(storage_error)?;
+
+    Ok(())
+}
+
 #[async_trait]
 impl TextRetriever for PgTextRetriever {
     async fn search(
@@ -141,6 +187,8 @@ impl TextRetriever for PgTextRetriever {
             .begin_scoped(context)
             .await
             .map_err(storage_error)?;
+
+        validate_canonical_retrieval_pin(&mut scoped, context, request).await?;
 
         let TemporalQueryPlan {
             revision_join,
@@ -165,19 +213,18 @@ impl TextRetriever for PgTextRetriever {
                    m.state_revision AS source_generation, mr.id AS revision_id,
                    mr.revision_number, mr.content, mr.valid_from, mr.valid_until,
                    mr.created_at AS revision_created_at,
-                   member.corpus_generation_id AS corpus_generation_id,
+                   $6::uuid AS corpus_generation_id,
                    {rank_expression} AS rank
             FROM search_documents sd
             INNER JOIN memories m ON m.id = sd.memory_id
-            INNER JOIN memory_embeddings e ON e.memory_id = m.id AND e.workspace_id = m.workspace_id
-            INNER JOIN embedding_corpus_generation_members member
-                    ON member.memory_embedding_id = e.id AND member.workspace_id = e.workspace_id
             {revision_join}
             WHERE sd.workspace_id = $1
               AND m.workspace_id = $1
               AND m.status = ANY($3)
               AND (cardinality($4::text[]) = 0 OR m.kind = ANY($4))
-              AND member.corpus_generation_id = $6
+              AND m.status <> 'deleted'
+              AND EXISTS (SELECT 1 FROM vestrace_resolve_embedding_memory_references($1,$6,NULL) represented
+                          WHERE represented.memory_id = m.id AND represented.revision_id = mr.id)
               AND {match_expression}
             ORDER BY {order_by}
             LIMIT $5

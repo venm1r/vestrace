@@ -24,6 +24,91 @@
 - No task may edit a path absent from the Task 1 preflight and `scripts/p04-scope.mjs`; stop for a scope amendment instead.
 - Run PostgreSQL integration and mutation suites serially. Record real exits, counts, hashes, owners, ACLs, and restoration evidence.
 
+### Continuation checkpoint, 2026-09-12
+
+The user authorized adding `text_retriever.rs`, `embedding_space_isolation.rs`,
+`vector_retriever_data_policy.rs` and `retrieval_classification_boundary.rs`
+under `crates/vestrace-infrastructure/tests/` to the completion scope, and
+designing their canonical corpus-to-memory path. The exact allowlist is now
+143 paths; protected authority remains 23 paths. Original capture fields and
+historical migration digests are not recaptured.
+
+Section 12 of the companion design records the proposed behavior, database
+boundary, compatibility and acceptance criteria. It corrects the earlier
+claim that there is no memory link: ordinary material ownership already names
+the source revision, but text lookup and durable result validation do not use
+it consistently. The proposed forward migration
+`migrations/0208_embedding_memory_references.sql` is **user-approved and allowed**.
+Implementation is in progress and has not been accepted. Existing
+approved amendments through migration 0207 remain in effect; the initial
+0197-0204 range above describes the original task allocation.
+
+The four suites' current failures are retained pending that implementation.
+Task 14 cannot be marked complete from a scope amendment or a design review.
+Pre-existing `Cargo.toml` and `LICENSE-APACHE` drift is preserved and still
+reported by the frozen baseline verifier.
+
+### 0208 execution ledger and cdx lead rulings
+
+The user requested cdx during implementation, then assigned the current
+assistant the lead-engineer role. Codex agents implement; the lead reviews and
+accepts. No external Claude session was started. The approved completion plan
+and section 12 remain the contract: root `PLAN.md` concerns an unrelated slice
+and is outside this scope, so it is not overwritten for a skill convention.
+Continue the explicitly authorized dirty checkout without resetting, moving,
+committing or discarding earlier work. A byte snapshot of the pre-0208 allowed
+files is retained in the session temporary directory for comparison.
+
+- [x] Record user approval and add migration 0208: 141 exact paths, no baseline recapture.
+- [ ] Implement and review the SQL resolver, exact admission, provenance finalizer,
+  retired overloads, memory eligibility, erasure ordering and provisioner parity.
+  Files: migration 0208, provisioner, `embedding_retrieval_results.rs`, existing
+  scoped runtime/upgrade/erasure integration suites.
+- [ ] Implement and review the runtime contract in application `embedding/retrieval.rs`
+  and PostgreSQL retrieval repository/client/text adapter. Match the expected
+  canonical space/generation, preserve provenance and temporal eligibility,
+  deduplicate before limits, and refuse unsupported retry claims.
+- [ ] Complete shared canonical memory fixture and migrate all four debt suites.
+  Keep positive governed vector retrieval and its provider-call oracle; do not
+  replace it with a legacy refusal or a fixture-only assertion.
+- [ ] Prove direct SQL forgery rejection, upgrade of old empty/nonempty results,
+  erasure/publication races in both orders, and RED/exact-restore/GREEN mutations.
+- [ ] Run focused gates serially, inspect complete turn diff against the saved
+  snapshot, perform independent review, and record actual acceptance status.
+
+Ruling: result **ordinals** are contiguous; hit **ranks** may contain gaps after
+deduplication or exclusion. Reject negative/invalid ranks while retaining the
+chosen projection's original rank and score. Requiring rank equal to ordinal
+would reject valid results and contradict section 12.
+
+Ruling: finalization must accept the executor's actual durable running state
+only with its dispatch authority; a test that terminalizes a merely requested
+job is not a production-shaped positive proof. Repair those fixtures rather
+than weakening the finalization guard.
+
+Ruling: admission failure before a fence exists must not advertise a durable
+generation-changed attempt that can be retried. Return an unattempted safe
+degradation for the specific generation mismatch; unrelated conflicts are errors.
+
+Ruling: finalization locks the fence before the job, matching the existing
+generation-change terminal branch. Ordinary revision publication and both
+source-erasure entrypoints serialize on workspace/revision ownership before
+their existing row locks. Never-published abandoned preparations do not make
+a revision permanently ineligible; published erased source references do.
+
+Ruling: ordinary retrieval jobs receive an ordinary snapshot issued against
+the exact canonical registration and expected generation under current
+connection, qualification and credential authority. Do not loosen transition
+snapshot scope restrictions or select the newest transition as a substitute.
+
+Verification checkpoint (implementation remains NOT APPROVED): application
+retrieval unit tests passed 3/3; the initial combined P02/P03/P04 scope tests
+passed 17/17 and protocol-lock exited 0. After the policy amendment, P04 scope
+tests passed 7/7 for 143 paths. The first 0208 database smoke command stopped
+before database setup with Rust E0283 in the chunked resolver; this is not a
+migration pass. The frozen verifier still reports the pre-existing Cargo.toml
+and LICENSE-APACHE drift. Standard git diff --check exited 0 at that checkpoint.
+
 ## File Map
 
 **New migrations**
@@ -1022,3 +1107,13 @@ git commit -m "test(p04): qualify embedding completion"
 - [ ] **Step 7: Stop before push**
 
 Show `git status --short --branch`, the commit list since the Task 1 baseline, final gate evidence, and any material limitation. Push only after a separate explicit user instruction.
+
+
+### Approved governed embedding policy amendment, 2026-09-12
+
+The user explicitly approved adding `crates/vestrace-application/src/embedding_data_policy.rs` (142 scoped paths). Extract its existing decision-only classification/destination/record/enforcement logic and reuse it in the governed worker before network execution. Preserve the RetrievalQuery decision with the exact request ID, and prove denial causes zero provider calls. Do not replace this oracle with capability authorization alone. Protected paths and the frozen baseline are unchanged.
+
+
+### Approved final hydration amendment, 2026-09-12
+
+The user explicitly approved adding `crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs` (143 scoped paths). RetrievalService passes the normalized canonical request to final hydration. The production hydrator validates exact space/generation and live source-to-revision membership, deletion and temporal eligibility under the same transaction as the authoritative content/classification read. Canonical hydration defaults fail closed; general hydration remains available. Preserve structured classification withholding. Add deterministic tests for erasure, revocation and deletion between channel discovery and final hydration; no provider retry.

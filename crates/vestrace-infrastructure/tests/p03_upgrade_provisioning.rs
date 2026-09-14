@@ -1,3 +1,5 @@
+mod common;
+
 use std::{borrow::Cow, collections::BTreeSet, str::FromStr};
 
 use sqlx::{
@@ -1968,4 +1970,180 @@ async fn retired_credential_erasure_sqlx_fallback_preserves_exact_function_acl(p
     install_extensions_from_real_provisioner(&pool).await;
     MIGRATOR.run(&pool).await.unwrap();
     assert_retired_credential_erasure_function_inventory(&pool).await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn retrieval_0207_upgrade_preserves_unverified_empty_and_nonempty_results(pool: PgPool) {
+    common::result_preparation_fixture::provision_result_behavior_database_through(&pool, 207)
+        .await;
+    let runtime = runtime_pool(&pool).await;
+    let checksums: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT version,checksum FROM _sqlx_migrations WHERE version<=207 ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let mut history = Vec::new();
+    for count in [0_i32, 1] {
+        let base = common::prepare_delivery_embedding_job(&pool, &runtime).await;
+        let workspace = base.context.workspace_id.as_uuid();
+        let (space, _) = common::canonical_memory_fixture::register_space(
+            &pool,
+            &runtime,
+            &base,
+            "historical-results",
+        )
+        .await;
+        let generation = Uuid::now_v7();
+        let mut tx = runtime.begin().await.unwrap();
+        common::result_preparation_fixture::scoped(&mut tx, workspace).await;
+        sqlx::query("SELECT vestrace_capture_embedding_generation($1,$2,$3,1::bigint)")
+            .bind(generation)
+            .bind(workspace)
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("SELECT vestrace_publish_embedding_generation($1,$2,$3,1::bigint)")
+            .bind(workspace)
+            .bind(space)
+            .bind(generation)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        // This deliberately reproduces the unchecked 0207 authority: a query
+        // job in the old registration could fence a different canonical space
+        // and persist unproved UUIDs. Upgrade must preserve and label that fact.
+        sqlx::query("SELECT vestrace_accept_embedding_job($1,$2,$3,'retrieval_query',$4,$5,$6,NULL,NULL::bigint)")
+            .bind(base.job_id.as_uuid()).bind(workspace).bind(base.space_registration_id).bind(base.snapshot_id)
+            .bind(base.external_effect_id).bind(base.evidence_id).execute(&mut *tx).await.unwrap();
+        let fence: Uuid = sqlx::query_scalar("SELECT vestrace_accept_embedding_retrieval_attempt($1,$2,$3,$4,NOW()+interval '30 seconds')")
+            .bind(workspace).bind(base.job_id.as_uuid()).bind(Uuid::now_v7()).bind(space).fetch_one(&mut *tx).await.unwrap();
+        let memories: Vec<Uuid> = (0..count).map(|_| Uuid::now_v7()).collect();
+        let revisions: Vec<Uuid> = (0..count).map(|_| Uuid::now_v7()).collect();
+        let ranks: Vec<i64> = (0..i64::from(count)).collect();
+        let scores = vec![0.5_f64; count as usize];
+        let result: Uuid = sqlx::query_scalar(
+            "SELECT vestrace_finalize_embedding_retrieval_result($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(workspace)
+        .bind(base.job_id.as_uuid())
+        .bind(fence)
+        .bind(&memories)
+        .bind(&revisions)
+        .bind(ranks)
+        .bind(scores)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        history.push((
+            workspace,
+            base.job_id.as_uuid(),
+            result,
+            count,
+            memories,
+            revisions,
+        ));
+    }
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    MIGRATOR
+        .run(&runtime)
+        .await
+        .expect("restricted runtime upgrades existing terminal results");
+    let after: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT version,checksum FROM _sqlx_migrations WHERE version<=207 ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after, checksums, "no historical migration checksum changed");
+    for (workspace, job, result, count, memories, revisions) in history {
+        let header: (i32, i32, String) = sqlx::query_as("SELECT r.provenance_version,r.reference_count,j.state FROM embedding_retrieval_results r JOIN embedding_jobs j ON j.workspace_id=r.workspace_id AND j.id=r.job_id WHERE r.workspace_id=$1 AND r.id=$2 AND j.id=$3")
+            .bind(workspace).bind(result).bind(job).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            header,
+            (0, count, "succeeded".to_owned()),
+            "empty results are historical too; job stays terminal"
+        );
+        let references: Vec<(Uuid,Uuid,Option<Uuid>,Option<Uuid>)> = sqlx::query_as("SELECT memory_id,revision_id,projection_id,source_material_id FROM embedding_retrieval_result_references WHERE workspace_id=$1 AND result_id=$2 ORDER BY ordinal")
+            .bind(workspace).bind(result).fetch_all(&pool).await.unwrap();
+        assert_eq!(references.len(), count as usize);
+        for (index, reference) in references.iter().enumerate() {
+            assert_eq!(
+                reference,
+                &(memories[index], revisions[index], None, None),
+                "upgrade must never fabricate provenance"
+            );
+        }
+    }
+    for (signature, executable) in [
+        (
+            "vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,timestamptz)",
+            false,
+        ),
+        (
+            "vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],bigint[],double precision[])",
+            false,
+        ),
+        (
+            "vestrace_resolve_embedding_memory_references(uuid,uuid,uuid[])",
+            true,
+        ),
+        (
+            "vestrace_issue_canonical_retrieval_snapshot(uuid,uuid,uuid,uuid)",
+            true,
+        ),
+        (
+            "vestrace_accept_embedding_retrieval_attempt(uuid,uuid,uuid,uuid,uuid,timestamptz)",
+            true,
+        ),
+        (
+            "vestrace_finalize_embedding_retrieval_result(uuid,uuid,uuid,uuid[],uuid[],uuid[],uuid[],bigint[],double precision[])",
+            true,
+        ),
+    ] {
+        let posture: (String,bool,bool,bool) = sqlx::query_as("SELECT pg_get_userbyid(proowner),prosecdef,has_function_privilege('vestrace',oid,'EXECUTE'),has_function_privilege('public',oid,'EXECUTE') FROM pg_proc WHERE oid=$1::regprocedure")
+            .bind(signature).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            posture,
+            ("vestrace_guarded_owner".to_owned(), true, executable, false),
+            "{signature}"
+        );
+    }
+    for statement in [
+        "SELECT vestrace_accept_embedding_retrieval_attempt(NULL::uuid,NULL::uuid,NULL::uuid,NULL::uuid,NULL::timestamptz)",
+        "SELECT vestrace_finalize_embedding_retrieval_result(NULL::uuid,NULL::uuid,NULL::uuid,NULL::uuid[],NULL::uuid[],NULL::bigint[],NULL::float8[])",
+    ] {
+        let error = sqlx::query(statement).execute(&pool).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("42501")
+        );
+        assert!(
+            error
+                .as_database_error()
+                .unwrap()
+                .message()
+                .contains("retired"),
+            "body itself refuses privileged callers"
+        );
+        let error = sqlx::query(statement).execute(&runtime).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("42501")
+        );
+    }
+    sqlx::raw_sql(provisioner_sql_from(
+        "-- P02 migrations run as the runtime role",
+    ))
+    .execute(&pool)
+    .await
+    .expect("reprovisioning audits retired and current overloads consistently");
+    runtime.close().await;
 }

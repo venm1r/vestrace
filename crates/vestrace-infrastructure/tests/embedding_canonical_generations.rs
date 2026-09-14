@@ -2542,111 +2542,112 @@ async fn generation_standing(
     (state, current, revision)
 }
 
-/// Mutation qualification, and a finding the mutation is what surfaced: the
-/// revocation branch of `vestrace_propagate_embedding_source_erasure` cannot be
-/// reached on a canonical space at all.
-///
-/// The intended reading of that branch is stated in the migration: a revoked
-/// generation is no longer current, and leaving the guard pointing at it would
-/// let retrieval acceptance pin a generation whose members are being erased.
-/// The run set out to check that claim by disabling the branch. It could not,
-/// because the unmutated erasure is already refused.
-///
-/// `vestrace_validate_canonical_member_liveness` is a deferred constraint
-/// trigger that refuses whenever a projection entry enrolled in *any*
-/// `encrypted_projection` generation stops being Live. The propagation's first
-/// act on each affected space is to retire exactly such entries, so on a
-/// canonical space holding a generation the whole transaction is refused at
-/// COMMIT with `canonical generation member must remain Live`, before the
-/// revocation it contains can mean anything. Members cannot be removed from a
-/// generation either -- `embedding_corpus_generation_members` refuses deletion
-/// -- so there is no order of operations that gets past it.
-///
-/// The mutation is still installed and still recorded, and it changes nothing:
-/// the same refusal, at the same boundary, by the same message. That is the
-/// evidence for unreachability rather than a null result, because a branch
-/// whose presence and absence are indistinguishable from outside is precisely
-/// what "unreachable" means here.
-///
-/// The consequence is stated plainly rather than smoothed over, because it is
-/// larger than the predicate: **once a canonical generation enrols a
-/// projection, the source that projection was computed from can no longer be
-/// erased.** Erasure of such a source succeeds only while no generation holds
-/// it -- which the companion qualification of the Live membership predicate
-/// exercises, and which is the same authority succeeding on the same kind of
-/// world one step earlier. The revocation branch remains reachable for
-/// `legacy_upgrade` generations, which the liveness trigger deliberately does
-/// not cover; no fixture in this package builds one holding real dependencies,
-/// so that path is not qualified here and is not claimed to be.
-#[sqlx::test(migrations = false)]
-async fn the_erasure_revocation_branch_is_unreachable_while_a_canonical_generation_holds_its_members(
-    pool: PgPool,
+/// A successful erasure must leave the exact durable witness that permits
+/// historical canonical members to retire.
+async fn assert_published_erasure(
+    pool: &PgPool,
+    runtime: &PgPool,
+    world: &CanonicalDeliveryWorld,
+    generation: Uuid,
+    material: Uuid,
 ) {
+    let before = generation_standing(pool, world, generation).await;
+    assert_eq!((before.0.as_str(), before.1), ("ready", Some(generation)));
+    let propagation = propagate_erasure(runtime, world, material)
+        .await
+        .expect("published canonical members permit witnessed source erasure");
+    let after = generation_standing(pool, world, generation).await;
+    assert_eq!((after.0.as_str(), after.1), ("revoked", None));
+    assert_eq!(after.2, before.2 + 1);
+    let witnessed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM embedding_erasure_revoked_members revoked
+         JOIN embedding_erasure_propagations propagation
+           ON propagation.workspace_id=revoked.workspace_id AND propagation.id=revoked.propagation_id
+         JOIN material_erasure_preparations preparation
+           ON preparation.workspace_id=propagation.workspace_id
+          AND preparation.id=propagation.material_erasure_preparation_id
+          AND preparation.target_kind='content'
+          AND preparation.content_material_id=propagation.source_material_id
+         JOIN content_materials source
+           ON source.workspace_id=propagation.workspace_id AND source.id=propagation.source_material_id
+          AND source.state='erasure_prepared'
+         JOIN embedding_projection_entries projection
+           ON projection.workspace_id=revoked.workspace_id AND projection.id=revoked.projection_entry_id
+          AND projection.space_registration_id=revoked.space_registration_id
+          AND projection.material_id=revoked.vector_material_id
+          AND projection.state='erased' AND projection.retention_eligibility_state='erasure_propagated'
+         JOIN embedding_projection_source_dependencies dependency
+           ON dependency.workspace_id=projection.workspace_id AND dependency.projection_id=projection.id
+          AND dependency.source_material_id=source.id AND dependency.source_intent_id=source.intent_id
+         JOIN embedding_corpus_generation_members member
+           ON member.workspace_id=projection.workspace_id AND member.embedding_projection_entry_id=projection.id
+          AND member.corpus_generation_id=revoked.corpus_generation_id
+         WHERE propagation.workspace_id=$1 AND propagation.id=$2
+           AND propagation.source_material_id=$3 AND revoked.corpus_generation_id=$4",
+    )
+    .bind(world.f.workspace.as_uuid())
+    .bind(propagation)
+    .bind(material)
+    .bind(generation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        witnessed > 0,
+        "the retired members retain exact source erasure lineage"
+    );
+}
+
+/// Removing generation revocation must make a real source erasure fail at the
+/// deferred canonical liveness boundary, while the original authority succeeds.
+#[sqlx::test(migrations = false)]
+async fn canonical_erasure_requires_generation_revocation(pool: PgPool) {
     provision_result_behavior_database(&pool).await;
     let runtime = common::runtime_pool(&pool).await;
-
     let (original, owner, acl, runtime_execute) =
         authority_state(&pool, PROPAGATION_AUTHORITY).await;
-    assert!(
-        original.contains(REVOCATION_NEEDLE),
-        "the predicate this qualification mutates is no longer in the authority; \
-         the mutation would silently test nothing: {original}"
-    );
+    assert_eq!(original.matches(REVOCATION_NEEDLE).count(), 1);
 
-    // Unmutated, with a generation holding the members: already refused.
     let (before, before_generation, before_material) = published_world(&pool, &runtime).await;
-    let standing = generation_standing(&pool, &before, before_generation).await;
-    assert_eq!(
-        (standing.0.as_str(), standing.1),
-        ("ready", Some(before_generation))
-    );
-    let (boundary, state, message) = propagate_erasure(&runtime, &before, before_material)
-        .await
-        .expect_err("a canonical generation's member may not stop being Live");
-    assert_eq!(
-        boundary,
-        Boundary::Commit,
-        "the propagation itself raises nothing: {message}"
-    );
-    assert_eq!(state, "23514");
-    assert!(
-        message.contains("canonical generation member must remain Live"),
-        "{message}"
-    );
-    assert_eq!(
-        generation_standing(&pool, &before, before_generation).await,
-        standing,
-        "a refused erasure leaves the space exactly as it found it"
-    );
+    assert_published_erasure(&pool, &runtime, &before, before_generation, before_material).await;
 
+    let (during, during_generation, during_material) = published_world(&pool, &runtime).await;
+    let during_standing = generation_standing(&pool, &during, during_generation).await;
     install_authority(
         &pool,
         &original.replace(REVOCATION_NEEDLE, REVOCATION_MUTATION),
     )
     .await;
-    let (mutated, mutated_owner, mutated_acl, mutated_execute) =
-        authority_state(&pool, PROPAGATION_AUTHORITY).await;
-    assert_ne!(mutated, original, "the mutation must actually be installed");
-    assert_eq!(
-        mutated_owner, owner,
-        "the mutation must not change the owner"
-    );
-    assert_eq!(mutated_acl, acl, "nor the access control list");
-    assert_eq!(mutated_execute, runtime_execute, "nor its reachability");
+    let mutated = authority_state(&pool, PROPAGATION_AUTHORITY).await;
+    let outcome = propagate_erasure(&runtime, &during, during_material).await;
 
-    // Mutated, in its own world: indistinguishable.
-    let (during, during_generation, during_material) = published_world(&pool, &runtime).await;
-    let during_standing = generation_standing(&pool, &during, during_generation).await;
-    let (mutated_boundary, mutated_state, mutated_message) =
-        propagate_erasure(&runtime, &during, during_material)
-            .await
-            .expect_err("disabling the revocation cannot help an erasure that never gets there");
-    assert_eq!(mutated_boundary, boundary);
-    assert_eq!(mutated_state, state);
+    // Restore before asserting the mutation outcome, even if the mutant survived.
+    install_authority(&pool, &original).await;
+    let restored = authority_state(&pool, PROPAGATION_AUTHORITY).await;
     assert_eq!(
-        mutated_message, message,
-        "the branch's presence and absence must be indistinguishable, which is \
-         what makes it unreachable rather than merely defended"
+        restored,
+        (
+            original.clone(),
+            owner.clone(),
+            acl.clone(),
+            runtime_execute
+        )
+    );
+    assert_ne!(
+        mutated.0, original,
+        "the mutation must actually be installed"
+    );
+    assert_eq!(
+        (mutated.1, mutated.2, mutated.3),
+        (owner, acl, runtime_execute)
+    );
+    let (boundary, state, message) =
+        outcome.expect_err("retiring current canonical members must fail");
+    assert_eq!(boundary, Boundary::Commit);
+    assert_eq!(state, "23514");
+    assert!(
+        message.contains("canonical generation member must remain Live"),
+        "{message}"
     );
     assert_eq!(
         generation_standing(&pool, &during, during_generation).await,
@@ -2661,31 +2662,18 @@ async fn the_erasure_revocation_branch_is_unreachable_while_a_canonical_generati
     .unwrap();
     assert_eq!(
         attempted, 0,
-        "including the propagation record, which rolled back with it"
+        "the propagation witness rolls back with the erasure"
     );
+    let source_state: String =
+        sqlx::query_scalar("SELECT state FROM content_materials WHERE workspace_id=$1 AND id=$2")
+            .bind(during.f.workspace.as_uuid())
+            .bind(during_material)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(source_state, "live");
 
-    // Restore, byte-exactly, and prove it.
-    install_authority(&pool, &original).await;
-    let (restored, restored_owner, restored_acl, restored_execute) =
-        authority_state(&pool, PROPAGATION_AUTHORITY).await;
-    assert_eq!(
-        restored, original,
-        "the definition must be restored exactly"
-    );
-    assert_eq!(restored_owner, owner);
-    assert_eq!(restored_acl, acl);
-    assert_eq!(restored_execute, runtime_execute);
-
-    // And the contrast that gives the finding its edge: the same authority, the
-    // same kind of world, one step earlier -- no generation yet -- succeeds.
-    let f = canonical_qualification(&pool, &runtime).await;
-    let open = canonical_delivery_world(&pool, &runtime, f).await;
-    let (open_live, open_not_live) = erase_one_source(&pool, &runtime, &open).await;
-    assert!(
-        open_not_live >= 1,
-        "with no generation holding them, the projections do retire"
-    );
-    assert!(open_live >= 0);
-
+    let (after, after_generation, after_material) = published_world(&pool, &runtime).await;
+    assert_published_erasure(&pool, &runtime, &after, after_generation, after_material).await;
     runtime.close().await;
 }
