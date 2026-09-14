@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 81);
+  assert.equal(changeScopePaths.length, 83);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -203,6 +203,20 @@ test('P05-D admits only the reviewed Compose and G0-evidence plan boundary', () 
 // module element by element, not as a set. Two lists holding the same paths in
 // different collations are still a finding, so the capture has to be the module
 // verbatim.
+test('P05-E admits its own reviewed spec and plan', () => {
+  // P05-E is a sub-package of P05: the verifier hard-codes ^p(\d{2})-scope\.mjs$,
+  // so there is one scope module per gate number and P05-A through P05-E all
+  // share this one. Only the spec and plan are admitted here; the
+  // implementation paths are admitted by the plan's own first task.
+  for (const path of [
+    'docs/superpowers/plans/2026-09-14-vestrace-v1-g0-05e-test-migrator.md',
+    'docs/superpowers/specs/2026-09-14-vestrace-v1-g0-05e-test-migrator-design.md',
+  ]) {
+    assert.ok(changeScopePaths.includes(path), path);
+    assert.ok(!protectedAuthorityPaths.includes(path), path);
+  }
+});
+
 test('the captured preflight scope entry is the scope module verbatim', () => {
   const preflight = JSON.parse(
     readFileSync(new URL('../docs/development-evidence/v1-g0-05-preflight.json', import.meta.url)),
