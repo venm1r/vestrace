@@ -1,0 +1,55 @@
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test provider_admission
+
+running 12 tests
+test task10_admission_entrypoint_is_guarded_and_returns_only_bounded_db_time ... ok
+test a_fresh_connection_can_be_given_its_admission_policy ... ok
+test a_connection_without_an_execution_guard_gets_no_policy ... ok
+test throttle_and_wait_retry_race_serializes_without_deadlock ... ok
+test admission_rejects_caller_time_shifting_and_writes_nothing ... ok
+test a_publisher_that_did_not_see_the_current_policy_loses ... ok
+test release_and_throttle_require_the_exact_effect_receipt_pair ... ok
+test exact_429_receipt_releases_lease_and_terminalizes_wait_as_throttled ... ok
+test admission_revalidates_pinned_canonical_sources_before_replay ... ok
+test valid_admission_pins_latest_complete_evidence_and_db_authored_expiry ... ok
+test admission_rejects_more_than_8200_locked_evidence_nodes ... ok
+test saturated_wait_is_durable_and_expired_lease_is_reclaimed_without_sleep ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.93s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test effect_outcome_delivery
+
+running 4 tests
+test an_inconclusive_outcome_is_not_delivered ... ok
+test an_outcome_belonging_to_no_run_is_not_owed_forever ... ok
+test a_settled_lost_dispatch_with_no_receipt_is_told_to_its_run ... ok
+test a_settled_outcome_is_recorded_in_the_run_that_asked_for_it ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.51s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test intent_crash_boundaries
+
+running 15 tests
+test material_crash_after_abort_before_witnessed_erase_is_resumable ... ok
+test credential_crash_after_receipt_before_prepared_is_resumable ... ok
+test material_crash_after_erase_receipt_before_terminal_append_is_resumable ... ok
+test credential_crash_after_abort_before_witnessed_erase_is_resumable ... ok
+test owner_result_prepared_crash_after_prepared_before_bound_is_parked ... ok
+test material_crash_after_reserved_is_resumable ... ok
+test credential_crash_after_reserved_is_resumable ... ok
+test credential_crash_after_vault_create_before_receipt_is_resumable ... ok
+test material_crash_after_bound_before_promotion_is_resumable ... ok
+test credential_crash_after_erase_receipt_before_terminal_append_is_resumable ... ok
+test credential_crash_after_prepared_before_bound_is_resumable ... ok
+test material_crash_after_vault_create_before_receipt_is_resumable ... ok
+test credential_crash_after_bound_before_promotion_is_resumable ... ok
+test material_crash_after_receipt_before_prepared_is_resumable ... ok
+test material_crash_after_prepared_before_bound_is_resumable ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.85s
+
+exit: 0

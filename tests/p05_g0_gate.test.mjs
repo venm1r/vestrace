@@ -344,7 +344,7 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
 
   // Exit 2 is malformed evidence, which is a defect in the manifest. Exit 1 is
   // a correctly formed manifest that does not add up to a pass, which is what
-  // the manifest actually has through P05-F: it closes five of nineteen
+  // the manifest actually has through P05-G: it closes twelve of nineteen
   // criteria and cannot speak to the rest.
   assert.equal(run.code, 1, run.stderr);
   const report = JSON.parse(run.stdout);
@@ -356,10 +356,19 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
   // The change boundary is the one criterion P05-D closes outright.
   assert.equal(byId.get('g0-19').status, 'pass');
 
-  // P05-F closed four more with fresh re-run evidence: default-deny route
+  // P05-F closed four with fresh re-run evidence: default-deny route
   // authority, mutation-plus-audit atomicity, MaterialKeyCreationIntent
   // enforcement, and the pinned protocol lock/fixtures.
   for (const id of ['g0-01', 'g0-02', 'g0-08', 'g0-18']) {
+    assert.equal(byId.get(id).status, 'pass', id);
+    assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
+  }
+
+  // P05-G closed seven more, all P03-scoped: typed external-effect authority,
+  // ModelRequestEvidence, provider transport, connection/credential guards,
+  // admission/leases, CredentialKeyCreationIntent lifecycle, and pre-live
+  // credential abort plus bound-Candidate abandon closure.
+  for (const id of ['g0-03', 'g0-04', 'g0-05', 'g0-06', 'g0-07', 'g0-09', 'g0-11']) {
     assert.equal(byId.get(id).status, 'pass', id);
     assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
   }
@@ -372,7 +381,7 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
   assert.ok(byId.get('g0-17').sources.length > 0, 'a blocked criterion still names what it ran');
 
   const passed = report.criteria.filter((entry) => entry.status === 'pass');
-  assert.equal(passed.length, 5, 'no package may claim a criterion it did not close');
+  assert.equal(passed.length, 12, 'no package may claim a criterion it did not close');
 
   // Nothing is inherited from P05-A through P05-C.
   assert.equal(byId.get('g0-16').status, 'unknown');
