@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 153);
+  assert.equal(changeScopePaths.length, 154);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -215,6 +215,12 @@ test('P05-E admits its own reviewed spec and plan', () => {
     assert.ok(changeScopePaths.includes(path), path);
     assert.ok(!protectedAuthorityPaths.includes(path), path);
   }
+});
+
+test('the G0 closure roadmap is admitted and not protected', () => {
+  const path = 'docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md';
+  assert.ok(changeScopePaths.includes(path), path);
+  assert.ok(!protectedAuthorityPaths.includes(path), path);
 });
 
 test('the captured preflight scope entry is the scope module verbatim', () => {
