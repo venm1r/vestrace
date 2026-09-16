@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 154);
+  assert.equal(changeScopePaths.length, 160);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -259,4 +259,18 @@ test('P05-E admits its implementation and evidence paths', () => {
     (path) => /^crates\/vestrace-(infrastructure|cli)\/tests\/.*\.rs$/.test(path),
   );
   assert.ok(rewritten.length >= 60, `only ${rewritten.length} test files admitted`);
+});
+
+test('P05-F admits its own plan and evidence paths', () => {
+  for (const path of [
+    'docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05f-fresh-closure.md',
+    'docs/development-evidence/v1-g0-05-gate/route-authority-test.txt',
+    'docs/development-evidence/v1-g0-05-gate/mutation-audit-test.txt',
+    'docs/development-evidence/v1-g0-05-gate/material-intent-test.txt',
+    'docs/development-evidence/v1-g0-05-gate/protocol-lock-test.txt',
+    'docs/development-evidence/v1-g0-05f-fresh-closure.md',
+  ]) {
+    assert.ok(changeScopePaths.includes(path), path);
+    assert.ok(!protectedAuthorityPaths.includes(path), path);
+  }
 });

@@ -7,15 +7,29 @@
   "criteria": [
     {
       "id": "g0-01",
-      "claim": "unknown",
-      "reason": "Route authority is P01 work. P05-D started no server and exercised no route.",
-      "sources": []
+      "claim": "pass",
+      "reason": "vestrace-http's lib suite exhaustively walks route_inventory() (public_probe_exemption_matches_the_inventory) and independently proves any path outside it is denied (unknown_transport_path_is_denied), re-run fresh 2026-09-17 by P05-F.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/route-authority-test.txt",
+          "sha256": "15831d1955503ac433cabba5a40bbc5ca07aa6b61ab1205dfa8244592c4b8341",
+          "command": "cargo test -p vestrace-http --lib",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-02",
-      "claim": "unknown",
-      "reason": "Mutation/audit atomicity is P01 work and was not exercised by this package.",
-      "sources": []
+      "claim": "pass",
+      "reason": "governed_mutation_is_atomic proves mutation-plus-audit atomicity under injected write-boundary failure, re-run fresh 2026-09-17 by P05-F.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/mutation-audit-test.txt",
+          "sha256": "7a7c4cd7c0ebc5771b8c8ea7f4f3b995e0b4b09cbb471f38c1f797183f2c108d",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test governed_mutation_is_atomic",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-03",
@@ -49,9 +63,16 @@
     },
     {
       "id": "g0-08",
-      "claim": "unknown",
-      "reason": "MaterialKeyCreationIntent enforcement is P02 work.",
-      "sources": []
+      "claim": "pass",
+      "reason": "material_contract, material_intent_lifecycle, and material_vault_contract together prove ContentPrepared stays internal until Bound promotion, guarded pre-live abort, and raw-SQL publish/resurrect refusal, re-run fresh 2026-09-17 by P05-F.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/material-intent-test.txt",
+          "sha256": "406b1d2fe5baebb8bdf57c0c2f4247a28a26d35d28135b2b658ccdf5c4c128a6",
+          "command": "cargo test -p vestrace-domain --test material_contract && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test material_intent_lifecycle && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test material_vault_contract",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-09",
@@ -140,9 +161,16 @@
     },
     {
       "id": "g0-18",
-      "claim": "unknown",
-      "reason": "The pinned protocol lock and executable contract fixtures belong to a later package; P05-D produced no fixture evidence.",
-      "sources": []
+      "claim": "pass",
+      "reason": "protocol_a2a_lock and protocol_q1_manifest prove the pinned A2A/q1 protocol lock; protocol_q1_marker.test.mjs and p01_text_hygiene.test.mjs prove the executable P01 fixtures, re-run fresh 2026-09-17 by P05-F.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/protocol-lock-test.txt",
+          "sha256": "6a4acb78c31ab1e2a27fdcc58a5d19d585621a2b7edd01acd7c27996b1b81ede",
+          "command": "cargo test --test protocol_a2a_lock --test protocol_q1_manifest && node --test tests/protocol_q1_marker.test.mjs tests/p01_text_hygiene.test.mjs",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-19",

@@ -339,13 +339,13 @@ test('the command exits nonzero for malformed evidence and for a non-passing agg
   }
 });
 
-test('the recorded P05-D evidence manifest is well formed and claims no G0 pass', () => {
+test('the recorded G0 evidence manifest is well formed and claims exactly the criteria closed so far', () => {
   const run = runGate('docs/development-evidence/v1-g0-05-gate.json');
 
   // Exit 2 is malformed evidence, which is a defect in the manifest. Exit 1 is
   // a correctly formed manifest that does not add up to a pass, which is what
-  // P05-D actually has: it closes two of nineteen criteria and cannot speak to
-  // the rest.
+  // the manifest actually has through P05-F: it closes five of nineteen
+  // criteria and cannot speak to the rest.
   assert.equal(run.code, 1, run.stderr);
   const report = JSON.parse(run.stdout);
   assert.notEqual(report.aggregate, 'pass');
@@ -356,6 +356,14 @@ test('the recorded P05-D evidence manifest is well formed and claims no G0 pass'
   // The change boundary is the one criterion P05-D closes outright.
   assert.equal(byId.get('g0-19').status, 'pass');
 
+  // P05-F closed four more with fresh re-run evidence: default-deny route
+  // authority, mutation-plus-audit atomicity, MaterialKeyCreationIntent
+  // enforcement, and the pinned protocol lock/fixtures.
+  for (const id of ['g0-01', 'g0-02', 'g0-08', 'g0-18']) {
+    assert.equal(byId.get(id).status, 'pass', id);
+    assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
+  }
+
   // The installer/Compose criterion is a conjunction. P05-D proves the
   // topology, the safety stores, and the readiness grants, and does not
   // re-prove the archiver or fingerprint-key conjuncts that belong to earlier
@@ -364,7 +372,7 @@ test('the recorded P05-D evidence manifest is well formed and claims no G0 pass'
   assert.ok(byId.get('g0-17').sources.length > 0, 'a blocked criterion still names what it ran');
 
   const passed = report.criteria.filter((entry) => entry.status === 'pass');
-  assert.equal(passed.length, 1, 'P05-D must not claim a criterion it did not close');
+  assert.equal(passed.length, 5, 'no package may claim a criterion it did not close');
 
   // Nothing is inherited from P05-A through P05-C.
   assert.equal(byId.get('g0-16').status, 'unknown');
