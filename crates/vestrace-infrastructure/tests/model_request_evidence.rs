@@ -1244,7 +1244,7 @@ fn chat_creation_with_tool(
     .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn complete_evidence_reconstructs_from_exact_revisions(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let context = RequestContext::new(fixture.workspace_id, fixture.principal_id);
@@ -1278,7 +1278,7 @@ async fn complete_evidence_reconstructs_from_exact_revisions(pool: PgPool) {
     assert_eq!(created.as_uuid(), root_id);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_source_round_trips_only_the_closed_structural_tuple(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let context = RequestContext::new(fixture.workspace_id, fixture.principal_id);
@@ -1469,7 +1469,7 @@ async fn q1_source_round_trips_only_the_closed_structural_tuple(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn embeddings_reconstructs_from_database_backed_revisions(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1505,7 +1505,7 @@ async fn embeddings_reconstructs_from_database_backed_revisions(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn mixed_role_chat_reconstructs_and_the_production_adapter_preserves_message_order(
     pool: PgPool,
 ) {
@@ -1650,7 +1650,7 @@ async fn mixed_role_chat_reconstructs_and_the_production_adapter_preserves_messa
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_reconstructs_only_the_exact_snapshot_qualification_tuple(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1682,7 +1682,7 @@ async fn run_step_reconstructs_only_the_exact_snapshot_qualification_tuple(pool:
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_embeddings_reconstructs_the_exact_snapshot_qualification_tuple(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1722,7 +1722,7 @@ async fn run_step_embeddings_reconstructs_the_exact_snapshot_qualification_tuple
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn sql_size_header_and_unframed_refusals_do_not_unwrap(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1786,7 +1786,7 @@ async fn sql_size_header_and_unframed_refusals_do_not_unwrap(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn valid_decoded_request_above_four_mib_framed_reconstructs_completely(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1855,7 +1855,7 @@ async fn valid_decoded_request_above_four_mib_framed_reconstructs_completely(poo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pathological_aggregate_frame_set_is_incomplete_before_unwrap(pool: PgPool) {
     const DECODED_AGGREGATE_LIMIT: i64 = 4 * 1024 * 1024;
     const MIN_FRAME_BYTES: i64 = 4096;
@@ -1928,7 +1928,7 @@ async fn pathological_aggregate_frame_set_is_incomplete_before_unwrap(pool: PgPo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn wrong_aad_padding_and_open_failures_unwrap_once_and_zeroize(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2029,7 +2029,7 @@ async fn wrong_aad_padding_and_open_failures_unwrap_once_and_zeroize(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn postgres_never_stores_the_raw_semantic_request_or_a_stable_digest(pool: PgPool) {
     let tables = [
         "model_request_shape_revisions",
@@ -2082,7 +2082,7 @@ async fn postgres_never_stores_the_raw_semantic_request_or_a_stable_digest(pool:
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn wrong_kind_cross_workspace_wrong_version_duplicate_missing_and_extra_nodes_are_refused(
     pool: PgPool,
 ) {
@@ -2233,7 +2233,7 @@ async fn wrong_kind_cross_workspace_wrong_version_duplicate_missing_and_extra_no
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn models_list_run_step_is_refused_without_persisting_a_root_or_nodes(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2302,7 +2302,7 @@ async fn models_list_run_step_is_refused_without_persisting_a_root_or_nodes(pool
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn false_expired_check_cannot_cite_an_unrelated_erased_material(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2534,7 +2534,7 @@ async fn assert_no_test_check_rows(pool: &PgPool, check_id: Uuid) {
     assert_eq!(rows, (0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_check_cannot_omit_a_prepared_governed_input(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2560,7 +2560,7 @@ async fn expired_check_cannot_omit_a_prepared_governed_input(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_check_cannot_omit_a_live_governed_input_without_bytes(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2649,7 +2649,7 @@ async fn expired_check_cannot_omit_a_live_governed_input_without_bytes(pool: PgP
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_check_accepts_erased_input_when_every_omitted_input_is_live_with_bytes(
     pool: PgPool,
 ) {
@@ -2687,7 +2687,7 @@ async fn expired_check_accepts_erased_input_when_every_omitted_input_is_live_wit
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_check_cannot_omit_a_live_governed_input_with_malformed_frame(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2714,7 +2714,7 @@ async fn expired_check_cannot_omit_a_live_governed_input_with_malformed_frame(po
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn historical_incomplete_check_is_append_only(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2797,7 +2797,7 @@ async fn historical_incomplete_check_is_append_only(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn canonical_revisions_and_nodes_are_an_exact_bijection_before_any_write(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2898,7 +2898,7 @@ async fn canonical_revisions_and_nodes_are_an_exact_bijection_before_any_write(p
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn tool_name_and_description_bounds_are_utf8_bytes_in_postgres(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -2952,7 +2952,7 @@ async fn tool_name_and_description_bounds_are_utf8_bytes_in_postgres(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn retained_tool_dto_validation_failure_is_recorded_as_typed_incomplete(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3049,7 +3049,7 @@ async fn retained_tool_dto_validation_failure_is_recorded_as_typed_incomplete(po
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn missing_retained_source_is_incomplete_and_blocks_dispatch(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let context = RequestContext::new(fixture.workspace_id, fixture.principal_id);
@@ -3129,7 +3129,7 @@ async fn missing_retained_source_is_incomplete_and_blocks_dispatch(pool: PgPool)
     assert_eq!(persisted, ("incomplete".into(), 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn removed_required_input_node_is_incomplete_before_any_unwrap(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3194,7 +3194,7 @@ async fn removed_required_input_node_is_incomplete_before_any_unwrap(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn authorized_erasure_alone_derives_expired(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3282,7 +3282,7 @@ async fn authorized_erasure_alone_derives_expired(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn historical_evidence_survives_adapter_default_changes(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3340,7 +3340,7 @@ async fn historical_evidence_survives_adapter_default_changes(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn unknown_effect_preserves_the_same_evidence_root(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3377,7 +3377,7 @@ async fn unknown_effect_preserves_the_same_evidence_root(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_exact_replay_returns_one_root_and_conflicting_replay_is_refused(pool: PgPool) {
     let exact_fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3454,7 +3454,7 @@ async fn concurrent_exact_replay_returns_one_root_and_conflicting_replay_is_refu
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn erasure_race_cannot_hydrate_after_complete_check(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -3612,7 +3612,7 @@ async fn erasure_race_cannot_hydrate_after_complete_check(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn multi_material_erasure_preparation_and_finalization_races_do_not_deadlock(pool: PgPool) {
     let fixture = probe_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;

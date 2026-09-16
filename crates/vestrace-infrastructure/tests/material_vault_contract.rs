@@ -135,7 +135,7 @@ fn create_if_absent_refuses_a_different_nonce_for_the_same_key_id() {
     ));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn unwrap_refuses_after_prepare_erasure_without_consulting_postgres(pool: PgPool) {
     let fixture = VaultFixture::new();
     let vault = fixture.vault();

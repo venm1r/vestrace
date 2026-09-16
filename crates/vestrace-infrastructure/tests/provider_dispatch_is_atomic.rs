@@ -2398,7 +2398,7 @@ async fn watermark(pool: &PgPool) -> i64 {
         .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn atomic_count_authority_observes_a_current_effect_intent(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2416,7 +2416,7 @@ async fn atomic_count_authority_observes_a_current_effect_intent(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn admitted_dispatch_commits_all_legs_and_returns_the_same_request(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2463,7 +2463,7 @@ async fn admitted_dispatch_commits_all_legs_and_returns_the_same_request(pool: P
     assert_eq!(adapter_calls.load(Ordering::SeqCst), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn injected_write_boundaries_roll_every_dispatch_leg_back(pool: PgPool) {
     let _tracking_guard = TRACKING_TEST_GUARD.lock().await;
     let runtime = runtime_pool(&pool).await;
@@ -2525,7 +2525,7 @@ async fn injected_write_boundaries_roll_every_dispatch_leg_back(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn observe_model_denial_with_allowed_authorization_may_prepare(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2553,7 +2553,7 @@ async fn observe_model_denial_with_allowed_authorization_may_prepare(pool: PgPoo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn denied_authorization_wins_even_when_model_policy_allows(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2581,7 +2581,7 @@ async fn denied_authorization_wins_even_when_model_policy_allows(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn enforce_model_denial_cannot_pair_with_allowed_authorization(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2634,7 +2634,7 @@ fn configured_policy(
     ))
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn configured_policy_prepares_when_the_pinned_destination_is_admitted(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2661,7 +2661,7 @@ async fn configured_policy_prepares_when_the_pinned_destination_is_admitted(pool
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn configured_policy_denies_a_refused_destination_without_touching_admission(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2700,7 +2700,7 @@ async fn configured_policy_denies_a_refused_destination_without_touching_admissi
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn configured_policy_proceeds_under_observe_and_keeps_the_refusal(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -2737,7 +2737,7 @@ async fn configured_policy_proceeds_under_observe_and_keeps_the_refusal(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pinned_credential_and_request_auth_branches_must_match(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
 
@@ -2786,7 +2786,7 @@ async fn pinned_credential_and_request_auth_branches_must_match(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_metadata_must_match_the_pinned_authority(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for mutation in ["revision", "slot", "guard", "auth", "destination"] {
@@ -2817,7 +2817,7 @@ async fn credential_metadata_must_match_the_pinned_authority(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn caller_mutated_issued_lease_projection_rolls_back_every_dispatch_leg(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for mutation in [
@@ -2862,7 +2862,7 @@ async fn caller_mutated_issued_lease_projection_rolls_back_every_dispatch_leg(po
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pinned_credential_must_remain_current_and_usable(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for mutation in ["stale_version", "revoked"] {
@@ -2938,7 +2938,7 @@ async fn pinned_credential_must_remain_current_and_usable(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn preparer_frame_flows_through_dispatch_without_a_second_resolution(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup_run_branch(&pool, &runtime, true).await;
@@ -3001,7 +3001,7 @@ async fn preparer_frame_flows_through_dispatch_without_a_second_resolution(pool:
     assert_eq!(adapter_calls.load(Ordering::SeqCst), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_dispatch_success_and_faults_are_atomic_around_unwrap(pool: PgPool) {
     let _tracking_guard = TRACKING_TEST_GUARD.lock().await;
     let runtime = runtime_pool(&pool).await;
@@ -3145,7 +3145,7 @@ async fn credential_dispatch_success_and_faults_are_atomic_around_unwrap(pool: P
     assert_eq!(watermark(&pool).await, before_watermark);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn saturated_and_throttled_dispatches_commit_only_terminal_admission_evidence(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
 
@@ -3273,7 +3273,7 @@ async fn saturated_and_throttled_dispatches_commit_only_terminal_admission_evide
     assert_eq!(throttle_terminal, ("throttled".into(), 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_probe_dispatches_with_exact_no_auth_or_credential_binding(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
 
@@ -3314,7 +3314,7 @@ async fn qualification_probe_dispatches_with_exact_no_auth_or_credential_binding
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn shared_dispatch_returns_the_exact_complete_q1_request_for_a_qualification_probe(
     pool: PgPool,
 ) {
@@ -3342,7 +3342,7 @@ async fn shared_dispatch_returns_the_exact_complete_q1_request_for_a_qualificati
     assert!(matches!(*request, Q1ProbeRequest::ModelsList));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn static_q1_probes_create_neither_effect_nor_mre(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -3460,7 +3460,7 @@ async fn static_q1_probes_create_neither_effect_nor_mre(pool: PgPool) {
     assert_eq!((after.3, after.4), (2, 3));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_prerequisite_dependents_cannot_pass_after_an_unsupported_predecessor(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -3543,7 +3543,7 @@ async fn q1_prerequisite_dependents_cannot_pass_after_an_unsupported_predecessor
     assert_eq!(after, (before, "running".to_owned()));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_tool_dependents_cannot_pass_after_an_unsupported_tool_predecessor(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -3660,7 +3660,7 @@ async fn q1_tool_dependents_cannot_pass_after_an_unsupported_tool_predecessor(po
     assert_eq!(after, (before + 1, "running".to_owned()));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_request_refuses_a_stale_credential_slot_version_before_binding(
     pool: PgPool,
 ) {
@@ -3752,7 +3752,7 @@ async fn record_complete_q1_matrix(
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_finalizer_refuses_a_stale_no_auth_connection_head_before_publishing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -3817,7 +3817,7 @@ async fn q1_finalizer_refuses_a_stale_no_auth_connection_head_before_publishing(
     assert_eq!(facts, ("running".to_owned(), 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_finalizer_refuses_a_stale_candidate_slot_before_publishing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, true).await;
@@ -3886,7 +3886,7 @@ async fn q1_finalizer_refuses_a_stale_candidate_slot_before_publishing(pool: PgP
     assert_eq!(facts, ("running".to_owned(), 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_finalizer_locks_the_canonical_guard_before_publishing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -3944,7 +3944,7 @@ async fn q1_finalizer_locks_the_canonical_guard_before_publishing(pool: PgPool) 
     assert_eq!(facts, ("running".to_owned(), 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_finalizer_accepts_only_the_complete_twelve_probe_terminal_matrix(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -4043,7 +4043,7 @@ async fn q1_finalizer_accepts_only_the_complete_twelve_probe_terminal_matrix(poo
     assert_eq!(observed, ("succeeded".into(), 12, 1, 2, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn complete_q1_mre_reconstructs_the_exact_closed_adapter_request(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch(&pool, &runtime, false).await;
@@ -4110,7 +4110,7 @@ async fn complete_q1_mre_reconstructs_the_exact_closed_adapter_request(pool: PgP
     permit.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_probe_may_consume_only_its_pinned_candidate_credential(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let candidate = setup_qualification_branch(&pool, &runtime, true).await;
@@ -4158,7 +4158,7 @@ async fn qualification_probe_may_consume_only_its_pinned_candidate_credential(po
     assert_eq!(vault.0.load(Ordering::SeqCst), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_result_prepare_after_live_dispatch_commits_result_receipt_witness_and_release(
     pool: PgPool,
 ) {
@@ -4463,7 +4463,7 @@ async fn run_result_prepare_after_live_dispatch_commits_result_receipt_witness_a
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_result_finalize_after_live_dispatch_rolls_back_run_success_after_before_run_success_fault(
     pool: PgPool,
 ) {
@@ -4612,7 +4612,7 @@ async fn run_result_finalize_after_live_dispatch_rolls_back_run_success_after_be
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_result_prepare_after_live_dispatch_rolls_back_receipt_witness_and_release_after_fault(
     pool: PgPool,
 ) {
@@ -4702,7 +4702,7 @@ async fn run_result_prepare_after_live_dispatch_rolls_back_receipt_witness_and_r
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn post_network_completion_is_one_receipt_release_and_replay(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -4758,7 +4758,7 @@ async fn post_network_completion_is_one_receipt_release_and_replay(pool: PgPool)
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_reservation_converges_exact_replay_and_refuses_cross_step_fixed_identity_alias(
     pool: PgPool,
 ) {
@@ -4946,7 +4946,7 @@ async fn run_step_attempt_reservation_converges_exact_replay_and_refuses_cross_s
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_phases_are_evidence_bound_and_atomic_with_dispatch(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -5095,7 +5095,7 @@ async fn run_step_attempt_phases_are_evidence_bound_and_atomic_with_dispatch(poo
     assert_eq!(after_replay, ("dispatching".to_owned(), 1, 1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_recovery_classifies_a_fresh_reserved_attempt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &runtime).await;
@@ -5110,7 +5110,7 @@ async fn run_step_attempt_recovery_classifies_a_fresh_reserved_attempt(pool: PgP
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_recovery_classifies_a_lawful_admitted_attempt_before_dispatch(
     pool: PgPool,
 ) {
@@ -5144,7 +5144,7 @@ async fn run_step_attempt_recovery_classifies_a_lawful_admitted_attempt_before_d
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_recovery_adopts_only_the_expired_original_dispatch_as_unknown_without_re_admission(
     pool: PgPool,
 ) {
@@ -5261,7 +5261,7 @@ async fn run_step_attempt_recovery_adopts_only_the_expired_original_dispatch_as_
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn lost_q1_dispatch_becomes_inconclusive_without_another_adapter_attempt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let qualification = setup_qualification_branch_for_ordinal(&pool, &runtime, false, "10").await;
@@ -5315,7 +5315,7 @@ async fn lost_q1_dispatch_becomes_inconclusive_without_another_adapter_attempt(p
     assert_eq!(observed, ("inconclusive_unknown".into(), 1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_probe_refuses_wrong_job_target_ordinal_auth_or_current_credential(
     pool: PgPool,
 ) {
@@ -5456,7 +5456,7 @@ async fn qualification_probe_refuses_wrong_job_target_ordinal_auth_or_current_cr
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn three_session_dispatch_and_standalone_reconstruction_follow_root_first_order(
     pool: PgPool,
 ) {
@@ -5548,7 +5548,7 @@ async fn three_session_dispatch_and_standalone_reconstruction_follow_root_first_
     reconstruction_pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn old_snapshot_before_root_mutation_reproduces_40p01_then_restores_green(pool: PgPool) {
     let setup_runtime = runtime_pool(&pool).await;
     let fixture = setup(&pool, &setup_runtime).await;
@@ -5707,7 +5707,7 @@ async fn old_snapshot_before_root_mutation_reproduces_40p01_then_restores_green(
     restored_pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn independent_real_reconstruction_dispatches_serialize_on_one_connection(pool: PgPool) {
     let setup_runtime = runtime_pool(&pool).await;
     let first_fixture = setup(&pool, &setup_runtime).await;
@@ -5782,7 +5782,7 @@ async fn independent_real_reconstruction_dispatches_serialize_on_one_connection(
     second_pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_runner_composes_the_original_q1_dispatch_once(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = setup_branch(&pool, &runtime, false).await;
@@ -5905,7 +5905,7 @@ async fn qualification_runner_composes_the_original_q1_dispatch_once(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn optional_definite_status_from_the_real_runner_is_acknowledged_and_finalizable(
     pool: PgPool,
 ) {

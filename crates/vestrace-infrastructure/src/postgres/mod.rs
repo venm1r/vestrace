@@ -126,7 +126,7 @@ pub use model_repository::PgModelRepository;
 pub use model_request_evidence_repository::PgModelRequestEvidenceRepository;
 pub use model_revision_repository::PgModelRevisionRepository;
 pub use outbox_repository::{PgMemoryTextSource, PgOutboxRepository};
-pub use pool::{PgGovernedMutationRepository, PgStore};
+pub use pool::{HISTORICAL_MIGRATOR, PgGovernedMutationRepository, PgStore};
 pub use provenance_repository::PgProvenanceRepository;
 pub use provider_dispatch_repository::PgProviderDispatchRepository;
 pub use provider_repository::PgProviderRepository;

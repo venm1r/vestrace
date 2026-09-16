@@ -145,7 +145,7 @@ async fn stored_classification(pool: &PgPool, revision_id: MemoryRevisionId) -> 
         .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn malformed_stored_labels_fail_closed_in_both_embedding_readers(pool: PgPool) {
     let context = context(&pool, "malformed-reader").await;
     let service = memory_service(&pool, ["internal"]);
@@ -195,7 +195,7 @@ async fn malformed_stored_labels_fail_closed_in_both_embedding_readers(pool: PgP
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn creation_persists_declared_and_absent_labels_and_refuses_unknown_ones(pool: PgPool) {
     let context = context(&pool, "creation").await;
     let service = memory_service(&pool, ["internal", "restricted"]);
@@ -281,7 +281,7 @@ async fn creation_persists_declared_and_absent_labels_and_refuses_unknown_ones(p
     assert!(refused.contains("configured labels: []"), "{refused}");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn revise_inherits_or_accepts_the_identical_label_and_refuses_every_change(pool: PgPool) {
     let context = context(&pool, "revise").await;
     let service = memory_service(&pool, ["internal", "restricted"]);
@@ -372,7 +372,7 @@ async fn revise_inherits_or_accepts_the_identical_label_and_refuses_every_change
     assert_eq!(count, 3);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn one_idempotency_key_cannot_replay_a_different_stated_label(pool: PgPool) {
     let context = context(&pool, "idempotency").await;
     let service = memory_service(&pool, ["internal", "restricted"]);
@@ -455,7 +455,7 @@ impl MemoryRepository for RacingMemoryRepository {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_labelled_revise_has_one_winner_and_one_revision_conflict(pool: PgPool) {
     let context = context(&pool, "concurrency").await;
     let store = PgStore::from_pool(pool.clone());
@@ -602,7 +602,7 @@ impl EmbeddingProvider for CountingProvider {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_real_labelled_memory_is_refused_end_to_end_by_the_governed_provider(pool: PgPool) {
     let context = context(&pool, "headline").await;
     let service = memory_service(&pool, ["restricted"]);

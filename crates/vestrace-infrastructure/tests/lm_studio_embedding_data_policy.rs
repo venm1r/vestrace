@@ -51,7 +51,7 @@ impl EmbeddingProvider for PersistedBeforeLiveCall {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 #[ignore = "needs PostgreSQL 17 and LM Studio with text-embedding-nomic-embed-text-v1.5 loaded"]
 async fn governed_query_commits_before_the_real_lm_studio_round_trip(pool: PgPool) {
     let client = Arc::new(

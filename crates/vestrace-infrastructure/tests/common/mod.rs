@@ -1223,8 +1223,11 @@ pub(crate) mod result_preparation_fixture {
         let start = PROVISIONER
             .find(marker)
             .unwrap_or_else(|| panic!("missing provisioner marker {marker}"));
+        // The provisioner now has separate P05 psql heredocs after the
+        // runtime bridge. The bridge ends at its first terminator; selecting
+        // the final one would pass later shell text to PostgreSQL.
         PROVISIONER[start..]
-            .rsplit_once("\nSQL\n")
+            .split_once("\nSQL\n")
             .map(|(sql, _)| sql)
             .expect("the provisioner must contain the SQL heredoc terminator")
     }
@@ -1646,7 +1649,10 @@ pub(crate) mod result_preparation_fixture {
     }
 
     pub(crate) async fn provision_result_behavior_database(pool: &PgPool) {
-        provision_result_behavior_database_through(pool, i64::MAX).await;
+        // This fixture validates P04 result-finalization behaviour. Its
+        // ordinary test database must stop before the P05 safety suffix,
+        // whose installer requires the separate three-phase deployment route.
+        provision_result_behavior_database_through(pool, 208).await;
     }
 
     pub(crate) async fn provision_result_behavior_database_through(

@@ -148,7 +148,7 @@ async fn a_generation_of_one_same_wire_space_is_not_a_valid_pin_for_the_other(po
         .expect_err("cross-space pin must fail before search");
     assert!(error.to_string().contains("generation"), "{error}");
 }
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_embedding_job_dispatch_plan_remains_pinned_to_its_registered_space(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;

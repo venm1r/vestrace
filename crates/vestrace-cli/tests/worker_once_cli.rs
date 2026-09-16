@@ -317,7 +317,7 @@ async fn seed_run_work(
     item_id
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn once_exits_zero_when_a_workspace_has_work(pool: PgPool) {
     let (workspace_id, principal_id) = seed_workspace(&pool).await;
     let item_id = seed_run_work(&pool, workspace_id, principal_id).await;
@@ -340,7 +340,7 @@ async fn once_exits_zero_when_a_workspace_has_work(pool: PgPool) {
     assert_eq!(status, "completed", "the seeded handler work must complete");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn once_exits_three_when_every_poll_is_idle(pool: PgPool) {
     let (workspace_id, _) = seed_workspace(&pool).await;
     prepare_worker_runtime_ownership(&pool).await;
@@ -356,7 +356,7 @@ async fn once_exits_three_when_every_poll_is_idle(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn once_reports_a_failed_outbox_poll_after_successful_work(pool: PgPool) {
     let (workspace_id, principal_id) = seed_workspace(&pool).await;
     let item_id = seed_run_work(&pool, workspace_id, principal_id).await;

@@ -9,8 +9,8 @@ use std::sync::{
 
 use async_trait::async_trait;
 use common::result_preparation_fixture::{
-    DeliveryPolicyCase, MIGRATOR, OutputVaultFixture, acceptance_command,
-    attach_source_to_evidence, live_source, outputs, provision_result_behavior_database,
+    DeliveryPolicyCase, OutputVaultFixture, acceptance_command, attach_source_to_evidence,
+    live_source, outputs, provision_result_behavior_database,
     provision_result_behavior_database_through, reconcile_output_receipts, record_delivery_policy,
 };
 use sqlx::{PgPool, Postgres, Transaction};
@@ -1071,7 +1071,7 @@ async fn incomplete_or_non_exact_transition_satisfactions_are_refused_with_23514
 async fn transition_execution_acl_matches_on_0199_to_0200_upgrade(pool: PgPool) {
     provision_result_behavior_database_through(&pool, 199).await;
     let runtime = common::runtime_pool(&pool).await;
-    MIGRATOR
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
         .run(&runtime)
         .await
         .expect("the runtime role must apply 0200 from the exact 0199 predecessor");

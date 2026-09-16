@@ -46,7 +46,7 @@ async fn runtime_pool(source: &PgPool) -> PgPool {
         .expect("runtime must connect to the SQLx test database")
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_runtime_direct_attempt_dml_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let has_insert_privilege: bool = sqlx::query_scalar(
@@ -107,7 +107,7 @@ async fn governed_run_step_input_runtime_direct_attempt_dml_is_refused(pool: PgP
 /// This one declares nothing. It asks the catalog which tables the guarded
 /// owner holds and refuses all of them, so the cost of forgetting is a red
 /// test rather than a silent write path.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn every_guarded_owner_table_refuses_runtime_dml_including_undeclared_ones(pool: PgPool) {
     let tables: Vec<(String, String)> = sqlx::query_as(
         "

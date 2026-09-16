@@ -1017,7 +1017,7 @@ async fn p02_migrations_keep_legacy_tables_owned_by_the_runtime_role_and_functio
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_owner_bridge_refuses_an_unlisted_overload_of_an_allowlisted_name(pool: PgPool) {
     sqlx::query(
         "CREATE FUNCTION public.vestrace_record_guarded_operation_probe(TEXT) \
@@ -1158,7 +1158,7 @@ fn p02_owner_helper_is_bounded_and_only_p02_migrations_use_it() {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_is_not_the_owner_of_p02_tables(pool: PgPool) {
     let expected_tables = [
         "p02_guarded_operation_probe",
@@ -1207,7 +1207,7 @@ async fn runtime_role_is_not_the_owner_of_p02_tables(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_cannot_set_the_guarded_owner(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("SET ROLE vestrace_guarded_owner")
@@ -1217,7 +1217,7 @@ async fn runtime_role_cannot_set_the_guarded_owner(pool: PgPool) {
     assert_insufficient_privilege(result, "assumed the guarded owner with SET ROLE");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_membership_is_pinned_to_the_runtime_role_with_no_options(pool: PgPool) {
     let memberships = sqlx::query(
         "SELECT member_role.rolname, membership.admin_option, membership.inherit_option, membership.set_option \
@@ -1243,7 +1243,7 @@ async fn guarded_owner_membership_is_pinned_to_the_runtime_role_with_no_options(
     assert!(!membership.get::<bool, _>("set_option"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_has_no_direct_write_privileges_on_any_p02_table(pool: PgPool) {
     let expected_tables = [
         "p02_guarded_operation_probe",
@@ -1295,7 +1295,7 @@ async fn runtime_role_has_no_direct_write_privileges_on_any_p02_table(pool: PgPo
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("INSERT INTO p02_guarded_operation_probe (id) VALUES ($1)")
@@ -1307,7 +1307,7 @@ async fn runtime_role_direct_insert_is_refused(pool: PgPool) {
     assert_insufficient_table_privilege(result, "directly inserted a P02 row");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_update_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("UPDATE p02_guarded_operation_probe SET created_at = NOW()")
@@ -1318,7 +1318,7 @@ async fn runtime_role_direct_update_is_refused(pool: PgPool) {
     assert_insufficient_table_privilege(result, "directly updated a P02 row");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_delete_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("DELETE FROM p02_guarded_operation_probe")
@@ -1329,7 +1329,7 @@ async fn runtime_role_direct_delete_is_refused(pool: PgPool) {
     assert_insufficient_table_privilege(result, "directly deleted a P02 row");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_fingerprint_continuity_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1350,7 +1350,7 @@ async fn runtime_role_direct_insert_into_fingerprint_continuity_is_refused(pool:
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_installation_mutation_watermark_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1363,7 +1363,7 @@ async fn runtime_role_direct_insert_into_installation_mutation_watermark_is_refu
     assert_insufficient_privilege(result, "directly inserted installation mutation watermark");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_installation_mutation_watermark_advances_is_refused(
     pool: PgPool,
 ) {
@@ -1383,7 +1383,7 @@ async fn runtime_role_direct_insert_into_installation_mutation_watermark_advance
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_key_creation_intents_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1406,7 +1406,7 @@ async fn runtime_role_direct_insert_into_material_key_creation_intents_is_refuse
     assert_insufficient_privilege(result, "directly inserted a material-key creation intent");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_key_creation_intent_erasure_receipts_is_refused(
     pool: PgPool,
 ) {
@@ -1429,7 +1429,7 @@ async fn runtime_role_direct_insert_into_material_key_creation_intent_erasure_re
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_content_materials_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1448,7 +1448,7 @@ async fn runtime_role_direct_insert_into_content_materials_is_refused(pool: PgPo
     assert_insufficient_privilege(result, "directly inserted a content material");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_content_material_bytes_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1468,7 +1468,7 @@ async fn runtime_role_direct_insert_into_content_material_bytes_is_refused(pool:
     assert_insufficient_privilege(result, "directly inserted content-material ciphertext");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_prepared_material_attachments_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1490,7 +1490,7 @@ async fn runtime_role_direct_insert_into_prepared_material_attachments_is_refuse
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_content_material_ordinary_references_is_refused(
     pool: PgPool,
 ) {
@@ -1517,7 +1517,7 @@ async fn runtime_role_direct_insert_into_content_material_ordinary_references_is
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_connection_execution_guards_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1537,7 +1537,7 @@ async fn runtime_role_direct_insert_into_connection_execution_guards_is_refused(
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_activation_guards_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1560,7 +1560,7 @@ async fn runtime_role_direct_insert_into_credential_activation_guards_is_refused
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_slots_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1579,7 +1579,7 @@ async fn runtime_role_direct_insert_into_credential_slots_is_refused(pool: PgPoo
     assert_insufficient_privilege(result, "directly inserted a credential slot");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_revisions_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1599,7 +1599,7 @@ async fn runtime_role_direct_insert_into_credential_revisions_is_refused(pool: P
     assert_insufficient_privilege(result, "directly inserted immutable credential metadata");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_guard_occupancies_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1622,7 +1622,7 @@ async fn runtime_role_direct_insert_into_credential_guard_occupancies_is_refused
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_key_creation_intents_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1645,7 +1645,7 @@ async fn runtime_role_direct_insert_into_credential_key_creation_intents_is_refu
     assert_insufficient_privilege(result, "directly inserted a credential-key creation intent");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_prepared_materials_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1665,7 +1665,7 @@ async fn runtime_role_direct_insert_into_credential_prepared_materials_is_refuse
     assert_insufficient_privilege(result, "directly inserted CredentialPrepared ciphertext");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_prepared_attachments_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1686,7 +1686,7 @@ async fn runtime_role_direct_insert_into_credential_prepared_attachments_is_refu
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_association_events_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1705,7 +1705,7 @@ async fn runtime_role_direct_insert_into_credential_association_events_is_refuse
     assert_insufficient_privilege(result, "directly appended a cancellation association event");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_lifecycle_events_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1724,7 +1724,7 @@ async fn runtime_role_direct_insert_into_credential_lifecycle_events_is_refused(
     assert_insufficient_privilege(result, "directly appended a Candidate lifecycle event");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_credential_intent_erasure_receipts_is_refused(
     pool: PgPool,
 ) {
@@ -1747,7 +1747,7 @@ async fn runtime_role_direct_insert_into_credential_intent_erasure_receipts_is_r
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_erasure_preparations_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1766,7 +1766,7 @@ async fn runtime_role_direct_insert_into_material_erasure_preparations_is_refuse
     assert_insufficient_privilege(result, "directly inserted a material erasure preparation");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_erasure_events_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1783,7 +1783,7 @@ async fn runtime_role_direct_insert_into_material_erasure_events_is_refused(pool
     assert_insufficient_privilege(result, "directly appended a material erasure event");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_erasure_audit_tombstones_is_refused(
     pool: PgPool,
 ) {
@@ -1805,7 +1805,7 @@ async fn runtime_role_direct_insert_into_material_erasure_audit_tombstones_is_re
     assert_insufficient_privilege(result, "directly wrote a material erasure audit tombstone");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_insert_into_material_erasure_blockers_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1823,7 +1823,7 @@ async fn runtime_role_direct_insert_into_material_erasure_blockers_is_refused(po
     assert_insufficient_privilege(result, "directly wrote a material erasure blocker");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_may_execute_guarded_functions(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     sqlx::query("SELECT vestrace_record_guarded_operation_probe($1)")
@@ -2109,7 +2109,7 @@ async fn runtime_role_may_execute_guarded_functions(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_cannot_execute_internal_provider_result_live_guard(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("SELECT vestrace_validate_provider_result_material_live()")
@@ -2129,7 +2129,7 @@ async fn runtime_cannot_execute_internal_provider_result_live_guard(pool: PgPool
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_cannot_execute_result_material_preparation(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let can_execute: bool = sqlx::query_scalar(
@@ -2158,7 +2158,7 @@ async fn runtime_role_cannot_execute_result_material_preparation(pool: PgPool) {
     assert_insufficient_privilege(result, "executed ResultPrepared material creation");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn owner_role_cannot_log_in(pool: PgPool) {
     let role = sqlx::query(
         "SELECT rolcanlogin, rolsuper, rolbypassrls \
@@ -2173,7 +2173,7 @@ async fn owner_role_cannot_log_in(pool: PgPool) {
     assert!(!role.get::<bool, _>("rolbypassrls"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_dml_on_every_p03_table_is_exact_42501(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for table in P03_GUARDED_TABLES {
@@ -2198,7 +2198,7 @@ async fn runtime_role_direct_dml_on_every_p03_table_is_exact_42501(pool: PgPool)
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_has_select_only_on_deployment_policy_evidence(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for (verb, statement) in [
@@ -2226,7 +2226,7 @@ async fn runtime_role_has_select_only_on_deployment_policy_evidence(pool: PgPool
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_reconstruction_lock_is_executable_and_effect_intents_are_immutable(pool: PgPool) {
     let workspace = Uuid::now_v7();
     let effect = Uuid::now_v7();
@@ -2295,7 +2295,7 @@ async fn runtime_reconstruction_lock_is_executable_and_effect_intents_are_immuta
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_governed_mutation_dependencies_have_exact_writes_and_forced_workspace_rls(
     pool: PgPool,
 ) {
@@ -2563,7 +2563,7 @@ async fn runtime_governed_mutation_dependencies_have_exact_writes_and_forced_wor
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn superseded_p02_candidate_erasure_is_runtime_exact_42501(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query("SELECT public.vestrace_prepare_credential_material_erasure($1)")
@@ -2575,7 +2575,7 @@ async fn superseded_p02_candidate_erasure_is_runtime_exact_42501(pool: PgPool) {
     assert_insufficient_privilege(result, "executed superseded P02 Candidate-only erasure");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn retired_revoked_active_erasure_and_independent_recovery_are_exact(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let retired = create_candidate_fixture(&pool, &runtime, "retired").await;

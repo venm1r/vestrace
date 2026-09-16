@@ -107,7 +107,7 @@ async fn replay_embedding_evidence(
 /// A first plan is a whole immutable transition version: the target binding is
 /// copied from the stated tuple, its transition snapshot is scoped, and its
 /// ordered recipes are written in the same transaction.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_first_transition_version_writes_its_plan_recipes_and_scoped_snapshot(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -253,7 +253,7 @@ async fn plan_counts(pool: &PgPool, workspace_id: Uuid) -> (i64, i64, i64, i64) 
     .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn planning_conflicts_atomically_and_is_workspace_bound(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -356,7 +356,7 @@ async fn planning_conflicts_atomically_and_is_workspace_bound(pool: PgPool) {
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn successor_recipes_are_exactly_the_predecessor_identities_in_order(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -444,7 +444,7 @@ async fn successor_recipes_are_exactly_the_predecessor_identities_in_order(pool:
 /// Recipe identity alone is not the fixed persisted ordered wire structure.  A caller that moves
 /// an input ordinal while retaining the same recipe id must be refused before a
 /// successor plan is materialized.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn successor_recipes_preserve_their_ordered_input_ordinals(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -489,7 +489,7 @@ async fn successor_recipes_preserve_their_ordered_input_ordinals(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn ordinary_consumers_refuse_transition_and_scopeless_snapshots(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -646,7 +646,7 @@ async fn ordinary_consumers_refuse_transition_and_scopeless_snapshots(pool: PgPo
     scopeless_acceptance.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn snapshot_scope_is_deferred_to_commit_and_can_be_completed_in_the_same_transaction(
     pool: PgPool,
 ) {

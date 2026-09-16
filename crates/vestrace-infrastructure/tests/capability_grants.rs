@@ -87,7 +87,7 @@ fn engine(pool: &PgPool) -> StoredGrantPolicyEngine {
     .expect("a well-formed engine")
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_stored_grant_authorizes_and_a_missing_one_denies(pool: PgPool) {
     let (context, subject) = seed(&pool).await;
     let engine = engine(&pool);
@@ -121,7 +121,7 @@ async fn a_stored_grant_authorizes_and_a_missing_one_denies(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn revocation_reaches_the_next_decision(pool: PgPool) {
     // CAP-010 in the deployment rather than in the domain: no restart, no new
     // grant cycle, no cache to invalidate.
@@ -164,7 +164,7 @@ async fn revocation_reaches_the_next_decision(pool: PgPool) {
     assert!(again.revoke(now()).is_err());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_grant_issued_to_someone_else_does_not_authorize_me(pool: PgPool) {
     // The subject is the whole difference between this and the configured static
     // list, which gave every principal the same authority.
@@ -212,7 +212,7 @@ async fn a_grant_issued_to_someone_else_does_not_authorize_me(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_grant_does_not_cross_a_workspace_boundary(pool: PgPool) {
     let (mine, subject) = seed(&pool).await;
     let (theirs, _) = seed(&pool).await;
@@ -235,7 +235,7 @@ async fn a_grant_does_not_cross_a_workspace_boundary(pool: PgPool) {
     assert!(repository.insert(&theirs, &foreign).await.is_err());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_expired_grant_stops_authorizing_without_being_revoked(pool: PgPool) {
     use chrono::Duration;
 

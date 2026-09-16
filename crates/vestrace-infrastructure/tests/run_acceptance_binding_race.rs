@@ -935,7 +935,7 @@ async fn advance_connection_head_and_publish_new_tuple(
     transaction.commit().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_acceptance_races_credential_rotation_on_two_independent_pools(pool: PgPool) {
     let (credential, model_revision_id) = binding_fixture::prepare_credential_binding(&pool).await;
     let (
@@ -1034,7 +1034,7 @@ async fn run_acceptance_races_credential_rotation_on_two_independent_pools(pool:
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_acceptance_races_connection_head_advance_on_two_independent_pools(pool: PgPool) {
     let (fixture, model_id, old_model_revision_id) = binding_fixture::prepare_no_auth_binding(
         &pool,
@@ -1124,7 +1124,7 @@ async fn run_acceptance_races_connection_head_advance_on_two_independent_pools(p
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_commits_exact_atomic_tuple_and_schedules_one_execute_step(
     pool: PgPool,
 ) {
@@ -1264,7 +1264,7 @@ async fn governed_run_step_input_commits_exact_atomic_tuple_and_schedules_one_ex
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_prepares_live_material_and_complete_exact_mre_then_schedules(
     pool: PgPool,
 ) {
@@ -1364,7 +1364,7 @@ async fn governed_run_step_input_prepares_live_material_and_complete_exact_mre_t
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_fault_after_run_commit_rolls_back_every_leg(pool: PgPool) {
     let fixture = governed_input_fixture(&pool).await;
     let store = PgStore::from_pool(pool.clone());
@@ -1389,7 +1389,7 @@ async fn governed_run_step_input_fault_after_run_commit_rolls_back_every_leg(poo
     assert_governed_input_transaction_absent(&pool, &fixture).await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_fault_after_attempt_and_material_rolls_back_every_leg(
     pool: PgPool,
 ) {
@@ -1420,7 +1420,7 @@ async fn governed_run_step_input_fault_after_attempt_and_material_rolls_back_eve
 /// it authors anything for it. This read is what will let a same-Request-Id
 /// replay reuse the original `external_effect_id` instead of allocating a
 /// second intent and colliding with the guarded reserver's identity check.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_reserved_run_step_attempt_is_readable_by_its_exact_run_and_step(pool: PgPool) {
     let fixture = governed_input_fixture(&pool).await;
     governed_input_authority(&pool)
@@ -1469,7 +1469,7 @@ async fn a_reserved_run_step_attempt_is_readable_by_its_exact_run_and_step(pool:
 /// record: the exact reserved attempt, the intent already persisted under its
 /// effect id, and the Connection revision the Run pinned — with the auth branch
 /// read from the snapshot rather than defaulted.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_governed_run_step_dispatch_plan_is_read_back_from_the_pinned_binding(pool: PgPool) {
     let fixture = governed_input_fixture(&pool).await;
     governed_input_authority(&pool)
@@ -1745,7 +1745,7 @@ mod governed_execution {
         )
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
     async fn the_governed_executor_dispatches_an_accepted_step_once_and_never_again(pool: PgPool) {
         let vault = Arc::new(super::RecordingVault::new());
         let fixture = super::governed_input_fixture(&pool).await;
@@ -1926,7 +1926,7 @@ mod governed_execution {
     /// Nothing here is an in-memory double: the repositories, the vault, the
     /// Run store and the handler are the production types over real
     /// PostgreSQL. The adapter is the process boundary the crash happens at.
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
     async fn a_crash_between_dispatch_and_receipt_recovers_without_a_second_provider_call(
         pool: PgPool,
     ) {

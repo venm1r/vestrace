@@ -297,7 +297,7 @@ async fn seed_memory(pool: &PgPool, workspace_id: WorkspaceId) -> Uuid {
 /// would have exited 1 instead of 3. No test called that function, and every
 /// existing worker test ran with no embedding provider configured, so the whole
 /// dispatch path was unreached.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_idle_worker_runs_every_embedding_cycle_without_failing(pool: PgPool) {
     let (workspace_id, _) = seed_workspace(&pool).await;
     prepare_worker_runtime_ownership(&pool).await;
@@ -337,7 +337,7 @@ async fn an_idle_worker_runs_every_embedding_cycle_without_failing(pool: PgPool)
 /// The message stays retriable, because the refusal is about the workspace's
 /// state and not about the message -- a transition that establishes a canonical
 /// space makes this same message succeed unaided.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_on_write_route_refuses_a_memory_with_no_canonical_space(pool: PgPool) {
     let (workspace_id, _) = seed_workspace(&pool).await;
     let memory_id = seed_memory(&pool, workspace_id).await;

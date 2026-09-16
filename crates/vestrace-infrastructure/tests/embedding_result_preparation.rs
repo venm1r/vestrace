@@ -55,7 +55,7 @@ async fn result_preparation_schema_is_guarded_and_runtime_dml_is_refused(pool: P
     .await
     .expect("the real provisioner must install the 0194 ownership bridge");
     let runtime = common::runtime_pool(&pool).await;
-    MIGRATOR
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
         .run(&runtime)
         .await
         .expect("the restricted runtime must apply 0194 through the real bridge");

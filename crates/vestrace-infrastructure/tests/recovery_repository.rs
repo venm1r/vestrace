@@ -41,7 +41,7 @@ fn incident(scope: HealthScope, at: chrono::DateTime<Utc>) -> Incident {
     incident
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_repository_round_trips_and_retries_control_records(pool: PgPool) {
     let repository = PgRecoveryRepository::new(PgStore::from_pool(pool));
     let workspace_id = WorkspaceId::new();
@@ -112,7 +112,7 @@ async fn recovery_repository_round_trips_and_retries_control_records(pool: PgPoo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_repository_rejects_conflicting_reuse_of_immutable_ids(pool: PgPool) {
     let repository = PgRecoveryRepository::new(PgStore::from_pool(pool));
     let at = now();
@@ -133,7 +133,7 @@ async fn recovery_repository_rejects_conflicting_reuse_of_immutable_ids(pool: Pg
 /// microseconds. The indexed column is a truncated index of the payload value,
 /// so read-back must compare it at the column's precision instead of rejecting
 /// every record written with a real clock reading.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_records_survive_sub_microsecond_timestamps(pool: PgPool) {
     let repository = PgRecoveryRepository::new(PgStore::from_pool(pool));
     let at = now() + Duration::nanoseconds(1);

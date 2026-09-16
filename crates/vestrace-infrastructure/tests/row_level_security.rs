@@ -88,7 +88,7 @@ async fn unprivileged_role(pool: &PgPool) -> String {
     role
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_scoped_reader_sees_only_its_own_workspace(pool: PgPool) {
     let (mine, _, my_revision) = seed_workspace(&pool, "my content").await;
     let (_, _, their_revision) = seed_workspace(&pool, "their content").await;
@@ -127,7 +127,7 @@ async fn a_scoped_reader_sees_only_its_own_workspace(pool: PgPool) {
     assert_eq!(visible.len(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_unscoped_reader_sees_nothing(pool: PgPool) {
     // `vestrace_current_workspace_id()` yields NULL when the setting is absent,
     // and `workspace_id = NULL` is NULL rather than true. A connection that
@@ -154,7 +154,7 @@ async fn an_unscoped_reader_sees_nothing(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn naming_another_workspace_does_not_reach_its_rows(pool: PgPool) {
     // The predicate a caller controls is the workspace id it declares. Setting
     // it to somebody else's is the whole attack, and it works — which is why
@@ -188,7 +188,7 @@ async fn naming_another_workspace_does_not_reach_its_rows(pool: PgPool) {
     assert_ne!(mine, theirs);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_forced_policy_applies_to_the_owning_role(pool: PgPool) {
     // `FORCE ROW LEVEL SECURITY` is what makes a policy apply to the table
     // owner, and the runtime role owns every table in this schema (see
@@ -257,7 +257,7 @@ async fn the_forced_policy_applies_to_the_owning_role(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_table_holding_a_workspace_id_has_row_level_security(pool: PgPool) {
     // A third category, which the test above cannot see: thirteen tables have
     // no row level security *at all* — not enabled, not forced, no policy. The

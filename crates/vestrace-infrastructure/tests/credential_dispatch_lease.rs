@@ -102,7 +102,7 @@ fn credential_v2_codec_is_bounded_and_binds_every_identity() {
     assert!(codec.validate_frame(&vec![0_u8; 64 * 1024 + 1]).is_err());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_dispatch_lease_entrypoints_are_present(pool: PgPool) {
     let entrypoints: Vec<String> = sqlx::query_scalar(
         "SELECT p.oid::regprocedure::text \
@@ -432,7 +432,7 @@ async fn issue_lease(
     lease_id
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_lease_issue_consume_and_refusals_are_structural(pool: PgPool) {
     let fixture = active_lease_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -548,7 +548,7 @@ async fn guarded_lease_issue_consume_and_refusals_are_structural(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_and_no_longer_current_leases_cannot_be_consumed(pool: PgPool) {
     let fixture = active_lease_fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -657,7 +657,7 @@ impl vestrace_application::MaterialKeyVault for CountingVault {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn vault_unwrap_follows_successful_consumption_and_never_a_refusal(pool: PgPool) {
     let fixture = active_lease_fixture(&pool).await;
     let (effect_id, authorization_id) = authorized_effect(&pool, fixture.workspace_id).await;
@@ -713,7 +713,7 @@ async fn vault_unwrap_follows_successful_consumption_and_never_a_refusal(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn caller_mutations_never_override_the_persisted_lease_authority(pool: PgPool) {
     let fixture = active_lease_fixture(&pool).await;
     let (effect_id, authorization_id) = authorized_effect(&pool, fixture.workspace_id).await;
@@ -812,7 +812,7 @@ async fn caller_mutations_never_override_the_persisted_lease_authority(pool: PgP
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn transaction_bound_issue_rolls_back_and_reuses_the_exact_identity(pool: PgPool) {
     let fixture = active_lease_fixture(&pool).await;
     let (effect_id, authorization_id) = authorized_effect(&pool, fixture.workspace_id).await;

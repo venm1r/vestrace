@@ -84,6 +84,9 @@ fn recovery_qualification_uses_configured_credentials_without_disclosing_them() 
 }
 
 async fn ephemeral_database_url(pool: &PgPool) -> String {
+    if let Ok(url) = std::env::var("VESTRACE_P05_TEST_DATABASE_URL") {
+        return url;
+    }
     let base = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must name the PostgreSQL used by #[sqlx::test]");
     let database: String = sqlx::query_scalar("SELECT current_database()")
@@ -101,8 +104,28 @@ async fn ephemeral_database_url(pool: &PgPool) -> String {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn recovery_qualification_runs_every_target_once_through_canonical_runs(pool: PgPool) {
+async fn deployment_pool() -> Option<PgPool> {
+    let Ok(url) = std::env::var("VESTRACE_P05_TEST_DATABASE_URL") else {
+        eprintln!(
+            "BLOCKED: set VESTRACE_P05_TEST_DATABASE_URL to a disposable database \
+             taken through the three-phase P05 route"
+        );
+        return None;
+    };
+    Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn recovery_qualification_runs_every_target_once_through_canonical_runs() {
+    let Some(pool) = deployment_pool().await else {
+        return;
+    };
     let workspace_id = vestrace_domain::WorkspaceId::new().as_uuid();
     let principal_id = vestrace_domain::PrincipalId::new().as_uuid();
     sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")

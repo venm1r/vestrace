@@ -519,7 +519,7 @@ async fn candidate_credential(pool: &PgPool) -> CredentialFixture {
     fixture
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn live_cannot_return_from_erasure_prepared(pool: PgPool) {
     let fixture = live_content(&pool).await;
     prepare_content_erasure(&pool, &fixture).await;
@@ -544,7 +544,7 @@ async fn live_cannot_return_from_erasure_prepared(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn tombstoned_cannot_return_to_live(pool: PgPool) {
     let fixture = live_content(&pool).await;
     tombstone_content(&pool, &fixture).await;
@@ -569,7 +569,7 @@ async fn tombstoned_cannot_return_to_live(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_resurrect_a_tombstoned_identity(pool: PgPool) {
     let fixture = live_content(&pool).await;
     tombstone_content(&pool, &fixture).await;
@@ -614,7 +614,7 @@ async fn raw_sql_cannot_resurrect_a_tombstoned_identity(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn content_erasure_keyed_operations_require_a_fenced_preparation_and_replay_its_receipt(
     pool: PgPool,
 ) {
@@ -703,7 +703,7 @@ async fn content_erasure_keyed_operations_require_a_fenced_preparation_and_repla
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn replay_returns_the_original_receipt_without_a_second_erase(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let repository = PgMaterialErasureRepository::new(PgStore::from_pool(pool.clone()));
@@ -729,7 +729,7 @@ async fn replay_returns_the_original_receipt_without_a_second_erase(pool: PgPool
     assert_eq!(counters.erase_calls.load(Ordering::SeqCst), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn blocker_refuses_preparation(pool: PgPool) {
     for (blocker_kind, usable_until) in [
         ("effect", None),
@@ -764,7 +764,7 @@ async fn blocker_refuses_preparation(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn blocker_writer_refuses_after_waiting_for_content_erasure_preparation(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -825,7 +825,7 @@ async fn blocker_writer_refuses_after_waiting_for_content_erasure_preparation(po
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn metadata_and_audit_survive_erasure(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let (preparation_id, _receipt) = tombstone_content(&pool, &fixture).await;
@@ -909,7 +909,7 @@ async fn metadata_and_audit_survive_erasure(pool: PgPool) {
 /// about the guarded owner those triggers exempt. `SET ROLE` reaches that owner
 /// even though it cannot log in, so this exercises the one-way trigger against
 /// the only role that could otherwise reverse an erasure.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn state_reversal_is_refused_for_the_guarded_owner(pool: PgPool) {
     let fixture = live_content(&pool).await;
     tombstone_content(&pool, &fixture).await;
@@ -956,7 +956,7 @@ async fn state_reversal_is_refused_for_the_guarded_owner(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_skip_content_erasure_preparation(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let mut transaction = content_transaction(&pool, &fixture).await;
@@ -976,7 +976,7 @@ async fn guarded_owner_cannot_skip_content_erasure_preparation(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_skip_credential_erasure_preparation(pool: PgPool) {
     let fixture = candidate_credential(&pool).await;
     let mut transaction = credential_transaction(&pool, &fixture).await;
@@ -997,7 +997,7 @@ async fn guarded_owner_cannot_skip_credential_erasure_preparation(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_skip_material_intent_erasure_preparation(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let mut transaction = content_transaction(&pool, &fixture).await;
@@ -1029,7 +1029,7 @@ async fn guarded_owner_cannot_skip_material_intent_erasure_preparation(pool: PgP
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_reverse_a_tombstoned_material_intent(pool: PgPool) {
     let fixture = live_content(&pool).await;
     tombstone_content(&pool, &fixture).await;
@@ -1062,7 +1062,7 @@ async fn guarded_owner_cannot_reverse_a_tombstoned_material_intent(pool: PgPool)
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_delete_a_tombstoned_material_intent(pool: PgPool) {
     let fixture = live_content(&pool).await;
     tombstone_content(&pool, &fixture).await;
@@ -1094,7 +1094,7 @@ async fn guarded_owner_cannot_delete_a_tombstoned_material_intent(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn guarded_owner_cannot_reverse_an_erasure_prepared_material_intent(pool: PgPool) {
     let fixture = live_content(&pool).await;
     prepare_content_erasure(&pool, &fixture).await;
@@ -1127,7 +1127,7 @@ async fn guarded_owner_cannot_reverse_an_erasure_prepared_material_intent(pool: 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_candidate_can_only_advance_to_destroyed(pool: PgPool) {
     let fixture = candidate_credential(&pool).await;
     let mut transaction = credential_transaction(&pool, &fixture).await;

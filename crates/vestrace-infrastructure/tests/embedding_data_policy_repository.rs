@@ -29,7 +29,7 @@ fn decision(attempt: u32) -> EmbeddingDataPolicyDecisionRecord {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn embedding_decisions_preserve_purpose_cause_and_both_policy_checks(pool: PgPool) {
     let repository = PgEmbeddingDataPolicyDecisionRepository::new(PgStore::from_pool(pool.clone()));
     let first = decision(1);
@@ -72,7 +72,7 @@ async fn embedding_decisions_preserve_purpose_cause_and_both_policy_checks(pool:
     assert_eq!(rows[0].get::<String, _>("mode"), "observe");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn embedding_decisions_are_append_only_and_not_tenant_owned(pool: PgPool) {
     let repository = PgEmbeddingDataPolicyDecisionRepository::new(PgStore::from_pool(pool.clone()));
     let decision = decision(1);
@@ -117,7 +117,7 @@ async fn embedding_decisions_are_append_only_and_not_tenant_owned(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn purpose_rejects_a_causal_shape_another_path_could_mislabel(pool: PgPool) {
     let error = sqlx::query(
         "INSERT INTO embedding_data_policy_decisions (

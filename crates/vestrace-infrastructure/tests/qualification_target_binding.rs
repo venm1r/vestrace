@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 const RUNTIME_DATABASE_URL_ENV: &str = "VESTRACE_RUNTIME_DATABASE_URL";
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_lifecycle_is_forward_migrated_and_runtime_has_only_execute(pool: PgPool) {
     let target_columns: i64 = sqlx::query_scalar(
         "SELECT count(*)
@@ -52,7 +52,7 @@ async fn qualification_lifecycle_is_forward_migrated_and_runtime_has_only_execut
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_cannot_bypass_the_guarded_qualification_tables(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let error = sqlx::query(
@@ -72,7 +72,7 @@ async fn runtime_cannot_bypass_the_guarded_qualification_tables(pool: PgPool) {
     assert_eq!(database.code().as_deref(), Some("42501"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn q1_mre_source_is_closed_and_runtime_cannot_write_it_directly(pool: PgPool) {
     let columns: Vec<String> = sqlx::query_scalar(
         "SELECT column_name

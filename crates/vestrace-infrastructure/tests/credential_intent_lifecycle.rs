@@ -457,7 +457,7 @@ async fn reserve(pool: &PgPool, fixture: &Fixture) -> Result<(), sqlx::Error> {
     .await
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_material_preparation_is_framed_and_exact_replay_is_state_first(pool: PgPool) {
     let fixture = fixture(&pool).await;
     reserve(&pool, &fixture).await.unwrap();
@@ -529,7 +529,7 @@ async fn credential_material_preparation_is_framed_and_exact_replay_is_state_fir
     assert_eq!(counts, (1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_material_replay_reports_every_safe_effective_lifecycle_state(pool: PgPool) {
     let credential_prepared = credential_prepared(&pool).await;
     let bound = bound(&pool).await;
@@ -637,7 +637,7 @@ async fn credential_material_replay_reports_every_safe_effective_lifecycle_state
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn exclusive_installation_permit_blocks_preparation_before_vault_activity(pool: PgPool) {
     let fixture = Arc::new(fixture(&pool).await);
     reserve(&pool, &fixture).await.unwrap();
@@ -689,7 +689,7 @@ async fn exclusive_installation_permit_blocks_preparation_before_vault_activity(
     assert_eq!(vault.counts(), (1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn installation_permit_error_propagates_before_preparation_side_effects(pool: PgPool) {
     let fixture = fixture(&pool).await;
     reserve(&pool, &fixture).await.unwrap();
@@ -725,7 +725,7 @@ async fn installation_permit_error_propagates_before_preparation_side_effects(po
     assert_eq!(unchanged, ("reserved".to_owned(), 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_credential_material_preparation_writes_one_frame_and_loser_uses_no_vault(
     pool: PgPool,
 ) {
@@ -766,7 +766,7 @@ async fn concurrent_credential_material_preparation_writes_one_frame_and_loser_u
     assert_eq!(rows, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_material_preparation_resumes_every_crash_boundary(pool: PgPool) {
     for point in [
         CredentialMaterialPreparationFaultPoint::AfterVaultCreate,
@@ -1229,7 +1229,7 @@ async fn credential_side_table_counts(pool: &PgPool, fixture: &Fixture) -> (i64,
     )
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn closed_sequence_is_enforced(pool: PgPool) {
     let fixture = fixture(&pool).await;
     reserve(&pool, &fixture).await.unwrap();
@@ -1331,7 +1331,7 @@ async fn closed_sequence_is_enforced(pool: PgPool) {
     assert!(candidate_is_visible(&pool, &fixture).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn abort_branch_never_creates_candidate(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     prepare_abandon(&pool, &fixture, 1).await.unwrap();
@@ -1347,7 +1347,7 @@ async fn abort_branch_never_creates_candidate(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn abort_branch_never_creates_erasure_prepared(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     prepare_abandon(&pool, &fixture, 1).await.unwrap();
@@ -1373,7 +1373,7 @@ async fn abort_branch_never_creates_erasure_prepared(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn prepared_row_cannot_jump_to_abandoned(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     assert_sqlstate(
@@ -1398,7 +1398,7 @@ async fn prepared_row_cannot_jump_to_abandoned(pool: PgPool) {
     assert_eq!(intent_state(&pool, &fixture).await, "credential_prepared");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn sql_rollback_does_not_erase_a_key_already_created_in_the_vault(pool: PgPool) {
     let fixture = fixture(&pool).await;
     reserve(&pool, &fixture).await.unwrap();
@@ -1429,7 +1429,7 @@ async fn sql_rollback_does_not_erase_a_key_already_created_in_the_vault(pool: Pg
     assert_eq!(intent_state(&pool, &fixture).await, "provisional_created");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn revision_identity_is_allocated_before_encryption(pool: PgPool) {
     let fixture = fixture(&pool).await;
     reserve(&pool, &fixture).await.unwrap();
@@ -1486,7 +1486,7 @@ async fn revision_identity_is_allocated_before_encryption(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_creation_returns_a_typed_conflict(pool: PgPool) {
     let fixture = Arc::new(fixture(&pool).await);
     let database = pool.clone();
@@ -1553,7 +1553,7 @@ async fn concurrent_creation_returns_a_typed_conflict(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_forge_a_prepared_attachment(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     assert_sqlstate(
@@ -1572,7 +1572,7 @@ async fn raw_sql_cannot_forge_a_prepared_attachment(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_forge_a_candidate_event_or_bound_receipt(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     assert_sqlstate(
@@ -1605,7 +1605,7 @@ async fn raw_sql_cannot_forge_a_candidate_event_or_bound_receipt(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_forge_a_cancellation_or_visible_destroyed_identity(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     prepare_abandon(&pool, &fixture, 1).await.unwrap();
@@ -1655,7 +1655,7 @@ async fn raw_sql_cannot_forge_a_cancellation_or_visible_destroyed_identity(pool:
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn occupancy_releases_only_after_cancelled_plus_witnessed_terminal_receipt(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     prepare_abandon(&pool, &fixture, 1).await.unwrap();
@@ -1705,7 +1705,7 @@ async fn occupancy_releases_only_after_cancelled_plus_witnessed_terminal_receipt
     .expect("the terminal cancellation receipt releases the permanent guard occupancy");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pre_live_abort_requires_the_expected_association_version(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     assert_sqlstate(
@@ -1716,7 +1716,7 @@ async fn pre_live_abort_requires_the_expected_association_version(pool: PgPool) 
     assert_eq!(intent_state(&pool, &fixture).await, "credential_prepared");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pre_live_abort_accepts_each_pre_live_state(pool: PgPool) {
     let reserved = fixture(&pool).await;
     reserve(&pool, &reserved).await.unwrap();
@@ -1761,7 +1761,7 @@ async fn pre_live_abort_accepts_each_pre_live_state(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pre_live_abort_refusal_matrix_observes_its_state_and_association_guards(pool: PgPool) {
     let bound = credential_prepared(&pool).await;
     execute_scoped(
@@ -1847,7 +1847,7 @@ async fn pre_live_abort_refusal_matrix_observes_its_state_and_association_guards
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn pre_live_abort_state_clause_is_independently_reachable(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;
@@ -1912,7 +1912,7 @@ async fn pre_live_abort_state_clause_is_independently_reachable(pool: PgPool) {
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn abandonment_requires_a_witnessed_unbound_key_erase(pool: PgPool) {
     let fixture = credential_prepared(&pool).await;
     prepare_abandon(&pool, &fixture, 1).await.unwrap();
@@ -1946,7 +1946,7 @@ async fn abandonment_requires_a_witnessed_unbound_key_erase(pool: PgPool) {
     assert_eq!(intent_state(&pool, &fixture).await, "abandoned");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn active_releases_the_guard_but_cannot_duplicate_an_untouched_live_slot(pool: PgPool) {
     let first = candidate(&pool).await;
     activate_candidate_as_guarded_owner(&pool, &first, None, 0)
@@ -1975,7 +1975,7 @@ async fn active_releases_the_guard_but_cannot_duplicate_an_untouched_live_slot(p
     assert_eq!(intent_state(&pool, &second).await, "candidate");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn active_requires_its_exact_current_slot_pointer_at_commit(pool: PgPool) {
     let fixture = candidate(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;

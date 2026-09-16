@@ -108,7 +108,7 @@ fn runtime_and_qualification_roots_verify_migrations_without_performing_ddl() {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_can_read_administratively_applied_migration_history(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM _sqlx_migrations")
@@ -125,8 +125,28 @@ async fn runtime_role_can_read_administratively_applied_migration_history(pool: 
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn runtime_mcp_starts_without_ddl_on_an_already_migrated_database(pool: PgPool) {
+async fn deployment_pool() -> Option<PgPool> {
+    let Ok(url) = std::env::var("VESTRACE_P05_TEST_DATABASE_URL") else {
+        eprintln!(
+            "BLOCKED: set VESTRACE_P05_TEST_DATABASE_URL to a disposable database \
+             taken through the three-phase P05 route"
+        );
+        return None;
+    };
+    Some(
+        PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn runtime_mcp_starts_without_ddl_on_an_already_migrated_database() {
+    let Some(pool) = deployment_pool().await else {
+        return;
+    };
     let output = run_mcp(&runtime_database_url(&pool));
 
     assert!(
@@ -141,8 +161,11 @@ async fn runtime_mcp_starts_without_ddl_on_an_already_migrated_database(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn runtime_mcp_refuses_divergent_migration_history(pool: PgPool) {
+#[tokio::test]
+async fn runtime_mcp_refuses_divergent_migration_history() {
+    let Some(pool) = deployment_pool().await else {
+        return;
+    };
     sqlx::query(
         "UPDATE _sqlx_migrations \
          SET checksum = decode('00', 'hex') \

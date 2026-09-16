@@ -55,7 +55,7 @@ fn assert_sqlstate<T>(result: Result<T, sqlx::Error>, expected: &str, operation:
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn forward_provider_result_entrypoints_refuse_absent_normalized_tuples(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let workspace_id = Uuid::now_v7();
@@ -101,7 +101,7 @@ async fn forward_provider_result_entrypoints_refuse_absent_normalized_tuples(poo
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_artifact_revision_requires_its_exact_content_map_at_commit(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     let artifact_id = Uuid::now_v7();
@@ -151,7 +151,7 @@ async fn governed_artifact_revision_requires_its_exact_content_map_at_commit(poo
     assert_eq!(persisted, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn task10_replaces_the_old_provider_result_prepare_signature(pool: PgPool) {
     let signatures: (bool, bool, bool, bool) = sqlx::query_as(
         "SELECT \

@@ -24,7 +24,7 @@ fn observation(
     )
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_qualification_observations_round_trip_without_deduplication(pool: PgPool) {
     let repository = PgRecoveryQualificationEvidenceRepository::new(PgStore::from_pool(pool));
     let first = observation(
@@ -59,7 +59,7 @@ async fn recovery_qualification_observations_round_trip_without_deduplication(po
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_qualification_observations_cannot_be_edited_or_deleted(pool: PgPool) {
     let repository =
         PgRecoveryQualificationEvidenceRepository::new(PgStore::from_pool(pool.clone()));

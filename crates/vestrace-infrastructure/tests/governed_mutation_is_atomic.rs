@@ -144,7 +144,7 @@ async fn count(pool: &PgPool, table: &str, id: Uuid) -> i64 {
         .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn failed_mutation_leaves_no_audit_entry(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -163,7 +163,7 @@ async fn failed_mutation_leaves_no_audit_entry(pool: PgPool) {
     assert_eq!(count(&pool, "audit_events", audit_id).await, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn failed_audit_write_rolls_back_the_mutation(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -199,7 +199,7 @@ async fn failed_audit_write_rolls_back_the_mutation(pool: PgPool) {
     assert_eq!(count(&pool, "access_tokens", token.id.as_uuid()).await, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn failed_outbox_write_rolls_back_mutation_and_audit(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -240,7 +240,7 @@ async fn failed_outbox_write_rolls_back_mutation_and_audit(pool: PgPool) {
     assert_eq!(count(&pool, "audit_events", audit_id).await, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn failed_idempotency_write_rolls_back_mutation_and_audit(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -271,7 +271,7 @@ async fn failed_idempotency_write_rolls_back_mutation_and_audit(pool: PgPool) {
     assert_eq!(count(&pool, "audit_events", audit_id).await, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn mutation_without_audit_is_refused_by_the_database(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -323,7 +323,7 @@ async fn mutation_without_audit_is_refused_by_the_database(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn successful_mutation_commits_all_four_together(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -383,7 +383,7 @@ async fn successful_mutation_commits_all_four_together(pool: PgPool) {
     assert_eq!(watermark_advances, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn access_token_creation_is_atomic_with_its_audit(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;

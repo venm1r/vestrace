@@ -161,7 +161,7 @@ async fn counts(pool: &PgPool, connection_id: ConnectionId) -> (i64, i64, i64, i
     )
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn connection_creation_atomically_creates_its_permanent_guard(pool: PgPool) {
     let context = context();
     let command = command(&context);
@@ -176,7 +176,7 @@ async fn connection_creation_atomically_creates_its_permanent_guard(pool: PgPool
     assert_eq!(counts(&pool, command.connection.id).await, (1, 1, 1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn no_auth_revision_atomically_creates_one_no_auth_binding(pool: PgPool) {
     let context = context();
     let command = command(&context);
@@ -198,7 +198,7 @@ async fn no_auth_revision_atomically_creates_one_no_auth_binding(pool: PgPool) {
     assert_eq!(bindings, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn safe_connection_projection_marks_legacy_and_unqualified_heads_non_executable(
     pool: PgPool,
 ) {
@@ -250,7 +250,7 @@ async fn safe_connection_projection_marks_legacy_and_unqualified_heads_non_execu
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn auth_required_revision_cannot_own_a_no_auth_binding(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let workspace_id = Uuid::now_v7();
@@ -331,7 +331,7 @@ async fn auth_required_revision_cannot_own_a_no_auth_binding(pool: PgPool) {
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn connection_revision_is_immutable_and_head_uses_expected_version(pool: PgPool) {
     let context = context();
     let command = command(&context);
@@ -438,7 +438,7 @@ async fn connection_revision_is_immutable_and_head_uses_expected_version(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_catalog_row_is_not_executable_without_a_guarded_head(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let context = context();

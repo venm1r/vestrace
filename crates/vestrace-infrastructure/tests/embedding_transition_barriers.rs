@@ -339,7 +339,7 @@ async fn wait_until_planner_is_between_header_read_and_successor_insert(pool: &P
 
 /// A nonterminal predecessor produces one durable open observation, a fresh
 /// dedicated batch, and the exact old-to-new recipe/input evidence.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_nonterminal_predecessor_records_one_open_barrier_with_its_dedicated_batch_and_mapping(
     pool: PgPool,
 ) {
@@ -414,7 +414,7 @@ async fn a_nonterminal_predecessor_records_one_open_barrier_with_its_dedicated_b
     assert_eq!(mappings, vec![(0, 1, 0, 1), (1, 1, 1, 1), (1, 2, 1, 2)]);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn one_open_barrier_per_predecessor_lineage_is_enforced_with_a_precise_refusal(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -481,7 +481,7 @@ async fn one_open_barrier_per_predecessor_lineage_is_enforced_with_a_precise_ref
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_unknown_terminal_predecessor_resolves_the_barrier_to_carry_with_effect_evidence(
     pool: PgPool,
 ) {
@@ -522,7 +522,7 @@ async fn an_unknown_terminal_predecessor_resolves_the_barrier_to_carry_with_effe
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_succeeded_terminal_predecessor_resolves_the_barrier_as_satisfied_with_effect_evidence(
     pool: PgPool,
 ) {
@@ -555,7 +555,7 @@ async fn a_succeeded_terminal_predecessor_resolves_the_barrier_as_satisfied_with
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_definite_terminal_predecessor_resolves_the_barrier_with_effect_evidence(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -586,7 +586,7 @@ async fn a_definite_terminal_predecessor_resolves_the_barrier_with_effect_eviden
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandonment_terminalizes_only_the_current_barrier_as_no_longer_required(
     pool: PgPool,
 ) {
@@ -610,7 +610,7 @@ async fn candidate_abandonment_terminalizes_only_the_current_barrier_as_no_longe
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_stale_target_with_still_required_overlap_is_superseded_into_one_linked_current_barrier(
     pool: PgPool,
 ) {
@@ -653,7 +653,7 @@ async fn a_stale_target_with_still_required_overlap_is_superseded_into_one_linke
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_open_dedicated_barrier_batch_is_refused_while_a_sibling_batch_is_admitted(
     pool: PgPool,
 ) {
@@ -699,7 +699,7 @@ async fn an_open_dedicated_barrier_batch_is_refused_while_a_sibling_batch_is_adm
     .expect("the sibling transition batch in this workspace is admitted");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acknowledgement_refuses_the_open_barriers_dedicated_batch_with_the_exact_refusal(
     pool: PgPool,
 ) {
@@ -773,7 +773,7 @@ async fn acknowledgement_refuses_the_open_barriers_dedicated_batch_with_the_exac
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn classifier_and_supersession_serialize_to_one_current_barrier_without_recreating_the_stale_target(
     pool: PgPool,
 ) {

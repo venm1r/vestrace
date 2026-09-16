@@ -74,7 +74,7 @@ fn creation(workspace: WorkspaceId, objective: &str) -> (AgentRun, RunEvent) {
 }
 
 /// The defect this file exists for.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_run_can_actually_be_created(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -111,7 +111,7 @@ async fn a_run_can_actually_be_created(pool: PgPool) {
 /// The run must be attributed to the principal that asked for it. Nothing in
 /// the durable `AgentRun` carries a principal, so it comes from the request
 /// context, and getting it wrong would misattribute every run in the system.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_stored_run_is_attributed_to_the_requesting_principal(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -144,7 +144,7 @@ async fn the_stored_run_is_attributed_to_the_requesting_principal(pool: PgPool) 
 
 /// A created run must enqueue the work that advances it, or the worker never
 /// sees it — which is the condition this whole change set exists to remove.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn creation_enqueues_the_work_that_advances_the_run(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -184,7 +184,7 @@ async fn creation_enqueues_the_work_that_advances_the_run(pool: PgPool) {
 
 /// The event written on creation must carry the correlation it was given, or an
 /// HTTP request cannot be traced to the run it caused.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_creation_event_preserves_its_correlation(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -220,7 +220,7 @@ async fn the_creation_event_preserves_its_correlation(pool: PgPool) {
 /// `run_streams` is authoritative per migration 0112, and `PgRunRecoveryStore`
 /// reads a run's version from it. If a commit advanced `agent_runs` alone,
 /// recovery would act on a stale version.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn advancing_a_run_advances_the_authoritative_stream(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -316,7 +316,7 @@ async fn advancing_a_run_advances_the_authoritative_stream(pool: PgPool) {
 /// Steps are the newly reachable path: before `POST /v1/runs/{id}/steps` no run
 /// ever acquired one, so this insert had never executed against the schema.
 /// `step_number` is NOT NULL with no default and unique per run.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn steps_are_stored_and_numbered_within_their_run(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));
@@ -416,7 +416,7 @@ async fn steps_are_stored_and_numbered_within_their_run(pool: PgPool) {
 /// already exist with a changed status — `ExecuteStepHandler` puts the running
 /// and then the finished step there. A plain insert failed with a duplicate key
 /// the first time a step executed, so no run could progress past step one.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn re_persisting_a_step_updates_it_rather_than_failing(pool: PgPool) {
     let (workspace, principal) = seed(&pool).await;
     let store = PostgresRunStore::new(&PgStore::from_pool(pool.clone()));

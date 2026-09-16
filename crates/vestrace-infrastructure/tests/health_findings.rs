@@ -93,7 +93,7 @@ fn monitor(pool: &PgPool, runs: Vec<Vec<InvariantObservation>>) -> HealthMonitor
     )
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_same_problem_seen_twice_is_one_finding_with_two_occurrences(pool: PgPool) {
     // The property the whole slice exists for. Two runs observing the same
     // violation used to produce two findings, each with a count of zero.
@@ -139,7 +139,7 @@ async fn the_same_problem_seen_twice_is_one_finding_with_two_occurrences(pool: P
     assert_eq!(occurrences[1].sequence(), 2);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_finding_not_observed_again_stays_open(pool: PgPool) {
     // Resolving a finding by forgetting it is the failure mode a stateless
     // check cannot even have. A problem stops being a problem when something
@@ -166,7 +166,7 @@ async fn a_finding_not_observed_again_stays_open(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn findings_do_not_cross_a_workspace_boundary(pool: PgPool) {
     let mine = seed_workspace(&pool).await;
     let theirs = seed_workspace(&pool).await;
@@ -196,7 +196,7 @@ async fn findings_do_not_cross_a_workspace_boundary(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_oscillating_finding_records_its_transitions(pool: PgPool) {
     // Flapping detection reads occurrences. Until they were stored there was
     // nothing for `assess_recurrence` to read, so HLT-009 held in the domain

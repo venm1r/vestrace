@@ -405,7 +405,7 @@ async fn the_embedding_methods_are_reachable_only_through_the_shared_trait() {
 /// it names the job id and the authority returns the pinned Connection, its
 /// revision, the durable effect intent, and the auth branch the snapshot fixed
 /// at acceptance.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_governed_embedding_job_is_rediscovered_by_the_dispatch_authority(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -448,7 +448,7 @@ async fn a_governed_embedding_job_is_rediscovered_by_the_dispatch_authority(pool
 /// nor recovery automatically retry a job after `Dispatching`" -- so recovery
 /// classifies, and the classification for a job whose effect is still
 /// `Requested` is that it may be resumed, not that a charge may have happened.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_of_an_undispatched_embedding_job_resumes_it(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
@@ -470,7 +470,7 @@ async fn recovery_of_an_undispatched_embedding_job_resumes_it(pool: PgPool) {
 /// therefore re-states the whole tuple it expects. This forces the mismatch the
 /// arms exist to catch: a job whose state says the effect ended ambiguously,
 /// with no dispatch transition to have been ambiguous about.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_job_claiming_unknown_without_a_dispatch_transition_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -513,7 +513,7 @@ async fn a_job_claiming_unknown_without_a_dispatch_transition_is_refused(pool: P
 /// job by naming its id. The refusal is a conflict rather than an absence: an
 /// absence would tell the caller the job does not exist, which is itself an
 /// answer about another workspace's data.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_job_cannot_be_recovered_from_another_workspace(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -556,7 +556,7 @@ async fn a_job_cannot_be_recovered_from_another_workspace(pool: PgPool) {
 /// independently writable answer to whether the provider had been reached. This
 /// asserts the column set that makes that impossible, so a later migration
 /// cannot reintroduce it quietly.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_job_row_holds_no_dispatch_phase_of_its_own(pool: PgPool) {
     let columns: Vec<String> = sqlx::query_scalar(
         "SELECT column_name::TEXT FROM information_schema.columns \
@@ -743,7 +743,7 @@ async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
 /// `vestrace_try_admit_provider_dispatch`, the same routing lock, the same
 /// admission and concurrency lease, the same `dispatching` lifecycle
 /// transition. The cause row proves which owner asked, and it names the job.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_embedding_job_dispatches_through_the_shared_authority(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
@@ -822,7 +822,7 @@ async fn an_embedding_job_dispatches_through_the_shared_authority(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn dispatching_first_refuses_cancellation_without_a_terminal_receipt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
@@ -850,7 +850,7 @@ async fn dispatching_first_refuses_cancellation_without_a_terminal_receipt(pool:
     assert_eq!(receipts, 0, "Dispatching must leave no terminal receipt");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn admitted_but_not_dispatched_embedding_job_cancels_and_releases_its_lease(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
@@ -901,7 +901,7 @@ async fn admitted_but_not_dispatched_embedding_job_cancels_and_releases_its_leas
     assert_eq!((persisted.4, persisted.5), (0, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn cancellation_revokes_an_unconsumed_pinned_credential_lease(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job_with_pinned_credential(&pool, &runtime).await;
@@ -960,7 +960,7 @@ async fn cancellation_revokes_an_unconsumed_pinned_credential_lease(pool: PgPool
     assert_eq!(after.1.as_deref(), Some("revoked"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn cancellation_audit_failure_rolls_back_terminalization_and_lease_release(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, output_vault) = dispatchable_credential_embedding_job(&pool, &runtime).await;
@@ -1075,7 +1075,7 @@ async fn cancellation_audit_failure_rolls_back_terminalization_and_lease_release
     assert_eq!(credential_state, (None, None));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn termination_first_blocks_shared_admission_then_leaves_no_admission_trace(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1181,7 +1181,7 @@ async fn termination_first_blocks_shared_admission_then_leaves_no_admission_trac
     assert_eq!(traces, (0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn dispatching_first_blocks_cancellation_then_refuses_without_terminal_receipt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, _output_vault) = dispatchable_embedding_job(&pool, &runtime).await;
@@ -1267,7 +1267,7 @@ async fn dispatching_first_blocks_cancellation_then_refuses_without_terminal_rec
     assert_eq!(receipts, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn preexisting_cancellation_transaction_releases_a_later_admission_at_or_after_issuance(
     pool: PgPool,
 ) {
@@ -1346,7 +1346,7 @@ async fn preexisting_cancellation_transaction_releases_a_later_admission_at_or_a
 /// worst outcome this system can produce: an admission or a `dispatching`
 /// transition that survives without its siblings is a possible provider charge
 /// nobody can account for.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn injected_write_boundaries_roll_every_embedding_dispatch_leg_back(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for point in [
@@ -1394,7 +1394,7 @@ async fn injected_write_boundaries_roll_every_embedding_dispatch_leg_back(pool: 
 /// cannot cover a leg that never runs, and a future change that started
 /// recording a model data policy for embeddings would otherwise add an
 /// uncovered write to the dispatch transaction in silence.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_model_data_policy_leg_is_absent_from_an_embedding_dispatch(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let mut workspaces = Vec::new();
@@ -1438,7 +1438,7 @@ async fn the_model_data_policy_leg_is_absent_from_an_embedding_dispatch(pool: Pg
 /// at acceptance and never changed thereafter". A worker that could pass a
 /// different snapshot would be routing, and the refusal has to come from the
 /// database rather than from the caller's own care.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_dispatch_naming_another_snapshot_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1470,7 +1470,7 @@ async fn a_dispatch_naming_another_snapshot_is_refused(pool: PgPool) {
 /// dispatch converges on that exact effect id. Both are inside one governed
 /// mutation, so a job without its effect -- which no dispatch could ever find --
 /// is not a state this path can produce.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acceptance_writes_the_job_and_its_effect_together(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1524,7 +1524,7 @@ async fn acceptance_writes_the_job_and_its_effect_together(pool: PgPool) {
 /// acceptance takes it in the canonical lock order. Refusing here is what stops
 /// the lazy path this package replaces: a space that came into existence
 /// because something needed to write a vector into it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acceptance_into_an_unauthorized_space_leaves_nothing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1570,7 +1570,7 @@ async fn acceptance_into_an_unauthorized_space_leaves_nothing(pool: PgPool) {
 /// duplicate-charge acknowledgement may create a successor. The check is in the
 /// guarded function rather than in the caller, because the caller that wanted to
 /// retry a running job is exactly the caller that would skip it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_successor_of_a_live_predecessor_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;

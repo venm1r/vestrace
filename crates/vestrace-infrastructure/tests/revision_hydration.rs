@@ -91,7 +91,7 @@ async fn seed(pool: &PgPool, classification: Option<&str>) -> Fixture {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_older_revision_is_returned_rather_than_the_current_one(pool: PgPool) {
     // The property RET-002 names: asking for revision 1 while revision 2 exists
     // must return revision 1. Substituting the latest is how a caller asking
@@ -123,7 +123,7 @@ async fn an_older_revision_is_returned_rather_than_the_current_one(pool: PgPool)
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn each_reference_resolves_to_its_own_revision(pool: PgPool) {
     let fixture = seed(&pool, None).await;
     let hydrator = PgRevisionHydrator::new(PgStore::from_pool(pool));
@@ -158,7 +158,7 @@ async fn each_reference_resolves_to_its_own_revision(pool: PgPool) {
     assert_eq!(latest.content, "the corrected statement");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_unknown_revision_yields_no_row_rather_than_a_substitute(pool: PgPool) {
     let fixture = seed(&pool, None).await;
     let hydrator = PgRevisionHydrator::new(PgStore::from_pool(pool));
@@ -181,7 +181,7 @@ async fn an_unknown_revision_yields_no_row_rather_than_a_substitute(pool: PgPool
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_revision_of_a_different_memory_is_not_returned(pool: PgPool) {
     // The two `ANY` predicates are independent, so a revision id from one
     // reference paired with a memory id from another satisfies both. The
@@ -204,7 +204,7 @@ async fn a_revision_of_a_different_memory_is_not_returned(pool: PgPool) {
     assert!(hydrated.is_empty());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_reference_from_another_workspace_resolves_to_nothing(pool: PgPool) {
     // Proved here by the query predicate, not by row level security: this test
     // connects as the owner. See the module header.
@@ -226,7 +226,7 @@ async fn a_reference_from_another_workspace_resolves_to_nothing(pool: PgPool) {
     assert!(hydrated.is_empty());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_stored_classification_travels_with_the_revision(pool: PgPool) {
     // The classification has to arrive for the policy to have anything to
     // decide on. A hydrator that dropped it would make every revision look
@@ -249,7 +249,7 @@ async fn the_stored_classification_travels_with_the_revision(pool: PgPool) {
     assert_eq!(hydrated[0].classification.as_deref(), Some("restricted"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn malformed_stored_classification_fails_hydration_closed(pool: PgPool) {
     let fixture = seed(&pool, Some("internal")).await;
     sqlx::query("UPDATE memory_revisions SET classification = ' internal ' WHERE id = $1")

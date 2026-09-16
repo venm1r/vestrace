@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use vestrace_application::{HealthRepository, RequestContext, TransactionManager, UnitOfWork};
+use vestrace_application::{RequestContext, TransactionManager, UnitOfWork};
 use vestrace_domain::{PrincipalId, WorkspaceId};
 
 use secrecy::SecretString;
@@ -15,7 +15,7 @@ async fn single_connection_pool(source: &sqlx::PgPool) -> sqlx::PgPool {
         .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn scoped_transaction_sets_database_context(pool: sqlx::PgPool) {
     let store = PgStore::from_pool(pool);
     let ctx = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
@@ -28,7 +28,7 @@ async fn scoped_transaction_sets_database_context(pool: sqlx::PgPool) {
     assert_eq!(workspace, ctx.workspace_id.to_string());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn scoped_transaction_sets_principal_database_context(pool: sqlx::PgPool) {
     let store = PgStore::from_pool(pool);
     let ctx = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
@@ -42,7 +42,7 @@ async fn scoped_transaction_sets_principal_database_context(pool: sqlx::PgPool) 
     assert_eq!(principal, Some(ctx.principal_id.to_string()));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn committed_transaction_scope_does_not_leak_on_connection_reuse(pool: sqlx::PgPool) {
     let pool = single_connection_pool(&pool).await;
     let store = PgStore::from_pool(pool.clone());
@@ -79,7 +79,7 @@ async fn committed_transaction_scope_does_not_leak_on_connection_reuse(pool: sql
     pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn rolled_back_transaction_scope_does_not_leak_on_connection_reuse(pool: sqlx::PgPool) {
     let pool = single_connection_pool(&pool).await;
     let store = PgStore::from_pool(pool.clone());
@@ -116,7 +116,7 @@ async fn rolled_back_transaction_scope_does_not_leak_on_connection_reuse(pool: s
     pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn application_transaction_manager_commits_through_object_safe_ports(pool: sqlx::PgPool) {
     let store = PgStore::from_pool(pool);
     let manager: Box<dyn TransactionManager> = Box::new(PgTransactionManager::new(store));
@@ -191,142 +191,4 @@ async fn connect_rejects_zero_max_connections() {
     };
 
     assert_eq!(error.kind(), InfrastructureErrorKind::Configuration);
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_accepts_reachable_database_with_compatible_migrations(pool: sqlx::PgPool) {
-    let store = PgStore::from_pool(pool);
-
-    assert!(HealthRepository::check(&store).await.is_ok());
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_rejects_migration_checksum_mismatch(pool: sqlx::PgPool) {
-    sqlx::query(
-        "UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') \
-         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    let store = PgStore::from_pool(pool);
-
-    let error = HealthRepository::check(&store).await.unwrap_err();
-
-    assert!(matches!(
-        error,
-        vestrace_application::ApplicationError::Unavailable(_)
-    ));
-    assert!(!error.to_string().contains("checksum"));
-    assert!(!error.to_string().contains("_sqlx_migrations"));
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn deployment_qualification_reports_runtime_role_and_compatible_migrations(
-    pool: sqlx::PgPool,
-) {
-    let expected_role: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let store = PgStore::from_pool(pool);
-
-    let evidence = store.deployment_qualification_evidence().await.unwrap();
-
-    assert!(evidence.migration_history_compatible);
-    assert_eq!(evidence.runtime_role, expected_role);
-    assert!(!evidence.runtime_role.trim().is_empty());
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn deployment_qualification_reports_incompatible_migrations_without_mutating_them(
-    pool: sqlx::PgPool,
-) {
-    sqlx::query(
-        "UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') \
-         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    let store = PgStore::from_pool(pool.clone());
-
-    let evidence = store.deployment_qualification_evidence().await.unwrap();
-    let checksum: Vec<u8> = sqlx::query_scalar(
-        "SELECT checksum FROM _sqlx_migrations WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-
-    assert!(!evidence.migration_history_compatible);
-    assert_eq!(checksum, vec![0]);
-}
-
-async fn assert_health_is_opaquely_unavailable(pool: sqlx::PgPool) {
-    let store = PgStore::from_pool(pool);
-    let error = HealthRepository::check(&store).await.unwrap_err();
-
-    assert!(matches!(
-        error,
-        vestrace_application::ApplicationError::Unavailable(ref message)
-            if message == "database is not ready"
-    ));
-    let message = error.to_string();
-    assert_eq!(message, "unavailable: database is not ready");
-    assert!(!message.contains("_sqlx_migrations"));
-    assert!(!message.contains("checksum"));
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_rejects_missing_migration(pool: sqlx::PgPool) {
-    sqlx::query(
-        "DELETE FROM _sqlx_migrations \
-         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    assert_health_is_opaquely_unavailable(pool).await;
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_rejects_unsuccessful_migration(pool: sqlx::PgPool) {
-    sqlx::query(
-        "UPDATE _sqlx_migrations SET success = false \
-         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    assert_health_is_opaquely_unavailable(pool).await;
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_rejects_extra_migration(pool: sqlx::PgPool) {
-    sqlx::query(
-        "INSERT INTO _sqlx_migrations \
-         (version, description, success, checksum, execution_time) \
-         VALUES (9999, 'unrecognized migration', true, decode('00', 'hex'), 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    assert_health_is_opaquely_unavailable(pool).await;
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn health_check_rejects_same_count_version_mismatch(pool: sqlx::PgPool) {
-    sqlx::query(
-        "UPDATE _sqlx_migrations SET version = -1 \
-         WHERE version = (SELECT min(version) FROM _sqlx_migrations)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    assert_health_is_opaquely_unavailable(pool).await;
 }

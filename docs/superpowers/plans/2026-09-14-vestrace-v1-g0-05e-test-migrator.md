@@ -48,7 +48,7 @@
 - Consumes: nothing.
 - Produces: `changeScopePaths` containing every path this plan writes, so the dirty-baseline verifier stays clean from Task 2 onward.
 
-- [ ] **Step 1: Write the failing assertion**
+- [x] **Step 1: Write the failing assertion**
 
 Append to `tests/p05_scope.test.mjs`:
 
@@ -70,12 +70,12 @@ test('P05-E admits its implementation and evidence paths', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `node --test tests/p05_scope.test.mjs`
 Expected: FAIL on `crates/vestrace-infrastructure/tests/deployment_qualification.rs`.
 
-- [ ] **Step 3: Generate the admitted path list**
+- [x] **Step 3: Generate the admitted path list**
 
 The 63 files are not typed by hand. Write `list-paths.mjs` at the repo root, run it, then delete it:
 
@@ -94,7 +94,7 @@ console.log([...new Set([...files, ...extra])].sort().map((p) => `  ${JSON.strin
 
 Merge that output into `changeScopePaths` in `scripts/p05-scope.mjs`, keeping the whole array sorted with plain ASCII ordering (`.sort()` with no comparator — `-` sorts before `/`). `crates/vestrace-infrastructure/src/postgres/pool.rs` is already admitted.
 
-- [ ] **Step 4: Sync the preflight capture to the module, verbatim**
+- [x] **Step 4: Sync the preflight capture to the module, verbatim**
 
 The verifier compares the two element by element, so write the module's array into the capture rather than editing it by hand. Create `sync-preflight.mjs` at the repo root, run it, then delete it:
 
@@ -115,7 +115,7 @@ fs.writeFileSync(path, out);
 console.log(`preflight now carries ${changeScopePaths.length} scope paths`);
 ```
 
-- [ ] **Step 5: Record the amendment**
+- [x] **Step 5: Record the amendment**
 
 Add one entry to `scope_amendments` in the preflight, before the existing entries:
 
@@ -128,14 +128,14 @@ Add one entry to `scope_amendments` in the preflight, before the existing entrie
 }
 ```
 
-- [ ] **Step 6: Update the count assertion and run the suite**
+- [x] **Step 6: Update the count assertion and run the suite**
 
 `tests/p05_scope.test.mjs` asserts an exact `changeScopePaths.length`. Set it to the new length printed in Step 4.
 
 Run: `node --test tests/p05_scope.test.mjs`
 Expected: PASS, all tests.
 
-- [ ] **Step 7: Verify the baseline is still clean**
+- [x] **Step 7: Verify the baseline is still clean**
 
 Run: `node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-05-preflight.json --scope p05-scope.mjs`
 Expected: exit 0, no output.
@@ -151,7 +151,7 @@ Expected: exit 0, no output.
 - Consumes: `bounded_migrator(version: i64) -> Result<sqlx::migrate::Migrator, InfrastructureError>` and `P05_HISTORY_PREFIX_VERSION: i64 = 208`, both already private in `pool.rs`.
 - Produces: `vestrace_infrastructure::HISTORICAL_MIGRATOR`, a `std::sync::LazyLock<sqlx::migrate::Migrator>`. Tasks 3 and 4 name it in `#[sqlx::test(migrator = "...")]`.
 
-- [ ] **Step 1: Write the failing guard test**
+- [x] **Step 1: Write the failing guard test**
 
 Add to the existing `mod tests` block at the bottom of `pool.rs`, and add `HISTORICAL_MIGRATOR` to that module's `use super::{...}` list:
 
@@ -181,12 +181,12 @@ fn the_historical_migrator_stops_at_the_declared_prefix() {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `cargo test -p vestrace-infrastructure --lib the_historical_migrator_stops_at_the_declared_prefix`
 Expected: FAIL to compile — `cannot find value HISTORICAL_MIGRATOR in this scope`.
 
-- [ ] **Step 3: Add the static**
+- [x] **Step 3: Add the static**
 
 In `pool.rs`, immediately above `fn bounded_migrator`:
 
@@ -214,12 +214,12 @@ pub use pool::{HISTORICAL_MIGRATOR, PgGovernedMutationRepository, PgStore};
 
 `crates/vestrace-infrastructure/src/lib.rs` already has `pub use postgres::*;`, so no change there.
 
-- [ ] **Step 4: Run the guard**
+- [x] **Step 4: Run the guard**
 
 Run: `cargo test -p vestrace-infrastructure --lib the_historical_migrator_stops_at_the_declared_prefix`
 Expected: PASS.
 
-- [ ] **Step 5: Prove the attribute accepts it end to end**
+- [x] **Step 5: Prove the attribute accepts it end to end**
 
 `sqlx::test`'s `migrator` argument takes `&'static Migrator`; a borrow of a `LazyLock` static deref-coerces to one. Confirm against the real cluster before rewriting 60 files on the assumption.
 
@@ -250,7 +250,7 @@ Expected: PASS. Task 4 replaces this file's contents; the probe is scaffolding f
 - Consumes: `vestrace_infrastructure::HISTORICAL_MIGRATOR` from Task 2.
 - Produces: a workspace in which no test applies the raw migrations directory. Task 4 audits what this breaks.
 
-- [ ] **Step 1: Write the guard that will hold the boundary**
+- [x] **Step 1: Write the guard that will hold the boundary**
 
 Create `tests/p05e_test_migrator.test.mjs`:
 
@@ -316,12 +316,12 @@ test('the bounded migrator is named by its exported path', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `node --test tests/p05e_test_migrator.test.mjs`
 Expected: FAIL, listing 63 offending files.
 
-- [ ] **Step 2a: Prove the guard sees an untracked file**
+- [x] **Step 2a: Prove the guard sees an untracked file**
 
 The guard would be worthless if it inspected only tracked files, because every
 file this package creates stays untracked in the preserved dirty baseline.
@@ -329,7 +329,7 @@ Create `crates/vestrace-infrastructure/tests/zz_guard_probe.rs` containing the
 single line `// migrations = "../../migrations"`, run the guard, and confirm the
 probe appears in the offender list. Delete the probe afterwards.
 
-- [ ] **Step 3: Rewrite the attribute everywhere**
+- [x] **Step 3: Rewrite the attribute everywhere**
 
 592 occurrences across 63 files: script it, do not hand-edit. Create `rewrite.mjs` at the repo root, run it, then delete it:
 
@@ -353,19 +353,19 @@ console.log(`rewrote ${total} attributes across ${files.length} files`);
 
 Expected output: `rewrote 592 attributes across 63 files`. If either number differs, stop and find out why before continuing.
 
-- [ ] **Step 4: Run the guard**
+- [x] **Step 4: Run the guard**
 
 Run: `node --test tests/p05e_test_migrator.test.mjs`
 Expected: PASS, both tests.
 
-- [ ] **Step 5: Confirm the workspace still compiles**
+- [x] **Step 5: Confirm the workspace still compiles**
 
 `vestrace-cli` already depends on `vestrace-infrastructure`, so no manifest change is needed.
 
 Run: `cargo test --workspace --no-run`
 Expected: compiles. Any `unresolved import` means a crate lacks the dependency — add it rather than reverting the attribute.
 
-- [ ] **Step 6: Prove a previously blocked suite now reaches its assertions**
+- [x] **Step 6: Prove a previously blocked suite now reaches its assertions**
 
 Run: `DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_schema_contract --no-fail-fast`
 Expected: the 0209 error is gone. Tests now pass or fail on their own assertions. Record the counts; do not fix failures here.
@@ -393,7 +393,7 @@ Expected: the 0209 error is gone. Tests now pass or fail on their own assertions
 | `fingerprint_continuity_is_fail_closed.rs` | 1, `HealthRepository::check` |
 | `row_level_security.rs` | 1, ledger named only in a comment |
 
-- [ ] **Step 1: Classify empirically, not from the patterns**
+- [x] **Step 1: Classify empirically, not from the patterns**
 
 Both properties were derived by pattern matching and the second exists only because the first proved insufficient. Run each file and read the failures:
 
@@ -408,7 +408,7 @@ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test \
 
 A test that fails needs a complete deployment: classify `prepared`. A test that passes is not yet cleared — go to Step 2.
 
-- [ ] **Step 2: Test the passing ones for vacuity**
+- [x] **Step 2: Test the passing ones for vacuity**
 
 A passing test in this set may be passing for the wrong reason. Four in `postgres.rs` are known to: `health_check_rejects_missing_migration`, `health_check_rejects_unsuccessful_migration`, `health_check_rejects_extra_migration`, and `health_check_rejects_same_count_version_mismatch` each damage the ledger and assert the health check refuses. `HealthRepository::check` compares the applied ledger against the complete migrator, so at 0208 it already refuses before the damage.
 
@@ -416,7 +416,7 @@ For each passing candidate, comment out the line that performs the damage and re
 
 Expected: the four named above are vacuous. `row_level_security::a_table_holding_a_workspace_id_has_row_level_security` names `_sqlx_migrations` only inside a comment, and `runtime_schema_gate::runtime_role_can_read_administratively_applied_migration_history` only counts rows as the runtime role — both are `safe`.
 
-- [ ] **Step 3: Move the `postgres.rs` tests to a prepared database**
+- [x] **Step 3: Move the `postgres.rs` tests to a prepared database**
 
 Replace the Task 2 probe in `crates/vestrace-infrastructure/tests/deployment_qualification.rs` with the eight `postgres.rs` tests classified `prepared` or `vacuous`. Delete them from `postgres.rs`; its remaining tests keep the bounded migrator.
 
@@ -455,18 +455,18 @@ async fn health_check_accepts_reachable_database_with_compatible_migrations() {
 
 Carry the remaining seven across unchanged apart from the attribute and the pool acquisition. Each keeps its original name so the evidence can be matched to it.
 
-- [ ] **Step 4: Move the product-launching CLI tests the same way**
+- [x] **Step 4: Move the product-launching CLI tests the same way**
 
 The sixteen tests in `v1_release_gate_cli.rs` and `recovery_qualification_cli_contract.rs`, and the two in `runtime_schema_gate.rs`, launch `vestrace` against the test database. Convert each in place from `#[sqlx::test(migrator = ...)]` to `#[tokio::test]` taking its pool from `deployment_pool()` above, copied into each file rather than shared — these are separate test binaries and a shared helper would need a `common` module they do not have.
 
-- [ ] **Step 5: Prove the moved rejection tests fail for their stated reason**
+- [x] **Step 5: Prove the moved rejection tests fail for their stated reason**
 
 This is the point of the exercise. Provision a database through the three-phase route (Task 6 records how), point `VESTRACE_P05_TEST_DATABASE_URL` at it, and for each of the four `health_check_rejects_*` tests confirm that the health check passes *before* the damage and refuses *after* it.
 
 Run: `VESTRACE_P05_TEST_DATABASE_URL=<prepared> cargo test -p vestrace-infrastructure --test deployment_qualification -- --nocapture`
 Expected: PASS, with no `BLOCKED:` line in the output.
 
-- [ ] **Step 6: Confirm the blocked path is honest**
+- [x] **Step 6: Confirm the blocked path is honest**
 
 Run the same command with `VESTRACE_P05_TEST_DATABASE_URL` unset.
 Expected: PASS with a `BLOCKED:` line per test. Record that these report green while proving nothing — that is why Task 5 counts them separately.
@@ -482,13 +482,13 @@ Expected: PASS with a `BLOCKED:` line per test. Record that these report green w
 - Consumes: everything above.
 - Produces: the measured figure. No repairs.
 
-- [ ] **Step 1: Run the workspace**
+- [x] **Step 1: Run the workspace**
 
 The run is slow — one suite has previously taken about forty-five minutes. Run it in the background and start no other cargo command against the same target directory while it runs.
 
 Run: `DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test --workspace --no-fail-fast`
 
-- [ ] **Step 2: Record it, suite by suite**
+- [x] **Step 2: Record it, suite by suite**
 
 Write `docs/development-evidence/v1-g0-05e-test-migrator.md` with: the before state (63 files, 590 tests, all failing at 0209); the classification of all twenty-nine migration-sensitive tests with the reason for each; the after state as a table of suite, passed, failed, blocked; and a named list of every genuine failure as follow-up work.
 
@@ -496,7 +496,7 @@ Record `postgres.rs::store_migrate_applies_embedded_migrations` as a pre-existin
 
 Count blocked suites separately from passing ones and say so in the table, so a blocked run is never read as coverage.
 
-- [ ] **Step 3: State what is not claimed**
+- [x] **Step 3: State what is not claimed**
 
 Record explicitly: P05-E makes no G0 claim, repairs no failure it exposes, and changes no production migration behaviour. The aggregate G0 result remains whatever `scripts/p05-g0-gate.mjs` emits.
 
@@ -507,7 +507,7 @@ Record explicitly: P05-E makes no G0 claim, repairs no failure it exposes, and c
 **Files:**
 - Modify: `docs/development-evidence/v1-g0-05e-test-migrator.md`
 
-- [ ] **Step 1: Run the full gate set**
+- [x] **Step 1: Run the full gate set**
 
 ```
 node --test tests/p05_scope.test.mjs tests/p05e_test_migrator.test.mjs tests/p05_g0_gate.test.mjs
@@ -519,16 +519,16 @@ node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0
 
 Expected: every one exits 0.
 
-- [ ] **Step 2: Record how the prepared database was provisioned**
+- [x] **Step 2: Record how the prepared database was provisioned**
 
 Document the exact route, so the blocked tests can be run by anyone: build the image from `docker/postgres`, start it with `init-runtime-role.sh` mounted at `/docker-entrypoint-initdb.d/10-runtime-role.sh` (the Dockerfile does not bake it, and without the mount the container logs `ignoring /docker-entrypoint-initdb.d/*` and provisions nothing), then `migrate --through-version 208`, the bootstrap psql stage, then `migrate --only-version` for 209 through 215 one at a time.
 
-- [ ] **Step 3: Confirm the G0 result is unchanged**
+- [x] **Step 3: Confirm the G0 result is unchanged**
 
 Run: `node scripts/p05-g0-gate.mjs --evidence docs/development-evidence/v1-g0-05-gate.json`
 Expected: exit 1, aggregate `blocked`, 1 pass / 1 blocked / 17 unknown — identical to P05-D. P05-E closes no G0 criterion, and a changed result here means something was claimed that should not have been.
 
-- [ ] **Step 4: Mark P05-E complete only if every check above passed**
+- [x] **Step 4: Mark P05-E complete only if every check above passed**
 
 Record actual exits and counts. Report the red-test figure exactly as measured.
 

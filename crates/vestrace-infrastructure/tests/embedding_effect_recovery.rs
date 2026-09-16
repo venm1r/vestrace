@@ -524,7 +524,7 @@ async fn administratively_mark_embedding_job_running(pool: &PgPool, fixture: &Ac
 /// effect newly said Dispatching.  Keeping the adversarial writer as raw runtime
 /// SQL prevents the regression test from accidentally exercising only a friendly
 /// wrapper that learnt about cancellation later.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_cancelled_embedding_job_refuses_the_direct_lifecycle_dispatch_writer(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -657,7 +657,7 @@ async fn a_cancelled_embedding_job_refuses_the_direct_lifecycle_dispatch_writer(
 /// cancellation.  Commit the raw writer before observing it from the owner
 /// pool: this is a semantic RED against the old migration, not an uncommitted
 /// statement error.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_cancelled_embedding_job_refuses_lifecycle_update_to_dispatching(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, vault) = accepted_with_receipted_outputs_and_vault(&pool, &runtime).await;
@@ -745,7 +745,7 @@ async fn a_cancelled_embedding_job_refuses_lifecycle_update_to_dispatching(pool:
 /// that blocks cancellation.  `dispatched` reaches the fact through the real
 /// shared admission and lifecycle path; the only adversarial operation here is
 /// the raw runtime DELETE that must leave its persisted evidence intact.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn deleting_embedding_dispatch_history_does_not_restore_cancellation(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -817,7 +817,7 @@ async fn deleting_embedding_dispatch_history_does_not_restore_cancellation(pool:
 /// changes.  The durable command key must still converge on the first terminal
 /// receipt and audit exactly once; only that receipt makes the recovery and
 /// dispatch fences lawful.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn configured_cancellation_converges_on_one_terminal_receipt_and_blocks_dispatch(
     pool: PgPool,
 ) {
@@ -939,7 +939,7 @@ async fn configured_cancellation_converges_on_one_terminal_receipt_and_blocks_di
 /// evidence.  Cancellation therefore owns its active admission and lease as
 /// well as the requested case; a stale command, a reused key with different
 /// semantics, and a different principal cannot manufacture another receipt.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn running_cancellation_releases_its_admission_and_conflicting_commands_refuse(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, vault) = accepted_with_receipted_outputs_and_vault(&pool, &runtime).await;
@@ -1061,7 +1061,7 @@ async fn running_cancellation_releases_its_admission_and_conflicting_commands_re
 /// Terminal job state alone is never a recovery authority.  This legacy
 /// adversarial fixture writes Cancelled as the guarded owner without the new
 /// receipt; the recovery gate and repository must refuse that contradiction.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_refuses_a_terminal_embedding_job_without_its_exact_receipt(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1102,7 +1102,7 @@ async fn recovery_refuses_a_terminal_embedding_job_without_its_exact_receipt(poo
 /// A durable denied effect authorization is sufficient to prove the provider
 /// call cannot have begun.  Failure takes that exact authorization identity,
 /// produces one terminal receipt and turns recovery into a terminal outcome.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn denied_effect_authorization_finalizes_failed_definite_once(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -1283,7 +1283,7 @@ async fn denied_effect_authorization_finalizes_failed_definite_once(pool: PgPool
 /// aged without sleeping.  The termination function validates the exact
 /// workspace/effect/connection/deadline witness and closes it as Timeout in
 /// the same transaction as the FailedDefinite receipt.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_admission_wait_finalizes_failed_definite_and_closes_exact_wait(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let (fixture, vault) = accepted_with_receipted_outputs_and_vault(&pool, &runtime).await;
@@ -1535,7 +1535,7 @@ async fn recover_unknown(owner: &PgPool, runtime: &PgPool, fixture: &AcceptedJob
 /// A second successor identity races through the partial unique index. It is a
 /// policy refusal, not an infrastructure failure: the operator may learn that
 /// one successor already exists but must not see a storage-shaped 500.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_second_successor_identity_is_a_semantic_acceptance_refusal(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1583,7 +1583,7 @@ async fn a_second_successor_identity_is_a_semantic_acceptance_refusal(pool: PgPo
 /// operation, not a way to reinterpret a recovered Delivery as another job
 /// kind. The guarded predecessor lookup must reject the mismatch before the
 /// intent it was paired with can survive the transaction.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_successor_with_a_kind_different_from_its_predecessor_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1633,7 +1633,7 @@ async fn a_successor_with_a_kind_different_from_its_predecessor_is_refused(pool:
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acknowledgement_creates_one_fresh_successor_and_preserves_the_unknown_head(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1678,7 +1678,7 @@ async fn acknowledgement_creates_one_fresh_successor_and_preserves_the_unknown_h
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_identical_acknowledgement_replay_is_refused_without_another_job_or_effect(
     pool: PgPool,
 ) {
@@ -1723,7 +1723,7 @@ async fn an_identical_acknowledgement_replay_is_refused_without_another_job_or_e
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acknowledgement_refuses_nonterminal_heads_without_creating_a_successor_or_effect(
     pool: PgPool,
 ) {
@@ -1798,7 +1798,7 @@ async fn acknowledgement_refuses_nonterminal_heads_without_creating_a_successor_
     assert_eq!(after_dispatching, before_dispatching);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_stale_version_cannot_converge_on_an_existing_successor(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1873,7 +1873,7 @@ async fn a_stale_version_cannot_converge_on_an_existing_successor(pool: PgPool) 
 /// Line 245 makes loss after `Dispatching` deadline-gated. A worker that
 /// adopted an in-flight dispatch the moment it noticed one would be racing the
 /// provider it cannot see.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_waits_for_the_dispatch_deadline(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1903,7 +1903,7 @@ async fn recovery_waits_for_the_dispatch_deadline(pool: PgPool) {
 /// the dispatch TTL, which P03's qualification established. What is proved here
 /// against the database is the deadline branch; the pre-deadline branch above is
 /// proved the same way, and neither is proved by sleeping.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn past_the_deadline_one_winner_adopts_and_finalizes(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1956,7 +1956,7 @@ async fn past_the_deadline_one_winner_adopts_and_finalizes(pool: PgPool) {
 /// Line 245 requires the job to be finalized from the immutable effect outcome
 /// without another adapter call. The finalizer is idempotent, so the second run
 /// reports `AlreadyUnknown` and leaves the version where the first run put it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_second_recovery_adds_nothing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -1998,7 +1998,7 @@ async fn a_second_recovery_adds_nothing(pool: PgPool) {
 /// Line 257 makes the authorized acknowledgement the sole successor path, so
 /// rediscovering the plan of an `InconclusiveUnknown` job must not present it as
 /// something to dispatch again.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_terminal_unknown_job_is_never_presented_as_dispatchable(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;
@@ -2028,7 +2028,7 @@ async fn a_terminal_unknown_job_is_never_presented_as_dispatchable(pool: PgPool)
 }
 
 /// Another workspace cannot recover this job into a terminal state.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn recovery_is_workspace_bound(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = dispatched(&pool, &runtime).await;

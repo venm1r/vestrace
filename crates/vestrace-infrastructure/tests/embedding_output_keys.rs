@@ -1529,7 +1529,7 @@ fn fresh_output_service(
     )
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn child_process_death_recovers_every_db_and_vault_output_boundary(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let artifacts = TempDir::new().unwrap();
@@ -1756,7 +1756,7 @@ async fn child_process_death_recovers_every_db_and_vault_output_boundary(pool: P
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn delivery_acceptance_uses_exact_no_auth_and_live_credential_snapshot_branches(
     pool: PgPool,
 ) {
@@ -1853,7 +1853,7 @@ async fn delivery_acceptance_uses_exact_no_auth_and_live_credential_snapshot_bra
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn aggregate_output_progress_refuses_partial_sets_and_opens_only_a_complete_exact_set(
     pool: PgPool,
 ) {
@@ -1987,7 +1987,7 @@ async fn acceptance_must_refuse(
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn invalid_delivery_authority_and_output_identity_matrix_rolls_back_wholly(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let (fixture, _) = prepare_delivery_fixture(&pool, &runtime).await;
@@ -2126,7 +2126,7 @@ async fn invalid_delivery_authority_and_output_identity_matrix_rolls_back_wholly
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn receipt_and_retirement_serialize_without_deadlock_in_both_orders(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
 
@@ -2307,7 +2307,7 @@ async fn receipt_and_retirement_serialize_without_deadlock_in_both_orders(pool: 
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn source_erasure_and_fresh_acceptance_serialize_in_both_lock_orders(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
 
@@ -2413,7 +2413,7 @@ async fn source_erasure_and_fresh_acceptance_serialize_in_both_lock_orders(pool:
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn source_erasure_and_terminal_retirement_preserve_both_transaction_orders(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
 
@@ -2544,7 +2544,7 @@ async fn source_erasure_and_terminal_retirement_preserve_both_transaction_orders
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn delivery_acceptance_is_atomic_replayable_and_source_blocked(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let (fixture, source) = prepare_delivery_fixture(&pool, &runtime).await;
@@ -2651,7 +2651,7 @@ async fn delivery_acceptance_is_atomic_replayable_and_source_blocked(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn failed_second_output_rolls_back_receipt_job_reservations_and_audit(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let (fixture, _) = prepare_delivery_fixture(&pool, &runtime).await;
@@ -2685,7 +2685,7 @@ async fn failed_second_output_rolls_back_receipt_job_reservations_and_audit(pool
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn generic_material_abandonment_cannot_replace_output_retirement_receipt(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let (fixture, source) = prepare_delivery_fixture(&pool, &runtime).await;
@@ -2803,7 +2803,7 @@ async fn generic_material_abandonment_cannot_replace_output_retirement_receipt(p
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn retirement_requires_owned_authority_then_erases_and_releases_source_blocker(pool: PgPool) {
     let runtime = common::runtime_pool(&pool).await;
     let (fixture, source) = prepare_delivery_fixture(&pool, &runtime).await;

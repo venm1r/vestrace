@@ -29,7 +29,7 @@ fn text(body: &str) -> ArtifactContent {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn stored_content_comes_back_byte_for_byte(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -49,7 +49,7 @@ async fn stored_content_comes_back_byte_for_byte(pool: PgPool) {
     assert_eq!(fetched, Some(content));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_stored_digest_describes_the_stored_bytes(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -77,7 +77,7 @@ async fn the_stored_digest_describes_the_stored_bytes(pool: PgPool) {
     assert_eq!(on_disk, stored.content_hash);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn identical_content_is_stored_once_but_yields_distinct_artifacts(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -106,7 +106,7 @@ async fn identical_content_is_stored_once_but_yields_distinct_artifacts(pool: Pg
     assert_eq!(artifacts, 2, "each store call is its own artifact");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn content_does_not_cross_a_workspace_boundary(pool: PgPool) {
     let owner = WorkspaceId::new();
     let intruder = WorkspaceId::new();
@@ -130,7 +130,7 @@ async fn content_does_not_cross_a_workspace_boundary(pool: PgPool) {
     assert_eq!(leaked, None);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn absent_content_is_reported_as_absent_rather_than_as_a_failure(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -149,7 +149,7 @@ async fn absent_content_is_reported_as_absent_rather_than_as_a_failure(pool: PgP
     assert_eq!(missing, None);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn stored_content_appears_in_the_listing_with_its_size(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -169,7 +169,7 @@ async fn stored_content_appears_in_the_listing_with_its_size(pool: PgPool) {
     assert_eq!(revision.media_type, "text/plain");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn empty_content_is_storable_and_distinguishable_from_absent(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;

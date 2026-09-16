@@ -183,7 +183,7 @@ async fn workspace(pool: &PgPool) -> (Uuid, Uuid) {
 /// The declared set is read from the bootstrap script itself, because that file
 /// is the thing a fresh deployment actually runs. Reading it here means the test
 /// cannot drift from the deployment the way a second hand-written list would.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn every_runtime_executable_guarded_function_is_declared_in_the_bootstrap(pool: PgPool) {
     let executable: BTreeSet<String> = sqlx::query_scalar(
         "
@@ -283,7 +283,7 @@ fn array_regions<'a>(bootstrap: &'a str, declaration: &str) -> Vec<&'a str> {
 
 /// Every governed transition table carries the same owner, forced-RLS, and
 /// explicit-ACL posture as the earlier P02/P03 tables.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
     for table in NEW_TABLES {
         let row = sqlx::query(
@@ -319,7 +319,7 @@ async fn the_new_tables_are_owned_forced_and_acl_bearing(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn termination_tables_force_workspace_rls_before_row_constraints(pool: PgPool) {
     let (active_workspace, active_principal) = workspace(&pool).await;
     let (cross_workspace, _) = workspace(&pool).await;
@@ -359,7 +359,7 @@ async fn termination_tables_force_workspace_rls_before_row_constraints(pool: PgP
 /// They are written in two languages in two files, and nothing but this test
 /// keeps them in step. A state added to one and not the other would be found by
 /// a production insert instead.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_job_state_check_matches_the_declared_enum(pool: PgPool) {
     let definition: String = sqlx::query_scalar(
         "SELECT pg_get_constraintdef(constraint_.oid) \
@@ -428,7 +428,7 @@ fn assert_closed_check<T: Copy>(
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_barrier_state_check_matches_the_declared_enum(pool: PgPool) {
     let definition = check_definition(
         &pool,
@@ -439,7 +439,7 @@ async fn the_barrier_state_check_matches_the_declared_enum(pool: PgPool) {
     assert_closed_check(&definition, &BarrierState::ALL, BarrierState::as_str);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_carry_header_state_check_matches_the_declared_enum(pool: PgPool) {
     let definition = check_definition(
         &pool,
@@ -454,7 +454,7 @@ async fn the_carry_header_state_check_matches_the_declared_enum(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_carry_mapping_state_check_matches_the_declared_enum(pool: PgPool) {
     let definition = check_definition(
         &pool,
@@ -478,7 +478,7 @@ async fn the_carry_mapping_state_check_matches_the_declared_enum(pool: PgPool) {
 /// the closed set; it is not, it names the kinds whose response becomes a
 /// vector. `retrieval_query` is the kind retrieval actually issues, and it was
 /// unrepresentable in both the type and the column.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_job_kind_check_matches_the_declared_enum(pool: PgPool) {
     let definition: String = sqlx::query_scalar(
         "SELECT pg_get_constraintdef(constraint_.oid) \
@@ -598,7 +598,7 @@ async fn a_space_has_at_most_one_ready_generation(pool: PgPool) {
 }
 
 /// The space key is the whole tuple in the database too, not only in Rust.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn registration_is_idempotent_on_the_tuple_and_refuses_a_second_space(pool: PgPool) {
     let (workspace_id, principal_id) = workspace(&pool).await;
     let registration = Uuid::now_v7();
@@ -668,7 +668,7 @@ async fn registration_is_idempotent_on_the_tuple_and_refuses_a_second_space(pool
 }
 
 /// Spec line 251: a predecessor has at most one direct successor.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_runtime_cannot_write_the_new_tables_directly(pool: PgPool) {
     let (workspace_id, _) = workspace(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -755,7 +755,7 @@ async fn wait_for_blocker(pool: &PgPool, waiting_pid: i32, blocker_pid: i32) {
     .expect("session never reached the required observed lock wait");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn embedding_output_membership_reservation_is_exact_and_replayable(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
@@ -916,7 +916,7 @@ async fn embedding_output_membership_reservation_is_exact_and_replayable(pool: P
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn embedding_output_membership_deferred_validator_rejects_orphans_and_mismatches(
     pool: PgPool,
 ) {
@@ -1003,7 +1003,7 @@ async fn embedding_output_membership_deferred_validator_rejects_orphans_and_mism
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn only_a_witnessed_abandoned_output_member_allows_pre_dispatch_termination(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = common::accept_embedding_job(&pool, &runtime).await;
@@ -1158,7 +1158,7 @@ async fn only_a_witnessed_abandoned_output_member_allows_pre_dispatch_terminatio
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn enrollment_and_termination_serialize_on_the_embedding_job_lock_chain(pool: PgPool) {
     // Enrollment owns the canonical guards first. Cancellation must visibly
     // wait, then inspect the committed active member and refuse.

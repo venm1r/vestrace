@@ -537,7 +537,10 @@ async fn lifecycle_migration_preserves_preexisting_evidence_without_inventing_a_
     .unwrap();
     inspect_before.commit().await.unwrap();
 
-    MIGRATOR.run(&pool).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&pool)
+        .await
+        .unwrap();
 
     let mut inspect_after = pool.begin().await.unwrap();
     sqlx::query("SELECT set_config('vestrace.workspace_id', $1, true)")
@@ -645,7 +648,10 @@ async fn dispatch_deadline_migration_preserves_0153_rows_and_enforces_only_new_e
     .unwrap();
     transaction.commit().await.unwrap();
 
-    MIGRATOR.run(&pool).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&pool)
+        .await
+        .unwrap();
 
     let after = sqlx::query_as::<_, MigratedDispatchTransitionRow>(
         "SELECT id, effect_id, workspace_id, status, cause, cause_ref, recorded_at, created_at, \
@@ -853,7 +859,10 @@ async fn lifecycle_ordinal_migration_orders_distinct_and_tied_rows_preserves_fie
         1
     );
 
-    MIGRATOR.run(&pool).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&pool)
+        .await
+        .unwrap();
 
     let after: Vec<MigratedOrdinalTransitionRow> = sqlx::query_as(
         "SELECT id, effect_id, workspace_id, status, cause, cause_ref, recorded_at, created_at, \
@@ -916,7 +925,7 @@ async fn lifecycle_ordinal_migration_orders_distinct_and_tied_rows_preserves_fie
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn external_effect_repository_round_trips_unknown_and_reconciliation_evidence(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let intent = intent();
@@ -969,7 +978,7 @@ async fn external_effect_repository_round_trips_unknown_and_reconciliation_evide
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn permitted_external_effect_authorization_round_trips_and_names_its_transition(
     pool: PgPool,
 ) {
@@ -1017,7 +1026,7 @@ async fn permitted_external_effect_authorization_round_trips_and_names_its_trans
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn refused_external_effect_authorization_round_trips_without_authorized_transition(
     pool: PgPool,
 ) {
@@ -1061,7 +1070,7 @@ async fn refused_external_effect_authorization_round_trips_without_authorized_tr
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn authorized_lifecycle_status_refuses_every_unqualified_cause(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -1095,7 +1104,7 @@ async fn authorized_lifecycle_status_refuses_every_unqualified_cause(pool: PgPoo
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn external_effect_authorization_cannot_cross_a_workspace_boundary(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -1156,7 +1165,7 @@ async fn external_effect_authorization_cannot_cross_a_workspace_boundary(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn repository_operations_append_qualified_lifecycle_evidence_without_replay_regression(
     pool: PgPool,
 ) {
@@ -1259,7 +1268,7 @@ async fn repository_operations_append_qualified_lifecycle_evidence_without_repla
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn missing_and_foreign_dispatch_start_fail_without_disclosing_which(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -1304,7 +1313,7 @@ async fn missing_and_foreign_dispatch_start_fail_without_disclosing_which(pool: 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn restricted_runtime_role_sees_own_lifecycle_and_not_a_foreign_transition(pool: PgPool) {
     let admin_repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let own = intent();
@@ -1350,7 +1359,7 @@ async fn restricted_runtime_role_sees_own_lifecycle_and_not_a_foreign_transition
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_lifecycle_writers_append_without_losing_a_transition(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -1396,7 +1405,7 @@ async fn concurrent_lifecycle_writers_append_without_losing_a_transition(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(pool: PgPool) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
         pool.clone(),
@@ -1486,7 +1495,7 @@ async fn two_concurrent_recovery_candidates_adopt_and_reconcile_exactly_once(poo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn missing_route_after_adoption_backs_off_without_duplicate_adoption_evidence(pool: PgPool) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
         pool.clone(),
@@ -1559,7 +1568,7 @@ async fn missing_route_after_adoption_backs_off_without_duplicate_adoption_evide
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_failure_after_adoption_backs_off_without_duplicate_adoption_evidence(
     pool: PgPool,
 ) {
@@ -1639,7 +1648,7 @@ async fn provider_failure_after_adoption_backs_off_without_duplicate_adoption_ev
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_candidate(
     pool: PgPool,
 ) {
@@ -1675,7 +1684,7 @@ async fn receipt_inserted_after_adoption_wins_over_recorded_time_and_retires_can
     assert_eq!(candidates[0].receipt(), Some(&receipt));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -1759,7 +1768,7 @@ async fn lower_ordinal_receipt_still_outranks_a_later_dispatch_lost_guess(pool: 
     assert!(candidates[0].receipt().is_some());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_owners(
     pool: PgPool,
 ) {
@@ -1863,7 +1872,7 @@ async fn equal_age_dispatches_are_selected_by_deadline_and_keep_their_distinct_o
 /// Mutant caught: removing the owner-presence arm, reversing the lapse
 /// comparison, or allowing a fresh owner through makes the equal-age pair agree
 /// when only the lapsed owner is evidence that its dispatch was lost.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn equal_age_dispatches_split_only_on_lapsed_and_fresh_owner_presence(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let workspace_id = WorkspaceId::new();
@@ -1904,7 +1913,7 @@ async fn equal_age_dispatches_split_only_on_lapsed_and_fresh_owner_presence(pool
 /// Mutant caught: a LEFT JOIN whose NULL arm is accepted treats historical
 /// dispatches, and workers that died before their first heartbeat, as proof of
 /// death rather than preserving their stated deadline.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn dispatch_without_owner_presence_uses_its_deadline_and_not_absence(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let effect = intent();
@@ -1934,7 +1943,7 @@ async fn dispatch_without_owner_presence_uses_its_deadline_and_not_absence(pool:
 /// Mutant caught: physically deleting the row on clean shutdown collapses an
 /// explicit stop into the no-row compatibility state and makes recovery wait
 /// for either the lapse window or the dispatch deadline.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn clean_shutdown_is_immediate_lost_owner_evidence(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let effect = intent();
@@ -1963,7 +1972,7 @@ async fn clean_shutdown_is_immediate_lost_owner_evidence(pool: PgPool) {
     assert_eq!(candidates[0].intent(), &effect);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn restricted_runtime_role_reads_presence_only_in_its_workspace(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let own_workspace = WorkspaceId::new();
@@ -2009,7 +2018,7 @@ async fn restricted_runtime_role_reads_presence_only_in_its_workspace(pool: PgPo
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn every_unsettled_receipt_is_a_candidate_across_mixed_states_and_insertion_orders(
     pool: PgPool,
 ) {
@@ -2066,7 +2075,7 @@ async fn every_unsettled_receipt_is_a_candidate_across_mixed_states_and_insertio
 /// Mutant caught: widening only the in-memory double or only the service leaves
 /// acknowledged evidence permanently outside the PostgreSQL sweep, despite the
 /// provider having merely accepted the request rather than confirmed its effect.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acknowledged_receipts_follow_the_existing_unsettled_and_settled_candidate_rules(
     pool: PgPool,
 ) {
@@ -2145,7 +2154,7 @@ async fn acknowledged_receipts_follow_the_existing_unsettled_and_settled_candida
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let effect = intent();
@@ -2169,7 +2178,7 @@ async fn multiple_unknown_receipts_for_one_effect_are_distinct_candidates(pool: 
     assert_eq!(actual, expected);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(pool: PgPool) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
         pool.clone(),
@@ -2226,7 +2235,7 @@ async fn bounded_recovery_sweeps_take_the_oldest_batch_then_drain_the_backlog(po
     assert!(!second.saturated());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_failed_recovery_attempt_is_durable_not_a_reconciliation_and_backs_off(pool: PgPool) {
     let repository = Arc::new(PgExternalEffectRepository::new(PgStore::from_pool(
         pool.clone(),
@@ -2310,7 +2319,7 @@ async fn a_failed_recovery_attempt_is_durable_not_a_reconciliation_and_backs_off
     assert_eq!(after_cutoff.unreachable()[0].effect_id, effect.id());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_provider_failure_then_success_reconciles_once_without_another_failed_attempt_delay(
     pool: PgPool,
 ) {
@@ -2374,7 +2383,7 @@ async fn a_provider_failure_then_success_reconciles_once_without_another_failed_
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn receipt_lookup_follows_latest_receipt_transition_not_adverse_recorded_time(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let effect = intent();
@@ -2403,7 +2412,7 @@ async fn receipt_lookup_follows_latest_receipt_transition_not_adverse_recorded_t
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn lifecycle_status_storage_names_exactly_match_the_database_check(pool: PgPool) {
     let mut stored = sqlx::query_scalar::<_, Option<Vec<String>>>(
         "SELECT array_agg(matches[1] ORDER BY matches[1])
@@ -2428,7 +2437,7 @@ async fn lifecycle_status_storage_names_exactly_match_the_database_check(pool: P
     assert_eq!(stored, domain);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn external_effect_evidence_is_not_readable_from_another_workspace(pool: PgPool) {
     // The three reads took an id and nothing else, so any tenant's id returned
     // that tenant's row — and a receipt carries the external resource id and
@@ -2487,7 +2496,7 @@ async fn external_effect_evidence_is_not_readable_from_another_workspace(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_receipt_cannot_be_filed_against_another_workspaces_effect(pool: PgPool) {
     // A receipt carries no workspace of its own — it belongs to an effect, and
     // the effect belongs to a tenant. So the adapter binds the workspace from
@@ -2513,7 +2522,7 @@ async fn a_receipt_cannot_be_filed_against_another_workspaces_effect(pool: PgPoo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_failed_recovery_attempt_cannot_be_filed_against_another_workspaces_effect(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
     let effect = intent();
@@ -2560,7 +2569,7 @@ async fn a_failed_recovery_attempt_cannot_be_filed_against_another_workspaces_ef
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn external_effect_repository_rejects_conflicting_immutable_intent_id(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let first = intent();
@@ -2576,7 +2585,7 @@ async fn external_effect_repository_rejects_conflicting_immutable_intent_id(pool
     ));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_in_workspace(
     pool: PgPool,
 ) {
@@ -2645,7 +2654,7 @@ async fn external_effect_repository_discovers_only_unreconciled_unknown_effects_
 /// the effect permanently: the receipt stayed `unknown` and nothing ever asked
 /// again. This is the difference between a settled outcome and a recorded
 /// attempt.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let workspace_id = WorkspaceId::new();
@@ -2728,7 +2737,7 @@ async fn an_inconclusive_answer_does_not_retire_an_effect_from_the_sweep(pool: P
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_equal_time_inconclusive_reconciliation_does_not_clear_a_failed_attempt(pool: PgPool) {
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool));
     let workspace_id = WorkspaceId::new();
@@ -2788,7 +2797,7 @@ fn reconciliation_fixture_is_confirmed_before_persistence() {
     assert_eq!(reconciliation.outcome(), ReconciliationOutcome::Confirmed);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn fault_suite_evidence_repository_round_trips_and_is_idempotent(pool: PgPool) {
     let repository =
         vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
@@ -2803,7 +2812,7 @@ async fn fault_suite_evidence_repository_round_trips_and_is_idempotent(pool: PgP
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn fault_suite_evidence_repository_rejects_conflicting_immutable_id(pool: PgPool) {
     let repository =
         vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
@@ -2819,7 +2828,7 @@ async fn fault_suite_evidence_repository_rejects_conflicting_immutable_id(pool: 
     ));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn fault_suite_evidence_repository_preserves_failed_evidence(pool: PgPool) {
     let repository =
         vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(PgStore::from_pool(pool));
@@ -2832,7 +2841,7 @@ async fn fault_suite_evidence_repository_preserves_failed_evidence(pool: PgPool)
     assert!(!stored.failures().is_empty());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn fault_suite_evidence_rows_cannot_be_edited_or_deleted(pool: PgPool) {
     let repository = vestrace_infrastructure::PgFaultSuiteEvidenceRepository::new(
         PgStore::from_pool(pool.clone()),

@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 83);
+  assert.equal(changeScopePaths.length, 153);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -233,4 +233,24 @@ test('the captured preflight scope entry is the scope module verbatim', () => {
 test('the manifest carrying the P05 archive test dependency is admitted', () => {
   assert.ok(changeScopePaths.includes('crates/vestrace-application/Cargo.toml'));
   assert.ok(!protectedAuthorityPaths.includes('crates/vestrace-application/Cargo.toml'));
+});
+
+test('P05-E admits its implementation and evidence paths', () => {
+  for (const path of [
+    'crates/vestrace-infrastructure/tests/common/mod.rs',
+    'crates/vestrace-infrastructure/tests/deployment_qualification.rs',
+    'crates/vestrace-infrastructure/tests/embedding_result_finalization.rs',
+    'crates/vestrace-infrastructure/tests/embedding_result_preparation.rs',
+    'crates/vestrace-infrastructure/tests/embedding_transition_activation.rs',
+    'docs/development-evidence/v1-g0-05e-test-migrator.md',
+    'tests/p05e_test_migrator.test.mjs',
+  ]) {
+    assert.ok(changeScopePaths.includes(path), path);
+    assert.ok(!protectedAuthorityPaths.includes(path), path);
+  }
+  // Every test file whose attribute this package rewrites must be admitted.
+  const rewritten = changeScopePaths.filter(
+    (path) => /^crates\/vestrace-(infrastructure|cli)\/tests\/.*\.rs$/.test(path),
+  );
+  assert.ok(rewritten.length >= 60, `only ${rewritten.length} test files admitted`);
 });

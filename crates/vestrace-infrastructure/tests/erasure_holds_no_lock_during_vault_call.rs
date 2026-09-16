@@ -422,7 +422,7 @@ async fn candidate_credential(pool: &PgPool) -> CredentialFixture {
     fixture
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn nowait_probe_observes_a_lock_held_by_a_third_session(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let third = PgPoolOptions::new()
@@ -460,7 +460,7 @@ async fn nowait_probe_observes_a_lock_held_by_a_third_session(pool: PgPool) {
     probe_pool.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn erasure_holds_no_lock_during_vault_call(pool: PgPool) {
     let fixture = live_content(&pool).await;
     let gate = Arc::new(VaultGate::default());
@@ -586,7 +586,7 @@ async fn erasure_holds_no_lock_during_vault_call(pool: PgPool) {
     assert_eq!(receipt.as_uuid(), Uuid::from_u128(12));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_erasure_holds_no_lock_during_vault_call(pool: PgPool) {
     let fixture = candidate_credential(&pool).await;
     let gate = Arc::new(VaultGate::default());

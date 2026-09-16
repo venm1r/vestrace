@@ -125,7 +125,7 @@ async fn runtime_0196_upgrade_installs_canonical_authority(pool: PgPool) {
         .fetch_one(&pool).await.unwrap();
     assert!(!before);
     let runtime = common::runtime_pool(&pool).await;
-    sqlx::migrate!("../../migrations")
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
         .run(&runtime)
         .await
         .unwrap();
@@ -915,7 +915,7 @@ async fn seeded_legacy_history_survives_upgrade_but_runtime_cannot_use_or_mutate
             .fetch_one(&pool)
             .await
             .unwrap();
-    sqlx::migrate!("../../migrations")
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
         .run(&runtime)
         .await
         .unwrap();
@@ -981,7 +981,7 @@ async fn seeded_legacy_history_survives_upgrade_but_runtime_cannot_use_or_mutate
     assert_eq!(counts, (1, 1, None));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn sqlx_fallback_installs_the_same_canonical_authority(pool: PgPool) {
     assert_canonical_schema(&pool).await;
 }

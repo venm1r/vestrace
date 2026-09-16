@@ -479,7 +479,7 @@ async fn material_boundary(
     (outcome, fixture, vault)
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_reserved_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) = material_boundary(&pool, "after_reserved", "reserved").await;
     assert_eq!(
@@ -494,7 +494,7 @@ async fn material_crash_after_reserved_is_resumable(pool: PgPool) {
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_vault_create_before_receipt_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) = material_boundary(
         &pool,
@@ -515,7 +515,7 @@ async fn material_crash_after_vault_create_before_receipt_is_resumable(pool: PgP
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_receipt_before_prepared_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) = material_boundary(
         &pool,
@@ -541,7 +541,7 @@ async fn material_crash_after_receipt_before_prepared_is_resumable(pool: PgPool)
     assert_eq!(marker, None);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_prepared_before_bound_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) =
         material_boundary(&pool, "after_prepared_before_bound", "content_prepared").await;
@@ -560,7 +560,7 @@ async fn material_crash_after_prepared_before_bound_is_resumable(pool: PgPool) {
     assert_eq!(ciphertext, 0, "abandonment removes the prepared ciphertext");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn owner_result_prepared_crash_after_prepared_before_bound_is_parked(pool: PgPool) {
     let vault = Arc::new(CountingVault::default());
     let fixture = material_result_prepared_at_boundary(&pool, &vault).await;
@@ -579,7 +579,7 @@ async fn owner_result_prepared_crash_after_prepared_before_bound_is_parked(pool:
     assert_eq!(vault.erasures_performed(), 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_bound_before_promotion_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) =
         material_boundary(&pool, "after_bound_before_promotion", "bound").await;
@@ -602,7 +602,7 @@ async fn material_crash_after_bound_before_promotion_is_resumable(pool: PgPool) 
     let _ = ContentMaterialId::from_uuid(fixture.material_id);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_abort_before_witnessed_erase_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) = material_boundary(
         &pool,
@@ -618,7 +618,7 @@ async fn material_crash_after_abort_before_witnessed_erase_is_resumable(pool: Pg
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn material_crash_after_erase_receipt_before_terminal_append_is_resumable(pool: PgPool) {
     let (outcome, fixture, vault) = material_boundary(
         &pool,
@@ -857,7 +857,7 @@ async fn credential_boundary(
     (fixture, vault)
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_reserved_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -874,7 +874,7 @@ async fn credential_crash_after_reserved_is_resumable(pool: PgPool) {
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_vault_create_before_receipt_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -892,7 +892,7 @@ async fn credential_crash_after_vault_create_before_receipt_is_resumable(pool: P
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_receipt_before_prepared_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -905,7 +905,7 @@ async fn credential_crash_after_receipt_before_prepared_is_resumable(pool: PgPoo
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_prepared_before_bound_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -926,7 +926,7 @@ async fn credential_crash_after_prepared_before_bound_is_resumable(pool: PgPool)
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_bound_before_promotion_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -950,7 +950,7 @@ async fn credential_crash_after_bound_before_promotion_is_resumable(pool: PgPool
     assert_eq!(occupancy, "candidate");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_abort_before_witnessed_erase_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,
@@ -963,7 +963,7 @@ async fn credential_crash_after_abort_before_witnessed_erase_is_resumable(pool: 
     assert_eq!(vault.erasures_performed(), 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_crash_after_erase_receipt_before_terminal_append_is_resumable(pool: PgPool) {
     let (fixture, vault) = credential_boundary(
         &pool,

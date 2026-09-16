@@ -69,7 +69,7 @@ async fn seed_lease(pool: &PgPool, workspace_id: WorkspaceId, run_id: uuid::Uuid
     .unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn startup_recovery_discovers_only_interrupted_runs_in_the_workspace(pool: PgPool) {
     let workspace = WorkspaceId::new();
     let other_workspace = WorkspaceId::new();
@@ -116,7 +116,7 @@ async fn startup_recovery_discovers_only_interrupted_runs_in_the_workspace(pool:
     assert_eq!(found, expected);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn startup_recovery_discovery_is_empty_when_nothing_was_interrupted(pool: PgPool) {
     let workspace = WorkspaceId::new();
     let principal = seed_workspace(&pool, workspace).await;

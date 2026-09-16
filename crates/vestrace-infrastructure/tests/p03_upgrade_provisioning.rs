@@ -150,7 +150,7 @@ fn provisioner_sql_from(marker: &str) -> &'static str {
         .find(marker)
         .unwrap_or_else(|| panic!("missing provisioner marker {marker}"));
     PROVISIONER[start..]
-        .rsplit_once("\nSQL\n")
+        .split_once("\nSQL\n")
         .map(|(sql, _)| sql)
         .expect("the provisioner must contain the SQL heredoc terminator")
 }
@@ -161,6 +161,15 @@ fn provisioner_sql_between(start_marker: &str, end_marker: &str) -> &'static str
         .split_once(end_marker)
         .map(|(sql, _)| sql)
         .unwrap_or_else(|| panic!("missing provisioner marker {end_marker}"))
+}
+
+#[test]
+fn provisioner_sql_from_stops_at_its_first_heredoc_terminator() {
+    let sql = provisioner_sql_from("-- P02 migrations run as the runtime role");
+
+    assert!(!sql.contains("\nSQL\n"));
+    assert!(!sql.contains("VESTRACE_SAFETY_SUPERVISOR_PASSWORD"));
+    assert!(sql.contains("vestrace_finish_embedding_memory_references_upgrade"));
 }
 
 fn service_block<'a>(compose: &'a str, service: &str) -> &'a str {
@@ -760,7 +769,7 @@ async fn assert_final_p03_schema(pool: &PgPool, task10_installer_exists: bool) {
 #[test]
 fn compose_provisioning_precedes_runtime_migrate_without_leaking_bootstrap_credentials() {
     let provision = service_block(COMPOSE, "vestrace-role-provision");
-    let migrate = service_block(COMPOSE, "vestrace-migrate");
+    let migrate = service_block(COMPOSE, "vestrace-migrate-history");
     assert!(provision.contains("vestrace_bootstrap"));
     assert!(provision.contains("init-runtime-role.sh"));
     assert!(migrate.contains("vestrace-role-provision:"));
@@ -798,7 +807,10 @@ async fn fresh_database_runs_real_provisioner_before_runtime_migrator(pool: PgPo
     .expect("the embedded real provisioner SQL must run before migration");
 
     let runtime = runtime_pool(&pool).await;
-    MIGRATOR.run(&runtime).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&runtime)
+        .await
+        .unwrap();
     assert_final_p03_schema(&runtime, true).await;
     assert_retired_credential_erasure_function_inventory(&runtime).await;
     runtime.close().await;
@@ -966,7 +978,7 @@ async fn existing_0191_volume_hands_termination_objects_to_runtime_once(pool: Pg
     assert_eq!(helpers_after_refresh, (false, false));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_cannot_replace_run_step_publication_evidence_predicate(pool: PgPool) {
     const PUBLICATION_EVIDENCE: &str = "public.vestrace_run_step_publication_evidence_is_exact(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid)";
     let original: String = sqlx::query_scalar("SELECT pg_get_functiondef($1::regprocedure)")
@@ -1322,7 +1334,7 @@ async fn accepted_p02_database_acquires_p03_helpers_before_runtime_upgrade(pool:
         migrations: Cow::Owned(
             MIGRATOR
                 .iter()
-                .filter(|migration| migration.version >= 176)
+                .filter(|migration| (176..=208).contains(&migration.version))
                 .cloned()
                 .collect(),
         ),
@@ -1968,7 +1980,19 @@ async fn existing_0195_runtime_erasure_upgrade_changes_only_two_function_owners(
 #[sqlx::test(migrations = false)]
 async fn retired_credential_erasure_sqlx_fallback_preserves_exact_function_acl(pool: PgPool) {
     install_extensions_from_real_provisioner(&pool).await;
-    MIGRATOR.run(&pool).await.unwrap();
+    Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 196)
+                .cloned()
+                .collect(),
+        ),
+        ..Migrator::DEFAULT
+    }
+    .run(&pool)
+    .await
+    .unwrap();
     assert_retired_credential_erasure_function_inventory(&pool).await;
 }
 
@@ -2052,7 +2076,7 @@ async fn retrieval_0207_upgrade_preserves_unverified_empty_and_nonempty_results(
     .execute(&pool)
     .await
     .unwrap();
-    MIGRATOR
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
         .run(&runtime)
         .await
         .expect("restricted runtime upgrades existing terminal results");

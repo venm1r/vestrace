@@ -326,7 +326,7 @@ async fn assert_content_preparation_refusal(
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn closed_sequence_is_enforced(pool: PgPool) {
     let fixture = reserve(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;
@@ -353,7 +353,7 @@ async fn closed_sequence_is_enforced(pool: PgPool) {
     assert!(material_is_live(&pool, &fixture).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn content_preparation_allowed_origin_matrix_observes_the_ordering_guard(pool: PgPool) {
     let provisional_created_repeat = reserve(&pool).await;
     record_provisional_created(&pool, &provisional_created_repeat).await;
@@ -473,7 +473,7 @@ async fn content_preparation_allowed_origin_matrix_observes_the_ordering_guard(p
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn content_prepared_is_not_referenceable(pool: PgPool) {
     let fixture = content_prepared(&pool).await;
     let live = material_is_live(&pool, &fixture).await;
@@ -503,7 +503,7 @@ async fn content_prepared_is_not_referenceable(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn content_prepared_cannot_jump_to_abandoned(pool: PgPool) {
     let fixture = content_prepared(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;
@@ -531,7 +531,7 @@ async fn content_prepared_cannot_jump_to_abandoned(pool: PgPool) {
     assert_eq!(intent_state(&pool, &fixture).await, "content_prepared");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn abandon_requires_ciphertext_removal_and_witnessed_receipt(pool: PgPool) {
     let fixture = content_prepared(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;
@@ -587,7 +587,7 @@ async fn abandon_requires_ciphertext_removal_and_witnessed_receipt(pool: PgPool)
     assert_eq!(intent_state(&pool, &fixture).await, "abandoned");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn result_prepared_always_binds_and_never_abandons(pool: PgPool) {
     let fixture = reserve(&pool).await;
     record_provisional_created(&pool, &fixture).await;
@@ -612,7 +612,7 @@ async fn result_prepared_always_binds_and_never_abandons(pool: PgPool) {
     assert!(material_is_live(&pool, &fixture).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_publish_a_prepared_identity(pool: PgPool) {
     let fixture = content_prepared(&pool).await;
     let publication = sqlx::query("UPDATE content_materials SET state = 'live' WHERE id = $1")
@@ -642,7 +642,7 @@ async fn raw_sql_cannot_publish_a_prepared_identity(pool: PgPool) {
     assert!(!live);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_sql_cannot_resurrect_an_abandoned_identity(pool: PgPool) {
     let fixture = content_prepared(&pool).await;
     let mut transaction = context_transaction(&pool, &fixture).await;
@@ -689,7 +689,7 @@ async fn raw_sql_cannot_resurrect_an_abandoned_identity(pool: PgPool) {
     assert_eq!(intent_state(&pool, &fixture).await, "abandoned");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_direct_write_is_refused(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(

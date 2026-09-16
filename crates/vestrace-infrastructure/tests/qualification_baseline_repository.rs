@@ -58,7 +58,7 @@ fn baseline(bundle: &QualificationBundle) -> QualificationBaseline {
     QualificationBaseline::from_bundle(bundle, published_at).unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn published_baseline_round_trips_by_id_at_column_precision(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool.clone()));
     let baseline = baseline(&bundle("target-manifest-a"));
@@ -93,7 +93,7 @@ async fn published_baseline_round_trips_by_id_at_column_precision(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn published_baseline_is_found_by_exact_target_digest_and_profile(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool));
     let baseline = baseline(&bundle("target-manifest-a"));
@@ -109,7 +109,7 @@ async fn published_baseline_is_found_by_exact_target_digest_and_profile(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn second_publication_for_a_target_is_refused_and_names_the_target(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool));
     let target = bundle_for_profile("target-manifest-a", QualificationProfile::Core);
@@ -132,7 +132,7 @@ async fn second_publication_for_a_target_is_refused_and_names_the_target(pool: P
 /// profiles are a ladder, and a build qualified as `core` and later as `trusted`
 /// has two true and different facts. Uniqueness is on the pair, so the earlier
 /// baseline does not have to be invalidated to publish the later one.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_second_profile_for_one_target_is_published_beside_the_first(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool));
     let core = bundle_for_profile("target-manifest-a", QualificationProfile::Core);
@@ -158,7 +158,7 @@ async fn a_second_profile_for_one_target_is_published_beside_the_first(pool: PgP
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn database_refuses_rewriting_each_published_fact(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool.clone()));
     let baseline = baseline(&bundle("target-manifest-a"));
@@ -190,7 +190,7 @@ async fn database_refuses_rewriting_each_published_fact(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn database_refuses_rewriting_each_published_fact_inside_the_payload(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool.clone()));
     let baseline = baseline(&bundle("target-manifest-a"));
@@ -232,7 +232,7 @@ async fn database_refuses_rewriting_each_published_fact_inside_the_payload(pool:
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn database_allows_state_and_invalidation_reason_to_move_with_the_payload(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool.clone()));
     let baseline = baseline(&bundle("target-manifest-a"));
@@ -263,7 +263,7 @@ async fn database_allows_state_and_invalidation_reason_to_move_with_the_payload(
     assert_eq!(stored.invalidation_reason(), Some(reason));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn stored_baseline_for_bundle_a_does_not_match_bundle_b(pool: PgPool) {
     let repository = PgQualificationBaselineRepository::new(PgStore::from_pool(pool));
     let bundle_a = bundle("target-manifest-a");

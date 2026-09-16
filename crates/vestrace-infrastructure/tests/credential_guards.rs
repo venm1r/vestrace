@@ -208,7 +208,7 @@ fn assert_sqlstate<T: std::fmt::Debug>(
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn execution_guard_is_permanent(pool: PgPool) {
     let context = context();
     let fixture = seed_guard_fixture(&pool, &context).await;
@@ -231,7 +231,7 @@ async fn execution_guard_is_permanent(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn activation_guard_precedes_candidate_material(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -283,7 +283,7 @@ async fn activation_guard_precedes_candidate_material(pool: PgPool) {
         .expect("candidate preparation must be possible only after the activation guard exists");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn occupancy_permits_at_most_one_nonterminal_candidate(pool: PgPool) {
     let context = context();
     let fixture = seed_guard_fixture(&pool, &context).await;
@@ -311,7 +311,7 @@ async fn occupancy_permits_at_most_one_nonterminal_candidate(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn second_concurrent_preparing_returns_a_typed_conflict(pool: PgPool) {
     let context = context();
     let fixture = seed_guard_fixture(&pool, &context).await;
@@ -363,7 +363,7 @@ async fn second_concurrent_preparing_returns_a_typed_conflict(pool: PgPool) {
     }));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn lock_order_helper_refuses_an_inverted_acquisition(pool: PgPool) {
     let context = context();
     let fixture = seed_guard_fixture(&pool, &context).await;
@@ -395,7 +395,7 @@ async fn lock_order_helper_refuses_an_inverted_acquisition(pool: PgPool) {
     transaction.commit().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn slot_holds_no_ciphertext_column(pool: PgPool) {
     let columns = sqlx::query(
         "SELECT column_name, data_type, udt_name \

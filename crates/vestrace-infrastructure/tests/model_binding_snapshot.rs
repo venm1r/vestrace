@@ -890,7 +890,7 @@ pub(crate) async fn prepare_no_auth_binding(
     (fixture, model_id, model_revision_id)
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn safe_model_and_provider_projections_require_current_qualified_revision_tuples(
     pool: PgPool,
 ) {
@@ -1061,7 +1061,7 @@ async fn assert_runtime_binding_refusal(
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn model_revision_head_uses_cas_and_preserves_prior_immutable_row(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgModelRevisionRepository::new(PgStore::from_pool(pool.clone()));
@@ -1131,7 +1131,7 @@ async fn model_revision_head_uses_cas_and_preserves_prior_immutable_row(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn workspace_default_has_its_own_cas_and_qualification_refresh_cannot_rewrite_it(
     pool: PgPool,
 ) {
@@ -1256,7 +1256,7 @@ async fn workspace_default_has_its_own_cas_and_qualification_refresh_cannot_rewr
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_cannot_insert_model_revisions_heads_or_defaults_directly(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let runtime = runtime_pool(&pool).await;
@@ -1287,7 +1287,7 @@ async fn runtime_role_cannot_insert_model_revisions_heads_or_defaults_directly(p
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn legacy_run_pins_the_no_auth_branch_and_link_in_its_acceptance_transaction(pool: PgPool) {
     let (fixture, _, _) = prepare_no_auth_binding(&pool, QualificationRefreshMode::Valid).await;
     let run_id = AgentRunId::new();
@@ -1327,7 +1327,7 @@ async fn legacy_run_pins_the_no_auth_branch_and_link_in_its_acceptance_transacti
     assert!(row.5.is_some());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn legacy_run_pins_the_credential_branch_exclusively(pool: PgPool) {
     let (credential, _) = prepare_credential_binding(&pool).await;
     let run_id = AgentRunId::new();
@@ -1370,7 +1370,7 @@ async fn legacy_run_pins_the_credential_branch_exclusively(pool: PgPool) {
     assert_eq!(row.5, None);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_credential_outside_its_guarded_activation_path_cannot_produce_a_snapshot(
     pool: PgPool,
 ) {
@@ -1407,7 +1407,7 @@ async fn candidate_credential_outside_its_guarded_activation_path_cannot_produce
     .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn incompatible_qualification_cannot_produce_a_snapshot(pool: PgPool) {
     let (fixture, model_id, _) =
         prepare_no_auth_binding(&pool, QualificationRefreshMode::Valid).await;
@@ -1422,13 +1422,13 @@ async fn incompatible_qualification_cannot_produce_a_snapshot(pool: PgPool) {
         .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn expired_qualification_cannot_produce_a_snapshot(pool: PgPool) {
     let (fixture, _, _) = prepare_no_auth_binding(&pool, QualificationRefreshMode::Expired).await;
     assert_runtime_binding_refusal(&pool, &fixture, "model_binding_qualification_expired").await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn discovery_only_evidence_cannot_produce_a_snapshot(pool: PgPool) {
     let (fixture, _, _) =
         prepare_no_auth_binding(&pool, QualificationRefreshMode::DiscoveryOnly).await;
@@ -1436,7 +1436,7 @@ async fn discovery_only_evidence_cannot_produce_a_snapshot(pool: PgPool) {
         .await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn raw_legacy_catalog_rows_cannot_produce_a_snapshot(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let model_id = ModelId::new();
@@ -1479,7 +1479,7 @@ fn no_auth_resolution_explicitly_rejects_every_credential_reference() {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn created_only_run_commits_without_a_model_binding_snapshot(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let run_id = AgentRunId::new();
@@ -1521,7 +1521,7 @@ async fn created_only_run_commits_without_a_model_binding_snapshot(pool: PgPool)
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn executable_run_without_chat_default_is_refused_without_binding_or_work_item(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let run_id = AgentRunId::new();

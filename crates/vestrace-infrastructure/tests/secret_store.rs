@@ -49,7 +49,7 @@ fn lease(
         .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_stored_secret_resolves_to_exactly_what_was_stored(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -74,7 +74,7 @@ async fn a_stored_secret_resolves_to_exactly_what_was_stored(pool: PgPool) {
     assert_eq!(resolved.expose_str().unwrap(), PLAINTEXT);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_plaintext_is_nowhere_in_the_database(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -116,7 +116,7 @@ async fn the_plaintext_is_nowhere_in_the_database(pool: PgPool) {
     assert_eq!(row.try_get::<String, _>("name").unwrap(), "openai");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn replacing_a_secret_keeps_its_identity_and_changes_its_ciphertext(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -163,7 +163,7 @@ async fn replacing_a_secret_keeps_its_identity_and_changes_its_ciphertext(pool: 
     assert_eq!(resolved.expose_str().unwrap(), "new-value");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_secret_does_not_resolve_from_another_workspace(pool: PgPool) {
     let owner = WorkspaceId::new();
     let intruder = WorkspaceId::new();
@@ -194,7 +194,7 @@ async fn a_secret_does_not_resolve_from_another_workspace(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_domain_refuses_a_lease_for_the_wrong_purpose(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -221,7 +221,7 @@ async fn the_domain_refuses_a_lease_for_the_wrong_purpose(pool: PgPool) {
     assert!(denied.is_err());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_different_master_key_cannot_read_stored_secrets(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -269,7 +269,7 @@ async fn a_different_master_key_cannot_read_stored_secrets(pool: PgPool) {
     assert!(!message.contains(PLAINTEXT));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn tampering_with_the_stored_row_makes_it_unreadable_rather_than_wrong(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -305,7 +305,7 @@ async fn tampering_with_the_stored_row_makes_it_unreadable_rather_than_wrong(poo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn listing_reports_what_exists_and_never_the_material(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -333,7 +333,7 @@ async fn listing_reports_what_exists_and_never_the_material(pool: PgPool) {
     assert!(!format!("{:?}", listed[0]).contains(PLAINTEXT));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn deleting_is_idempotent_and_removes_the_ciphertext(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -361,7 +361,7 @@ async fn deleting_is_idempotent_and_removes_the_ciphertext(pool: PgPool) {
     assert_eq!(remaining, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn each_workspace_gets_its_own_data_key(pool: PgPool) {
     let first = WorkspaceId::new();
     let second = WorkspaceId::new();
@@ -397,7 +397,7 @@ async fn each_workspace_gets_its_own_data_key(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn storing_two_secrets_reuses_the_workspace_data_key(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;

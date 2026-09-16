@@ -427,7 +427,7 @@ async fn independent_planning_target(
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn one_eligible_head_is_carried_with_its_ordered_recipe_inputs(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -509,7 +509,7 @@ async fn one_eligible_head_is_carried_with_its_ordered_recipe_inputs(pool: PgPoo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn two_eligible_heads_raise_the_exact_ambiguity_refusal(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -554,7 +554,7 @@ async fn two_eligible_heads_raise_the_exact_ambiguity_refusal(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn reordered_regrouped_or_added_survivors_raise_the_exact_refusal(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -601,7 +601,7 @@ async fn reordered_regrouped_or_added_survivors_raise_the_exact_refusal(pool: Pg
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn no_head_creates_no_empty_carry_or_successor_batch(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -637,7 +637,7 @@ async fn no_head_creates_no_empty_carry_or_successor_batch(pool: PgPool) {
     assert_eq!(count, 0);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_later_target_supersedes_the_header_without_rewriting_its_recipes(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -731,7 +731,7 @@ async fn a_later_target_supersedes_the_header_without_rewriting_its_recipes(pool
     assert_eq!(preserved, old_recipes);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_succeeded_predecessor_is_refused_as_a_successor_source(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;
@@ -765,7 +765,7 @@ async fn a_succeeded_predecessor_is_refused_as_a_successor_source(pool: PgPool) 
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn acknowledgement_attaches_its_transition_snapshot_and_no_other_job_can_use_it(
     pool: PgPool,
 ) {
@@ -894,7 +894,7 @@ async fn acknowledgement_attaches_its_transition_snapshot_and_no_other_job_can_u
     transaction.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_same_version_planners_serialize_the_carry_for_one_ambiguity_head(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = accept_embedding_job(&pool, &runtime).await;

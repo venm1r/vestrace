@@ -414,6 +414,19 @@ where
     Ok(true)
 }
 
+/// The migrations an ordinary test database may hold: `0001` through `0208`.
+///
+/// Migrations `0209` and later are not ordinary migrations. They assert that a
+/// bootstrap-custody stage has already provisioned the P05 safety catalog, and
+/// they are applied only through the fixed three-phase route. `#[sqlx::test]`
+/// creates each database fresh from `template1` and applies every file it is
+/// given, so pointing it at the whole directory asks for a provisioning step
+/// that cannot have happened. This is the prefix that can.
+pub static HISTORICAL_MIGRATOR: std::sync::LazyLock<sqlx::migrate::Migrator> =
+    std::sync::LazyLock::new(|| {
+        bounded_migrator(P05_HISTORY_PREFIX_VERSION).expect("the historical prefix is embedded")
+    });
+
 fn bounded_migrator(version: i64) -> Result<sqlx::migrate::Migrator, InfrastructureError> {
     if !MIGRATOR.version_exists(version) {
         return Err(InfrastructureError::configuration(
@@ -449,13 +462,46 @@ impl vestrace_application::RuntimeEvidenceProvider for PgStore {
 #[cfg(test)]
 mod tests {
     use super::{
-        P05_ARCHIVE_ASSERTION_MIGRATION_VERSION, P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
-        P05_HISTORY_PREFIX_VERSION, P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+        HISTORICAL_MIGRATOR, MIGRATOR, P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+        P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION, P05_HISTORY_PREFIX_VERSION,
+        P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
         P05_SAFETY_ASSERTION_MIGRATION_VERSION, P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
         p05_assertion_migration,
     };
+
+    #[test]
+    fn the_historical_migrator_stops_at_the_declared_prefix() {
+        let versions: Vec<i64> = HISTORICAL_MIGRATOR.iter().map(|m| m.version).collect();
+
+        assert!(
+            !versions.is_empty(),
+            "the historical migrator embedded nothing"
+        );
+        assert_eq!(
+            versions.iter().copied().max(),
+            Some(P05_HISTORY_PREFIX_VERSION),
+            "the historical migrator must end at the declared historical prefix",
+        );
+        // P05 assertions are applied only through the fixed three-phase route. A
+        // test database that carried one would be a deployment nobody provisioned.
+        assert!(
+            versions
+                .iter()
+                .all(|version| *version <= P05_HISTORY_PREFIX_VERSION),
+            "the historical migrator carries a P05 assertion migration",
+        );
+        // Guarding only the head would pass a migrator with holes in it.
+        assert_eq!(
+            versions.len(),
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= P05_HISTORY_PREFIX_VERSION)
+                .count(),
+            "the historical migrator dropped a migration inside the prefix",
+        );
+    }
 
     #[test]
     fn p05_only_paths_are_pinned_to_their_transactional_predecessors() {

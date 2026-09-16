@@ -412,7 +412,7 @@ async fn try_admit_with_nullable_replay(
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn admission_rejects_caller_time_shifting_and_writes_nothing(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let workspace_id = Uuid::now_v7();
@@ -469,7 +469,7 @@ async fn admission_rejects_caller_time_shifting_and_writes_nothing(pool: PgPool)
     assert_eq!(counts, (0, 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn release_and_throttle_require_the_exact_effect_receipt_pair(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let workspace_id = Uuid::now_v7();
@@ -514,7 +514,7 @@ async fn release_and_throttle_require_the_exact_effect_receipt_pair(pool: PgPool
     assert_eq!(counts, (0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn task10_admission_entrypoint_is_guarded_and_returns_only_bounded_db_time(pool: PgPool) {
     let row = sqlx::query(
         "SELECT p.prosecdef, pg_get_userbyid(p.proowner) AS owner, \
@@ -539,7 +539,7 @@ async fn task10_admission_entrypoint_is_guarded_and_returns_only_bounded_db_time
     assert!(!row.get::<bool, _>("public_execute"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn valid_admission_pins_latest_complete_evidence_and_db_authored_expiry(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &runtime).await;
@@ -705,7 +705,7 @@ async fn valid_admission_pins_latest_complete_evidence_and_db_authored_expiry(po
     assert_eq!(counts, (1, 1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn admission_revalidates_pinned_canonical_sources_before_replay(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &runtime).await;
@@ -784,7 +784,7 @@ async fn admission_revalidates_pinned_canonical_sources_before_replay(pool: PgPo
     assert_eq!(after, before);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn admission_rejects_more_than_8200_locked_evidence_nodes(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &runtime).await;
@@ -869,7 +869,7 @@ async fn admission_rejects_more_than_8200_locked_evidence_nodes(pool: PgPool) {
     assert_eq!(after, before);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn saturated_wait_is_durable_and_expired_lease_is_reclaimed_without_sleep(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &runtime).await;
@@ -961,7 +961,7 @@ async fn saturated_wait_is_durable_and_expired_lease_is_reclaimed_without_sleep(
     assert_eq!(terminal, (Some("admitted".into()), true, true));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn exact_429_receipt_releases_lease_and_terminalizes_wait_as_throttled(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &runtime).await;
@@ -1314,7 +1314,7 @@ async fn exact_429_receipt_releases_lease_and_terminalizes_wait_as_throttled(poo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn throttle_and_wait_retry_race_serializes_without_deadlock(pool: PgPool) {
     let setup_runtime = runtime_pool(&pool).await;
     let fixture = qualification_fixture(&pool, &setup_runtime).await;
@@ -1559,7 +1559,7 @@ fn publish_policy_command(
 /// working. This runs the whole published path -- application command, governed
 /// mutation, guarded compare-and-swap -- over a Connection created moments
 /// earlier by the same repository.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_fresh_connection_can_be_given_its_admission_policy(pool: PgPool) {
     let context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
     let connector_id = Uuid::now_v7();
@@ -1614,7 +1614,7 @@ async fn a_fresh_connection_can_be_given_its_admission_policy(pool: PgPool) {
 /// compare-and-swap that second publication would silently replace a policy its
 /// author never saw, which is the failure the revision head already refuses for
 /// Connections.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_publisher_that_did_not_see_the_current_policy_loses(pool: PgPool) {
     let context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
     let connector_id = Uuid::now_v7();
@@ -1692,7 +1692,7 @@ async fn a_publisher_that_did_not_see_the_current_policy_loses(pool: PgPool) {
 /// Connection without one has no governed revision either. Refusing here keeps
 /// the guard's lock order canonical and stops a policy row from outliving the
 /// Connection it claims to govern.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_connection_without_an_execution_guard_gets_no_policy(pool: PgPool) {
     let context = RequestContext::new(WorkspaceId::new(), PrincipalId::new());
     let connector_id = Uuid::now_v7();

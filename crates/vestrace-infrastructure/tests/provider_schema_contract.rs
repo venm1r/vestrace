@@ -330,7 +330,7 @@ fn provider_result_receipt_payload(
     })
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn every_p03_table_is_guarded_forced_rls_and_has_a_nonempty_acl(pool: PgPool) {
     let rows = sqlx::query(
         "SELECT c.relname, pg_get_userbyid(c.relowner) AS owner, \
@@ -368,7 +368,7 @@ async fn every_p03_table_is_guarded_forced_rls_and_has_a_nonempty_acl(pool: PgPo
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn deployment_policy_decisions_have_exact_guarded_authority(pool: PgPool) {
     let row: (String, bool, Option<Vec<String>>, bool, bool) = sqlx::query_as(
         "SELECT pg_get_userbyid(procedure.proowner), procedure.prosecdef, procedure.proconfig,
@@ -432,7 +432,7 @@ async fn deployment_policy_decisions_have_exact_guarded_authority(pool: PgPool) 
     assert_eq!(function_acl, (true, false));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_policy_repository_and_guard_replay_are_exact(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let store = PgStore::from_pool(runtime.clone());
@@ -476,7 +476,7 @@ async fn runtime_policy_repository_and_guard_replay_are_exact(pool: PgPool) {
     assert!(rows.contains(&(transaction_bound.id, "caller transaction".to_owned())));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn model_policy_guard_same_id_races_are_serialized(pool: PgPool) {
     let first = runtime_pool(&pool).await;
     let second = runtime_pool(&pool).await;
@@ -528,7 +528,7 @@ async fn model_policy_guard_same_id_races_are_serialized(pool: PgPool) {
     assert!(persisted.1 == "alpha winner" || persisted.1 == "bravo winner");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn database_constraints_pin_auth_xor_and_cross_workspace_identity(pool: PgPool) {
     let definitions: Vec<String> = sqlx::query_scalar(
         "SELECT pg_get_constraintdef(con.oid) \
@@ -561,7 +561,7 @@ async fn database_constraints_pin_auth_xor_and_cross_workspace_identity(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_schema_contains_only_ciphertext_and_safe_material_metadata(pool: PgPool) {
     let columns: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT table_name, column_name, data_type \
@@ -627,7 +627,7 @@ async fn provider_result_schema_contains_only_ciphertext_and_safe_material_metad
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn task10_dispatch_and_governed_artifact_contract_is_database_visible(pool: PgPool) {
     let dispatch_columns: Vec<String> = sqlx::query_scalar(
         "SELECT column_name FROM information_schema.columns \
@@ -691,7 +691,7 @@ async fn task10_dispatch_and_governed_artifact_contract_is_database_visible(pool
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn p03_entrypoints_are_exact_guarded_and_runtime_executable(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let rows = sqlx::query(
@@ -736,7 +736,7 @@ async fn p03_entrypoints_are_exact_guarded_and_runtime_executable(pool: PgPool) 
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn reconstruction_lock_ownership_and_legacy_intent_acl_are_exact(pool: PgPool) {
     let locked_relations = [
         "model_request_evidence_roots",
@@ -977,7 +977,7 @@ async fn reconstruction_lock_ownership_and_legacy_intent_acl_are_exact(pool: PgP
     assert_ne!(trigger.1 & 16, 0, "trigger must cover UPDATE");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_catalog_projection_acl_is_exactly_column_scoped(pool: PgPool) {
     let model_projection_acl: (
         bool,
@@ -1096,7 +1096,7 @@ async fn runtime_catalog_projection_acl_is_exactly_column_scoped(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_routing_and_credential_consume_pin_the_canonical_lock_order(pool: PgPool) {
     let routing: String = sqlx::query_scalar(
         "SELECT pg_get_functiondef(
@@ -1135,7 +1135,7 @@ async fn provider_routing_and_credential_consume_pin_the_canonical_lock_order(po
     assert!(consume_chain < consume_lease_lock);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_attempt_recovery_authority_is_guarded_without_runtime_table_reads(pool: PgPool) {
     let function_acl: (bool, String, bool, bool) = sqlx::query_as(
         "SELECT
@@ -1186,7 +1186,7 @@ async fn run_step_attempt_recovery_authority_is_guarded_without_runtime_table_re
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn p03_guarded_function_runtime_execute_set_is_exact(pool: PgPool) {
     let rows: Vec<(String, String, bool, bool)> = sqlx::query_as(
         "SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner), \
@@ -1219,7 +1219,7 @@ async fn p03_guarded_function_runtime_execute_set_is_exact(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_live_guard_is_internal_fixed_and_deferred(pool: PgPool) {
     let authority: (String, bool, String, bool, bool) = sqlx::query_as(
         "SELECT pg_get_userbyid(procedure.proowner), procedure.prosecdef, \
@@ -1298,7 +1298,7 @@ async fn provider_result_live_guard_is_internal_fixed_and_deferred(pool: PgPool)
     assert!(!installer.5.contains("EXECUTE IMMEDIATE"));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn random_uuid_is_not_an_erasure_bound_provider_result_commitment(pool: PgPool) {
     let commitment_column: (String, String) = sqlx::query_as(
         "SELECT data_type, is_nullable \
@@ -1364,7 +1364,7 @@ async fn random_uuid_is_not_an_erasure_bound_provider_result_commitment(pool: Pg
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_schema_binds_one_atomic_publication_tuple(pool: PgPool) {
     let preparation_columns: BTreeSet<String> = sqlx::query_scalar(
         "SELECT column_name FROM information_schema.columns \
@@ -1418,7 +1418,7 @@ async fn provider_result_schema_binds_one_atomic_publication_tuple(pool: PgPool)
     assert!(replay_check < replay_return);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn representative_identity_edges_use_composite_foreign_keys(pool: PgPool) {
     let required = [
         "connection_revisions_exact_auth_mode_key",
@@ -1460,7 +1460,7 @@ async fn representative_identity_edges_use_composite_foreign_keys(pool: PgPool) 
     assert_eq!(actual, required.map(str::to_owned).into());
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn representative_composite_edges_reject_mixed_identity_inserts(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     let principal_id = Uuid::now_v7();
@@ -1630,7 +1630,7 @@ async fn representative_composite_edges_reject_mixed_identity_inserts(pool: PgPo
     mixed_policy.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn automatic_fallback_matches_bootstrap_dependency_and_helper_acls(pool: PgPool) {
     for table in [
         "connection_execution_guards",
@@ -2166,7 +2166,7 @@ async fn setup_run_admission_envelope(
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn dispatch_deadline_contract_is_scoped_to_normalized_provider_causes(pool: PgPool) {
     let legacy_workspace = WorkspaceId::new();
     let legacy_context = RequestContext::new(legacy_workspace, PrincipalId::new());
@@ -2812,7 +2812,7 @@ async fn seed_additional_result_cause(
     setup.commit().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn published_provider_result_is_rejected_at_commit_when_completion_is_incomplete(
     pool: PgPool,
 ) {
@@ -2892,7 +2892,7 @@ async fn published_provider_result_is_rejected_at_commit_when_completion_is_inco
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn publication_cannot_mix_fields_from_two_preparation_tuples_at_commit(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     let principal_id = Uuid::now_v7();
@@ -3054,7 +3054,7 @@ async fn publication_cannot_mix_fields_from_two_preparation_tuples_at_commit(poo
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn artifact_content_cannot_mix_content_material_and_intent_at_commit(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     let principal_id = Uuid::now_v7();
@@ -3189,7 +3189,7 @@ fn assert_exact_database_error<T>(
     assert_eq!(database.message(), message, "{operation}");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn connection_revision_creators_enforce_cas_auth_mode_and_runtime_write_boundaries(
     pool: PgPool,
 ) {
@@ -3484,7 +3484,7 @@ async fn connection_revision_creators_enforce_cas_auth_mode_and_runtime_write_bo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_dispatch_admits_task9_valid_graph_above_4096_total_nodes(pool: PgPool) {
     let envelope = setup_run_admission_envelope(&pool, false).await;
     let runtime = runtime_pool(&pool).await;
@@ -3567,7 +3567,7 @@ async fn provider_dispatch_admits_task9_valid_graph_above_4096_total_nodes(pool:
     assert_eq!(persisted, (1, 1, 1));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_dispatch_admission_rejects_aggregate_frames_above_derived_ceiling(pool: PgPool) {
     let envelope = setup_run_admission_envelope(&pool, false).await;
     let runtime = runtime_pool(&pool).await;
@@ -3621,7 +3621,7 @@ async fn provider_dispatch_admission_rejects_aggregate_frames_above_derived_ceil
     assert_eq!(counts, (0, 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn concurrent_run_step_attempt_reservations_converge_on_one_tuple(pool: PgPool) {
     let envelope = setup_run_admission_envelope(&pool, false).await;
     let attempt_id = Uuid::now_v7();
@@ -3726,7 +3726,7 @@ async fn concurrent_run_step_attempt_reservations_converge_on_one_tuple(pool: Pg
     assert_eq!(rows, (1, attempt_id));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_execution_attempt_is_immutable_replayable_and_phase_governed(pool: PgPool) {
     let envelope = setup_run_admission_envelope(&pool, false).await;
     let runtime = runtime_pool(&pool).await;
@@ -3852,7 +3852,7 @@ async fn run_step_execution_attempt_is_immutable_replayable_and_phase_governed(p
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn governed_run_step_input_enqueue_rejects_malformed_runtime_requests(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let refusal =
@@ -3883,7 +3883,7 @@ async fn governed_run_step_input_enqueue_rejects_malformed_runtime_requests(pool
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_step_admission_requires_exact_run_snapshot_mapping(pool: PgPool) {
     let envelope = setup_run_admission_envelope(&pool, true).await;
     let runtime = runtime_pool(&pool).await;
@@ -3936,7 +3936,7 @@ async fn run_step_admission_requires_exact_run_snapshot_mapping(pool: PgPool) {
     assert_eq!(counts, (0, 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_prepare_rejects_embeddings_request_and_model(pool: PgPool) {
     let ids = ProviderResultEnvelopeIds {
         workspace_id: Uuid::now_v7(),
@@ -4021,7 +4021,7 @@ async fn provider_result_prepare_rejects_embeddings_request_and_model(pool: PgPo
     assert_eq!(counts, (0, 0, "provisional_receipted".into()));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn terminalization_and_first_prepare_races_have_no_deadlock_or_stranded_state(pool: PgPool) {
     let terminal_wins = ProviderResultEnvelopeIds {
         workspace_id: Uuid::now_v7(),
@@ -4253,7 +4253,7 @@ async fn terminalization_and_first_prepare_races_have_no_deadlock_or_stranded_st
     setup_runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_prepare_maps_cross_effect_identity_collisions_to_policy_conflict(
     pool: PgPool,
 ) {
@@ -4379,7 +4379,7 @@ async fn provider_result_prepare_maps_cross_effect_identity_collisions_to_policy
     assert_eq!(rows, (1, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_entrypoints_enforce_replay_and_commit_complete_publication(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     let principal_id = Uuid::now_v7();
@@ -5285,7 +5285,7 @@ async fn provider_result_entrypoints_enforce_replay_and_commit_complete_publicat
     assert_eq!(published, (1, 1, true));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn generic_material_resumption_cannot_publish_a_provider_result(pool: PgPool) {
     let ids = ProviderResultEnvelopeIds {
         workspace_id: Uuid::now_v7(),
@@ -5640,7 +5640,7 @@ fn provider_result_identities(
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_advance_work_identity_collision_is_typed_and_atomic(pool: PgPool) {
     let first = ProviderResultEnvelopeIds {
         workspace_id: Uuid::now_v7(),
@@ -5759,7 +5759,7 @@ async fn provider_result_advance_work_identity_collision_is_typed_and_atomic(poo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_provider_result_prepare_fails_closed_without_dispatch_release_and_rolls_back(
     pool: PgPool,
 ) {
@@ -5835,7 +5835,7 @@ async fn run_provider_result_prepare_fails_closed_without_dispatch_release_and_r
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn provider_result_repository_recovers_one_atomic_publication_and_exact_replay(pool: PgPool) {
     let _observer = observe_retained_result().await;
     const SENTINEL: &str = "task10d-retained-provider-result-sentinel";

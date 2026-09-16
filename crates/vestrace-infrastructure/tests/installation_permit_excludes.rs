@@ -76,7 +76,7 @@ async fn advance_watermark(pool: &PgPool, context: &RequestContext, audit_id: Uu
     advance
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn exclusive_excludes_shared(pool: PgPool) {
     let store = PgStore::from_pool(pool);
     let permit = PgInstallationMutationPermit::new(store);
@@ -112,7 +112,7 @@ async fn exclusive_excludes_shared(pool: PgPool) {
     waiter.await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn shared_permits_are_concurrent(pool: PgPool) {
     let store = PgStore::from_pool(pool);
     let permit = PgInstallationMutationPermit::new(store);
@@ -131,7 +131,7 @@ async fn shared_permits_are_concurrent(pool: PgPool) {
     first.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn crashed_holder_releases_its_permit(pool: PgPool) {
     let store = PgStore::from_pool(pool);
     let permit = PgInstallationMutationPermit::new(store);
@@ -153,7 +153,7 @@ async fn crashed_holder_releases_its_permit(pool: PgPool) {
     shared.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn mutation_without_watermark_advance_is_refused(pool: PgPool) {
     let context = context();
     seed_context(&pool, &context).await;
@@ -186,7 +186,7 @@ async fn mutation_without_watermark_advance_is_refused(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn watermark_is_monotonic_under_concurrency(pool: PgPool) {
     let first_context = context();
     let second_context = context();

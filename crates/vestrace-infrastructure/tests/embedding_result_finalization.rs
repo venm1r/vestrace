@@ -589,7 +589,10 @@ async fn legacy_marker_adoption_never_transfers_old_blocker(pool: PgPool) {
     .unwrap();
     let historical =
         Uuid::parse_str(old["credential_erasure_blocker_id"].as_str().unwrap()).unwrap();
-    MIGRATOR.run(&f.runtime).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&f.runtime)
+        .await
+        .unwrap();
     let repo = PgEmbeddingResultFinalizationRepository::new(PgStore::from_pool(f.runtime.clone()));
     let a = authority(&f, p);
     assert!(matches!(
@@ -664,7 +667,10 @@ async fn legacy_adoption_revocation_first_refuses_without_partial_owner(pool: Pg
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    MIGRATOR.run(&f.runtime).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&f.runtime)
+        .await
+        .unwrap();
     let before: serde_json::Value = sqlx::query_scalar(
         "SELECT to_jsonb(p) FROM embedding_job_result_preparations p WHERE id=$1",
     )
@@ -1137,7 +1143,10 @@ async fn legacy_adoption_erasure_first_after_observed_lease_expiry_refuses(pool:
     .unwrap();
     // The immutable marker was created under0194; repair the schema before
     // erasure wins. No claim that unmodified0194 could commit this erasure.
-    MIGRATOR.run(&f.runtime).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&f.runtime)
+        .await
+        .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         let expired: bool = sqlx::query_scalar(
@@ -1579,7 +1588,10 @@ async fn published_public_adoption_replays_after_guarded_credential_revocation(p
     let f = result_fixture_with_pinned_credential(&pool).await;
     let p = Uuid::now_v7();
     commit_result(&f, p, Uuid::now_v7()).await;
-    MIGRATOR.run(&f.runtime).await.unwrap();
+    vestrace_infrastructure::HISTORICAL_MIGRATOR
+        .run(&f.runtime)
+        .await
+        .unwrap();
     let publication = finish_fixture(&f, p).await;
     let owned: Uuid = sqlx::query_scalar("SELECT owned_blocker_id FROM embedding_result_credential_blocker_adoptions WHERE preparation_id=$1")
         .bind(p).fetch_one(&pool).await.unwrap();

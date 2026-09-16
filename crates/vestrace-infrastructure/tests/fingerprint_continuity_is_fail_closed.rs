@@ -68,7 +68,7 @@ fn absent_vault_root_retains_a_distinct_readiness_cause() {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn rejected_create_only_record_retains_a_distinct_readiness_cause(pool: PgPool) {
     let root = TempDir::new().unwrap();
     let first = PgInstallationFingerprintReadiness::initialize(
@@ -99,8 +99,28 @@ async fn rejected_create_only_record_retains_a_distinct_readiness_cause(pool: Pg
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn production_readiness_reloads_the_host_fingerprint_record(pool: PgPool) {
+async fn deployment_pool() -> Option<PgPool> {
+    let Ok(url) = std::env::var("VESTRACE_P05_TEST_DATABASE_URL") else {
+        eprintln!(
+            "BLOCKED: set VESTRACE_P05_TEST_DATABASE_URL to a disposable database \
+             taken through the three-phase P05 route"
+        );
+        return None;
+    };
+    Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn production_readiness_reloads_the_host_fingerprint_record() {
+    let Some(pool) = deployment_pool().await else {
+        return;
+    };
     let root = TempDir::new().unwrap();
     let readiness =
         PgInstallationFingerprintReadiness::initialize(PgStore::from_pool(pool), root.path()).await;
@@ -111,7 +131,7 @@ async fn production_readiness_reloads_the_host_fingerprint_record(pool: PgPool) 
     assert_unavailable(HealthRepository::check(&readiness).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn key_record_is_never_stored_in_postgres(pool: PgPool) {
     let columns: Vec<String> = sqlx::query_scalar(
         "SELECT column_name \
@@ -155,7 +175,7 @@ fn continuity_proof_uses_the_exact_domain_separation_string() {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn readiness_fails_closed_on_missing_proof(pool: PgPool) {
     let supervisor = PgInstallationFingerprintSupervisor::new(pool);
     let key = installation_key(installation_id(10), fingerprint_key_id(11), [1; 32]);
@@ -163,7 +183,7 @@ async fn readiness_fails_closed_on_missing_proof(pool: PgPool) {
     assert_unavailable(supervisor.ensure_ready(&key).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn readiness_fails_closed_on_wrong_key_id(pool: PgPool) {
     let supervisor = PgInstallationFingerprintSupervisor::new(pool);
     let installation = installation_id(12);
@@ -174,7 +194,7 @@ async fn readiness_fails_closed_on_wrong_key_id(pool: PgPool) {
     assert_unavailable(supervisor.ensure_ready(&wrong_identity).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn readiness_fails_closed_on_wrong_key_version(pool: PgPool) {
     let supervisor = PgInstallationFingerprintSupervisor::new(pool.clone());
     let key = installation_key(installation_id(15), fingerprint_key_id(16), [3; 32]);
@@ -192,7 +212,7 @@ async fn readiness_fails_closed_on_wrong_key_version(pool: PgPool) {
     assert_unavailable(supervisor.ensure_ready(&key).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn readiness_fails_closed_on_same_key_id_different_key(pool: PgPool) {
     let supervisor = PgInstallationFingerprintSupervisor::new(pool);
     let installation = installation_id(17);
@@ -204,7 +224,7 @@ async fn readiness_fails_closed_on_same_key_id_different_key(pool: PgPool) {
     assert_unavailable(supervisor.ensure_ready(&different_key).await);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn no_rotation_or_overwrite_operation_exists(pool: PgPool) {
     let supervisor = PgInstallationFingerprintSupervisor::new(pool.clone());
     let installation = installation_id(19);

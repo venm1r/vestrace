@@ -255,7 +255,7 @@ async fn two_branches(pool: &PgPool, workspace: Uuid, principal: Uuid) -> (Branc
 /// The activation guard is the edge that ties a slot to its Connection, and it
 /// is why the binding-snapshot chain cannot be crossed. Proved directly rather
 /// than assumed, because the test below leans on it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_activation_guard_refuses_another_connections_slot(pool: PgPool) {
     let workspace = Uuid::now_v7();
     let principal = Uuid::now_v7();
@@ -297,7 +297,7 @@ async fn an_activation_guard_refuses_another_connections_slot(pool: PgPool) {
 /// keys satisfied by a revision pointing at a foreign Connection's slot, so
 /// this test names the trigger's exact message rather than only its SQLSTATE —
 /// a bare `23514` would not say which of the checks above spoke.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_connection_revision_pinning_another_connections_slot_is_refused_by_the_database(
     pool: PgPool,
 ) {
@@ -398,7 +398,7 @@ async fn a_connection_revision_pinning_another_connections_slot_is_refused_by_th
 /// `(workspace, connection_revision, connection_qualification_revision)`, so a
 /// qualification claiming one Connection's model against the other Connection's
 /// evidence has nowhere to attach.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn one_wire_model_id_on_two_connections_cannot_share_a_qualification(pool: PgPool) {
     let workspace = Uuid::now_v7();
     let principal = Uuid::now_v7();

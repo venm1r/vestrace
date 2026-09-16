@@ -116,7 +116,7 @@ async fn seed_connector(
     .unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn connection_mutation_rolls_back_when_audit_fails(pool: PgPool) {
     let context = context();
     let command = command(&context);
@@ -148,7 +148,7 @@ async fn connection_mutation_rolls_back_when_audit_fails(pool: PgPool) {
     assert_eq!((connections, guards), (0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn audit_rolls_back_when_connection_mutation_fails(pool: PgPool) {
     let context = context();
     let created = command(&context);
@@ -196,7 +196,7 @@ async fn audit_rolls_back_when_connection_mutation_fails(pool: PgPool) {
 /// without comparing it, so the comparison has to happen before anything is
 /// applied — otherwise a single key could carry two different mutations and
 /// only the mutation's own guard would notice.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_reused_idempotency_key_carrying_a_different_request_is_refused(pool: PgPool) {
     let context = context();
     let created = command(&context);
@@ -246,7 +246,7 @@ async fn a_reused_idempotency_key_carrying_a_different_request_is_refused(pool: 
 /// It must not be refused on the key alone; what stops it publishing twice is
 /// the immutable head guard, and this test pins that it is the guard doing the
 /// work rather than an accidental key collision.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_redelivered_identical_request_is_refused_by_its_head_guard_not_by_its_key(pool: PgPool) {
     let context = context();
     let created = command(&context);
@@ -278,7 +278,7 @@ async fn a_redelivered_identical_request_is_refused_by_its_head_guard_not_by_its
 /// The outbox is part of the same transaction as the mutation it announces. A
 /// message that survived a rolled-back revision would tell every subscriber
 /// about a Connection that does not exist.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_outbox_message_rolls_back_with_its_mutation(pool: PgPool) {
     let context = context();
     let created = command(&context);

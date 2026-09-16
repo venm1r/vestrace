@@ -149,7 +149,7 @@ async fn settle(
     intent
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_settled_outcome_is_recorded_in_the_run_that_asked_for_it(pool: PgPool) {
     seed_run(&pool).await;
     let store = PgStore::from_pool(pool.clone());
@@ -249,7 +249,7 @@ async fn a_settled_outcome_is_recorded_in_the_run_that_asked_for_it(pool: PgPool
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_settled_lost_dispatch_with_no_receipt_is_told_to_its_run(pool: PgPool) {
     seed_run(&pool).await;
     let store = PgStore::from_pool(pool.clone());
@@ -301,7 +301,7 @@ async fn a_settled_lost_dispatch_with_no_receipt_is_told_to_its_run(pool: PgPool
 }
 
 /// An effect nobody can attribute closes its debt without inventing a run.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_outcome_belonging_to_no_run_is_not_owed_forever(pool: PgPool) {
     seed_run(&pool).await;
     let repository = PgExternalEffectRepository::new(PgStore::from_pool(pool.clone()));
@@ -323,7 +323,7 @@ async fn an_outcome_belonging_to_no_run_is_not_owed_forever(pool: PgPool) {
 }
 
 /// An unsettled outcome is not a fact about the run.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_inconclusive_outcome_is_not_delivered(pool: PgPool) {
     seed_run(&pool).await;
     let store = PgStore::from_pool(pool.clone());

@@ -150,7 +150,7 @@ async fn assert_runtime_dml_is_refused(runtime: &PgPool, owner: &PgPool, table: 
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_registration_requires_a_matching_legacy_embedding_space(pool: PgPool) {
     let workspace_id = Uuid::now_v7();
     sqlx::query("INSERT INTO workspaces(id,slug) VALUES($1,$2)")
@@ -213,7 +213,7 @@ async fn runtime_registration_requires_a_matching_legacy_embedding_space(pool: P
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn every_p04_guarded_table_refuses_runtime_insert_update_and_delete(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for table in P04_GUARDED_TABLES {
@@ -222,7 +222,7 @@ async fn every_p04_guarded_table_refuses_runtime_insert_update_and_delete(pool: 
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_cannot_execute_embedding_pre_dispatch_gate_directly(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let gate = "public.vestrace_lock_embedding_job_pre_dispatch_gate(uuid,uuid,boolean)";
@@ -257,7 +257,7 @@ async fn runtime_cannot_execute_embedding_pre_dispatch_gate_directly(pool: PgPoo
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn canonical_authority_fields_refuse_every_runtime_write(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     for statement in [

@@ -20,7 +20,7 @@ fn context(workspace_id: WorkspaceId) -> RequestContext {
 
 /// A workspace that was never configured reads as the conservative defaults, so
 /// no caller has to distinguish "absent" from "unset".
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn unconfigured_workspace_reads_conservative_defaults(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -31,7 +31,7 @@ async fn unconfigured_workspace_reads_conservative_defaults(pool: PgPool) {
     assert_eq!(settings, WorkspaceSettings::defaults(workspace));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn settings_round_trip_and_advance_their_version(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -55,7 +55,7 @@ async fn settings_round_trip_and_advance_their_version(pool: PgPool) {
 }
 
 /// The second writer must be told, not silently overwrite the first.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_stale_version_is_rejected_without_writing(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -85,7 +85,7 @@ async fn a_stale_version_is_rejected_without_writing(pool: PgPool) {
 
 /// Invalid input must be refused by the database as well as the domain, so a
 /// direct writer cannot leave a value the domain would reject on read.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_schema_refuses_values_the_domain_would_reject(pool: PgPool) {
     let workspace = WorkspaceId::new();
     seed_workspace(&pool, workspace).await;
@@ -109,7 +109,7 @@ async fn the_schema_refuses_values_the_domain_would_reject(pool: PgPool) {
 }
 
 /// Settings are workspace-scoped like every other row in the system.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn settings_do_not_leak_across_workspaces(pool: PgPool) {
     let first = WorkspaceId::new();
     let second = WorkspaceId::new();

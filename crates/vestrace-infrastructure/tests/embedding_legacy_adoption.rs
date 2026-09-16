@@ -206,7 +206,7 @@ fn start(fixture: &LegacySpace, key: &str) -> StartLegacyAdoption {
 }
 
 /// The plan fixes what it covers once: which rows, which revisions, how many.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_plan_fixes_its_members_and_watermark_once(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -249,7 +249,7 @@ async fn a_plan_fixes_its_members_and_watermark_once(pool: PgPool) {
 
 /// One legacy space takes one plan. A different key is a second plan for the
 /// same rows, and two plans could each believe they own the cutover.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_second_key_against_the_same_legacy_space_conflicts(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -270,7 +270,7 @@ async fn a_second_key_against_the_same_legacy_space_conflicts(pool: PgPool) {
 
 /// An unadoptable source is visible, not silently omitted: the member is
 /// blocked with the exact reason and the plan still covers it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn an_erased_source_is_a_visible_blocker_and_not_an_omission(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -302,7 +302,7 @@ async fn an_erased_source_is_a_visible_blocker_and_not_an_omission(pool: PgPool)
 
 /// Adoption may only target a canonical space. A legacy target would adopt one
 /// legacy space into another and retire nothing.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_non_canonical_target_is_refused(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -321,7 +321,7 @@ async fn a_non_canonical_target_is_refused(pool: PgPool) {
 
 /// A cutover before every member is satisfied would delete plaintext whose
 /// vector was never recomputed.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_plan_with_an_unsatisfied_member_cannot_become_ready(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -351,7 +351,7 @@ async fn a_plan_with_an_unsatisfied_member_cannot_become_ready(pool: PgPool) {
 
 /// The installation gate stays shut while any adoption is outstanding, and it
 /// is deliberately blind to workspaces.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_retirement_gate_refuses_while_an_adoption_is_outstanding(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -378,7 +378,7 @@ async fn the_retirement_gate_refuses_while_an_adoption_is_outstanding(pool: PgPo
 
 /// A legacy space nobody ever planned is still a legacy space. The gate counts
 /// registrations, not plans, so an unadopted space cannot pass by being absent.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_retirement_gate_refuses_a_legacy_space_no_plan_ever_covered(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -396,7 +396,7 @@ async fn the_retirement_gate_refuses_a_legacy_space_no_plan_ever_covered(pool: P
 }
 
 /// The runtime role reads adoption state and changes none of it.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn the_runtime_role_cannot_write_adoption_tables_directly(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let repository = repository(&pool);
@@ -652,7 +652,7 @@ async fn embedding_job_evidence_and_its_materialized_source_are_accepted(pool: P
 /// invented a binding would let two jobs claim the same corpus under different
 /// qualification, and nothing downstream would notice: both would be
 /// structurally valid embedding jobs.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn a_target_space_without_a_transition_binding_is_refused(pool: PgPool) {
     let fixture = seed_legacy_space(&pool).await;
     let runtime = common::runtime_pool(&pool).await;
@@ -851,7 +851,7 @@ async fn plan_state(pool: &PgPool, fixture: &LegacySpace, plan: Uuid) -> String 
 /// moves an adoption's state with no guarded operation anywhere in the story.
 /// So this guard is the sole defence for that caller, and the two answers
 /// together are what the run records.
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn mutating_the_raw_mutation_guard_lets_a_privileged_connection_move_an_adoption(
     pool: PgPool,
 ) {

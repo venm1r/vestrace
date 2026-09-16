@@ -22,7 +22,7 @@ fn decision() -> ModelDataPolicyDecisionRecord {
     }
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn model_data_policy_decisions_preserve_the_boundary_facts(pool: PgPool) {
     let repository = PgModelDataPolicyDecisionRepository::new(PgStore::from_pool(pool.clone()));
     let decision = decision();
@@ -60,7 +60,7 @@ async fn model_data_policy_decisions_preserve_the_boundary_facts(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn model_data_policy_decisions_cannot_be_edited_or_deleted(pool: PgPool) {
     let repository = PgModelDataPolicyDecisionRepository::new(PgStore::from_pool(pool.clone()));
     let decision = decision();

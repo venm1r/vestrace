@@ -680,7 +680,7 @@ fn assert_state_refusal(
     ));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandon_replay_returns_its_original_erasure_preparation(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let association_version: i64 = sqlx::query_scalar(
@@ -717,7 +717,7 @@ async fn candidate_abandon_replay_returns_its_original_erasure_preparation(pool:
     assert_eq!(replayed, prepared);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandon_refuses_stale_or_unequal_association_versions(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let association_version: i64 = sqlx::query_scalar(
@@ -779,7 +779,7 @@ async fn candidate_abandon_refuses_stale_or_unequal_association_versions(pool: P
     stale.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandon_runtime_acl_executes_only_the_guarded_function(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let association_version: i64 = sqlx::query_scalar(
@@ -825,7 +825,7 @@ async fn candidate_abandon_runtime_acl_executes_only_the_guarded_function(pool: 
     runtime.close().await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandon_recovers_guarded_prepare_through_vault_fence_and_finalize(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let association_version: i64 = sqlx::query_scalar(
@@ -898,7 +898,7 @@ async fn candidate_abandon_recovers_guarded_prepare_through_vault_fence_and_fina
     assert_eq!(idempotency_count, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_abandon_rejects_same_request_key_with_a_different_hash(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let association_version: i64 = sqlx::query_scalar(
@@ -942,7 +942,7 @@ async fn candidate_abandon_rejects_same_request_key_with_a_different_hash(pool: 
     assert_eq!(audits, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn first_activation_moves_slot_version_and_closes_occupancy(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -981,7 +981,7 @@ async fn first_activation_moves_slot_version_and_closes_occupancy(pool: PgPool) 
     assert_eq!(occupancy, "activated");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn candidate_q1_activation_atomically_advances_connection_and_both_model_heads(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let (connection_qualification_id, chat_qualification_id, embedding_qualification_id) =
@@ -1027,7 +1027,7 @@ async fn candidate_q1_activation_atomically_advances_connection_and_both_model_h
     });
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn stale_activation_is_a_typed_conflict_and_leaves_no_evidence(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -1057,7 +1057,7 @@ async fn stale_activation_is_a_typed_conflict_and_leaves_no_evidence(pool: PgPoo
     assert_eq!(counts, (0, 0, 0, 0));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn activating_an_already_active_slot_is_refused(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -1079,7 +1079,7 @@ async fn activating_an_already_active_slot_is_refused(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn rotation_retires_outgoing_intent_and_leaves_one_active_intent(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -1128,7 +1128,7 @@ async fn rotation_retires_outgoing_intent_and_leaves_one_active_intent(pool: PgP
     assert_eq!(active_count, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn rotation_from_a_non_current_revision_is_refused(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -1159,7 +1159,7 @@ async fn rotation_from_a_non_current_revision_is_refused(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn revoke_is_immediate_and_blocks_later_resolution(pool: PgPool) {
     let fixture = fixture(&pool).await;
     let repository = PgCredentialActivationRepository::new(PgStore::from_pool(pool.clone()));
@@ -1207,7 +1207,7 @@ async fn revoke_is_immediate_and_blocks_later_resolution(pool: PgPool) {
     assert_eq!(revoked_events, 1);
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn runtime_role_cannot_insert_activation_or_rotation_events(pool: PgPool) {
     let runtime = runtime_pool(&pool).await;
     let result = sqlx::query(
@@ -1476,7 +1476,7 @@ async fn real_ordinary_erasure(
     let final_counts: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM material_erasure_events WHERE preparation_id=$1),(SELECT count(*) FROM material_erasure_audit_tombstones WHERE preparation_id=$1)").bind(prepared.0).fetch_one(owner).await.unwrap();
     assert_eq!(final_counts, (2, 1));
 }
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn revoked_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
     let host = RealErasureHost::new();
     let fixture = fixture_with_host(&pool, Some(&host)).await;
@@ -1498,7 +1498,7 @@ async fn revoked_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
         .unwrap();
     real_ordinary_erasure(&pool, &runtime, &fixture, &host, fixture.first).await;
 }
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn retired_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
     let host = RealErasureHost::new();
     let fixture = fixture_with_host(&pool, Some(&host)).await;
@@ -1522,7 +1522,7 @@ async fn retired_credential_erasure_uses_real_host_and_commits(pool: PgPool) {
     real_ordinary_erasure(&pool, &runtime, &fixture, &host, fixture.first).await;
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn ordinary_erasure_refuses_candidate_active_and_foreign_identity(pool: PgPool) {
     let host = RealErasureHost::new();
     let fixture = fixture_with_host(&pool, Some(&host)).await;
@@ -1627,7 +1627,7 @@ async fn ordinary_erasure_refuses_candidate_active_and_foreign_identity(pool: Pg
     assert_eq!(callbacks, 1, "refusals must preserve the actual host key");
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn credential_finalizer_defensively_requires_its_exact_revocation_evidence(pool: PgPool) {
     use vestrace_application::MaterialErasureRepository;
     let host = RealErasureHost::new();

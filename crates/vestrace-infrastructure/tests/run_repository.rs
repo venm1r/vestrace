@@ -8,7 +8,7 @@ use vestrace_domain::{
 };
 use vestrace_infrastructure::{PgRunRepository, PgStore};
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn run_repository_isolates_workspaces(pool: PgPool) {
     let workspace_a = WorkspaceId::new();
     let workspace_b = WorkspaceId::new();

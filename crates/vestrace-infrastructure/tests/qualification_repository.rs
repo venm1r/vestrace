@@ -25,7 +25,7 @@ fn bundle(target_manifest: &str) -> QualificationBundle {
     .unwrap()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_repository_round_trips_immutable_bundles(pool: PgPool) {
     let repository = PgQualificationRepository::new(PgStore::from_pool(pool));
     let bundle = bundle("target-manifest-a");
@@ -63,7 +63,7 @@ async fn qualification_repository_round_trips_immutable_bundles(pool: PgPool) {
     ));
 }
 
-#[sqlx::test(migrations = "../../migrations")]
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn qualification_repository_latest_lookup_is_target_bound(pool: PgPool) {
     let repository = PgQualificationRepository::new(PgStore::from_pool(pool));
     let first = bundle("target-manifest-a");
