@@ -380,8 +380,18 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
   assert.equal(byId.get('g0-17').status, 'blocked');
   assert.ok(byId.get('g0-17').sources.length > 0, 'a blocked criterion still names what it ran');
 
+  // P05-H moved three more from unknown to blocked -- honest partial-conjunction
+  // evidence, not a pass. Each still names what it ran.
+  for (const id of ['g0-10', 'g0-14', 'g0-15']) {
+    assert.equal(byId.get(id).status, 'blocked', id);
+    assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
+  }
+
   const passed = report.criteria.filter((entry) => entry.status === 'pass');
   assert.equal(passed.length, 12, 'no package may claim a criterion it did not close');
+
+  const blocked = report.criteria.filter((entry) => entry.status === 'blocked');
+  assert.equal(blocked.length, 4, 'g0-17 plus the three P05-H partial conjunctions');
 
   // Nothing is inherited from P05-A through P05-C.
   assert.equal(byId.get('g0-16').status, 'unknown');

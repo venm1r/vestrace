@@ -124,9 +124,16 @@
     },
     {
       "id": "g0-10",
-      "claim": "unknown",
-      "reason": "EmbeddingSpaceTransition oracles are P04 work and include browser evidence, which this package neither ran nor is scoped to run.",
-      "sources": []
+      "claim": "blocked",
+      "reason": "embedding_transition_planning, embedding_transition_barriers, embedding_transition_activation, and embedding_space_isolation together prove independently-exact spaces, opaque recipes, immutable batch identity, and recipe-granular partial carry with only-current classification, re-run fresh 2026-09-17 by P05-H. This closes the component/PostgreSQL/fault conjuncts. It does not close the conjunction: DrainMutationPermit and Quiescing (the completion-only reconciliation and no-post-freeze-write conjuncts) do not exist anywhere in the repository, in Rust or SQL (confirmed by grep, matching P04's own record), and the browser oracle conjunct is unavailable this session.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/embedding-transition-test.txt",
+          "sha256": "aca330f7c2878b30c9f93f1f2c731433ce0461ef63158e13bdcaedd5ea98c080",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_transition_planning --test embedding_transition_barriers --test embedding_transition_activation --test embedding_space_isolation",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-11",
@@ -155,15 +162,29 @@
     },
     {
       "id": "g0-14",
-      "claim": "unknown",
-      "reason": "Duplicate-charge successors and retrieval fences are P04 work and include browser evidence.",
-      "sources": []
+      "claim": "blocked",
+      "reason": "retrieval_generation_fence, embedding_retrieval_results, embedding_result_finalization, and embedding_result_preparation together prove the fence's atomic result/Succeeded or provider-success-plus-generation-changed orders and the authorized one-successor current-generation retry chain, re-run fresh 2026-09-17 by P05-H. This closes the component/PostgreSQL/fault conjuncts named by spec clause 946; that same clause also names browser tests, which are unavailable this session, so the conjunction is not closed.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/retrieval-retry-test.txt",
+          "sha256": "9670e5348e61b8795a721cdf3492c3be7854243b043a7c0e7838a79143c6b97c",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test retrieval_generation_fence --test embedding_retrieval_results --test embedding_result_finalization --test embedding_result_preparation",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-15",
-      "claim": "unknown",
-      "reason": "Append-only evidence and material lifecycle guarantees are P02/P04 work.",
-      "sources": []
+      "claim": "blocked",
+      "reason": "erasure_is_one_way, erasure_holds_no_lock_during_vault_call, invariant_observer_contract, and material_vault_contract together prove the one-way Live->ErasurePrepared->Tombstoned material lifecycle and vault-call lock discipline, re-run fresh 2026-09-17 by P05-H. A search for the spec's dictionary-resistant erasure-bound comparison-scope mechanism (grep -rni \"dictionary\" and \"comparison.scope\" across crates/) found no matches, so that conjunct is neither confirmed built nor confirmed absent -- recorded as a follow-up investigation, not a P05-H repair. Separately, cargo test -p vestrace-domain --test evidence_is_readable fails (WitnessStateV1.generation_lineage_state, WitnessAdvance.event_kind, and WitnessAdvance.next_state are recorded fields with no reader); this is a genuine pre-existing defect unrelated to this criterion's claim, named as follow-up and not repaired here.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/material-lifecycle-test.txt",
+          "sha256": "19ff46756e5a74d40c866c61b5cfedbe424d101239582297ed1644296fa0520d",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test erasure_is_one_way && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test erasure_holds_no_lock_during_vault_call --test material_vault_contract && cargo test -p vestrace-infrastructure --test invariant_observer_contract",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-16",

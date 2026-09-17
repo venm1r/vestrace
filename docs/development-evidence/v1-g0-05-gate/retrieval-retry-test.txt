@@ -1,0 +1,88 @@
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test retrieval_generation_fence
+
+running 4 tests
+test a_space_without_a_published_generation_is_refused ... ok
+test the_current_canonical_generation_resolves_for_its_exact_space ... ok
+test another_name_or_model_is_not_a_valid_canonical_pin ... ok
+test a_superseded_generation_is_no_longer_what_the_fence_names ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.58s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_retrieval_results
+
+running 21 tests
+test canonical_reference_entrypoints_require_workspace_context ... ok
+test malformed_references_roll_back_before_a_valid_finish ... ok
+test a_generation_that_moves_first_refuses_the_result_and_stores_nothing ... ok
+test a_terminal_attempt_reads_back_as_its_outcome_and_its_lineage ... ok
+test a_published_projection_resolves_to_its_memory_revision ... ok
+test a_result_and_a_generation_change_exclude_each_other ... ok
+test one_confirmed_change_authorizes_exactly_one_successor ... ok
+test ambiguous_revision_owners_remain_ambiguous_after_owner_deletion ... ok
+test a_result_lands_while_its_pinned_generation_is_current ... ok
+test terminal_branches_exclude_each_other_in_both_blocked_commit_orders ... ok
+test mutating_the_one_successor_lookup_moves_the_refusal_and_restores_exactly ... ok
+test mutating_memory_provenance_makes_a_wrong_memory_reference_persist ... ok
+test distinct_projections_of_one_revision_cannot_form_two_result_references ... ok
+test only_a_live_fence_makes_a_retrieval_query_claimable ... ok
+test a_job_takes_exactly_one_fence ... ok
+test mutating_the_pinned_generation_fence_is_contained_by_additional_snapshot_guard ... ok
+test the_runtime_role_cannot_write_retrieval_tables_directly ... ok
+test unchecked_result_overloads_are_retired ... ok
+test the_worker_reads_back_the_generation_the_fence_pinned ... ok
+test the_attempt_view_reports_what_the_durable_record_holds ... ok
+test the_retry_queue_holds_only_unspent_confirmed_changes ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.82s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_result_finalization
+
+running 17 tests
+test legacy_rotation_is_refused_without_embedding_transition_authority ... ok
+test generic_finalizer_cannot_publish_bound_embedding_output ... ok
+test all_bound_publishers_recheck_publication_after_the_connection_guard ... ok
+test published_job_recovery_survives_guarded_credential_revocation ... ok
+test legacy_adoption_erasure_first_after_observed_lease_expiry_refuses ... ok
+test finalizers_serialize_with_source_erasure_in_both_orders ... ok
+test published_direct_replay_requires_the_exact_commitment_tuple ... ok
+test publication_releases_only_job_owned_credential_blocker ... ok
+test publication_defensively_refuses_a_corrupted_non_live_source ... ok
+test concurrent_finalizers_converge_on_one_publication ... ok
+test partial_binding_preserves_history_and_stays_non_live ... ok
+test all_outputs_publish_with_one_corpus_event ... ok
+test legacy_adoption_revocation_first_refuses_without_partial_owner ... ok
+test legacy_marker_adoption_never_transfers_old_blocker ... ok
+test preparation_replay_and_publication_serialize_in_both_orders_without_reseal ... ok
+test publication_preserves_exact_attachment_history ... ok
+test published_public_adoption_replays_after_guarded_credential_revocation ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.03s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_result_preparation
+
+running 14 tests
+test result_preparation_schema_is_guarded_and_runtime_dml_is_refused ... ok
+test result_preparation_marker_first_replay_and_concurrent_callers_converge ... ok
+test result_preparation_refuses_a_missing_exact_output_key_receipt ... ok
+test result_preparation_loader_refuses_projection_with_mismatched_policy_labels ... ok
+test result_prepared_fences_late_terminal_retirement_and_generic_abandonment ... ok
+test result_preparation_loader_refuses_a_corrupted_partial_marker ... ok
+test result_preparation_requires_its_exact_allowed_delivery_policy ... ok
+test result_prepared_terminal_fence_rejects_a_guarded_owner_bypass ... ok
+test result_preparation_commits_a_complete_non_live_two_output_tuple ... ok
+test result_preparation_loader_refuses_a_marker_missing_an_exact_source_dependency ... ok
+test result_preparation_binds_its_active_credential_snapshot_tuple ... ok
+test result_preparation_loader_refuses_a_marker_with_an_unsafe_source_chain ... ok
+test result_preparation_refuses_malformed_caller_tuples_without_partial_state ... ok
+test result_recovery_refuses_a_marker_with_mismatched_exact_acknowledgement ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.65s
+
+exit: 0
