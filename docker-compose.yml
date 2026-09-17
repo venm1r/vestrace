@@ -109,7 +109,7 @@ services:
       - >-
         psql --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" --no-password --no-psqlrc
         --set=ON_ERROR_STOP=1 -c "ALTER ROLE vestrace NOLOGIN;"
-        -c "DO \$\$ BEGIN IF (SELECT count(*) FROM _sqlx_migrations WHERE success) <> 138 OR EXISTS (SELECT 1 FROM _sqlx_migrations WHERE NOT success OR version > 208) THEN RAISE EXCEPTION 'P05 bootstrap requires exact 0208 migration ledger'; END IF; END \$\$;"
+        -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM _sqlx_migrations WHERE NOT success) THEN RAISE EXCEPTION 'P05 bootstrap requires a clean migration ledger'; END IF; IF NOT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = 209) AND ((SELECT count(*) FROM _sqlx_migrations) <> 138 OR EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version > 208)) THEN RAISE EXCEPTION 'P05 bootstrap requires exact 0208 migration ledger'; END IF; END \$\$;"
         -c "SELECT public.vestrace_install_p05_safety_schema();"
         -c "ALTER ROLE vestrace LOGIN;"
     restart: "no"
@@ -129,6 +129,119 @@ services:
     command: ["migrate", "--only-version", "209"]
     restart: "no"
 
+  # Each P05 assertion migration after 0209 is pinned to its exact predecessor
+  # (see crates/vestrace-infrastructure/src/postgres/pool.rs's
+  # p05_assertion_migration allowlist) and must be applied one version at a
+  # time, in order -- the same fixed route the disposable-Compose evidence
+  # recipe already uses. The server's own startup self-check
+  # (migrations_are_compatible) requires every migration the binary embeds to
+  # be present in the ledger, so skipping any one of these leaves the server
+  # refusing to start with "database migration history is incompatible".
+  vestrace-migrate-p05-210:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "210"]
+    restart: "no"
+
+  vestrace-migrate-p05-211:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-210:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "211"]
+    restart: "no"
+
+  vestrace-migrate-p05-212:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-211:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "212"]
+    restart: "no"
+
+  vestrace-migrate-p05-213:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-212:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "213"]
+    restart: "no"
+
+  vestrace-migrate-p05-214:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-213:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "214"]
+    restart: "no"
+
+  vestrace-migrate-p05-215:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-214:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "215"]
+    restart: "no"
+
+  vestrace-migrate-p05-216:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-215:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "216"]
+    restart: "no"
+
   # The installation fingerprint this vault holds is bound to the safety
   # authority's continuity record, which 0209 creates. Without an explicit
   # prerequisite Compose is free to create the vault root before that authority
@@ -137,7 +250,7 @@ services:
   vestrace-fingerprint-vault-init:
     image: busybox:1.36.1
     depends_on:
-      vestrace-migrate-p05:
+      vestrace-migrate-p05-216:
         condition: service_completed_successfully
     entrypoint:
       - sh
@@ -443,7 +556,7 @@ services:
   dev-seed:
     image: pgvector/pgvector:pg17-bookworm
     depends_on:
-      vestrace-migrate-p05:
+      vestrace-migrate-p05-216:
         condition: service_completed_successfully
     environment:
       PGPASSWORD: bootstrap-local-development-only

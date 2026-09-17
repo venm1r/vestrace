@@ -228,7 +228,21 @@ impl PgStore {
     }
 
     /// Applies only the embedded migration prefix through `version`.
+    ///
+    /// Idempotent the same way `migrate_only_version_after` already is: once
+    /// this prefix is intact, this returns `Ok` without calling sqlx's own
+    /// `Migrator::run` again. sqlx's migrator refuses to run at all against a
+    /// ledger that already holds versions past what a bounded migrator lists
+    /// (its own "migration was previously applied but is missing from the
+    /// resolved migrations" protection) -- which is exactly the ledger state
+    /// of a real deployment restarted after any P05 (0209+) migration has
+    /// ever succeeded. Without this check, `vestrace-migrate-history`'s
+    /// `--through-version 208` step -- meant to be a no-op on every restart
+    /// after the very first one -- fails outright instead.
     pub async fn migrate_through_version(&self, version: i64) -> Result<(), InfrastructureError> {
+        if self.migrations_are_compatible_through(version).await? {
+            return Ok(());
+        }
         let migrator = bounded_migrator(version)?;
         migrator.run(&self.pool).await?;
         Ok(())
@@ -398,10 +412,22 @@ async fn migration_ledger_matches_through<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    let applied =
-        sqlx::query("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(executor)
-            .await?;
+    // Bounded the same way `expected` is bounded below: this asks whether the
+    // ledger's prefix through `through` is intact, not whether `through` is
+    // the ledger's current head. Once a P05 one-shot migration step (0209+)
+    // has ever succeeded, the ledger permanently holds rows past every
+    // earlier `--through-version`/`--only-version` call's own target -- an
+    // idempotent retry (or, for `vestrace-migrate-history`, a full `docker
+    // compose down && up` restart with the volume preserved) must still see
+    // this as a match, not a stale/out-of-order ledger. The `Full` caller
+    // (the server's own startup check) passes `through = i64::MAX`, where
+    // this bound is a no-op and every embedded migration is still required.
+    let applied = sqlx::query(
+        "SELECT version, success, checksum FROM _sqlx_migrations WHERE version <= $1 ORDER BY version",
+    )
+    .bind(through)
+    .fetch_all(executor)
+    .await?;
     let expected: Vec<_> = MIGRATOR
         .iter()
         .filter(|migration| migration.version <= through)
@@ -675,5 +701,56 @@ mod tests {
             expected,
             "the drain historical migrator dropped or added a migration"
         );
+    }
+
+    // Regression: `migration_ledger_matches_through` used to compare the
+    // *entire* ledger against the `through`-bounded expected prefix, so once
+    // any migration past `through` had ever succeeded, this returned `false`
+    // forever -- breaking `vestrace-migrate-history`'s idempotent
+    // `--through-version 208` re-run on every restart of a deployment that
+    // had already reached 209+. DRAIN_HISTORICAL_MIGRATOR reaches 216 without
+    // the P05 bootstrap ceremony, so it stands in for "the ledger has already
+    // moved past the version this call cares about."
+    #[sqlx::test(migrator = "crate::postgres::pool::DRAIN_HISTORICAL_MIGRATOR")]
+    async fn compatibility_through_an_earlier_version_survives_a_ledger_that_moved_past_it(
+        pool: sqlx::PgPool,
+    ) {
+        let store = super::PgStore::from_pool(pool);
+        let compatible_through_208 = store
+            .migrations_are_compatible_through(P05_HISTORY_PREFIX_VERSION)
+            .await
+            .expect("compatibility check must not fail outright");
+        assert!(
+            compatible_through_208,
+            "the 1-208 prefix is intact even though the ledger has already reached 216",
+        );
+
+        // The unbounded (server startup) check is unaffected by this fix: it
+        // must still report incompatible here, because this ledger
+        // (DRAIN_HISTORICAL_MIGRATOR) deliberately excludes the seven P05
+        // assertion migrations 209-215 that the full embedded MIGRATOR
+        // requires. A real deployment ledger has every one of them; this
+        // just proves the fix did not also quietly widen the unbounded case.
+        let fully_compatible = store
+            .migrations_are_compatible()
+            .await
+            .expect("compatibility check must not fail outright");
+        assert!(
+            !fully_compatible,
+            "the unbounded check must still require the excluded P05 assertion migrations",
+        );
+
+        // The compatibility check alone is not the whole story: sqlx's own
+        // `Migrator::run` independently refuses to run at all against a
+        // ledger holding versions past what a bounded migrator lists (its own
+        // "migration was previously applied but is missing from the resolved
+        // migrations" protection). `migrate_through_version` must short-
+        // circuit before ever calling it, exactly like this same call would
+        // on a freshly-restarted real deployment whose ledger has already
+        // reached 216.
+        store
+            .migrate_through_version(P05_HISTORY_PREFIX_VERSION)
+            .await
+            .expect("a no-op re-run through 208 must not fail sqlx's own migrator");
     }
 }
