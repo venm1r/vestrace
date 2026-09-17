@@ -208,14 +208,21 @@
     },
     {
       "id": "g0-16",
-      "claim": "unknown",
-      "reason": "Witnessed backup, restore, and crypto-erasure are P05-A through P05-C work. P05-D neither re-ran nor re-verified that evidence, and inheriting a pass from an earlier package is exactly the inference this collector exists to prevent.",
-      "sources": []
+      "claim": "pass",
+      "reason": "Re-run fresh 2026-09-17 by P05-J against a genuinely disposable, freshly-provisioned PostgreSQL (built from the current docker/postgres image, migrated through 216 by the real forward-only route), never inheriting P05-A/B/C's original evidence. installation_safety_authority and backup_archive_authority and restore_cutover_authority prove the universal InstallationMutationPermit/guarded-owner authority posture and that the restricted runtime role cannot write archive/restore state directly (SQLSTATE 42501 on every attempt). safety_supervisor_witness proves the append-only witnessed journal (immutable entries, fsynced witness, corrupt-record refusal) in the Linux runner this exact durability model requires -- it fails closed on Windows (SafetyBootstrapRecord::open_or_create's `os error 5`) and that refusal was not weakened to obtain a local pass. safety_archive_recovery and safety_restore_recovery prove the encrypted set+continuous-WAL archive lifecycle, Streaming/Sealing hold serialization, source freeze/target fork, atomic Abandoned+SourceResumePrepared or plan-bound TargetActivating, and two-phase crypto-erasure survive real crash-injection restarts against a live PostgreSQL 17 instance.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/backup-restore-authority-test.txt",
+          "sha256": "c3e113817cb09aa331fdb628e81eb975a4fd71c95d0eeb31cb97d8bcbac10e65",
+          "command": "VESTRACE_P05_TEST_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55434/vestrace cargo test -p vestrace-infrastructure --test installation_safety_authority -- --nocapture && VESTRACE_P05_TEST_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55434/vestrace cargo test -p vestrace-infrastructure --test backup_archive_authority -- --nocapture && VESTRACE_P05_TEST_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55434/vestrace cargo test -p vestrace-infrastructure --test restore_cutover_authority -- --nocapture && docker run --rm --network p05j_default -v \"$PWD:/workspace\" -v p05c-linux-cargo-home:/usr/local/cargo -v p05c-linux-target-cache:/workspace/target-linux -w /workspace -e CARGO_TARGET_DIR=/workspace/target-linux p05c-rust185-cache:latest cargo test -p vestrace-cli --test safety_supervisor_witness -- --test-threads=1 --nocapture && docker run --rm --network p05j_default -v \"$PWD:/workspace\" -v p05c-linux-cargo-home:/usr/local/cargo -v p05c-linux-target-cache:/workspace/target-linux -w /workspace -e CARGO_TARGET_DIR=/workspace/target-linux -e VESTRACE_P05_RECOVERY_BOOTSTRAP_DATABASE_URL=postgres://vestrace_bootstrap:bootstrap-local-development-only@p05j-postgres:5432/vestrace?sslmode=disable -e VESTRACE_P05_RECOVERY_SUPERVISOR_DATABASE_URL=postgres://vestrace_safety_supervisor:safety-supervisor-local-development-only@p05j-postgres:5432/vestrace?sslmode=disable p05c-rust185-cache:latest cargo test -p vestrace-cli --test safety_archive_recovery -- --test-threads=1 --nocapture && docker run --rm --network p05j_default -v \"$PWD:/workspace\" -v p05c-linux-cargo-home:/usr/local/cargo -v p05c-linux-target-cache:/workspace/target-linux -w /workspace -e CARGO_TARGET_DIR=/workspace/target-linux -e VESTRACE_P05_RECOVERY_BOOTSTRAP_DATABASE_URL=postgres://vestrace_bootstrap:bootstrap-local-development-only@p05j-postgres:5432/vestrace?sslmode=disable -e VESTRACE_P05_RECOVERY_SUPERVISOR_DATABASE_URL=postgres://vestrace_safety_supervisor:safety-supervisor-local-development-only@p05j-postgres:5432/vestrace?sslmode=disable p05c-rust185-cache:latest cargo test -p vestrace-cli --test safety_restore_recovery -- --test-threads=1 --nocapture",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-17",
-      "claim": "blocked",
-      "reason": "P05-D proves the Compose least-privilege topology, the independent host safety stores, the supervisor-only readiness read and its grants, and the forward-only 0209-0215 route. It does not re-prove the archiver or the create-only fingerprint-key identity/proof conjuncts of this criterion, which belong to P05-A and P05-B, so the conjunction is not closed here.",
+      "claim": "pass",
+      "reason": "P05-D proved the Compose least-privilege topology, the independent host safety stores, the supervisor-only readiness read and its grants, and the forward-only 0209-0215 route. P05-J closes the two remaining named conjuncts, re-run fresh 2026-09-17 with no BLOCKED shortcut: safety_archive_host_custody proves the archiver (create-only staging, exact orphan cleanup, distinct-root isolation, and that Compose owns no archive/key-custody/supervisor service of its own); fingerprint_continuity_is_fail_closed proves the create-only fingerprint-key identity/proof (domain-separated continuity proof, no rotation/overwrite operation exists anywhere, fail-closed readiness on every wrong-key/wrong-version/missing-proof case, and the key record is never stored in PostgreSQL). Every conjunct spec clause 949 names is now covered.",
       "sources": [
         {
           "path": "v1-g0-05-gate/compose-config.txt",
@@ -245,6 +252,12 @@
           "path": "v1-g0-05-gate/migration-ledger.txt",
           "sha256": "ccc89a2f82f6d1585654ec8f1a4cfd03323ec4361eb27e5e267e9984fada2fc4",
           "command": "psql: forward-only P05 migration ledger",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/archiver-fingerprint-test.txt",
+          "sha256": "3342840c7041d4900d0feb0ef4d91a19d2109d4c29076d0f19a0d3a78cbece71",
+          "command": "cargo test -p vestrace-cli --test safety_archive_host_custody && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test fingerprint_continuity_is_fail_closed",
           "exit_code": 0
         }
       ]

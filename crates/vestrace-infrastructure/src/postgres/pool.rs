@@ -371,6 +371,9 @@ fn p05_assertion_migration(
         ) | (
             P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
             P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION
+        ) | (
+            P05_DRAIN_PREFIX_VERSION,
+            P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION
         )
     );
     if !permitted {

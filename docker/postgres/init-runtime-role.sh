@@ -4854,38 +4854,279 @@ psql \
   --no-password \
   --no-psqlrc \
   --set=ON_ERROR_STOP=1 <<'SQL'
-DO $installation_drain_bootstrap$
-DECLARE applied BOOLEAN:=false;
+-- P05-I DrainMutationPermit/Quiescing: creates installation_drain_requests,
+-- the drained_by snapshot columns, the two new drain functions, and widens
+-- the two existing reserve functions with one precondition each. Matches the
+-- established P05 (0209+) pattern exactly: this is a SECURITY DEFINER
+-- function owned by vestrace_guarded_owner (the owner of schema public
+-- itself, so its body always has CREATE rights regardless of what has been
+-- revoked from vestrace), callable by the restricted runtime role, invoked
+-- from within migration 0216 itself -- the same shape as
+-- vestrace_install_p05_base_capture_guards (0211) and
+-- vestrace_install_p05_restore_cutover_guards (0212). No ownership hand-back
+-- is needed: CREATE OR REPLACE FUNCTION issued from inside a SECURITY
+-- DEFINER body executes, and creates new objects, as the function's owner.
+CREATE OR REPLACE FUNCTION public.vestrace_install_p05_installation_drain_guards()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $guards$
 BEGIN
- IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
-  SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=216 AND success) INTO applied;
- END IF;
- IF applied THEN
-  IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.material_key_creation_intents'::regclass)<>'vestrace_guarded_owner'
-   OR (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.credential_key_creation_intents'::regclass)<>'vestrace_guarded_owner'
-   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_reserve_material_key_creation_intent(uuid,uuid,uuid,uuid,uuid,text,uuid,bigint)'::regprocedure)<>'vestrace_guarded_owner'
-   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_reserve_credential_key_creation_intent(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text)'::regprocedure)<>'vestrace_guarded_owner' THEN
-   RAISE EXCEPTION 'installation-drain ownership hand-back left an object unrestored' USING ERRCODE='42501'; END IF;
-  DROP FUNCTION IF EXISTS vestrace_prepare_p05_installation_drain_upgrade();
- ELSE
-  EXECUTE $function$
-  CREATE OR REPLACE FUNCTION vestrace_prepare_p05_installation_drain_upgrade()
-  RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+  IF to_regclass('public.material_key_creation_intents') IS NULL
+     OR to_regclass('public.credential_key_creation_intents') IS NULL THEN
+    RAISE EXCEPTION 'P05 installation-drain guards require the material/credential intent schema' USING ERRCODE = '42501';
+  END IF;
+
+  IF to_regclass('public.installation_drain_requests') IS NULL THEN
+    EXECUTE 'CREATE TABLE public.installation_drain_requests (
+        id UUID PRIMARY KEY,
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        CONSTRAINT installation_drain_requests_completed_after_requested
+            CHECK (completed_at IS NULL OR completed_at >= requested_at)
+    )';
+    EXECUTE 'CREATE UNIQUE INDEX installation_drain_requests_one_active
+        ON public.installation_drain_requests ((true))
+        WHERE completed_at IS NULL';
+    EXECUTE 'REVOKE ALL ON TABLE public.installation_drain_requests FROM PUBLIC, vestrace';
+    EXECUTE 'GRANT SELECT ON TABLE public.installation_drain_requests TO vestrace';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'material_key_creation_intents' AND column_name = 'drained_by'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.material_key_creation_intents
+        ADD COLUMN drained_by UUID REFERENCES public.installation_drain_requests(id)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'credential_key_creation_intents' AND column_name = 'drained_by'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.credential_key_creation_intents
+        ADD COLUMN drained_by UUID REFERENCES public.installation_drain_requests(id)';
+  END IF;
+
+  -- Pre-Quiescing states per docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md
+  -- section 2. Bound and every terminal state are never stamped: g0-13 --
+  -- "Bound never abandons" -- and a terminal intent needs no draining.
+  EXECUTE $reqfn$
+  CREATE OR REPLACE FUNCTION public.vestrace_request_installation_drain(
+      target_request_id UUID
+  )
+  RETURNS VOID
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+  AS $reqbody$
   BEGIN
-   IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=215 AND success)
-    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=216 AND success) THEN
-    RAISE EXCEPTION 'installation-drain upgrade requires exact 0215 predecessor' USING ERRCODE='42501'; END IF;
-   ALTER TABLE public.material_key_creation_intents OWNER TO vestrace;
-   ALTER TABLE public.credential_key_creation_intents OWNER TO vestrace;
-   ALTER FUNCTION public.vestrace_reserve_material_key_creation_intent(uuid,uuid,uuid,uuid,uuid,text,uuid,bigint) OWNER TO vestrace;
-   ALTER FUNCTION public.vestrace_reserve_credential_key_creation_intent(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text) OWNER TO vestrace;
-   REVOKE EXECUTE ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() FROM vestrace;
-  END $body$
-  $function$;
-  REVOKE ALL ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() FROM PUBLIC;
-  GRANT EXECUTE ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() TO vestrace;
- END IF;
-END $installation_drain_bootstrap$;
+      PERFORM pg_advisory_xact_lock(hashtext('vestrace-installation-mutation-permit-v1')::bigint);
+      IF EXISTS (SELECT 1 FROM installation_drain_requests WHERE completed_at IS NULL) THEN
+          RAISE EXCEPTION 'an installation drain is already active' USING ERRCODE = '55000';
+      END IF;
+
+      INSERT INTO installation_drain_requests (id) VALUES (target_request_id);
+
+      UPDATE material_key_creation_intents
+         SET drained_by = target_request_id
+       WHERE state IN ('reserved', 'provisional_created', 'provisional_receipted',
+                        'content_prepared', 'result_prepared')
+         AND drained_by IS NULL;
+
+      UPDATE credential_key_creation_intents
+         SET drained_by = target_request_id
+       WHERE state IN ('reserved', 'provisional_created', 'provisional_receipted',
+                        'credential_prepared')
+         AND drained_by IS NULL;
+  END
+  $reqbody$;
+  $reqfn$;
+
+  EXECUTE $recfn$
+  CREATE OR REPLACE FUNCTION public.vestrace_reconcile_installation_drain(
+      target_request_id UUID
+  )
+  RETURNS BOOLEAN
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+  AS $recbody$
+  DECLARE
+      pending BIGINT;
+  BEGIN
+      PERFORM 1 FROM installation_drain_requests WHERE id = target_request_id AND completed_at IS NULL
+          FOR UPDATE;
+      IF NOT FOUND THEN
+          -- Already Frozen (or the id is unknown) is not an error: reconcile
+          -- is idempotent and safe to call after a crash or a repeat call.
+          RETURN EXISTS (
+              SELECT 1 FROM installation_drain_requests
+               WHERE id = target_request_id AND completed_at IS NOT NULL
+          );
+      END IF;
+
+      SELECT
+          (SELECT COUNT(*) FROM material_key_creation_intents
+            WHERE drained_by = target_request_id
+              AND state IN ('reserved', 'provisional_created', 'provisional_receipted',
+                             'content_prepared', 'result_prepared'))
+          +
+          (SELECT COUNT(*) FROM credential_key_creation_intents
+            WHERE drained_by = target_request_id
+              AND state IN ('reserved', 'provisional_created', 'provisional_receipted',
+                             'credential_prepared'))
+        INTO pending;
+
+      IF pending = 0 THEN
+          UPDATE installation_drain_requests SET completed_at = NOW() WHERE id = target_request_id;
+          RETURN TRUE;
+      END IF;
+      RETURN FALSE;
+  END
+  $recbody$;
+  $recfn$;
+
+  -- Widens the existing reserve functions with one precondition: refuse a
+  -- new Reserved intent while any drain request row exists (active or
+  -- Frozen -- freezing is permanent for that request; a new drain would be a
+  -- new request row). Every other line is copied unchanged from migrations
+  -- 0169 and 0173 respectively.
+  EXECUTE $matfn$
+  CREATE OR REPLACE FUNCTION public.vestrace_reserve_material_key_creation_intent(
+      target_intent_id UUID,
+      target_workspace_id UUID,
+      target_material_id UUID,
+      target_material_key_id UUID,
+      target_nonce UUID,
+      target_owner_kind TEXT,
+      target_owner_id UUID,
+      target_output_ordinal BIGINT
+  )
+  RETURNS VOID
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+  AS $matbody$
+  BEGIN
+      PERFORM pg_advisory_xact_lock_shared(hashtext('vestrace-installation-mutation-permit-v1')::bigint);
+      IF EXISTS (SELECT 1 FROM installation_drain_requests) THEN
+          RAISE EXCEPTION 'the installation is draining; no new material key creation intent may be reserved'
+              USING ERRCODE = '55000';
+      END IF;
+      PERFORM vestrace_assert_material_intent_workspace(target_workspace_id);
+
+      INSERT INTO material_key_creation_intents (
+          id,
+          workspace_id,
+          material_id,
+          material_key_id,
+          nonce,
+          owner_kind,
+          owner_id,
+          output_ordinal,
+          state
+      )
+      VALUES (
+          target_intent_id,
+          target_workspace_id,
+          target_material_id,
+          target_material_key_id,
+          target_nonce,
+          target_owner_kind,
+          target_owner_id,
+          target_output_ordinal,
+          'reserved'
+      );
+  END
+  $matbody$;
+  $matfn$;
+
+  EXECUTE $credfn$
+  CREATE OR REPLACE FUNCTION public.vestrace_reserve_credential_key_creation_intent(
+      target_intent_id UUID,
+      target_workspace_id UUID,
+      target_connection_id UUID,
+      target_slot_id UUID,
+      target_occupancy_id UUID,
+      target_revision_id UUID,
+      target_material_key_id UUID,
+      target_nonce UUID,
+      target_associated_data_profile TEXT
+  )
+  RETURNS VOID
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+  AS $credbody$
+  DECLARE
+      occupancy_row credential_guard_occupancies%ROWTYPE;
+  BEGIN
+      PERFORM pg_advisory_xact_lock_shared(hashtext('vestrace-installation-mutation-permit-v1')::bigint);
+      IF EXISTS (SELECT 1 FROM installation_drain_requests) THEN
+          RAISE EXCEPTION 'the installation is draining; no new credential key creation intent may be reserved'
+              USING ERRCODE = '55000';
+      END IF;
+      PERFORM vestrace_acquire_credential_lock_chain(
+          target_workspace_id,
+          target_connection_id,
+          target_slot_id,
+          ARRAY[
+              'connection_execution_guard',
+              'credential_activation_guard',
+              'credential_slot',
+              'revision_material'
+          ]::TEXT[]
+      );
+      SELECT * INTO occupancy_row
+        FROM credential_guard_occupancies
+       WHERE id = target_occupancy_id
+         AND workspace_id = target_workspace_id
+         AND connection_id = target_connection_id
+         AND credential_slot_id = target_slot_id
+       FOR UPDATE;
+      IF NOT FOUND OR occupancy_row.state <> 'preparing' THEN
+          RAISE EXCEPTION 'credential intent requires a Preparing association'
+              USING ERRCODE = '23514';
+      END IF;
+      IF occupancy_row.intent_id IS NOT NULL THEN
+          RAISE EXCEPTION 'credential association already has an intent'
+              USING ERRCODE = '23505';
+      END IF;
+      IF target_associated_data_profile NOT IN ('credential_v2', 'legacy_v1') THEN
+          RAISE EXCEPTION 'credential associated-data profile is invalid' USING ERRCODE = '23514';
+      END IF;
+
+      -- Allocate this immutable identity before any caller can encrypt.
+      INSERT INTO credential_revisions (
+          id, workspace_id, credential_slot_id, material_key_id, associated_data_profile
+      ) VALUES (
+          target_revision_id, target_workspace_id, target_slot_id,
+          target_material_key_id, target_associated_data_profile
+      );
+      INSERT INTO credential_key_creation_intents (
+          id, workspace_id, connection_id, credential_slot_id, occupancy_id,
+          credential_revision_id, material_key_id, nonce, state
+      ) VALUES (
+          target_intent_id, target_workspace_id, target_connection_id, target_slot_id,
+          target_occupancy_id, target_revision_id, target_material_key_id, target_nonce, 'reserved'
+      );
+      UPDATE credential_guard_occupancies
+         SET intent_id = target_intent_id, updated_at = NOW()
+       WHERE id = target_occupancy_id;
+  END
+  $credbody$;
+  $credfn$;
+
+  EXECUTE 'REVOKE ALL ON FUNCTION public.vestrace_request_installation_drain(UUID) FROM PUBLIC, vestrace';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION public.vestrace_request_installation_drain(UUID) TO vestrace';
+  EXECUTE 'REVOKE ALL ON FUNCTION public.vestrace_reconcile_installation_drain(UUID) FROM PUBLIC, vestrace';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION public.vestrace_reconcile_installation_drain(UUID) TO vestrace';
+  -- The two reserve functions already carry their 0169/0173 grants (EXECUTE
+  -- to vestrace, revoked from PUBLIC); CREATE OR REPLACE preserves a
+  -- function's existing ACL when replacing an object that already exists.
+END
+$guards$;
+ALTER FUNCTION public.vestrace_install_p05_installation_drain_guards() OWNER TO vestrace_guarded_owner;
+REVOKE ALL ON FUNCTION public.vestrace_install_p05_installation_drain_guards() FROM PUBLIC, vestrace_safety_supervisor;
+GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_installation_drain_guards() TO vestrace;
 SQL
 
 # A physical base backup opens a replication connection, which PostgreSQL's

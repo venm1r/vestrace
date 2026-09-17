@@ -373,13 +373,6 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
     assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
   }
 
-  // The installer/Compose criterion is a conjunction. P05-D proves the
-  // topology, the safety stores, and the readiness grants, and does not
-  // re-prove the archiver or fingerprint-key conjuncts that belong to earlier
-  // packages -- so it is blocked, not passed.
-  assert.equal(byId.get('g0-17').status, 'blocked');
-  assert.ok(byId.get('g0-17').sources.length > 0, 'a blocked criterion still names what it ran');
-
   // P05-H moved three more from unknown to blocked -- honest partial-conjunction
   // evidence, not a pass. Each still names what it ran. g0-10 stays blocked
   // even after P05-I closes its DrainMutationPermit conjunct below, because
@@ -399,12 +392,32 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
     assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
   }
 
+  // P05-J re-ran g0-16 fresh against a genuinely disposable, freshly
+  // provisioned PostgreSQL (never inheriting P05-A/B/C's original evidence),
+  // and closed the two remaining named conjuncts of the g0-17 conjunction
+  // (the archiver and create-only fingerprint-key identity/proof) that P05-D
+  // had left open -- every conjunct spec clause 949 names is now covered, so
+  // g0-17 moves from blocked to pass alongside it.
+  for (const id of ['g0-16', 'g0-17']) {
+    assert.equal(byId.get(id).status, 'pass', id);
+    assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
+  }
+  // A pinned sources.length check alone would have passed even if P05-J's
+  // new evidence file were never actually wired into g0-17's sources array
+  // (P05-D's five pre-existing sources already satisfy length > 0) -- so
+  // this asserts the specific new source by name, not merely that some
+  // source exists.
+  assert.ok(
+    byId.get('g0-17').sources.some((source) => source.includes('archiver-fingerprint-test.txt')),
+    'g0-17 cites its new archiver/fingerprint-key evidence by name, not just by an unchanged source count',
+  );
+
   const passed = report.criteria.filter((entry) => entry.status === 'pass');
-  assert.equal(passed.length, 14, 'no package may claim a criterion it did not close');
+  assert.equal(passed.length, 16, 'no package may claim a criterion it did not close');
 
   const blocked = report.criteria.filter((entry) => entry.status === 'blocked');
-  assert.equal(blocked.length, 4, 'g0-17 plus the three P05-H partial conjunctions');
+  assert.equal(blocked.length, 3, 'the three P05-H partial conjunctions, blocked on their browser/search conjuncts');
 
-  // Nothing is inherited from P05-A through P05-C.
-  assert.equal(byId.get('g0-16').status, 'unknown');
+  const unknown = report.criteria.filter((entry) => entry.status === 'unknown');
+  assert.equal(unknown.length, 0, 'every criterion has now been evidence-checked at least once');
 });
