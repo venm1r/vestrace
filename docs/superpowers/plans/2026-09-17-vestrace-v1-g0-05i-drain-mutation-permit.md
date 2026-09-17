@@ -230,8 +230,13 @@ pub use pool::{DRAIN_HISTORICAL_MIGRATOR, HISTORICAL_MIGRATOR, PgGovernedMutatio
 
 - [ ] **Step 4: Run the guard**
 
-Run: `cargo test -p vestrace-infrastructure --lib the_drain_historical_migrator_extends_the_historical_prefix_excluding_p05_assertions the_historical_migrator_stops_at_the_declared_prefix`
-Expected: both PASS — confirms the new static is correct and the existing one is unchanged.
+Run each name separately, not combined — `DRAIN_HISTORICAL_MIGRATOR` is a `LazyLock` whose `.expect(...)` panics on first access when migration 216 is not embedded, so its own guard test cannot pass until Task 3 lands, exactly like Step 5's probe below (this plan originally said "both PASS" here, which is impossible before Task 3 exists — corrected during Task 2's review):
+
+Run: `cargo test -p vestrace-infrastructure --lib the_historical_migrator_stops_at_the_declared_prefix`
+Expected: PASS — confirms the existing static (`HISTORICAL_MIGRATOR`, bounded at 208) is unchanged.
+
+Run: `cargo test -p vestrace-infrastructure --lib the_drain_historical_migrator_extends_the_historical_prefix_excluding_p05_assertions`
+Expected: FAILS (panics) with `"requested bounded migration version is not embedded"` — the same expected-failure shape as Step 5, for the same reason. Task 3 makes this pass.
 
 - [ ] **Step 5: Prove the new migrator drives `#[sqlx::test]` before migration 0216 exists**
 
@@ -474,6 +479,7 @@ BEGIN
         RAISE EXCEPTION 'credential associated-data profile is invalid' USING ERRCODE = '23514';
     END IF;
 
+    -- Allocate this immutable identity before any caller can encrypt.
     INSERT INTO credential_revisions (
         id, workspace_id, credential_slot_id, material_key_id, associated_data_profile
     ) VALUES (
@@ -492,7 +498,58 @@ BEGIN
      WHERE id = target_occupancy_id;
 END
 $$;
+
+-- Hand installation_drain_requests and the two new functions to the guarded
+-- owner, exactly as every migration since 0176 has for its own new guarded
+-- objects: try the standing (but necessarily pre-0216) allowlisted helper
+-- first, and fall back to a direct grant only when running as the SQLx
+-- fresh-database superuser, which never runs the Compose provisioner that
+-- would otherwise extend the real allowlist. Without this, the drain-guard
+-- check the two widened reserve functions above just added would fail with
+-- "permission denied for table installation_drain_requests" for every
+-- caller, drain active or not -- confirmed by Task 7's own PostgreSQL suite.
+--
+-- Production upgrades run as the restricted runtime role and use the exact
+-- bootstrap allowlist, which docker/postgres/init-runtime-role.sh extends for
+-- this migration. The provisioner re-runs before the migrator on every start,
+-- so an existing deployment acquires the extended allowlist before this
+-- executes. SQLx fresh databases are provisioned by a superuser and never run
+-- the Compose bootstrap, which is what the narrow fallback below is for.
+DO $$
+BEGIN
+    PERFORM vestrace_assign_p03_table_owner('installation_drain_requests'::REGCLASS);
+EXCEPTION WHEN insufficient_privilege THEN
+    IF NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), FALSE) THEN
+        RAISE;
+    END IF;
+    ALTER TABLE installation_drain_requests OWNER TO vestrace_guarded_owner;
+    REVOKE ALL ON TABLE installation_drain_requests FROM PUBLIC;
+    REVOKE ALL ON TABLE installation_drain_requests FROM vestrace;
+    GRANT SELECT ON TABLE installation_drain_requests TO vestrace;
+END
+$$;
+
+DO $$
+BEGIN
+    PERFORM vestrace_assign_p03_function_owner('vestrace_request_installation_drain(UUID)'::REGPROCEDURE);
+    PERFORM vestrace_assign_p03_function_owner('vestrace_reconcile_installation_drain(UUID)'::REGPROCEDURE);
+EXCEPTION WHEN insufficient_privilege THEN
+    IF NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), FALSE) THEN
+        RAISE;
+    END IF;
+    ALTER FUNCTION vestrace_request_installation_drain(UUID) OWNER TO vestrace_guarded_owner;
+    ALTER FUNCTION vestrace_reconcile_installation_drain(UUID) OWNER TO vestrace_guarded_owner;
+    REVOKE ALL ON FUNCTION vestrace_request_installation_drain(UUID) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION vestrace_reconcile_installation_drain(UUID) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION vestrace_request_installation_drain(UUID) TO vestrace;
+    GRANT EXECUTE ON FUNCTION vestrace_reconcile_installation_drain(UUID) TO vestrace;
+END
+$$;
 ```
+
+**Correction made during Task 3's review:** the block above originally dropped the `-- Allocate this immutable identity before any caller can encrypt.` comment that migration 0173's original function carries immediately before `INSERT INTO credential_revisions` — a plan-authoring transcription slip, not a logic change. Restored above so the widened function is genuinely byte-for-byte identical to the original beyond the one added guard block.
+
+**Second correction made during Task 7's execution:** the migration as originally planned created `installation_drain_requests` and the two new functions with no ownership/grant statements at all, leaving them owned by whichever role runs the migration rather than `vestrace_guarded_owner`. Since the two widened reserve functions (owned by `vestrace_guarded_owner`, unchanged) now read `installation_drain_requests` inside a `SECURITY DEFINER` body, every `reserve()` call failed with `permission denied for table installation_drain_requests`, drain active or not. Root cause and fix (the ownership-assignment DO blocks above, following the exact pattern every migration since 0176 uses for its own new guarded objects) confirmed via `crates/vestrace-infrastructure/tests/installation_drain_request.rs`.
 
 - [ ] **Step 2: Confirm the probe from Task 2 Step 5 now passes**
 
@@ -901,6 +958,7 @@ Replace the probe content with:
 //! exact pre-Quiescing snapshot stamping, reserve refusal during a drain, and
 //! reconcile reaching Frozen only at zero pending.
 
+use sqlx::PgPool;
 use vestrace_application::{DrainMutationPermitRepository, MaterialIntentRepository, RequestContext};
 use vestrace_domain::{
     ContentMaterialId, InstallationDrainRequest, IntentNonce, MaterialKeyCreationIntent,
@@ -908,8 +966,29 @@ use vestrace_domain::{
 };
 use vestrace_infrastructure::{PgDrainMutationPermitRepository, PgMaterialIntentRepository, PgStore};
 
-fn context(workspace_id: WorkspaceId) -> RequestContext {
-    RequestContext::new(workspace_id, PrincipalId::from_uuid(uuid::Uuid::now_v7()))
+/// Seeds one workspace and one principal via the raw superuser pool
+/// connection (bypassing RLS, exactly as `material_intent_lifecycle.rs`'s own
+/// `reserve()` fixture does), then returns a `RequestContext` for them. Every
+/// write this suite makes needs a real `workspaces` row: the
+/// `material_key_creation_intents.workspace_id` foreign key requires it, and
+/// `PgStore::begin_scoped` sets the `vestrace.workspace_id` RLS GUC to it.
+async fn seed_context(pool: &PgPool) -> RequestContext {
+    let workspace_id = WorkspaceId::new();
+    let principal_id = PrincipalId::new();
+    sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
+        .bind(workspace_id.as_uuid())
+        .bind(format!("drain-test-{}", workspace_id.as_uuid()))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO principals (id, workspace_id, identifier) VALUES ($1, $2, $3)")
+        .bind(principal_id.as_uuid())
+        .bind(workspace_id.as_uuid())
+        .bind(format!("drain-test-principal-{}", principal_id.as_uuid()))
+        .execute(pool)
+        .await
+        .unwrap();
+    RequestContext::new(workspace_id, principal_id)
 }
 
 fn fresh_material_intent(workspace_id: WorkspaceId) -> MaterialKeyCreationIntent {
@@ -1096,6 +1175,8 @@ async fn a_bound_intent_present_before_a_drain_is_not_stamped_and_never_abandons
 
 **This task's four fully-sketched-but-not-yet-concrete tests are deliberately left with the exact boundary/outcome comment markers shown** (`/* expected outcome matching the sibling test */` and the three `// ...` bodies) because completing them requires reading each named sibling test's exact assertions in this same file (`material_crash_after_reserved_is_resumable` at the line this plan's investigation found, `material_crash_after_prepared_before_bound_is_resumable`, `owner_result_prepared_crash_after_prepared_before_bound_is_parked`, `credential_crash_after_reserved_is_resumable`) and copying their assertion shape exactly — a step done at implementation time by reading those ~20-line functions directly, not guessed here. Do this before running Step 2; do not leave a body unfinished and call the step done.
 
+**Correction made before Task 8's dispatch:** the sketch above assumed a `material_boundary(&pool, &fixture, &outcome, ...)` call shape that does not exist. The file's real `material_boundary`/`credential_boundary` helpers each create their own fixture internally and immediately resume it, with no seam to insert a drain request in between — the wrong assumption was caught by reading the real helper signatures directly (`resume_material`/`resume_credential` take `vault: Arc<CountingVault>`; `material_at`/`credential_at`/`material_result_prepared_at_boundary` take `vault: &CountingVault`; `Fixture::context()` already builds `RequestContext` directly) before dispatch, not discovered mid-implementation. The five tests were rewritten to call `material_at`/`credential_at`/`material_result_prepared_at_boundary` and `resume_material`/`resume_credential` directly (inserting the drain request between fixture creation and resumption), asserting the same `ResumptionOutcome`/`CredentialResumptionOutcome` values their non-drain siblings assert. One resulting detail worth flagging: `draining_does_not_change_how_result_prepared_finalizes`'s final `reconcile` call asserts `Draining`, not `Frozen` — a `Parked` `ResultPrepared` intent never leaves the pre-Quiescing state set, so the drain correctly stays open, unlike the other four tests which each resolve to a terminal state and then `Frozen`. The corrected, complete code lives in this package's execution workspace as `task-8-brief.md`, not reproduced a second time here to avoid duplicating a large block — the implemented file is the authoritative record going forward.
+
 - [ ] **Step 2: Run each new test standalone**
 
 ```
@@ -1118,7 +1199,7 @@ Expected: every test passes, count unchanged plus the 5 new ones.
 - Create: `docs/development-evidence/v1-g0-05i-drain-mutation-permit.md`
 - Create: `docs/development-evidence/v1-g0-05-gate/drain-mutation-permit-test.txt`
 
-- [ ] **Step 1: Capture the evidence file**
+- [x] **Step 1: Capture the evidence file**
 
 ```bash
 {
@@ -1136,22 +1217,22 @@ Expected: every test passes, count unchanged plus the 5 new ones.
 
 Expected: all three exit 0. Add this new evidence file's path to `scripts/p05-scope.mjs` first (repeat Task 1's Steps 3-7 for this one additional path, or fold it into Task 1 originally if this plan is revised before execution — do not let this file go dirty before it is admitted).
 
-- [ ] **Step 2: Wire g0-12, g0-13, and g0-10 in the manifest**
+- [x] **Step 2: Wire g0-12, g0-13, and g0-10 in the manifest**
 
 Compute the digest, then set `g0-12` and `g0-13` to `claim: "pass"` with one `sources` entry each (or one shared entry citing the same file — either is acceptable since both criteria are proven by the same evidence; follow whichever the collector's schema makes cleaner, which is one `sources` entry per criterion citing the same file and digest twice).
 
 Update `g0-10`'s existing (P05-H) entry: change its reason to state the `DrainMutationPermit`/"no post-freeze write" conjunct is now proven (cite the new evidence file as an additional source alongside P05-H's `embedding-transition-test.txt`), but **keep `claim: "blocked"`** — the browser oracle conjunct is still open and unrelated to this package.
 
-- [ ] **Step 3: Run the collector**
+- [x] **Step 3: Run the collector**
 
 Run: `node scripts/p05-g0-gate.mjs --evidence docs/development-evidence/v1-g0-05-gate.json`
 Expected: exit 1 (aggregate still `blocked`), `counts.pass` risen from 12 to 14, `counts.blocked` unchanged at 4, `counts.unknown` fallen from 3 to 1 (only `g0-16` remains).
 
-- [ ] **Step 4: Extend the pinned manifest assertion**
+- [x] **Step 4: Extend the pinned manifest assertion**
 
 In `tests/p05_g0_gate.test.mjs`, add `g0-12` and `g0-13` to the `pass` assertion loop, raise `passed.length` to `14`, and add a note that `g0-10`'s `blocked` reason now names two sources.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 ```
 node --test tests/p05_scope.test.mjs tests/p05e_test_migrator.test.mjs tests/p05_g0_gate.test.mjs
@@ -1164,7 +1245,7 @@ node scripts/p05-g0-gate.mjs --evidence docs/development-evidence/v1-g0-05-gate.
 
 Expected: every command exits 0 except the last, which exits 1 with `counts: { pass: 14, blocked: 4, unknown: 1 }`.
 
-- [ ] **Step 6: Write the evidence doc**
+- [x] **Step 6: Write the evidence doc**
 
 Record: the migration-numbering prerequisite and its fix; the schema and guard placement; every new suite and its count; the qualification-check table; and what remains open (`g0-16` unknown; `g0-10`, `g0-14`, `g0-15`, `g0-17` blocked on their named conjuncts — P05-J's scope).
 

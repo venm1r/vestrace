@@ -30,6 +30,7 @@ pub mod id;
 pub mod identity;
 #[path = "installation/fingerprint.rs"]
 pub mod installation;
+pub mod installation_drain;
 pub mod installation_safety;
 pub mod job;
 pub mod learning;
@@ -115,6 +116,10 @@ pub use installation::{
     ExternalIdFingerprint, FINGERPRINT_CONTINUITY_DOMAIN, FingerprintKey,
     FingerprintKeyContinuityProof, FingerprintKeyId, FingerprintKeyVersion, FingerprintScope,
     InstallationFingerprintKey, InstallationId, continuity_proof, external_id_fingerprint,
+};
+pub use installation_drain::{
+    InstallationDrainRequest, InstallationDrainRequestId, is_credential_pre_quiescing,
+    is_material_pre_quiescing,
 };
 pub use installation_safety::{
     DatabaseGenerationId, InstallationSafetyError, JournalEntryToSign, JournalPublicKey,

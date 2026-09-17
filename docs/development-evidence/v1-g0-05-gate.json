@@ -125,12 +125,18 @@
     {
       "id": "g0-10",
       "claim": "blocked",
-      "reason": "embedding_transition_planning, embedding_transition_barriers, embedding_transition_activation, and embedding_space_isolation together prove independently-exact spaces, opaque recipes, immutable batch identity, and recipe-granular partial carry with only-current classification, re-run fresh 2026-09-17 by P05-H. This closes the component/PostgreSQL/fault conjuncts. It does not close the conjunction: DrainMutationPermit and Quiescing (the completion-only reconciliation and no-post-freeze-write conjuncts) do not exist anywhere in the repository, in Rust or SQL (confirmed by grep, matching P04's own record), and the browser oracle conjunct is unavailable this session.",
+      "reason": "embedding_transition_planning, embedding_transition_barriers, embedding_transition_activation, and embedding_space_isolation together prove independently-exact spaces, opaque recipes, immutable batch identity, and recipe-granular partial carry with only-current classification, re-run fresh 2026-09-17 by P05-H. installation_drain_contract, installation_drain_request, and intent_crash_boundaries (P05-I) now prove the DrainMutationPermit/no-post-freeze-write conjunct: a snapshot-exact drain request, permanent refusal of new work both while draining and after the drain reaches Frozen, and five crash-boundary tests proving an active drain does not change any existing resumption outcome. This closes the component/PostgreSQL/fault conjuncts named by clause 942. It still does not close the conjunction: the browser oracle conjunct is unavailable this session.",
       "sources": [
         {
           "path": "v1-g0-05-gate/embedding-transition-test.txt",
           "sha256": "aca330f7c2878b30c9f93f1f2c731433ce0461ef63158e13bdcaedd5ea98c080",
           "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test embedding_transition_planning --test embedding_transition_barriers --test embedding_transition_activation --test embedding_space_isolation",
+          "exit_code": 0
+        },
+        {
+          "path": "v1-g0-05-gate/drain-mutation-permit-test.txt",
+          "sha256": "47990e6e387e08e434171e657fd82b43781f03b46d5a56b261356cd8881b0991",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-domain --test installation_drain_contract && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test installation_drain_request && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test intent_crash_boundaries",
           "exit_code": 0
         }
       ]
@@ -150,15 +156,29 @@
     },
     {
       "id": "g0-12",
-      "claim": "unknown",
-      "reason": "DrainMutationPermit reconciliation is P04 work.",
-      "sources": []
+      "claim": "pass",
+      "reason": "DrainMutationPermit (migration 0216, crates/vestrace-domain/src/installation_drain.rs, crates/vestrace-application/src/ports.rs, crates/vestrace-infrastructure/src/postgres/installation_drain.rs) reconciles only the exact pre-Quiescing MaterialKeyCreationIntent/CredentialKeyCreationIntent set snapshotted at request time (installation_drain_contract's exhaustive state-classification tests, installation_drain_request's snapshot-exactness and concurrent-request-refusal tests), and freeze evidence covers a representative sample of crash boundaries without a new identity/effect/output/dispatch (intent_crash_boundaries' five drain-aware tests, out of 20 total) or post-freeze write (reserve refusal now proven both while draining and after reconcile reaches Frozen -- both reserve guards check for any drain request row, not only an active one, closing a post-freeze-write gap found and fixed during final review). A PostgreSQL advisory transaction lock (exclusive in request, shared in both reserve functions) closes the TOCTOU window between a drain snapshot and a concurrent reservation, also found and fixed during final review. Built and evidenced fresh 2026-09-17 by P05-I; production-migration ownership hand-back and the post-freeze/TOCTOU fixes verified 2026-09-17 in final review.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/drain-mutation-permit-test.txt",
+          "sha256": "47990e6e387e08e434171e657fd82b43781f03b46d5a56b261356cd8881b0991",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-domain --test installation_drain_contract && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test installation_drain_request && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test intent_crash_boundaries",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-13",
-      "claim": "unknown",
-      "reason": "Unbound pre-Prepared drain routing is P04 work.",
-      "sources": []
+      "claim": "pass",
+      "reason": "For unbound pre-Prepared drain work, intent_crash_boundaries' five new tests prove retained-input resumption takes only the existing precommitted route and unavailable-input takes only the existing guarded pre-prepared abort/unbound-erase route, with no synthetic bytes or ContentPrepared-only marker -- an active drain adds no new per-intent behavior, it only observes. ResultPrepared always Parks (never abandons) under an active drain exactly as it does without one, and reconcile correctly stays Draining while it does. Bound never abandons: a Bound intent present before a drain is never stamped and still promotes to Live. Built and evidenced fresh 2026-09-17 by P05-I.",
+      "sources": [
+        {
+          "path": "v1-g0-05-gate/drain-mutation-permit-test.txt",
+          "sha256": "47990e6e387e08e434171e657fd82b43781f03b46d5a56b261356cd8881b0991",
+          "command": "DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-domain --test installation_drain_contract && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test installation_drain_request && DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test intent_crash_boundaries",
+          "exit_code": 0
+        }
+      ]
     },
     {
       "id": "g0-14",

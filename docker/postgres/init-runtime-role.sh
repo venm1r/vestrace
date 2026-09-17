@@ -4848,6 +4848,46 @@ REVOKE ALL ON FUNCTION public.vestrace_install_p05_safety_readiness_read() FROM 
 GRANT EXECUTE ON FUNCTION public.vestrace_install_p05_safety_readiness_read() TO vestrace;
 SQL
 
+psql \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --no-password \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 <<'SQL'
+DO $installation_drain_bootstrap$
+DECLARE applied BOOLEAN:=false;
+BEGIN
+ IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+  SELECT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=216 AND success) INTO applied;
+ END IF;
+ IF applied THEN
+  IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.material_key_creation_intents'::regclass)<>'vestrace_guarded_owner'
+   OR (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.credential_key_creation_intents'::regclass)<>'vestrace_guarded_owner'
+   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_reserve_material_key_creation_intent(uuid,uuid,uuid,uuid,uuid,text,uuid,bigint)'::regprocedure)<>'vestrace_guarded_owner'
+   OR (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.vestrace_reserve_credential_key_creation_intent(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text)'::regprocedure)<>'vestrace_guarded_owner' THEN
+   RAISE EXCEPTION 'installation-drain ownership hand-back left an object unrestored' USING ERRCODE='42501'; END IF;
+  DROP FUNCTION IF EXISTS vestrace_prepare_p05_installation_drain_upgrade();
+ ELSE
+  EXECUTE $function$
+  CREATE OR REPLACE FUNCTION vestrace_prepare_p05_installation_drain_upgrade()
+  RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $body$
+  BEGIN
+   IF NOT EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=215 AND success)
+    OR EXISTS(SELECT 1 FROM public._sqlx_migrations WHERE version=216 AND success) THEN
+    RAISE EXCEPTION 'installation-drain upgrade requires exact 0215 predecessor' USING ERRCODE='42501'; END IF;
+   ALTER TABLE public.material_key_creation_intents OWNER TO vestrace;
+   ALTER TABLE public.credential_key_creation_intents OWNER TO vestrace;
+   ALTER FUNCTION public.vestrace_reserve_material_key_creation_intent(uuid,uuid,uuid,uuid,uuid,text,uuid,bigint) OWNER TO vestrace;
+   ALTER FUNCTION public.vestrace_reserve_credential_key_creation_intent(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text) OWNER TO vestrace;
+   REVOKE EXECUTE ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() FROM vestrace;
+  END $body$
+  $function$;
+  REVOKE ALL ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION vestrace_prepare_p05_installation_drain_upgrade() TO vestrace;
+ END IF;
+END $installation_drain_bootstrap$;
+SQL
+
 # A physical base backup opens a replication connection, which PostgreSQL's
 # generic `host all ...` rule does not cover.  This script also runs from the
 # separate role-provisioner container, which cannot see PGDATA; only the

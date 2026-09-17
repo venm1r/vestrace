@@ -245,8 +245,8 @@ pub use outbox::{
     SharedOutboxHandler, SharedOutboxRepository,
 };
 pub use ports::{
-    CredentialIntentRepository, MaterialErasurePreparation, MaterialErasureRepository,
-    MaterialIntentRepository, TransactionManager, UnitOfWork,
+    CredentialIntentRepository, DrainMutationPermitRepository, MaterialErasurePreparation,
+    MaterialErasureRepository, MaterialIntentRepository, TransactionManager, UnitOfWork,
 };
 pub use provider_dispatch::*;
 pub use provider_qualification::*;

@@ -29,6 +29,16 @@ const P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION: i64 = 212;
 const P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION: i64 = 213;
 const P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION: i64 = 214;
 const P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION: i64 = 215;
+const P05_DRAIN_PREFIX_VERSION: i64 = 216;
+const P05_ASSERTION_MIGRATION_VERSIONS: [i64; 7] = [
+    P05_SAFETY_ASSERTION_MIGRATION_VERSION,
+    P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+    P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+    P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+    P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
+    P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+    P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+];
 const P05_MIGRATION_ADVISORY_LOCK: i64 = 0x5030_3509;
 
 #[derive(Clone, Debug)]
@@ -427,6 +437,17 @@ pub static HISTORICAL_MIGRATOR: std::sync::LazyLock<sqlx::migrate::Migrator> =
         bounded_migrator(P05_HISTORY_PREFIX_VERSION).expect("the historical prefix is embedded")
     });
 
+/// The migrations an ordinary test database may hold when it needs
+/// `installation_drain_requests` (migration 216): the historical 0001-0208
+/// prefix, plus 216 itself, excluding the P05 safety-bootstrap assertions
+/// 209-215 for the same reason `HISTORICAL_MIGRATOR` excludes them --
+/// `#[sqlx::test]` cannot have provisioned the P05 safety catalog.
+pub static DRAIN_HISTORICAL_MIGRATOR: std::sync::LazyLock<sqlx::migrate::Migrator> =
+    std::sync::LazyLock::new(|| {
+        bounded_migrator_excluding(P05_DRAIN_PREFIX_VERSION, &P05_ASSERTION_MIGRATION_VERSIONS)
+            .expect("the drain historical prefix is embedded")
+    });
+
 fn bounded_migrator(version: i64) -> Result<sqlx::migrate::Migrator, InfrastructureError> {
     if !MIGRATOR.version_exists(version) {
         return Err(InfrastructureError::configuration(
@@ -438,6 +459,34 @@ fn bounded_migrator(version: i64) -> Result<sqlx::migrate::Migrator, Infrastruct
             MIGRATOR
                 .iter()
                 .filter(|migration| migration.version <= version)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate::Migrator::DEFAULT
+    })
+}
+
+/// Like `bounded_migrator`, but excludes specific versions inside the bound
+/// rather than only cutting at the top. `bounded_migrator` cannot express "up
+/// through 216, except the fixed P05 assertion migrations 209-215" -- a plain
+/// `<= version` filter would re-admit them. This is that generalization; it
+/// does not change `bounded_migrator`'s own behavior or any existing caller.
+fn bounded_migrator_excluding(
+    upper: i64,
+    excluded: &[i64],
+) -> Result<sqlx::migrate::Migrator, InfrastructureError> {
+    if !MIGRATOR.version_exists(upper) {
+        return Err(InfrastructureError::configuration(
+            "requested bounded migration version is not embedded",
+        ));
+    }
+    Ok(sqlx::migrate::Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|migration| {
+                    migration.version <= upper && !excluded.contains(&migration.version)
+                })
                 .cloned()
                 .collect(),
         ),
@@ -462,8 +511,9 @@ impl vestrace_application::RuntimeEvidenceProvider for PgStore {
 #[cfg(test)]
 mod tests {
     use super::{
-        HISTORICAL_MIGRATOR, MIGRATOR, P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
-        P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION, P05_HISTORY_PREFIX_VERSION,
+        DRAIN_HISTORICAL_MIGRATOR, HISTORICAL_MIGRATOR, MIGRATOR,
+        P05_ARCHIVE_ASSERTION_MIGRATION_VERSION, P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+        P05_DRAIN_PREFIX_VERSION, P05_HISTORY_PREFIX_VERSION,
         P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
@@ -568,5 +618,59 @@ mod tests {
         // install a read surface over a catalog that never gained its guard.
         assert!(p05_assertion_migration(215, 213).is_err());
         assert!(p05_assertion_migration(215, 208).is_err());
+    }
+
+    #[test]
+    fn the_drain_historical_migrator_extends_the_historical_prefix_excluding_p05_assertions() {
+        let versions: Vec<i64> = DRAIN_HISTORICAL_MIGRATOR
+            .iter()
+            .map(|m| m.version)
+            .collect();
+
+        assert!(
+            !versions.is_empty(),
+            "the drain historical migrator embedded nothing"
+        );
+        assert_eq!(
+            versions.iter().copied().max(),
+            Some(P05_DRAIN_PREFIX_VERSION),
+            "the drain historical migrator must end at its declared prefix",
+        );
+        for excluded in [
+            P05_SAFETY_ASSERTION_MIGRATION_VERSION,
+            P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+            P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+            P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+        ] {
+            assert!(
+                !versions.contains(&excluded),
+                "the drain historical migrator must not carry P05 assertion migration {excluded}",
+            );
+        }
+        // Every migration in [1, 216] except the seven excluded P05 assertions.
+        let expected = MIGRATOR
+            .iter()
+            .filter(|m| {
+                m.version <= P05_DRAIN_PREFIX_VERSION
+                    && ![
+                        P05_SAFETY_ASSERTION_MIGRATION_VERSION,
+                        P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+                        P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+                        P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+                    ]
+                    .contains(&m.version)
+            })
+            .count();
+        assert_eq!(
+            versions.len(),
+            expected,
+            "the drain historical migrator dropped or added a migration"
+        );
     }
 }

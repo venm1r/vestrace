@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 176);
+  assert.equal(changeScopePaths.length, 185);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -174,6 +174,7 @@ test('P05-C admits only the reviewed restore/cutover implementation increment', 
       'migrations/0213_managed_restore_refusal.sql',
       'migrations/0214_managed_restore_safety_events.sql',
       'migrations/0215_managed_safety_readiness.sql',
+      'migrations/0216_installation_drain_request.sql',
     ],
   );
 });
@@ -315,4 +316,19 @@ test('P05-I admits its implementation plan', () => {
   const path = 'docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit.md';
   assert.ok(changeScopePaths.includes(path), path);
   assert.ok(!protectedAuthorityPaths.includes(path), path);
+});
+
+test('P05-I admits its own plan and implementation paths', () => {
+  for (const path of [
+    'docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit.md',
+    'migrations/0216_installation_drain_request.sql',
+    'crates/vestrace-domain/src/installation_drain.rs',
+    'crates/vestrace-application/src/installation_drain.rs',
+    'crates/vestrace-infrastructure/src/postgres/installation_drain.rs',
+    'crates/vestrace-infrastructure/tests/installation_drain_request.rs',
+    'docs/development-evidence/v1-g0-05i-drain-mutation-permit.md',
+  ]) {
+    assert.ok(changeScopePaths.includes(path), path);
+    assert.ok(!protectedAuthorityPaths.includes(path), path);
+  }
 });

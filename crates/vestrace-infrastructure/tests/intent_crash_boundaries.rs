@@ -15,15 +15,20 @@ use std::{
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 use vestrace_application::{
-    CredentialIntentResumption, CredentialResumptionOutcome, FenceReceipt,
-    MaterialIntentResumption, MaterialKeyVault, RequestContext, ResumptionOutcome, VaultError,
+    CredentialIntentResumption, CredentialResumptionOutcome, DrainMutationPermitRepository,
+    FenceReceipt, MaterialIntentResumption, MaterialKeyVault, RequestContext, ResumptionOutcome,
+    VaultError,
 };
 use vestrace_domain::{
     ContentMaterialId, CredentialKeyCreationIntentId, CredentialKeyCreationIntentState,
-    ErasureReceipt, IntentNonce, MaterialKeyCreationIntentId, MaterialKeyCreationIntentState,
-    MaterialKeyId, PrincipalId, VaultReceipt, WorkspaceId, ZeroizingDek,
+    ErasureReceipt, InstallationDrainRequest, IntentNonce, MaterialKeyCreationIntentId,
+    MaterialKeyCreationIntentState, MaterialKeyId, PrincipalId, VaultReceipt, WorkspaceId,
+    ZeroizingDek,
 };
-use vestrace_infrastructure::{PgCredentialIntentRepository, PgMaterialIntentRepository, PgStore};
+use vestrace_infrastructure::{
+    PgCredentialIntentRepository, PgDrainMutationPermitRepository, PgMaterialIntentRepository,
+    PgStore,
+};
 
 // ─── a vault that refuses to lose track of a key ────────────────────────────
 
@@ -978,4 +983,170 @@ async fn credential_crash_after_erase_receipt_before_terminal_append_is_resumabl
         1,
         "a committed erase receipt must not be re-earned"
     );
+}
+
+// ─── DrainMutationPermit: existing resumption is undisturbed by a drain ────
+
+#[sqlx::test(migrator = "vestrace_infrastructure::DRAIN_HISTORICAL_MIGRATOR")]
+async fn draining_does_not_change_how_a_reserved_material_intent_resumes(pool: PgPool) {
+    let vault = Arc::new(CountingVault::default());
+    let fixture = material_at(&pool, "after_reserved", &vault).await;
+
+    let drain = PgDrainMutationPermitRepository::new(PgStore::from_pool(pool.clone()));
+    let ctx = fixture.context();
+    let request = drain.request(&ctx).await.unwrap();
+
+    // Confirm the drain snapshot picked up this pre-existing Reserved intent.
+    let mid_reconcile = drain.reconcile(&ctx, request.id()).await.unwrap();
+    assert!(matches!(
+        mid_reconcile,
+        InstallationDrainRequest::Draining(_)
+    ));
+
+    // Same resumption outcome as the non-drain sibling test
+    // `material_crash_after_reserved_is_resumable`: the drain adds no new
+    // per-intent behavior, so a Reserved intent still resolves the crash
+    // ambiguity by creating the reserved identity and erasing it.
+    let outcome = resume_material(&pool, &fixture, Arc::clone(&vault)).await;
+    assert_eq!(
+        outcome,
+        ResumptionOutcome::Terminal(MaterialKeyCreationIntentState::Abandoned)
+    );
+    assert_eq!(material_state(&pool, &fixture).await, "abandoned");
+
+    // Now that the intent reached a terminal resting state, reconcile must
+    // reach Frozen.
+    let final_reconcile = drain.reconcile(&ctx, request.id()).await.unwrap();
+    assert!(matches!(
+        final_reconcile,
+        InstallationDrainRequest::Frozen(_)
+    ));
+}
+
+#[sqlx::test(migrator = "vestrace_infrastructure::DRAIN_HISTORICAL_MIGRATOR")]
+async fn draining_does_not_change_how_a_content_prepared_material_intent_resumes(pool: PgPool) {
+    let vault = Arc::new(CountingVault::default());
+    let fixture = material_at(&pool, "after_prepared_before_bound", &vault).await;
+    assert_eq!(material_state(&pool, &fixture).await, "content_prepared");
+
+    let drain = PgDrainMutationPermitRepository::new(PgStore::from_pool(pool.clone()));
+    let ctx = fixture.context();
+    let request = drain.request(&ctx).await.unwrap();
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Draining(_)
+    ));
+
+    // Same resumption outcome as the non-drain sibling test
+    // `material_crash_after_prepared_before_bound_is_resumable`.
+    let outcome = resume_material(&pool, &fixture, Arc::clone(&vault)).await;
+    assert_eq!(
+        outcome,
+        ResumptionOutcome::Terminal(MaterialKeyCreationIntentState::Abandoned)
+    );
+    assert_eq!(material_state(&pool, &fixture).await, "abandoned");
+
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Frozen(_)
+    ));
+}
+
+#[sqlx::test(migrator = "vestrace_infrastructure::DRAIN_HISTORICAL_MIGRATOR")]
+async fn draining_does_not_change_how_result_prepared_finalizes(pool: PgPool) {
+    let vault = Arc::new(CountingVault::default());
+    let fixture = material_result_prepared_at_boundary(&pool, &vault).await;
+    assert_eq!(material_state(&pool, &fixture).await, "result_prepared");
+
+    let drain = PgDrainMutationPermitRepository::new(PgStore::from_pool(pool.clone()));
+    let ctx = fixture.context();
+    let request = drain.request(&ctx).await.unwrap();
+
+    // Same resumption outcome as the non-drain sibling test
+    // `owner_result_prepared_crash_after_prepared_before_bound_is_parked`:
+    // ResultPrepared always Parks on mere resumption -- it is finalized only
+    // by the owning job's own bind call, never by a reconciler. g0-13: "Bound
+    // never abandons" and (implicitly) ResultPrepared never abandons either.
+    let outcome = resume_material(&pool, &fixture, Arc::clone(&vault)).await;
+    assert_eq!(
+        outcome,
+        ResumptionOutcome::Parked {
+            state: MaterialKeyCreationIntentState::ResultPrepared,
+            reason: "ResultPrepared always binds and never abandons; its bind receipt is owned by the job that crashed",
+        }
+    );
+    assert_eq!(material_state(&pool, &fixture).await, "result_prepared");
+
+    // ResultPrepared is pre-Quiescing (see is_material_pre_quiescing), and
+    // Parked leaves it in exactly that state -- a drain must NOT be fooled
+    // into thinking this intent resolved. reconcile must still report
+    // Draining, not Frozen, because the intent that was stamped at request
+    // time is still sitting in ResultPrepared.
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Draining(_)
+    ));
+}
+
+#[sqlx::test(migrator = "vestrace_infrastructure::DRAIN_HISTORICAL_MIGRATOR")]
+async fn draining_does_not_change_how_a_reserved_credential_intent_resumes(pool: PgPool) {
+    let vault = Arc::new(CountingVault::default());
+    let fixture = credential_at(&pool, "after_reserved", &vault).await;
+
+    let drain = PgDrainMutationPermitRepository::new(PgStore::from_pool(pool.clone()));
+    let ctx = fixture.context();
+    let request = drain.request(&ctx).await.unwrap();
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Draining(_)
+    ));
+
+    // Same resumption outcome as the non-drain sibling test
+    // `credential_crash_after_reserved_is_resumable`.
+    let outcome = resume_credential(&pool, &fixture, Arc::clone(&vault)).await;
+    assert_eq!(
+        outcome,
+        CredentialResumptionOutcome::Terminal(CredentialKeyCreationIntentState::Abandoned)
+    );
+    assert_eq!(credential_state(&pool, &fixture).await, "abandoned");
+
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Frozen(_)
+    ));
+}
+
+#[sqlx::test(migrator = "vestrace_infrastructure::DRAIN_HISTORICAL_MIGRATOR")]
+async fn a_bound_intent_present_before_a_drain_is_not_stamped_and_never_abandons(pool: PgPool) {
+    let vault = Arc::new(CountingVault::default());
+    // "after_bound_before_promotion" drives material_at() through its final,
+    // unconditional fallthrough branch, which binds the intent -- the same
+    // boundary the non-drain sibling `material_crash_after_bound_before_promotion_is_resumable`
+    // uses via `material_boundary(&pool, "after_bound_before_promotion", "bound")`.
+    let fixture = material_at(&pool, "after_bound_before_promotion", &vault).await;
+    assert_eq!(material_state(&pool, &fixture).await, "bound");
+
+    let drain = PgDrainMutationPermitRepository::new(PgStore::from_pool(pool.clone()));
+    let ctx = fixture.context();
+    let request = drain.request(&ctx).await.unwrap();
+
+    // Bound is not pre-Quiescing (see is_material_pre_quiescing): the drain's
+    // snapshot UPDATE only stamps rows in the pre-Quiescing state list, so
+    // this Bound intent was never stamped. reconcile must therefore find
+    // nothing pending and reach Frozen immediately, without this intent ever
+    // resuming at all.
+    assert!(matches!(
+        drain.reconcile(&ctx, request.id()).await.unwrap(),
+        InstallationDrainRequest::Frozen(_)
+    ));
+
+    // g0-13: "Bound never abandons" -- prove this is unaffected by the active
+    // (now Frozen) drain: resumption still promotes Bound to Live, the same
+    // outcome the non-drain sibling test proves, never an abandon path.
+    let outcome = resume_material(&pool, &fixture, Arc::clone(&vault)).await;
+    assert_eq!(
+        outcome,
+        ResumptionOutcome::Terminal(MaterialKeyCreationIntentState::Live)
+    );
+    assert_eq!(material_state(&pool, &fixture).await, "live");
 }

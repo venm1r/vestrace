@@ -381,14 +381,26 @@ test('the recorded G0 evidence manifest is well formed and claims exactly the cr
   assert.ok(byId.get('g0-17').sources.length > 0, 'a blocked criterion still names what it ran');
 
   // P05-H moved three more from unknown to blocked -- honest partial-conjunction
-  // evidence, not a pass. Each still names what it ran.
+  // evidence, not a pass. Each still names what it ran. g0-10 stays blocked
+  // even after P05-I closes its DrainMutationPermit conjunct below, because
+  // the browser oracle conjunct remains open -- its reason grew a second
+  // source without its status changing.
   for (const id of ['g0-10', 'g0-14', 'g0-15']) {
     assert.equal(byId.get(id).status, 'blocked', id);
     assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
   }
+  assert.equal(byId.get('g0-10').sources.length, 2, 'g0-10 names both P05-H and P05-I evidence');
+
+  // P05-I built DrainMutationPermit/Quiescing from nothing and closed two
+  // more: exact pre-Quiescing reconciliation across every crash boundary, and
+  // unbound pre-Prepared drain routing undisturbed by an active drain.
+  for (const id of ['g0-12', 'g0-13']) {
+    assert.equal(byId.get(id).status, 'pass', id);
+    assert.ok(byId.get(id).sources.length > 0, `${id} names what it ran`);
+  }
 
   const passed = report.criteria.filter((entry) => entry.status === 'pass');
-  assert.equal(passed.length, 12, 'no package may claim a criterion it did not close');
+  assert.equal(passed.length, 14, 'no package may claim a criterion it did not close');
 
   const blocked = report.criteria.filter((entry) => entry.status === 'blocked');
   assert.equal(blocked.length, 4, 'g0-17 plus the three P05-H partial conjunctions');

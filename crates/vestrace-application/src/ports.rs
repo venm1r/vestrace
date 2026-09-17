@@ -4,9 +4,10 @@ use crate::FenceReceipt;
 use crate::{ApplicationError, RequestContext};
 use vestrace_domain::{
     ContentMaterialId, CredentialKeyCreationIntent, CredentialKeyCreationIntentId,
-    CredentialPreparedAttachmentId, CredentialRevisionId, ErasureReceipt,
-    MaterialKeyBindingReceipt, MaterialKeyCreationIntent, MaterialKeyCreationIntentId,
-    MaterialKeyId, PreparedMaterialAttachmentId, SizeClass, VaultReceipt,
+    CredentialPreparedAttachmentId, CredentialRevisionId, ErasureReceipt, InstallationDrainRequest,
+    InstallationDrainRequestId, MaterialKeyBindingReceipt, MaterialKeyCreationIntent,
+    MaterialKeyCreationIntentId, MaterialKeyId, PreparedMaterialAttachmentId, SizeClass,
+    VaultReceipt,
 };
 
 #[async_trait::async_trait]
@@ -237,6 +238,33 @@ pub trait CredentialIntentRepository: Send + Sync {
         context: &RequestContext,
         intent_id: CredentialKeyCreationIntentId,
     ) -> Result<Option<crate::CredentialIntentSnapshot>, ApplicationError>;
+}
+
+/// DrainMutationPermit: `request` and both `reserve` functions it guards
+/// take a PostgreSQL advisory transaction lock scoped to installation
+/// mutation (the same conceptual exclusion `InstallationMutationPermit::
+/// Exclusive` names, taken directly in SQL rather than through that Rust
+/// permit type) so the drain snapshot and a concurrent reservation cannot
+/// both commit past each other. `current_state` and `reconcile` are plain
+/// reads plus (for `reconcile`) a conditional completion write, safe to call
+/// at any time including after a crash.
+#[async_trait::async_trait]
+pub trait DrainMutationPermitRepository: Send + Sync {
+    async fn request(
+        &self,
+        context: &RequestContext,
+    ) -> Result<InstallationDrainRequest, ApplicationError>;
+
+    async fn current_state(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Option<InstallationDrainRequest>, ApplicationError>;
+
+    async fn reconcile(
+        &self,
+        context: &RequestContext,
+        id: InstallationDrainRequestId,
+    ) -> Result<InstallationDrainRequest, ApplicationError>;
 }
 
 /// The database portion of irreversible material destruction. Each method is

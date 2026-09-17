@@ -29,6 +29,7 @@ pub mod fault_suite_evidence_repository;
 mod health;
 pub mod health_finding_repository;
 pub mod idempotency_repository;
+pub mod installation_drain;
 pub mod installation_fingerprint;
 pub mod installation_permit;
 pub mod invariant_observer;
@@ -110,6 +111,7 @@ pub use external_effect_repository::PgExternalEffectRepository;
 pub use fault_suite_evidence_repository::PgFaultSuiteEvidenceRepository;
 pub use health_finding_repository::PgHealthFindingRepository;
 pub use idempotency_repository::PgIdempotencyRepository;
+pub use installation_drain::PgDrainMutationPermitRepository;
 pub use installation_fingerprint::{
     HostInstallationFingerprintVault, INSTALLATION_FINGERPRINT_RECORD_FILE,
     INSTALLATION_FINGERPRINT_VAULT_ROOT_ENV, InstallationFingerprintReadinessCause,
@@ -126,7 +128,9 @@ pub use model_repository::PgModelRepository;
 pub use model_request_evidence_repository::PgModelRequestEvidenceRepository;
 pub use model_revision_repository::PgModelRevisionRepository;
 pub use outbox_repository::{PgMemoryTextSource, PgOutboxRepository};
-pub use pool::{HISTORICAL_MIGRATOR, PgGovernedMutationRepository, PgStore};
+pub use pool::{
+    DRAIN_HISTORICAL_MIGRATOR, HISTORICAL_MIGRATOR, PgGovernedMutationRepository, PgStore,
+};
 pub use provenance_repository::PgProvenanceRepository;
 pub use provider_dispatch_repository::PgProviderDispatchRepository;
 pub use provider_repository::PgProviderRepository;
