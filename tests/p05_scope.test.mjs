@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 174);
+  assert.equal(changeScopePaths.length, 175);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -303,4 +303,10 @@ test('P05-H admits its own plan and evidence paths', () => {
     assert.ok(changeScopePaths.includes(path), path);
     assert.ok(!protectedAuthorityPaths.includes(path), path);
   }
+});
+
+test('P05-I admits its design spec, ahead of its implementation plan', () => {
+  const path = 'docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md';
+  assert.ok(changeScopePaths.includes(path), path);
+  assert.ok(!protectedAuthorityPaths.includes(path), path);
 });

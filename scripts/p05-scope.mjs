@@ -164,6 +164,7 @@ export const changeScopePaths = [
   "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md",
   "docs/superpowers/specs/2026-09-12-vestrace-v1-g0-05-backup-restore-foundation-design.md",
   "docs/superpowers/specs/2026-09-14-vestrace-v1-g0-05e-test-migrator-design.md",
+  "docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md",
   "migrations/0210_managed_backup_archive_retention.sql",
   "migrations/0211_managed_backup_base_capture.sql",
   "migrations/0212_managed_restore_cutover.sql",
