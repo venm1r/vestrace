@@ -7,7 +7,7 @@ use vestrace_application::{
     ApplicationError, CreateModelRevision, GovernedModelProjection, GovernedMutation,
     GovernedMutationApply, GovernedMutationReceipt, GovernedMutationRepository,
     GovernedProviderProjection, ModelRevisionRepository, RequestContext, SetWorkspaceModelDefault,
-    UnitOfWork,
+    UnitOfWork, WorkspaceModelDefaultProjection,
 };
 use vestrace_domain::{
     ModelKind, ModelObservationSource, ModelRevisionId, embedding::EmbeddingReadinessReason,
@@ -71,6 +71,33 @@ impl ModelRevisionRepository for PgModelRevisionRepository {
                 apply: WorkspaceDefaultMutation { command },
             })
             .await
+    }
+
+    async fn get_workspace_default(
+        &self,
+        context: &RequestContext,
+        purpose: &str,
+    ) -> Result<Option<WorkspaceModelDefaultProjection>, ApplicationError> {
+        let mut scoped = self
+            .store
+            .begin_scoped(context)
+            .await
+            .map_err(storage_error)?;
+        let row = sqlx::query(
+            "SELECT model_id, version FROM workspace_model_defaults \
+             WHERE workspace_id = $1 AND purpose = $2",
+        )
+        .bind(context.workspace_id.as_uuid())
+        .bind(purpose)
+        .fetch_optional(scoped.connection())
+        .await
+        .map_err(storage_error)?;
+        scoped.commit().await.map_err(storage_error)?;
+
+        Ok(row.map(|row| WorkspaceModelDefaultProjection {
+            model_id: ModelId::from_uuid(row.get::<uuid::Uuid, _>("model_id")),
+            version: row.get::<i64, _>("version") as u64,
+        }))
     }
 
     async fn list_safe_models(

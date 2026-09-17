@@ -236,7 +236,7 @@ pub use models::{
     ProviderRecord, ProviderRepository, RoutingDecisionRecord, RoutingDecisionRepository,
     SetWorkspaceModelDefault, SharedModelBindingResolver, SharedModelExecutionRepository,
     SharedModelRepository, SharedModelRevisionRepository, SharedProviderRepository,
-    SharedRoutingDecisionRepository,
+    SharedRoutingDecisionRepository, WorkspaceModelDefaultProjection,
 };
 pub use null_execution_history::NullExecutionHistoryRepository;
 pub use operator::{HealthOperatorService, RepairPlanRequest, RepairRequest};

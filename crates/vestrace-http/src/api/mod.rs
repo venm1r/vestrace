@@ -177,6 +177,16 @@ pub fn api_routes() -> Router<AppState> {
     );
     let router = mount(
         router,
+        route_descriptor(&Method::POST, "/v1/models/{id}/default"),
+        post(models::set_workspace_model_default),
+    );
+    let router = mount(
+        router,
+        route_descriptor(&Method::GET, "/v1/models/default"),
+        get(models::get_workspace_model_default),
+    );
+    let router = mount(
+        router,
         route_descriptor(&Method::POST, "/v1/models/{id}/qualifications"),
         post(models::request_model_qualification),
     );

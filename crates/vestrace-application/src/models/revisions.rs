@@ -38,6 +38,13 @@ pub struct SetWorkspaceModelDefault {
     pub audit: AuditEvent,
 }
 
+/// The workspace's current default Model for one purpose (e.g. `"chat"`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkspaceModelDefaultProjection {
+    pub model_id: ModelId,
+    pub version: u64,
+}
+
 /// A non-routing read model derived only from the current immutable Model and
 /// Connection revision heads plus their current qualification evidence.  It
 /// deliberately contains no wire model name, URL, credential shape, or legacy
@@ -75,6 +82,19 @@ pub trait ModelRevisionRepository: Send + Sync {
         context: RequestContext,
         command: SetWorkspaceModelDefault,
     ) -> Result<GovernedMutationReceipt, ApplicationError>;
+
+    /// The workspace's current default for `purpose`, or `None` if nothing has
+    /// been set yet. A caller with no default configured is a normal, expected
+    /// state (a fresh workspace), not an error.
+    async fn get_workspace_default(
+        &self,
+        _context: &RequestContext,
+        _purpose: &str,
+    ) -> Result<Option<WorkspaceModelDefaultProjection>, ApplicationError> {
+        Err(ApplicationError::Unavailable(
+            "workspace default model projection is not configured".to_owned(),
+        ))
+    }
 
     /// Lists stable Models with an explicit non-executable state when they
     /// lack a current governed tuple.  This is intentionally separate from

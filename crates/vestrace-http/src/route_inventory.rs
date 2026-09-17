@@ -244,6 +244,8 @@ static ROUTE_INVENTORY: &[RouteDescriptor] = &[
         Critical
     ),
     governed!(POST, "/v1/models/{id}/revisions", ModelWrite, Medium),
+    governed!(POST, "/v1/models/{id}/default", ModelWrite, Medium),
+    governed!(GET, "/v1/models/default", ModelRead, Low),
     governed!(POST, "/v1/models/{id}/qualifications", ModelWrite, High),
     governed!(GET, "/v1/profile", WorkspaceAdmin, Low),
     governed!(POST, "/v1/effects", ExecutionWrite, Critical),

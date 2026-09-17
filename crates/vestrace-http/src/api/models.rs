@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vestrace_application::{
     CreateModelRevision, GovernedModelProjection, GovernedProviderProjection, IdempotencyRecord,
-    ModelRecord, OutboxMessage,
+    ModelRecord, OutboxMessage, SetWorkspaceModelDefault,
 };
 use vestrace_domain::{
     AuditEvent, ConnectionId, ConnectionRevisionId, ModelKind, ModelObservation, ModelRevision,
@@ -260,6 +260,116 @@ pub async fn create_model_revision(
         .into_response())
 }
 
+/// Names the workspace default this call is publishing. `purpose` travels in
+/// the body even though this build only ever sends `"chat"`, because the
+/// backend command already carries it generally.
+#[derive(Debug, Deserialize)]
+pub struct SetWorkspaceModelDefaultRequest {
+    pub default_id: Uuid,
+    pub model_id: Uuid,
+    pub purpose: String,
+    pub required_capabilities: Vec<String>,
+    pub expected_version: u64,
+}
+
+pub async fn set_workspace_model_default(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(model_id): Path<Uuid>,
+    Json(request): Json<SetWorkspaceModelDefaultRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    let context = request_context(&headers)?;
+    if request.model_id != model_id {
+        return Err(ApiError::bad_request(
+            "the path model id and the request body disagree",
+        ));
+    }
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let at = now();
+    let evidence = serde_json::json!({
+        "default_id": request.default_id,
+        "purpose": request.purpose,
+        "model_id": request.model_id,
+    });
+    let command = SetWorkspaceModelDefault {
+        default_id: request.default_id,
+        workspace_id: context.workspace_id,
+        purpose: request.purpose,
+        model_id: vestrace_domain::id::ModelId::from_uuid(request.model_id),
+        required_capabilities: request.required_capabilities,
+        expected_version: request.expected_version,
+        idempotency: Some(IdempotencyRecord {
+            idempotency_key: idempotency_key.clone(),
+            workspace_id: context.workspace_id,
+            request_hash: request.default_id.to_string(),
+            response_payload: None,
+            status: "completed".to_owned(),
+            created_at: at,
+            expires_at: at + chrono::Duration::hours(24),
+        }),
+        outbox: vec![OutboxMessage::new(
+            context.workspace_id,
+            "model.workspace_default.set",
+            evidence.clone(),
+            at,
+        )],
+        audit: AuditEvent::new(
+            AuditEventId::new(),
+            context.workspace_id,
+            context.principal_id,
+            "model.workspace_default.set",
+            "model",
+            request.model_id,
+            evidence,
+            at,
+        )
+        .map_err(|error| ApiError::bad_request(error.to_string()))?,
+    };
+    let receipt = state
+        .model_revision_repository()?
+        .set_workspace_default_governed(context, command)
+        .await
+        .map_err(ApiError::from_application)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(GovernedMutationResponse::from(receipt)),
+    )
+        .into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct WorkspaceModelDefaultQuery {
+    pub purpose: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceModelDefaultResponse {
+    pub model_id: Option<Uuid>,
+    pub purpose: String,
+    pub version: u64,
+}
+
+pub async fn get_workspace_model_default(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<WorkspaceModelDefaultQuery>,
+) -> Result<Json<WorkspaceModelDefaultResponse>, ApiError> {
+    let context = request_context(&headers)?;
+    let purpose = query
+        .purpose
+        .unwrap_or_else(|| vestrace_application::LEGACY_RUN_MODEL_DEFAULT_PURPOSE.to_owned());
+    let projection = state
+        .model_revision_repository()?
+        .get_workspace_default(&context, &purpose)
+        .await
+        .map_err(ApiError::from_application)?;
+    Ok(Json(WorkspaceModelDefaultResponse {
+        model_id: projection.as_ref().map(|p| p.model_id.as_uuid()),
+        version: projection.map(|p| p.version).unwrap_or(0),
+        purpose,
+    }))
+}
+
 /// Requests one qualification job for the Model named by the path.
 ///
 /// The job itself is stated over the exact Connection revision and both model
@@ -470,5 +580,181 @@ mod tests {
             "a database-backed listing must not assert process-local index \
              presence: {serialized}"
         );
+    }
+
+    #[derive(Default)]
+    struct SpyDefaults {
+        set: std::sync::Mutex<Option<vestrace_application::SetWorkspaceModelDefault>>,
+        stored: std::sync::Mutex<Option<vestrace_application::WorkspaceModelDefaultProjection>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelRevisionRepository for SpyDefaults {
+        async fn create_governed(
+            &self,
+            _context: RequestContext,
+            _command: CreateModelRevision,
+        ) -> Result<vestrace_application::GovernedMutationReceipt, ApplicationError> {
+            unreachable!("this suite exercises the default pointer only")
+        }
+
+        async fn set_workspace_default_governed(
+            &self,
+            _context: RequestContext,
+            command: vestrace_application::SetWorkspaceModelDefault,
+        ) -> Result<vestrace_application::GovernedMutationReceipt, ApplicationError> {
+            *self.stored.lock().unwrap() =
+                Some(vestrace_application::WorkspaceModelDefaultProjection {
+                    model_id: command.model_id,
+                    version: command.expected_version + 1,
+                });
+            *self.set.lock().unwrap() = Some(command);
+            Ok(vestrace_application::GovernedMutationReceipt {
+                audit_event_id: vestrace_domain::id::AuditEventId::new(),
+                idempotency_key: None,
+                outbox_message_ids: vec![],
+            })
+        }
+
+        async fn get_workspace_default(
+            &self,
+            _context: &RequestContext,
+            _purpose: &str,
+        ) -> Result<Option<vestrace_application::WorkspaceModelDefaultProjection>, ApplicationError>
+        {
+            Ok(*self.stored.lock().unwrap())
+        }
+
+        async fn list_safe_models(
+            &self,
+            _context: &RequestContext,
+        ) -> Result<Vec<GovernedModelProjection>, ApplicationError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn default_request(uri: &str, idempotency_key: Option<&str>, body: &str) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("x-workspace-id", Uuid::now_v7().to_string())
+            .header("x-principal-id", Uuid::now_v7().to_string());
+        if let Some(key) = idempotency_key {
+            builder = builder.header("idempotency-key", key);
+        }
+        builder.body(Body::from(body.to_owned())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn setting_the_workspace_default_reaches_the_application_and_a_later_read_sees_it() {
+        use std::sync::Arc;
+        let spy = Arc::new(SpyDefaults::default());
+        let model_id = Uuid::now_v7();
+        let app = build_router(
+            crate::api::runs::tests::test_state()
+                .with_policy(Arc::new(crate::api::runs::tests::TestAllowPolicy))
+                .with_model_revision_repository(spy.clone()),
+        );
+
+        let body = serde_json::json!({
+            "default_id": Uuid::now_v7(),
+            "model_id": model_id,
+            "purpose": "chat",
+            "required_capabilities": ["chat.completions"],
+            "expected_version": 0,
+        })
+        .to_string();
+
+        let response = app
+            .clone()
+            .oneshot(default_request(
+                &format!("/v1/models/{model_id}/default"),
+                Some(&Uuid::now_v7().to_string()),
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let recorded = spy
+            .set
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the set reached the application");
+        assert_eq!(recorded.model_id.as_uuid(), model_id);
+        assert_eq!(recorded.purpose, "chat");
+
+        let read = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/models/default?purpose=chat")
+                    .header("x-workspace-id", Uuid::now_v7().to_string())
+                    .header("x-principal-id", Uuid::now_v7().to_string())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(read.status(), StatusCode::OK);
+        let read_body = to_bytes(read.into_body(), 4096).await.unwrap();
+        let read_body: serde_json::Value = serde_json::from_slice(&read_body).unwrap();
+        assert_eq!(read_body["model_id"], model_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn a_default_read_with_nothing_configured_answers_a_null_model_id_not_an_error() {
+        use std::sync::Arc;
+        let app = build_router(
+            crate::api::runs::tests::test_state()
+                .with_policy(Arc::new(crate::api::runs::tests::TestAllowPolicy))
+                .with_model_revision_repository(Arc::new(SpyDefaults::default())),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/models/default?purpose=chat")
+                    .header("x-workspace-id", Uuid::now_v7().to_string())
+                    .header("x-principal-id", Uuid::now_v7().to_string())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(body["model_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_default_write_whose_path_and_body_disagree_is_refused() {
+        use std::sync::Arc;
+        let app = build_router(
+            crate::api::runs::tests::test_state()
+                .with_policy(Arc::new(crate::api::runs::tests::TestAllowPolicy))
+                .with_model_revision_repository(Arc::new(SpyDefaults::default())),
+        );
+        let body = serde_json::json!({
+            "default_id": Uuid::now_v7(),
+            "model_id": Uuid::now_v7(),
+            "purpose": "chat",
+            "required_capabilities": ["chat.completions"],
+            "expected_version": 0,
+        })
+        .to_string();
+
+        let response = app
+            .oneshot(default_request(
+                &format!("/v1/models/{}/default", Uuid::now_v7()),
+                Some(&Uuid::now_v7().to_string()),
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
