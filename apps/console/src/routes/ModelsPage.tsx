@@ -58,6 +58,10 @@ export const ModelsPage: React.FC = () => {
       notify('warning', 'The selected Connection has no published revision yet.');
       return;
     }
+    if (!connection.execution_guard_id) {
+      notify('warning', 'The selected Connection is missing its execution guard id.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -76,7 +80,7 @@ export const ModelsPage: React.FC = () => {
           connection_revision_id: connection.revision_id,
           wire_model_id: wireModelId.trim(),
           kind: modelKind,
-          execution_guard_id: crypto.randomUUID(),
+          execution_guard_id: connection.execution_guard_id,
           expected_head_version: 0,
         },
         { requestId: crypto.randomUUID() },

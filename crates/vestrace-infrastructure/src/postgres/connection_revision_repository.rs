@@ -121,7 +121,8 @@ impl ConnectionRevisionRepository for PgConnectionRevisionRepository {
                    head.current_revision_id AS connection_revision_id,
                    head.state AS connection_state,
                    qualification.valid_until AS qualification_valid_until,
-                   no_auth.id AS no_auth_binding_revision_id
+                   no_auth.id AS no_auth_binding_revision_id,
+                   revision.execution_guard_id AS execution_guard_id
               FROM connections AS connection
               LEFT JOIN connection_revision_heads AS head
                 ON head.workspace_id=connection.workspace_id
@@ -136,6 +137,10 @@ impl ConnectionRevisionRepository for PgConnectionRevisionRepository {
                 ON no_auth.workspace_id=connection.workspace_id
                AND no_auth.connection_id=connection.id
                AND no_auth.connection_revision_id=head.current_revision_id
+              LEFT JOIN connection_revisions AS revision
+                ON revision.workspace_id=connection.workspace_id
+               AND revision.connection_id=connection.id
+               AND revision.id=head.current_revision_id
              WHERE connection.workspace_id=$1
              ORDER BY connection.created_at, connection.id
             "#,
@@ -169,6 +174,8 @@ fn decode_safe_connection_projection(
     let no_auth_binding_revision_id: Option<uuid::Uuid> = row
         .try_get("no_auth_binding_revision_id")
         .map_err(storage_error)?;
+    let execution_guard_id: Option<uuid::Uuid> =
+        row.try_get("execution_guard_id").map_err(storage_error)?;
 
     let mut blockers = Vec::new();
     if revision_id.is_none() {
@@ -210,6 +217,7 @@ fn decode_safe_connection_projection(
         qualification_state: qualification_state.to_owned(),
         blockers,
         no_auth_binding_revision_id,
+        execution_guard_id,
     })
 }
 

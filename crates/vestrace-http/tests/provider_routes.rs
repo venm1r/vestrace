@@ -42,6 +42,7 @@ fn governed_projection_responses_serialize_only_opaque_safe_fields() {
             qualification_state: "qualified".to_owned(),
             blockers: Vec::new(),
             no_auth_binding_revision_id: None,
+            execution_guard_id: None,
         }),
     )
     .unwrap();
@@ -54,6 +55,7 @@ fn governed_projection_responses_serialize_only_opaque_safe_fields() {
             "qualification_state": "qualified",
             "blockers": [],
             "no_auth_binding_revision_id": null,
+            "execution_guard_id": null,
         })
     );
 

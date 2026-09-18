@@ -1,7 +1,0 @@
-{
-  "action": "restore",
-  "expected_revision_id": "00000000-0000-4000-8000-000000000012",
-  "expected_state_revision": 2,
-  "reason": "Возврат прежнего текста как новая revision",
-  "restore_from_revision_id": "00000000-0000-4000-8000-000000000011"
-}

@@ -48,6 +48,7 @@ pub struct ConnectionResponse {
     pub qualification_state: String,
     pub blockers: Vec<String>,
     pub no_auth_binding_revision_id: Option<uuid::Uuid>,
+    pub execution_guard_id: Option<uuid::Uuid>,
 }
 
 impl From<GovernedConnectionProjection> for ConnectionResponse {
@@ -59,6 +60,7 @@ impl From<GovernedConnectionProjection> for ConnectionResponse {
             qualification_state: projection.qualification_state,
             blockers: projection.blockers,
             no_auth_binding_revision_id: projection.no_auth_binding_revision_id,
+            execution_guard_id: projection.execution_guard_id,
         }
     }
 }

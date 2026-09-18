@@ -240,6 +240,39 @@ async fn safe_connection_projection_exposes_the_real_no_auth_binding_revision_id
     );
 }
 
+/// The projection the console reads to publish a Model must carry the real
+/// `execution_guard_id` from the connection's *current* revision, not a value
+/// the surface invents. The console today fakes this with
+/// `crypto.randomUUID()`, which can never equal the guard id the model
+/// revision's own creation SQL requires, and every model registration fails;
+/// this closes that gap on the backend.
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
+async fn safe_connection_projection_exposes_the_real_execution_guard_id(pool: PgPool) {
+    let context = context();
+    let command = command(&context);
+    seed_context(&pool, &context, &command).await;
+    let repository = PgConnectionRevisionRepository::new(PgStore::from_pool(pool.clone()));
+    repository
+        .create_governed(context.clone(), command.clone())
+        .await
+        .unwrap();
+
+    let projections = repository
+        .list_safe_connections(&context)
+        .await
+        .expect("lists the governed connection projection");
+    let governed = projections
+        .iter()
+        .find(|projection| projection.id == command.connection.id)
+        .unwrap();
+    assert_eq!(
+        governed.execution_guard_id,
+        Some(command.execution_guard_id),
+        "the projection must expose the exact execution_guard_id the command used to \
+         create the connection's current revision"
+    );
+}
+
 #[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn safe_connection_projection_marks_legacy_and_unqualified_heads_non_executable(
     pool: PgPool,

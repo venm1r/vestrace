@@ -1,7 +1,0 @@
-$ psql -c 'readiness read surface grants and volatility'
- runtime_execute | supervisor_execute | supervisor_table_select | volatility | security_definer |         owner          
------------------+--------------------+-------------------------+------------+------------------+------------------------
- f               | t                  | f                       | s          | t                | vestrace_guarded_owner
-(1 row)
-
-exit: 0

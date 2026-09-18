@@ -149,6 +149,7 @@ export interface GovernedConnectionItem {
   qualification_state: string | null;
   blockers: string[];
   no_auth_binding_revision_id: string | null;
+  execution_guard_id: string | null;
 }
 
 export interface GovernedModelItem {

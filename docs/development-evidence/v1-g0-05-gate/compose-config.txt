@@ -1,2 +1,0 @@
-$ docker compose -f docker-compose.yml config --quiet
-exit: 0

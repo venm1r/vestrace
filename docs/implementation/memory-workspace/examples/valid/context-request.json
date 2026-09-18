@@ -1,9 +1,0 @@
-{
-  "query": "Какая интеграция выбрана первой?",
-  "intent": "decision_recall",
-  "time_perspective": "current",
-  "max_utf8_bytes": 8192,
-  "destination": {
-    "kind": "operator"
-  }
-}

@@ -1,2 +1,0 @@
-$ node scripts/verify-dirty-baseline.mjs --check . docs/development-evidence/v1-g0-05-preflight.json --scope p05-scope.mjs
-exit: 0
