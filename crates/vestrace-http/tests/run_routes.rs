@@ -734,21 +734,40 @@ async fn governed_agent_input_is_consumed_once_and_never_echoed() {
     );
 }
 
-/// Catches AG-UI mapping a chat message into a run objective, which would make
-/// message plaintext a pre-governance execution input.
+/// AG-UI now creates a run and adds a step through the same governed
+/// coordinator `/v1/runs/{id}/steps` uses. The message must travel as a
+/// confidential step input, never as a plaintext run objective, and it must
+/// never be echoed back in the response.
 #[tokio::test]
-async fn ag_ui_refuses_the_message_to_run_execution_bridge() {
-    let response = app(Arc::new(FakeRunUseCases::default()))
-        .oneshot(identity_request(
-            "POST",
-            "/ag-ui/run",
-            Body::from(r#"{"message":"sentinel-secret"}"#),
-        ))
-        .await
-        .unwrap();
+async fn ag_ui_carries_the_message_as_a_governed_step_input_not_a_plaintext_objective() {
+    let run_use_cases = Arc::new(FakeRunUseCases::default());
+    let commands = Arc::new(FakeRunCommands {
+        runs: run_use_cases.clone(),
+        ..Default::default()
+    });
+    let response =
+        app_with_run_commands(run_use_cases, Arc::new(TestAllowPolicy), commands.clone())
+            .oneshot(identity_request(
+                "POST",
+                "/ag-ui/run",
+                Body::from(r#"{"message":"sentinel-secret"}"#),
+            ))
+            .await
+            .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let body = response_json(response).await;
-    assert_eq!(body["code"], "governed_run_input_required");
-    assert!(!body.to_string().contains("sentinel-secret"));
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await.to_string();
+    assert!(!body.contains("sentinel-secret"));
+    assert_eq!(
+        commands.accepted_inputs.lock().unwrap().as_slice(),
+        [b"sentinel-secret"]
+    );
+
+    // The message must not have been duplicated into the run's plaintext
+    // `objective` in addition to travelling as a confidential step input.
+    // `FakeRunCommands::create_run` is the only path that persists a run into
+    // `run_use_cases`, so this is the run AG-UI actually created.
+    let created_runs = commands.runs.runs.lock().unwrap();
+    assert_eq!(created_runs.len(), 1);
+    assert!(!created_runs[0].objective.contains("sentinel-secret"));
 }

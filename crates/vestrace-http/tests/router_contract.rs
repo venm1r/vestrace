@@ -387,9 +387,10 @@ async fn v1_is_applied_exactly_once() {
 }
 
 #[tokio::test]
-/// AG-UI must refuse message-to-execution bridging before it consults an
-/// orchestrator, because governed confidential-input acceptance is absent.
-async fn ag_ui_run_reports_unavailable_when_no_orchestrator_is_configured() {
+/// AG-UI creates or extends a Run through the same orchestrator `/v1/runs`
+/// uses. This test's router has none configured, so the honest answer is "not
+/// implemented", not a stub refusal that never looked.
+async fn ag_ui_run_answers_not_implemented_when_no_orchestrator_is_configured() {
     let response = app()
         .oneshot(
             Request::builder()
@@ -403,10 +404,10 @@ async fn ag_ui_run_reports_unavailable_when_no_orchestrator_is_configured() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(body["code"], "governed_run_input_required");
+    assert_eq!(body["code"], "not_implemented");
     assert!(!body.to_string().contains("do the thing"));
 }
 

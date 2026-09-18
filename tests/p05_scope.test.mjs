@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 196);
+  assert.equal(changeScopePaths.length, 199);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);

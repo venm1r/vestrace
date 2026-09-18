@@ -1,9 +1,9 @@
 //! AG-UI reads endpoints and streams safe run-event metadata.
 //!
-//! Its `POST /ag-ui/run` surface is deliberately closed: confidential agent
-//! input must first be accepted by the governed Run authority, which is not
-//! composed here. The route therefore returns `governed_run_input_required`
-//! and never invokes the run orchestrator.
+//! Its `POST /ag-ui/run` surface creates or extends a Run through the same
+//! `RunOrchestrator` the console's own Run detail page uses. It is
+//! single-shot: one message becomes one step on the run, with no thread
+//! continuation.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -53,12 +53,18 @@ pub struct AgUiEndpointResponse {
 #[derive(Debug, Deserialize)]
 pub struct RunAgentRequest {
     pub message: String,
-    /// Accepted and ignored: the console sends them, and there is no thread or
-    /// run continuation in this build. Silently accepting them is better than
-    /// a 400 on a field the client has always sent, and they are echoed nowhere
-    /// so no caller can mistake them for having taken effect.
+    /// Accepted and ignored: the console sends it, but this build has no
+    /// thread continuation. Silently accepting it is better than a 400 on a
+    /// field the client has always sent, and it is echoed nowhere in the
+    /// response so no caller can mistake it for having taken effect.
     #[serde(default)]
     pub thread_id: Option<String>,
+    /// When present, names an existing run to extend rather than create: it
+    /// is looked up and the message is added to it as a new step, a real
+    /// continuation with an effect. Unlike `thread_id`, this is not inert —
+    /// it is simply never echoed back in the response body itself, the same
+    /// way `/v1/runs/{id}/steps` never echoes the `{id}` path segment back
+    /// into its own response.
     #[serde(default)]
     pub run_id: Option<String>,
 }
@@ -122,15 +128,79 @@ async fn list_endpoints(
 }
 
 async fn run_agent(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
-    Json(_request): Json<RunAgentRequest>,
-) -> Result<(), ApiError> {
-    let _context = request_context(&headers)?;
-    Err(ApiError::refused(
-        "governed_run_input_required",
-        "AG-UI run execution requires governed confidential input acceptance",
-    ))
+    Json(request): Json<RunAgentRequest>,
+) -> Result<Json<RunAgentResponse>, ApiError> {
+    let context = request_context(&headers)?;
+    let confidential_input =
+        vestrace_application::run::ConfidentialRunInput::parse(request.message)
+            .map_err(ApiError::from_application)?;
+
+    let (run_id, expected_version) = match request.run_id {
+        Some(ref raw) => {
+            let run_id = raw
+                .parse::<vestrace_domain::id::AgentRunId>()
+                .map_err(|_| ApiError::bad_request("run id must be a UUID"))?;
+            let run = state
+                .run_use_cases()
+                .get_run(&context, run_id)
+                .await
+                .map_err(ApiError::from_application)?
+                .ok_or_else(|| ApiError::not_found("run"))?;
+            (run_id, run.version)
+        }
+        None => {
+            let created = state
+                .run_orchestrator()?
+                .create_run(
+                    &context,
+                    vestrace_application::run::CreateRun {
+                        objective: "AG-UI run".to_owned(),
+                        coordinator_snapshot_id: vestrace_domain::id::AgentRuntimeSnapshotId::new(),
+                        execution_mode: vestrace_domain::run::RunExecutionMode::Supervised,
+                        parent: None,
+                        correlation_id: None,
+                        idempotency_key: uuid::Uuid::now_v7().to_string(),
+                    },
+                )
+                .await
+                .map_err(ApiError::from_application)?;
+            (created.run.id, created.run.version)
+        }
+    };
+
+    let result = state
+        .run_orchestrator()?
+        .add_steps(
+            &context,
+            vestrace_application::run::AddRunSteps {
+                run_id,
+                expected_version,
+                correlation_id: None,
+                steps: vec![vestrace_application::run::NewRunStepDto {
+                    id: vestrace_domain::id::RunStepId::new(),
+                    plan_step_reference: None,
+                    assigned_actor: vestrace_domain::run::RunActorRef::AgentSnapshot(
+                        vestrace_domain::id::AgentRuntimeSnapshotId::new(),
+                    ),
+                    input_references: vec![],
+                    input: vestrace_application::run::NewRunStepInput::Confidential(
+                        confidential_input,
+                    ),
+                }],
+                actor: vestrace_domain::run::RunActorRef::Principal(context.principal_id),
+                idempotency_key: uuid::Uuid::now_v7().to_string(),
+            },
+        )
+        .await
+        .map_err(ApiError::from_application)?;
+
+    Ok(Json(RunAgentResponse {
+        run_id: result.run.id.as_uuid(),
+        status: "accepted".to_owned(),
+        message: "run accepted".to_owned(),
+    }))
 }
 
 async fn event_stream(
@@ -197,17 +267,26 @@ async fn event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+    use vestrace_application::run::{AddRunSteps, CreateRun, RunOrchestrator, RunSnapshot};
+    use vestrace_application::{ApplicationError, RequestContext};
 
     #[test]
-    fn thread_and_run_identifiers_are_accepted_without_being_echoed() {
-        // The console sends them; this build has no thread continuation. They
-        // must not appear in the response, where a caller could read them as
-        // having taken effect.
+    // Renamed from `thread_and_run_identifiers_are_accepted_without_being_echoed`:
+    // that name read as if neither field has an effect, which is no longer
+    // true of `run_id` (it now genuinely extends a run — see `run_agent`).
+    // What this test actually covers is narrower and still true of both
+    // fields: they parse off the request, and the *response* body never
+    // echoes their literal values back, regardless of what effect they had.
+    fn thread_and_run_identifiers_are_parsed_and_never_echoed_in_the_response() {
         let request: RunAgentRequest =
             serde_json::from_str(r#"{"message":"do the thing","thread_id":"t-1","run_id":"r-1"}"#)
                 .unwrap();
         assert_eq!(request.message, "do the thing");
         assert_eq!(request.thread_id.as_deref(), Some("t-1"));
+        assert_eq!(request.run_id.as_deref(), Some("r-1"));
 
         let response = RunAgentResponse {
             run_id: uuid::Uuid::nil(),
@@ -216,18 +295,176 @@ mod tests {
         };
         let rendered = serde_json::to_string(&response).unwrap();
         assert!(!rendered.contains("t-1"));
+        assert!(!rendered.contains("r-1"));
         assert!(!rendered.contains("thread"));
-    }
-
-    #[test]
-    fn a_message_is_required() {
-        let request: RunAgentRequest = serde_json::from_str(r#"{"message":"   "}"#).unwrap();
-        assert!(request.message.trim().is_empty());
     }
 
     #[test]
     fn the_stream_query_defaults_to_the_whole_workspace() {
         let query: StreamQuery = serde_urlencoded::from_str("").unwrap();
         assert!(query.run_id.is_none());
+    }
+
+    /// Records what the transport asked the durable coordinator to do, exactly
+    /// like `api::runs::tests::RecordingOrchestrator` — redefined here because
+    /// that one is private to `runs.rs`'s own test module.
+    #[derive(Default, Clone)]
+    struct RecordingOrchestrator {
+        created: std::sync::Arc<std::sync::Mutex<Option<CreateRun>>>,
+        added: std::sync::Arc<std::sync::Mutex<Option<AddRunSteps>>>,
+    }
+
+    fn snapshot(context: &RequestContext, objective: String) -> RunSnapshot {
+        let at = vestrace_domain::time::now();
+        let run_id = vestrace_domain::id::AgentRunId::new();
+        RunSnapshot {
+            run: vestrace_domain::run::AgentRun {
+                id: run_id,
+                workspace_id: context.workspace_id,
+                objective,
+                coordinator_snapshot_id: vestrace_domain::id::AgentRuntimeSnapshotId::new(),
+                active_plan_revision_id: None,
+                execution_mode: vestrace_domain::run::RunExecutionMode::Supervised,
+                status: vestrace_domain::run::RunStatus::Created,
+                current_step_id: None,
+                checkpoint_id: None,
+                parent: None,
+                root_run_id: run_id,
+                budget_snapshot_id: None,
+                resource_usage_snapshot_id: None,
+                version: vestrace_domain::run::RunVersion::INITIAL,
+                result: None,
+                created_at: at,
+                updated_at: at,
+                finished_at: None,
+            },
+            steps: vec![],
+            checkpoint: None,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RunOrchestrator for RecordingOrchestrator {
+        async fn create_run(
+            &self,
+            context: &RequestContext,
+            command: CreateRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            let objective = command.objective.clone();
+            *self.created.lock().unwrap() = Some(command);
+            Ok(snapshot(context, objective))
+        }
+
+        async fn add_steps(
+            &self,
+            context: &RequestContext,
+            command: AddRunSteps,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            *self.added.lock().unwrap() = Some(command);
+            Ok(snapshot(context, "stepped".to_string()))
+        }
+
+        async fn pause_run(
+            &self,
+            context: &RequestContext,
+            _command: vestrace_application::run::PauseRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            Ok(snapshot(context, "paused".to_string()))
+        }
+
+        async fn resume_run(
+            &self,
+            context: &RequestContext,
+            _command: vestrace_application::run::ResumeRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            Ok(snapshot(context, "resumed".to_string()))
+        }
+
+        async fn cancel_run(
+            &self,
+            context: &RequestContext,
+            _command: vestrace_application::run::CancelRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            Ok(snapshot(context, "cancelled".to_string()))
+        }
+
+        async fn approve_run(
+            &self,
+            context: &RequestContext,
+            _command: vestrace_application::run::ApproveRun,
+        ) -> Result<RunSnapshot, ApplicationError> {
+            Ok(snapshot(context, "approved".to_string()))
+        }
+    }
+
+    fn post_run(body: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/ag-ui/run")
+            .header("content-type", "application/json")
+            .header("x-workspace-id", uuid::Uuid::now_v7().to_string())
+            .header("x-principal-id", uuid::Uuid::now_v7().to_string())
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_message_with_no_run_id_creates_a_run_and_adds_an_agent_step() {
+        use std::sync::Arc;
+        let orchestrator = RecordingOrchestrator::default();
+        let app = crate::build_router(
+            crate::api::runs::tests::test_state()
+                .with_policy(Arc::new(crate::api::runs::tests::TestAllowPolicy))
+                .with_run_orchestrator(Arc::new(orchestrator.clone())),
+        );
+
+        let response = app
+            .oneshot(post_run(r#"{"message":"hello there"}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let created = orchestrator.created.lock().unwrap().take();
+        assert!(
+            created.is_some(),
+            "run_agent must create a run when no run_id is given"
+        );
+        let added = orchestrator.added.lock().unwrap().take();
+        let added = added.expect("run_agent must add a step to the run it created");
+        assert_eq!(added.steps.len(), 1);
+        assert!(matches!(
+            added.steps[0].assigned_actor,
+            vestrace_domain::run::RunActorRef::AgentSnapshot(_)
+        ));
+
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(body["run_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_blank_message_is_refused_before_anything_is_created() {
+        use std::sync::Arc;
+        let orchestrator = RecordingOrchestrator::default();
+        let app = crate::build_router(
+            crate::api::runs::tests::test_state()
+                .with_policy(Arc::new(crate::api::runs::tests::TestAllowPolicy))
+                .with_run_orchestrator(Arc::new(orchestrator.clone())),
+        );
+
+        let response = app.oneshot(post_run(r#"{"message":"   "}"#)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(orchestrator.created.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn no_orchestrator_configured_answers_not_implemented_rather_than_a_stub_refusal() {
+        let response = crate::build_router(crate::api::runs::tests::test_state().with_policy(
+            std::sync::Arc::new(crate::api::runs::tests::TestAllowPolicy),
+        ))
+        .oneshot(post_run(r#"{"message":"hello there"}"#))
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     }
 }
