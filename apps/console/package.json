@@ -1,0 +1,28 @@
+{
+  "name": "@vestrace/console",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test:protocol": "node --test tests/agUiProtocolProfile.test.mjs tests/protocolLock.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ag-ui/client": "0.0.58",
+    "@ag-ui/core": "0.0.58",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "zod-to-json-schema": "3.25.2"
+  }
+}

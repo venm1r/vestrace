@@ -1,0 +1,214 @@
+﻿{
+  "tools": [
+    {
+      "description": "Search memories by text query using hybrid retrieval",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "description": "Search query text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_memories"
+    },
+    {
+      "description": "Retrieve a memory by its UUID",
+      "input_schema": {
+        "properties": {
+          "memory_id": {
+            "description": "Memory UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_memory"
+    },
+    {
+      "description": "List all registered AI models",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "vestrace_models_list"
+    },
+    {
+      "description": "Get an agent definition by ID",
+      "input_schema": {
+        "properties": {
+          "agent_id": {
+            "description": "Agent UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_agent_get"
+    },
+    {
+      "description": "Get a skill definition by ID",
+      "input_schema": {
+        "properties": {
+          "skill_id": {
+            "description": "Skill UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_skill_get"
+    },
+    {
+      "description": "Get a workflow definition by ID",
+      "input_schema": {
+        "properties": {
+          "workflow_id": {
+            "description": "Workflow UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_workflow_get"
+    },
+    {
+      "description": "Get a workflow revision definition with nodes and transitions",
+      "input_schema": {
+        "properties": {
+          "revision_number": {
+            "description": "Revision number (default: 1)",
+            "type": "integer"
+          },
+          "workflow_id": {
+            "description": "Workflow UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_workflow_context"
+    },
+    {
+      "description": "Start a new workflow execution",
+      "input_schema": {
+        "properties": {
+          "attempt": {
+            "description": "Attempt number (default: 1)",
+            "type": "integer"
+          },
+          "workflow_id": {
+            "description": "Workflow UUID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_execution_start"
+    },
+    {
+      "description": "Record a step execution within a workflow execution",
+      "input_schema": {
+        "properties": {
+          "attempt": {
+            "description": "Attempt number (default: 1)",
+            "type": "integer"
+          },
+          "execution_id": {
+            "description": "Workflow execution UUID",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Step kind: agent, skill, tool, decision, parallel, join, human_approval, sub_workflow, end",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "Workflow node UUID",
+            "type": "string"
+          },
+          "node_label": {
+            "description": "Node label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id",
+          "node_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_step_record"
+    },
+    {
+      "description": "Complete a workflow execution with final status",
+      "input_schema": {
+        "properties": {
+          "execution_id": {
+            "description": "Workflow execution UUID",
+            "type": "string"
+          },
+          "status": {
+            "description": "Final status: succeeded, failed, cancelled",
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_execution_complete"
+    },
+    {
+      "description": "Record a model evaluation result",
+      "input_schema": {
+        "properties": {
+          "model_id": {
+            "description": "Model UUID (optional)",
+            "type": "string"
+          },
+          "name": {
+            "description": "Evaluation name",
+            "type": "string"
+          },
+          "score": {
+            "description": "Evaluation score (optional)",
+            "type": "number"
+          },
+          "summary": {
+            "description": "Evaluation summary (optional)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "vestrace_model_evaluation_record"
+    }
+  ],
+  "version": "1.0"
+}

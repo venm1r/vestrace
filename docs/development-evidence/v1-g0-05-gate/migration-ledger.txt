@@ -1,0 +1,18 @@
+$ psql -c 'forward-only P05 migration ledger'
+ applied | head | all_successful 
+---------+------+----------------
+     145 |  215 | t
+(1 row)
+
+ version | success 
+---------+---------
+     209 | t
+     210 | t
+     211 | t
+     212 | t
+     213 | t
+     214 | t
+     215 | t
+(7 rows)
+
+exit: 0

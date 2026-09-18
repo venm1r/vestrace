@@ -1,0 +1,66 @@
+$ node --test tests/p05_scope.test.mjs
+TAP version 13
+# Subtest: P05 dispatch verifies its own scope and rejects a P04 authority mutation
+ok 1 - P05 dispatch verifies its own scope and rejects a P04 authority mutation
+  ---
+  duration_ms: 2235.9927
+  type: 'test'
+  ...
+# Subtest: P04 dispatch remains unchanged when P05 arrives
+ok 2 - P04 dispatch remains unchanged when P05 arrives
+  ---
+  duration_ms: 1121.3959
+  type: 'test'
+  ...
+# Subtest: P05 scope is sorted, minimal, and disjoint from protected authority
+ok 3 - P05 scope is sorted, minimal, and disjoint from protected authority
+  ---
+  duration_ms: 1.4922
+  type: 'test'
+  ...
+# Subtest: P05 protects root planning authority, P04 completion authority, and migrations through 0208
+ok 4 - P05 protects root planning authority, P04 completion authority, and migrations through 0208
+  ---
+  duration_ms: 0.9246
+  type: 'test'
+  ...
+# Subtest: P05-B admits its enumerated archive and base-capture paths and freezes the P05-A migration
+ok 5 - P05-B admits its enumerated archive and base-capture paths and freezes the P05-A migration
+  ---
+  duration_ms: 0.314
+  type: 'test'
+  ...
+# Subtest: P05-C admits only the reviewed restore/cutover implementation increment
+ok 6 - P05-C admits only the reviewed restore/cutover implementation increment
+  ---
+  duration_ms: 0.26
+  type: 'test'
+  ...
+# Subtest: P05-D admits only the reviewed Compose and G0-evidence plan boundary
+ok 7 - P05-D admits only the reviewed Compose and G0-evidence plan boundary
+  ---
+  duration_ms: 0.3217
+  type: 'test'
+  ...
+# Subtest: the captured preflight scope entry is the scope module verbatim
+ok 8 - the captured preflight scope entry is the scope module verbatim
+  ---
+  duration_ms: 2.3425
+  type: 'test'
+  ...
+# Subtest: the manifest carrying the P05 archive test dependency is admitted
+ok 9 - the manifest carrying the P05 archive test dependency is admitted
+  ---
+  duration_ms: 0.5488
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3515.4144
+exit: 0

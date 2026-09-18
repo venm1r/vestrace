@@ -1,0 +1,46 @@
+{
+  "schema_version": "vestrace.g2.authorization-fixture.v1",
+  "profile": "GOVERNANCE",
+  "release_gate": "v0.4 Govern",
+  "status": "evidence_fixture_only",
+  "cases": [
+    {
+      "id": "G2-BOUNDARY-001",
+      "status": "covered",
+      "requirements": ["CAP-001", "CAP-002", "CAP-011"],
+      "surfaces": ["application"],
+      "test": "g2_shared_boundary_rejects_a_denied_decision_before_execution",
+      "note": "The shared application boundary converts a deny decision into a policy error before execution."
+    },
+    {
+      "id": "G2-HTTP-001",
+      "status": "covered",
+      "requirements": ["CAP-001", "CAP-002"],
+      "surfaces": ["http"],
+      "test": "default_policy_denies_before_run_command_executor",
+      "note": "The HTTP middleware denies the governed route before the canonical run command executor."
+    },
+    {
+      "id": "G2-MCP-001",
+      "status": "covered",
+      "requirements": ["CAP-001", "CAP-002"],
+      "surfaces": ["mcp"],
+      "test": "denied_tool_call_stops_before_dispatch",
+      "note": "MCP tool dispatch is behind the same boundary and does not call the repository on deny."
+    },
+    {
+      "id": "G2-WORKER-001",
+      "status": "covered",
+      "requirements": ["CAP-001", "CAP-002"],
+      "surfaces": ["worker", "internal"],
+      "test": "denied_work_item_is_dead_lettered_before_handler",
+      "note": "A denied run work item is dead-lettered before lease acquisition or handler execution."
+    }
+  ],
+  "known_limitations": [
+    "Grant loading and policy decision persistence are not durable PostgreSQL runtime behavior in G2.",
+    "Delegation attenuation, bounded delegation depth, hierarchical budgets, approval override semantics, and federation adapters remain later gates.",
+    "The generic job poller has no trusted workspace/principal context and remains orchestration-only; the governed run worker is the worker evidence path.",
+    "This fixture is evidence-only and does not claim a qualified GOVERNANCE profile or full qualification bundle."
+  ]
+}

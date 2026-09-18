@@ -1,0 +1,62 @@
+{
+  "schema_version": "vestrace.g3.governance-fixture.v1",
+  "profile": "GOVERNANCE",
+  "release_gate": "v0.4 Govern",
+  "status": "evidence_fixture_only",
+  "cases": [
+    {
+      "id": "G3-001",
+      "status": "covered",
+      "requirements": ["CAP-005", "CAP-006"],
+      "test": "g3_valid_delegation_is_attenuated_and_reserves_a_budget_subset",
+      "note": "A child is issued only from an active parent plus an explicit capability.delegate grant and a narrower contract."
+    },
+    {
+      "id": "G3-002",
+      "status": "covered",
+      "requirements": ["CAP-005"],
+      "test": "g3_broader_child_authority_is_denied",
+      "note": "Capability, selector, risk, validity, and budget broadening all fail closed."
+    },
+    {
+      "id": "G3-003",
+      "status": "covered",
+      "requirements": ["CAP-006", "CAP-014"],
+      "test": "g3_missing_permission_and_self_delegation_are_denied",
+      "note": "A non-delegation grant and child subject equal to the delegator cannot create authority."
+    },
+    {
+      "id": "G3-004",
+      "status": "covered",
+      "requirements": ["CAP-007"],
+      "test": "g3_depth_is_bounded_even_when_a_contract_requests_more",
+      "note": "The global depth ceiling and per-contract depth limit are both enforced."
+    },
+    {
+      "id": "G3-005",
+      "status": "covered",
+      "requirements": ["CAP-013"],
+      "test": "g3_hierarchical_budget_charges_cannot_overspend_or_bypass_parent_allocation",
+      "note": "Child charges remain within allocation and sibling reservations cannot exceed parent headroom."
+    },
+    {
+      "id": "G3-006",
+      "status": "covered",
+      "requirements": ["CAP-001", "CAP-005", "CAP-013"],
+      "test": "g3_budget_policy_boundary_charges_and_denies_after_child_allocation",
+      "note": "A valid child uses the existing policy decision boundary and the budget charge denies the second request after allocation is consumed."
+    },
+    {
+      "id": "G3-007",
+      "status": "covered",
+      "requirements": ["CAP-003", "CAP-005"],
+      "test": "g3_delegation_preserves_parent_conditions_and_has_no_partial_root_on_invalid_child",
+      "note": "Delegation cannot drop parent conditions, and invalid child construction leaves no partial root reservation."
+    }
+  ],
+  "known_limitations": [
+    "Grant revisions, reservation audit records, and durable budget persistence are not implemented in G3.",
+    "Cross-workspace grant plus target mount acceptance is a later G4 boundary.",
+    "This fixture is executable evidence for the slice, not a TRUSTED qualification bundle."
+  ]
+}

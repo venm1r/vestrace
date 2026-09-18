@@ -1,0 +1,3714 @@
+{
+  "format": "vestrace-preserved-original-files/1",
+  "baseline": "3e05dfbdce063aa44a3a9e5a7a84c274597e8188",
+  "files": [
+    {
+      "path": ".dockerignore",
+      "sha256": "bd015eccddbefb88989d92f618aa78fb8ef7fb5750d5d5cb9af0a0458849d5a8"
+    },
+    {
+      "path": ".env.example",
+      "sha256": "15e38a25bb45b59a0be87c37dd00738590882c039b605ec99b6b10a912e017aa"
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "4f8a96b66f37d194b82c657b29f81e86658c711984f132a79d1c857c3beab708"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "6a7488073b995607c11cc71105e43ac7ca5ea0fecf151d147ef3b9e46024840e"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "1786e4ed23238887b53deff34623fde6956ec27e9cfa13ca502d6e7a230c1a2f"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "b9d4edab8503d106598ad9c4aca3c22f4e46115d67b6a370173d87a68851dea3"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "b41ecc1420d38da42a4bcbebed95ad4abeca2c6f54f47c07bb086051684f1f5d"
+    },
+    {
+      "path": "Dockerfile",
+      "sha256": "0a4d32efd362830ae37cc389b314a8de6c32270b038dd05ee0af718ff20276a0"
+    },
+    {
+      "path": "PLAN.md",
+      "sha256": "621d7d6d5fcfe098d7197c4e89ed2e275007d4fd235782d4be36c7ae8afe5a00"
+    },
+    {
+      "path": "apps/console/.dockerignore",
+      "sha256": "5985ba75c332d6ce36a2033c285af89089cab26078cbc83d6c903103ed61ecb0"
+    },
+    {
+      "path": "apps/console/.gitignore",
+      "sha256": "02a6d9e3917d62b574d655aeec519f214a5770130d18242d8c0f62aa3aa3d527"
+    },
+    {
+      "path": "apps/console/Dockerfile",
+      "sha256": "978c7562797a1bd1cc75a380a4594c96d20f00d50557b8d5bf282f2bd070fd3b"
+    },
+    {
+      "path": "apps/console/dist/index.html",
+      "sha256": "618e85f7704d680f4f053e42a4cc13e7fb4747793d5751a14e495d2d55b18fb2"
+    },
+    {
+      "path": "apps/console/index.html",
+      "sha256": "518c9d609e8a707a7a1449866c505886630fdd483b1dc5bb91289e16ea20ef9f"
+    },
+    {
+      "path": "apps/console/nginx.conf",
+      "sha256": "6bfc76d020b85307c29d97c72fce3b28cf19ce2c27c4b414686ca414968df7db"
+    },
+    {
+      "path": "apps/console/nginx.conf.template",
+      "sha256": "65e7f586e2a0a343439069f52ed79d6dde66fefee0c94b3b80c6ab1ba3eec904"
+    },
+    {
+      "path": "apps/console/package-lock.json",
+      "sha256": "6eaa395198c05fc847cf37586efaf664a9c59eaa172734196ac4229cf34cff51"
+    },
+    {
+      "path": "apps/console/package.json",
+      "sha256": "422627710e76498b6cd35981687025bb7ac884dd26d0e440690bf3a1b7dd7d99"
+    },
+    {
+      "path": "apps/console/src/assets/vestrace-mark.svg",
+      "sha256": "2fb8607bdd31e8e5ea03f5c9006030ea753a276293c8e023281556df0789f358"
+    },
+    {
+      "path": "apps/console/src/components/ApprovalChallenge.tsx",
+      "sha256": "d642fed9da363625c02e078768b9b5eea53876de5198482df94b81382ecc39cf"
+    },
+    {
+      "path": "apps/console/src/components/CompactChat.tsx",
+      "sha256": "2946ef2ef283516d07cb1c71bc3899200a14c047b1640eaa183f1dd18c533405"
+    },
+    {
+      "path": "apps/console/src/components/RunInspector.tsx",
+      "sha256": "9246c709f5832acbee48f0f832bfbf5b5bded0cc1da5709e19487db349224c80"
+    },
+    {
+      "path": "apps/console/src/components/RunWorkspace.tsx",
+      "sha256": "9e1bbba533cc913909ad11d03b9390e5d74628f1ed73c05298d9a8d78f07488e"
+    },
+    {
+      "path": "apps/console/src/components/RunsRail.tsx",
+      "sha256": "05ef3be4d5155ea1128e558c041437e1d369caf34c89fbde8daddc4fc5ea35a5"
+    },
+    {
+      "path": "apps/console/src/design-system/primitives/Button.tsx",
+      "sha256": "d1bb8e6994f06a19775c3a692474946eb1b722e515107db951c537755ce5128b"
+    },
+    {
+      "path": "apps/console/src/design-system/primitives/Modal.tsx",
+      "sha256": "3451231c4297022aa6bb147d11b8d0b0a60305751163991c6a9529d20016834e"
+    },
+    {
+      "path": "apps/console/src/design-system/primitives/Surface.tsx",
+      "sha256": "12ebf3916ee9b5a958b9a6afdda9808fe6189cab7926e942186d50a0b34bc541"
+    },
+    {
+      "path": "apps/console/src/design-system/tokens/theme.css",
+      "sha256": "5446bcaca7cb1be54750c623b84b7024dc5df5972dfd6c5608f3a0fdc95d75af"
+    },
+    {
+      "path": "apps/console/src/main.tsx",
+      "sha256": "0ddebdf3d47015a7d404b18f978334fab2a81f928593f58dcac2001c4c0e1884"
+    },
+    {
+      "path": "apps/console/src/memory/MemoryConsole.tsx",
+      "sha256": "5c3f1a6e4f67d52f3e5c3a56ce5cbc95d5bb1b4553aed65152df80e2e0d66cba"
+    },
+    {
+      "path": "apps/console/src/routes/AgentsPage.tsx",
+      "sha256": "89c6da5ceb396013c3d3fa6a7ba26b1b3dd4274e5a3eed829485071cb295f9dd"
+    },
+    {
+      "path": "apps/console/src/routes/ArtifactsPage.tsx",
+      "sha256": "3dddae7a2471666879a06de1b7238c2f048900aafa39f83e46ce808840fc71f2"
+    },
+    {
+      "path": "apps/console/src/routes/AuditPage.tsx",
+      "sha256": "50864f3aa8530a6329a6280bbbee44148173c7a0a8b79ee0ce0daf6606b64b13"
+    },
+    {
+      "path": "apps/console/src/routes/ConnectionsPage.tsx",
+      "sha256": "b5b2444aeb0ff70320f4d2072fd7c22c4e9f207395e84a1d913f21b559cdfa98"
+    },
+    {
+      "path": "apps/console/src/routes/EvaluationsPage.tsx",
+      "sha256": "3f191f5b6cecd39314602204bc8f0e94c180a96a0aed0162fd8dea737d1a3958"
+    },
+    {
+      "path": "apps/console/src/routes/HomePage.tsx",
+      "sha256": "1e7be1e0227d71a05e07e43565251b1198539794bf4e4d50bbf30255b91392c2"
+    },
+    {
+      "path": "apps/console/src/routes/ModelsPage.tsx",
+      "sha256": "b96d231100bc1bc6eb4c5b2e43d4437281c4784387a5d9925accb7a3c3cba4c9"
+    },
+    {
+      "path": "apps/console/src/routes/NotFoundPage.tsx",
+      "sha256": "4396828f487f67b5b69772f8a7eccf5fb0906f49ec038417abdab73b44ade043"
+    },
+    {
+      "path": "apps/console/src/routes/ProfilePage.tsx",
+      "sha256": "736cd0aafce2ee875c84556a17d20712ef39d58bf5cf3b9b047dd28120877ad2"
+    },
+    {
+      "path": "apps/console/src/routes/RunsPage.tsx",
+      "sha256": "58d38e4db7b1d27e2af37586a4786869597879a96543fe02a271d91c8eb94b70"
+    },
+    {
+      "path": "apps/console/src/routes/SettingsPage.tsx",
+      "sha256": "9326d3fae188f1a9f3c2b85123e5f7e56b2de7544f6eb066dafa2631d3d0a353"
+    },
+    {
+      "path": "apps/console/src/routes/TriggersPage.tsx",
+      "sha256": "0cb76ca5bd29d92d25aca0c4077e4042eab773e2876df9a91b3d7e480d61d9f2"
+    },
+    {
+      "path": "apps/console/src/routes/WorkflowsPage.tsx",
+      "sha256": "1dcde651fc40847c1b11b18a33e7a9a0da18dae99a5899f3e933a12f094680be"
+    },
+    {
+      "path": "apps/console/src/routes/runWorkspaceModel.ts",
+      "sha256": "5d3f1b448af8d60c514cd9f8f2f45cce516e6dbd3be3ae2a349d6be5eba8635a"
+    },
+    {
+      "path": "apps/console/src/sdk/agUiClient.ts",
+      "sha256": "340c16774c345f132898ab7ace1373ef406e9a2a179d20bbf76506ea290fcaa5"
+    },
+    {
+      "path": "apps/console/src/sdk/client.ts",
+      "sha256": "2207b3627327db3376b7a027292e37308e67c096f4555de8a0221c8cc0891a98"
+    },
+    {
+      "path": "apps/console/src/sdk/useApiResource.ts",
+      "sha256": "f62a5a0d576ee32d224a9b703487d8267d17761249270ac041c5d3bab5500bf6"
+    },
+    {
+      "path": "apps/console/src/shell/AppLayout.tsx",
+      "sha256": "c2ff6221d074da613d96b738aba58852d576b29138b6b1eeff4a490ee35a56f4"
+    },
+    {
+      "path": "apps/console/src/shell/ErrorBoundary.tsx",
+      "sha256": "7ddc6dfa3eb24f8e9542e0eb96a7f6c3bf326080ffebc0ab84a54d66e0aad7cc"
+    },
+    {
+      "path": "apps/console/src/shell/InspectorDrawer.tsx",
+      "sha256": "ffecd6ccb172315c700ea0885dc2c37a6adfbb4d03c4a79e5a20f85630c7af8f"
+    },
+    {
+      "path": "apps/console/src/shell/PageState.tsx",
+      "sha256": "1e922fc01babc7e3acbf346989d82806a849d03abd937b5896814cac715fa588"
+    },
+    {
+      "path": "apps/console/src/shell/SimpleListView.tsx",
+      "sha256": "d75c5ebf89c64be803dc65c790ef9c25b44b1c24a553ad08dc0cf8864fcf7301"
+    },
+    {
+      "path": "apps/console/src/shell/TaskWorkbench.tsx",
+      "sha256": "fb9bdc52d33d248243aa0b866c7fb126d59babaf1a804ee2e4d697a7c2436f18"
+    },
+    {
+      "path": "apps/console/src/vite-env.d.ts",
+      "sha256": "a5d8684854b4cd4ce12e6a80ccbe8d06b00c97bd2b30fc4694a7d55fb986fc96"
+    },
+    {
+      "path": "apps/console/tests/agUiClient.test.mjs",
+      "sha256": "4c8f112a930e86abf29d23857ad2d2b4c201181a850de24fbc244a53a6a7f490"
+    },
+    {
+      "path": "apps/console/tests/agUiProtocolProfile.test.mjs",
+      "sha256": "d89c7317585840d73b9685aa7c76f5784d8102d20d6a457d384fe546a9e59ef7"
+    },
+    {
+      "path": "apps/console/tests/layoutContract.test.mjs",
+      "sha256": "2bf3dff21940183fafce7a3830cc257b73a08c69cea306da72bf2817578cc06f"
+    },
+    {
+      "path": "apps/console/tests/protocolLock.test.mjs",
+      "sha256": "0344e3773efcaf4d1817aac0c48e8b6236abc5fdb739edd1b00475b2b0943a57"
+    },
+    {
+      "path": "apps/console/tests/providerClientContract.test.mjs",
+      "sha256": "8c4b837b2eca4beb8f5a5e459edfee1b4b0cc8d6d405c6bae4c9ac70439a5ef0"
+    },
+    {
+      "path": "apps/console/tests/runWorkspaceModel.test.mjs",
+      "sha256": "2b9cbd66cf7d24c629fbb27304c9973b055970129dc8a9873427fd1560f589da"
+    },
+    {
+      "path": "apps/console/tests/viteConfig.test.mjs",
+      "sha256": "d2f170d0589d299bc88b1dac01a9bad22600641dc050f00eaa7f266ace1c1247"
+    },
+    {
+      "path": "apps/console/tsconfig.json",
+      "sha256": "00adaef3cb5f1cc832be92b2867c32ec31a6fabd05b58a6a827eebfd782532ff"
+    },
+    {
+      "path": "apps/console/vite.config.ts",
+      "sha256": "26144e1a253b2ab4400a169f7cd62f89aa123aaa0d4fb6a47bde51820b38c808"
+    },
+    {
+      "path": "clippy.toml",
+      "sha256": "72a487c8a1fef88c025426e6db13eb8cbf3b62e261e318a00c02cb668661cc00"
+    },
+    {
+      "path": "crates/vestrace-application/Cargo.toml",
+      "sha256": "aae70b65dfeb5a0f65ebf397dbb8e5d7cc70856044859ab2ffe145ffba2828b4"
+    },
+    {
+      "path": "crates/vestrace-application/src/ag_ui.rs",
+      "sha256": "c98f4c8a458451702f38beb625b64b07c2cf2095146d8aedc3404b95a715d226"
+    },
+    {
+      "path": "crates/vestrace-application/src/artifacts.rs",
+      "sha256": "079559458f3e1fe8ecb768ee43cdf1f0099dab6bc36a54220698bf4d2d1ce7ba"
+    },
+    {
+      "path": "crates/vestrace-application/src/capability_restoration.rs",
+      "sha256": "ea0bb649a2fde159c1f5739861b516c2c402d8880fb66e92411322623e8fa210"
+    },
+    {
+      "path": "crates/vestrace-application/src/cognitive/mod.rs",
+      "sha256": "36eeea2a6acf2fd695f9fd40f5bce0899220adcab2c2a91447f32ace2b894670"
+    },
+    {
+      "path": "crates/vestrace-application/src/cognitive/ports.rs",
+      "sha256": "64f4881c75bc2d7007e905221c7833641f3809b45050c18b2dd1d11977b79ba4"
+    },
+    {
+      "path": "crates/vestrace-application/src/cognitive_mutation.rs",
+      "sha256": "2870c5dbb9b24500a31af9b530408db0226fe2f1cee6cc05da0e718f2d52ae24"
+    },
+    {
+      "path": "crates/vestrace-application/src/cognitive_ports.rs",
+      "sha256": "84232614bfec516423b87a7ad08145edf171390b498ba3fb9b1ea1289a21481b"
+    },
+    {
+      "path": "crates/vestrace-application/src/conformance_cases.rs",
+      "sha256": "6c401f009cc451af0d19cba5ae5e8e9138cf5fe8a103c059b61a51c110b98ee9"
+    },
+    {
+      "path": "crates/vestrace-application/src/connections.rs",
+      "sha256": "db705552ac8bc87d8d72a391bd764ebb6960891b509b5144425eddbc32e7b04b"
+    },
+    {
+      "path": "crates/vestrace-application/src/context.rs",
+      "sha256": "d139b82f4b1b5e7dd13b725452f110e730898c487e1b8852a5cf395064cae521"
+    },
+    {
+      "path": "crates/vestrace-application/src/credential/activation.rs",
+      "sha256": "96e4f5b1063d0f8062c9f8c87d1c39ff4fe930e77fd81b756f710c3d0f230259"
+    },
+    {
+      "path": "crates/vestrace-application/src/credential/commands.rs",
+      "sha256": "72b72311fdb1a5ef08623e0353c21450df576aba98e651c8fc704776ba098111"
+    },
+    {
+      "path": "crates/vestrace-application/src/credential/mod.rs",
+      "sha256": "5ae7ddb4d1bbdbf9704dc70fba392dea6ac8f996381eb6c589a6aa8bd0e7f11d"
+    },
+    {
+      "path": "crates/vestrace-application/src/crypto_qualification.rs",
+      "sha256": "1ca70398ecfe3f1dbf56c0309b73e99305235ca8dc862056f82d0a12e4fb03d9"
+    },
+    {
+      "path": "crates/vestrace-application/src/diagnostics.rs",
+      "sha256": "c026e69aac399374dbd57ae03b6b23e014f13dff4254ba04b7daf3fb04a3f42f"
+    },
+    {
+      "path": "crates/vestrace-application/src/effect_outcome_delivery.rs",
+      "sha256": "4558024b18cf91f9b08face3ec813eef8d312bc537698baeedfdfa5af21be973"
+    },
+    {
+      "path": "crates/vestrace-application/src/effect_recovery.rs",
+      "sha256": "90ee6d7d0186406e347176c546699439b0c802aaad356c48f7bd98948e412b17"
+    },
+    {
+      "path": "crates/vestrace-application/src/effect_repository.rs",
+      "sha256": "99f4bd601f3aa9618b0f8da18106461087053e1411460de82320d1dd06f4b03c"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/barrier.rs",
+      "sha256": "d7164b3b32ad6b43151a3d991173dcdb090735ae8ab3d1157257f758f5c4855f"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/carry.rs",
+      "sha256": "0b615876b021a3d401e6d0a6f4d0e974eb9c4ecb8996c1c04f94b15bf330b2b5"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/finalization.rs",
+      "sha256": "dedd67a6cb3e679db68613aecfe324e520ef2390df31e09e0a86989b6bfc3f7e"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/job.rs",
+      "sha256": "8bdcdd6b8dd71d10baf10663c062057c804c87aff01f2271e0c832057a4ec8dd"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/keys.rs",
+      "sha256": "137d7f1f5c3a40bd2bf6f9965dad5fb6becfc53fb70e200148d9b4f087da8eaf"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/mod.rs",
+      "sha256": "beb5046447d94b193ebb1c0ef0be45aebfedf4f06f1fca22f6178dd364554349"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/result.rs",
+      "sha256": "29cadf9542363522913bc6a9d18fac7d5701e6141ca4ae08c4812ceb6752b488"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding/transition.rs",
+      "sha256": "346857da32fcf3c74c248569da201ba44100a914981188a2f8e2b396227620d2"
+    },
+    {
+      "path": "crates/vestrace-application/src/embedding_data_policy.rs",
+      "sha256": "b3a6b2886f9b55a185650994f952584ca22b4fbd5c5fcb85733fb4cffe1000f6"
+    },
+    {
+      "path": "crates/vestrace-application/src/error.rs",
+      "sha256": "e311cf250cc77c95056343eb98a0f6d1980208b4a7bc9870273df00abd66f7b8"
+    },
+    {
+      "path": "crates/vestrace-application/src/execution_ports.rs",
+      "sha256": "a80a46d757c74be7cc283071942df02450c64ed3b53aeb0260da089807d05142"
+    },
+    {
+      "path": "crates/vestrace-application/src/external_effects.rs",
+      "sha256": "e51f1f4f6d31a3ff69499ef13da03c496aa99ba90da32ffee96719950c4e119b"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_admission.rs",
+      "sha256": "b5e482ed4b6fa9a2784fd2e6730cd5a8762a097a2593844af04806b42a5cbc46"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_bundle.rs",
+      "sha256": "c25dfc75a962754f8e725ef655e0b659a374359d499ab24ba57872a764687554"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_evidence.rs",
+      "sha256": "9780f18d1e98b6f2f1ddf51a9a4dbeb710313dfcf94de8e0d393d5260465d4f4"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_gate_evidence.rs",
+      "sha256": "6d788730069e2db11215e5e632e2510f614cb893d7860290abd8b97597398c66"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_qualification.rs",
+      "sha256": "06bf6a6cf6a55bc11420c7e41de0ff1393ce4982318facf76e0d6611e974ec84"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_runtime.rs",
+      "sha256": "086ac3750b5bc299c3e008e7fcbbc0209c44799f44522756b977b0bbf1fae49e"
+    },
+    {
+      "path": "crates/vestrace-application/src/fault_suite.rs",
+      "sha256": "50eb0f160f89241f19c99205f40a5a127b1a29eb82fec741b9f6dbc0d7a64495"
+    },
+    {
+      "path": "crates/vestrace-application/src/governed_mutation.rs",
+      "sha256": "498e65221410d35a88d33d8237a37485d2b6b5f5c5f8eb5f22293577941913f8"
+    },
+    {
+      "path": "crates/vestrace-application/src/health.rs",
+      "sha256": "f217911dd4d8c8002ad111020cf4ef157f1fb03c5e685583d845af5f7afba1c5"
+    },
+    {
+      "path": "crates/vestrace-application/src/idempotency.rs",
+      "sha256": "60f80ffa37f2512ef2876636be4a3c9583ed451d3d64a0d2165d8015e9c82670"
+    },
+    {
+      "path": "crates/vestrace-application/src/identity.rs",
+      "sha256": "6dd8b0d47c88955d82a1d79b52f360d1a820a631cb46e183c78bb8aa11f604dd"
+    },
+    {
+      "path": "crates/vestrace-application/src/installation/permit.rs",
+      "sha256": "836c8ad108097eb4f0533a0fb405246142d3d08ebdc5b074a52bc06617c33655"
+    },
+    {
+      "path": "crates/vestrace-application/src/jobs/mod.rs",
+      "sha256": "99bf0630b4f44b5c3a06f6fe701789c0a020788128d89cae3145d7a0957bb983"
+    },
+    {
+      "path": "crates/vestrace-application/src/jobs/ports.rs",
+      "sha256": "dd9330a0f8b502f3782bfb9fccbd40101f0a4312bf8e1760276a3db4e420ee2e"
+    },
+    {
+      "path": "crates/vestrace-application/src/lib.rs",
+      "sha256": "4994c7af07888d8a75557ed20e424da63bbcbfb39b77040b8840c986dd517d56"
+    },
+    {
+      "path": "crates/vestrace-application/src/material/commands.rs",
+      "sha256": "8e00e534c96dcbbe018d26ad4f551bcf32e569466b05ed917898326e089c7aa5"
+    },
+    {
+      "path": "crates/vestrace-application/src/material/erasure.rs",
+      "sha256": "d86b662ca2749919015f610259f68c368d8deb7a90a5cb52d812d74ecd045fb8"
+    },
+    {
+      "path": "crates/vestrace-application/src/material/vault.rs",
+      "sha256": "0c069cedc3d6dd849cb79ed6f48c7639b789f69b95449bf8bdf371365db15c61"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/commands.rs",
+      "sha256": "2ed60ff455334982420d8f29c3797718a33647411c1b6b09404b132d02cd24e8"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/extraction.rs",
+      "sha256": "7b0f18d055d90e5a4c5500379c42ca74b819757ee6bfb688910cc3b84ef02214"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/mod.rs",
+      "sha256": "eb74c91c5f131290c5186ba30d3988836888d6d3897f79158b74f878ace5c587"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/ports.rs",
+      "sha256": "7cf7282c9b6d3eea3ed55294c076a946a3a27614665d113e05be12a39cbe3115"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/purge.rs",
+      "sha256": "d2d2b8bc193306d3b670a0ee61b55a4b10dc01741e87011c68bc7720db9d2e04"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/services.rs",
+      "sha256": "cec79cc333bce0c43d8502540cefc0feb7aaaeaa28381977c89d6147f7ac0f40"
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/shared_read.rs",
+      "sha256": "dcbf3b3ad8d4ed0bd3c0995d2b191169312f1c6ad429460a1acf3f2f21aa96a2"
+    },
+    {
+      "path": "crates/vestrace-application/src/model_data_policy.rs",
+      "sha256": "57616807d3912f44dd19d38b717eeaf0d69255d79cbd8bbe1680fc5334432a81"
+    },
+    {
+      "path": "crates/vestrace-application/src/model_request_evidence.rs",
+      "sha256": "52278e821b4d313fef67c190ca61b9eb51b420337900abb0feaf7de882c8e010"
+    },
+    {
+      "path": "crates/vestrace-application/src/models/bindings.rs",
+      "sha256": "5fd4579f862b64c32e6d6b9ca3469b3613ad7d94e85a590beee2ae9a21742143"
+    },
+    {
+      "path": "crates/vestrace-application/src/models/mod.rs",
+      "sha256": "4b236cbbfae44674d6f812853082f6bfa27e7c57ba9ab2775cf283fdf5c3d3af"
+    },
+    {
+      "path": "crates/vestrace-application/src/models/ports.rs",
+      "sha256": "ff6d809156da4993e7751d9e89b3e002c8d0860d9027383036980b057522ab02"
+    },
+    {
+      "path": "crates/vestrace-application/src/models/revisions.rs",
+      "sha256": "75be23413e29b309311145c46134e171dad20560f33a1601930e7af53b07a238"
+    },
+    {
+      "path": "crates/vestrace-application/src/models/routing_ports.rs",
+      "sha256": "ce0c93b1cb981543bd5f381d5bc3f0b025c65cd61615b61435739d550b991b7f"
+    },
+    {
+      "path": "crates/vestrace-application/src/null_execution_history.rs",
+      "sha256": "589b10b92e00560e9a196faff2d3e4265a54541924b4b01f8df3e034a2658d45"
+    },
+    {
+      "path": "crates/vestrace-application/src/operator.rs",
+      "sha256": "332033fa15cb1d6da42eac5af6bbe1c1574c9befc379b3c5668234765d4aa680"
+    },
+    {
+      "path": "crates/vestrace-application/src/outbox.rs",
+      "sha256": "3607bf4d823d250edd9d3216374db01c16c68c1025612c8a35330942996624ba"
+    },
+    {
+      "path": "crates/vestrace-application/src/ports.rs",
+      "sha256": "f5d25a2922e8b7d2efd07c45636698a02ace067d77f8874147fe40aad626a8d7"
+    },
+    {
+      "path": "crates/vestrace-application/src/provider_dispatch.rs",
+      "sha256": "99513491b04d5c8a7b20098f304e3875690e9af1d9ceba60afd69912f82ebe0f"
+    },
+    {
+      "path": "crates/vestrace-application/src/provider_qualification.rs",
+      "sha256": "4f44af0de06a03cec9b8569ec662c0bdee463816571bfac87a1948075d340925"
+    },
+    {
+      "path": "crates/vestrace-application/src/provider_result.rs",
+      "sha256": "aa53e3c1ac218fcb73a4f938408a3504448802e8682dbac2bc7bb08401e66ba9"
+    },
+    {
+      "path": "crates/vestrace-application/src/providers/mod.rs",
+      "sha256": "2d00a5fa19c4c267fbb9863a743d779d854f65abd363f0ec1c0c6429a5444e87"
+    },
+    {
+      "path": "crates/vestrace-application/src/providers/ports.rs",
+      "sha256": "5b6b9e12d3cfed37faa8ecd3ff461db60fa6792b759e811644ded48fe3c9e223"
+    },
+    {
+      "path": "crates/vestrace-application/src/qualification.rs",
+      "sha256": "e273589df59e9f96e8e9647a9a767f1e4847e8f1ccb63f791f82204332455663"
+    },
+    {
+      "path": "crates/vestrace-application/src/recovery.rs",
+      "sha256": "046c1d51fb761fe4f628d9ebd64224f8a002f1d704f526deed948130f86f5e69"
+    },
+    {
+      "path": "crates/vestrace-application/src/recovery_reconciliation.rs",
+      "sha256": "180affe47453fe958ce7a3f2d1a2560498a6c920f213e0f9a456493a125ca9d2"
+    },
+    {
+      "path": "crates/vestrace-application/src/release_approval.rs",
+      "sha256": "7e42984fc92dafd4ec05665aea9576819252cf09c8c5b26c18fd5a2d9d25c318"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/context_builder.rs",
+      "sha256": "ca7875a19ecd8e2e56e338349e859a045725ffcd14d471254b8650b77ff09f98"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/embedding.rs",
+      "sha256": "72f84eff921f4fce0f897cbc2da81484c3762a9faf18b3a0fd4692c88c10770a"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/fusion.rs",
+      "sha256": "3f95367ecba627099b42d0cc596fda46b12c22747177dd9f6196e7713f2ea541"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/mod.rs",
+      "sha256": "ca3c42ab0b7ff534c68ec5478642ca08521f5c5d708c1a1765a13628ee49a7c4"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/ports.rs",
+      "sha256": "35f4e6a8fb364e55ad93ced3eb96671c0431ce91ecaa7d2af4e70312386e6575"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/request.rs",
+      "sha256": "3beded688a3c9199d6e66e06cdae8eb6cac5745b2296e46fc689ab23bd9f6fd2"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/rerank.rs",
+      "sha256": "4e78b1e6939e7f45e982cea31c672d6a85f3b13b650e515b59bedcc79ceb14d5"
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/service.rs",
+      "sha256": "432fe29a7a90fa32a025a3373b66a81cea5d3af6e67285957496e6b0af604881"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/clock.rs",
+      "sha256": "ec9caa2dc92fd678113c8eca39e4202bdf0d02d4f99f386d05defe436cf52501"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/commands.rs",
+      "sha256": "ef171c1a14eb63fd5ef5e24c3c906ba36abe30ecdaeecd9029b64c04ca11a196"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/coordinator.rs",
+      "sha256": "9c044a9edc741a739dbeff0d40a155964d316bfd3c51e9b20a6abed4da383028"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/handlers/advance_run.rs",
+      "sha256": "6a4ac44bd1dfb0994595a125ce151ae6955c4af04772f09fc311cdcb1910f9a2"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/handlers/execute_step.rs",
+      "sha256": "3cf6265a5854c00ba738ccfc33943735d062eff90787af4b3a8a5edfe2081efd"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/handlers/mod.rs",
+      "sha256": "89d1faa5d296f6282650e8bb6e898017d67263ba2181a42b39431b2cca99db58"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/handlers/resume_run.rs",
+      "sha256": "70ef30a66423b56b445308d7e137593a2a9e754a16c582a49deeeb82640b6681"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/mod.rs",
+      "sha256": "2be750c34496ce25ea635e5351c2a24569dcb19a2bc4564571d754409788c5b7"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/model_step.rs",
+      "sha256": "dbcee0cb48a8c432a2348e574bbfb18437b136e2f07d4fa064bc8d992cba856a"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/ports.rs",
+      "sha256": "dcd9b556eb045b420f2911055f7c50e1a2b3109a8adfe34b883f9ed69d8b45ea"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/replay.rs",
+      "sha256": "392431ce688d70e016cc0a61e6f66f159f9b9260241d272b1fe39d2eb95b416a"
+    },
+    {
+      "path": "crates/vestrace-application/src/run/worker.rs",
+      "sha256": "e12466f17289dbf19919f3ffa4fa67910f66622b596dfaafa4f966d99c41569c"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/command_service.rs",
+      "sha256": "fc5273b9faa7046fd8ca496be79180bbb246ddb505e63b649e98fd5d86a4844c"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/commands.rs",
+      "sha256": "48415b107b851bbd59b586a664d87508ebe48325c467eba502935afc78d115b3"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/mod.rs",
+      "sha256": "76f3c2f92aafb3ee01fd0ddb029d3ccdffa2a9d54d07fa912470163e68fea2fe"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/ports.rs",
+      "sha256": "abc179f02c8aefe9f3674b451dc8ca4218ed94445b643d180f9bc33e4cc4a72b"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/projection.rs",
+      "sha256": "0336e0d6ecc5a52f5f025fc434c89f1df649c50bd62e5d3d0c4768a28023393a"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/recovery.rs",
+      "sha256": "734469e06726263ffe05d134ce7f77ab027882894b23df319b1e03d3aa869ecd"
+    },
+    {
+      "path": "crates/vestrace-application/src/runs/service.rs",
+      "sha256": "1f2a6f9997faeb183464ccc6c1a35c5f3123db686b206654039e2b8fbee719ee"
+    },
+    {
+      "path": "crates/vestrace-application/src/secrets.rs",
+      "sha256": "625e9cb7652e3666d34a7ffe8b6e5c4f07307dcbe2c1b5ee15eb7787ab8f2e3c"
+    },
+    {
+      "path": "crates/vestrace-application/src/security/audit.rs",
+      "sha256": "0bd1d6c13e2bf20974198ba05ad3166eefde56e63f16506d92c19dffc27c224f"
+    },
+    {
+      "path": "crates/vestrace-application/src/security/grant_store.rs",
+      "sha256": "6c5df08c24d363bc044bdaf311be3e35719c375c461ef34a7af8569723faa6b7"
+    },
+    {
+      "path": "crates/vestrace-application/src/security/mod.rs",
+      "sha256": "ce0eff3140bd51d1e4b7627e0d15eaee4b8633600b957f60ac0f68fc3b3cb03a"
+    },
+    {
+      "path": "crates/vestrace-application/src/security/policy_engine.rs",
+      "sha256": "e93abcfcba7fa019725003a316faafe81534a840faeff440e75be59a4406761e"
+    },
+    {
+      "path": "crates/vestrace-application/src/security/redaction.rs",
+      "sha256": "89d6ba2b8cb675df6ceb994d7b40732db36e2edf2c5482c57cf54431b282b822"
+    },
+    {
+      "path": "crates/vestrace-application/src/settings.rs",
+      "sha256": "68f90c6d5e31bcba3345c03eae8e542773aafaa3ceed7dbc6e5f613e8c6d7fe6"
+    },
+    {
+      "path": "crates/vestrace-application/src/triggers.rs",
+      "sha256": "a8991c322153cbc699e0954deac9595ffe744f7e7708e315b147d8ea720ff59e"
+    },
+    {
+      "path": "crates/vestrace-application/src/trust_restoration.rs",
+      "sha256": "73f2e52d936ad563016949249f00ab54cb0ea744980f7dd1933e863cc556f98e"
+    },
+    {
+      "path": "crates/vestrace-application/src/v1_release_evidence.rs",
+      "sha256": "cc26da65ce97639a36a93e59d2cf82cfc6b60a562f75e2c1bd515d56d3156356"
+    },
+    {
+      "path": "crates/vestrace-application/tests/embedding_data_policy.rs",
+      "sha256": "9149c6f713c51af178a02c4902b498d43241d425bf6e99a1bf99e7a70c32025e"
+    },
+    {
+      "path": "crates/vestrace-application/tests/execute_step.rs",
+      "sha256": "4e4745be651d2482b69295f4ee535327c359c2fc061f7ff01504db09f4cabeb6"
+    },
+    {
+      "path": "crates/vestrace-application/tests/run_coordinator.rs",
+      "sha256": "03fef6681463e8fb4a685e1c40b45820512d79399a70a5fc1d3d8225a27d1906"
+    },
+    {
+      "path": "crates/vestrace-application/tests/run_event_store_contract.rs",
+      "sha256": "8826911c6153405af90f7d4b74b0dcec83da01db6db096e20a2400edc750c632"
+    },
+    {
+      "path": "crates/vestrace-application/tests/run_replay.rs",
+      "sha256": "0e6ff89376763572858249fc4b9e147eafa14da07e77b157d49d9d04db37df17"
+    },
+    {
+      "path": "crates/vestrace-application/tests/run_worker.rs",
+      "sha256": "b58dc453fc985402c7bc910271c3696013a0325527e703c2e19881d590913d02"
+    },
+    {
+      "path": "crates/vestrace-application/tests/shared_memory_read.rs",
+      "sha256": "9dfdcb0a8c8f07c37b9200c192083c1d1aae6826326c8a01abe4539fc2ee578f"
+    },
+    {
+      "path": "crates/vestrace-cli/Cargo.toml",
+      "sha256": "22b9c1a76e5e4b74919cad1c4600ecb7907c82e58052f49db8498cfead15bb6c"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/conformance.rs",
+      "sha256": "d71038527863f98f14f310d2ffcfccf64cbbc690362ebabcd9bf04183a8974df"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/doctor.rs",
+      "sha256": "6c986a096b0ccbb79a63abc970e66e41b297bd82c7b05c0cd52ff12aa97cbf6f"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/mcp.rs",
+      "sha256": "4c5f3351752749607fd238f41487a34431c5e71d34621ccbc6f8118500b0408b"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/migrate.rs",
+      "sha256": "8ecbbf0a7d1cd3ea7f85381f3a4a5c2215dacd75cd284318b6ac5f27a5ea6f79"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/mod.rs",
+      "sha256": "c85b40b1558645aa091589206043ae4c36aac233e57165c90a13a8665b5834b7"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/operator.rs",
+      "sha256": "91e911316878c73aac181a7b9c7be22e9266655f71c8fc70cf9d552cb9a2ec05"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/rebuild.rs",
+      "sha256": "07ed664511aec0b05c07923a3be68ba67359e32e7d1c7de6cb890a1bbd7bdcd2"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/recovery.rs",
+      "sha256": "6c537d8908c867049c4f34d2420627ceb6a79fe7ca7b7145925e5925764b579d"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/schema.rs",
+      "sha256": "3bf9cae8bd499f488398f20ae7bdd4ac17b91740bc526ea4fd668f03a75a1466"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/server.rs",
+      "sha256": "39d81f868e3413d13f2e63a0745515adc2a0452d00971e1a8bf96e392138464a"
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/worker.rs",
+      "sha256": "e304f165eb7f5c853f7f56f10d66883a208dfc4a1a62654b92047a2fc23f1c8f"
+    },
+    {
+      "path": "crates/vestrace-cli/src/main.rs",
+      "sha256": "d022b2aa7eb2d2a2097efdfc79db93441710a0fa956d62f7b8cce2f348ee0a1c"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/cli.rs",
+      "sha256": "4cf31c0d2e7053442dea2103ba30b65fe3555324074c7f56c4329130dacc1db9"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/command_contract.rs",
+      "sha256": "c484914ff74349085a0139da0a3c5de73a1dfa680d64124c8297f292e8ad291c"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/crypto_evidence_cli.rs",
+      "sha256": "5d08cd4b4e5a7abccc8ff1d24677e9d79e1e822cbc5ac72e6212348c991aaba1"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/fault_suite_cli_contract.rs",
+      "sha256": "20ad82498d2ebd9fe43bbdb25480e47fb8af15546e8ca81ae783fa466cf5b52c"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/idw_010_build_verified.rs",
+      "sha256": "650ba1aab04b52236986ebcc86b06020d8b5ff71f22655fae9cc1283db004477"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/idw_014_shared_read_truth.rs",
+      "sha256": "bb352a25a30f749647e7c6b347bc581a892755282db69456db9a0284ede45094"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/provider_openapi_contract.rs",
+      "sha256": "008626da01aec92119ec485b1f2474cfd834f32eeacbe46d5101d1738e7f1b4c"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/provider_runtime_wiring.rs",
+      "sha256": "057c354c667ccbf80264d292e55a83dbef0d961df0ceb813221d6226e880fcd7"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q10_post_incident_cli.rs",
+      "sha256": "458ffd02c02586a6d04347bfc3098aec2ef5194ae24e1371addf3d77bea988e3"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q1_qualification_cli.rs",
+      "sha256": "c3565239dd5a5514779c1ea0ab5c118bf96fe75300598f478045b6bed2973fba"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q3_qualification_persistence_cli.rs",
+      "sha256": "3f13f845c08514801edac0262c4d72428de7614ea30079740b893a5d14c1d3ab"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q4_capability_manifest_cli.rs",
+      "sha256": "5ba62360f41d74964065f5d029f24db1e62ad355307d6077dc8547e337fe6466"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q5_manifest_binding_cli.rs",
+      "sha256": "96422d96f6aef8f1fda1ea1be4698f95617794658e2a53be037a3a0fb2941174"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q6_deployment_qualification_cli.rs",
+      "sha256": "db7bf74e4e2c6aef6249c32087aeff1ad8c2fc2d7deb99272722316199c2831f"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q7_signed_artifacts_cli.rs",
+      "sha256": "35e2ee3e864188d54af11324ead47770606f0a434857e147c311bb8963e712f9"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/q9_key_provider_trust_cli.rs",
+      "sha256": "061459bd89653bf0965606fb83f2b5291a07f1ee68b5d5aba5bbd9d767151ba5"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/qualification_baseline_cli.rs",
+      "sha256": "b1bec43b04aa57f858ab026eee0bef110525e7535efeee25d1d4798fcd186985"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/recovery_qualification_cli_contract.rs",
+      "sha256": "6b46f9eefee82f56b9399e63e16469cceca0ab4d33381237cbabf02948988c99"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/runtime_schema_gate.rs",
+      "sha256": "6801066556dbce0faf68758b899d5e1b92ef5d0a26b63c516818a563f52767f0"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/v1_release_gate_cli.rs",
+      "sha256": "21e80528b563e416d53af4d6915b0c47d17dda9a4ab25ddd49adcda9ec23ddbd"
+    },
+    {
+      "path": "crates/vestrace-cli/tests/worker_once_cli.rs",
+      "sha256": "da8dfdf9adf02049875df00ef2775b98642a144f22926827cc29ca42effc6e8e"
+    },
+    {
+      "path": "crates/vestrace-domain/Cargo.toml",
+      "sha256": "679c42ac708171f5b7c082265621ab38cebcacf34a89e0061a267ddf561a2535"
+    },
+    {
+      "path": "crates/vestrace-domain/src/a2a/mod.rs",
+      "sha256": "5a904a87a597ba6d2096bf82e951b105eb32a4b3ac4119a327f7b41747149229"
+    },
+    {
+      "path": "crates/vestrace-domain/src/ag_ui/mod.rs",
+      "sha256": "36aff23dd86757924180cd1edf1f004f328ddc009e0150c2eb98364470ddef85"
+    },
+    {
+      "path": "crates/vestrace-domain/src/artifact/mod.rs",
+      "sha256": "2b0107cc6a36d2e6c3a2000bf82e3fe8a679717d746a4687e273db3adb9bad81"
+    },
+    {
+      "path": "crates/vestrace-domain/src/budget/mod.rs",
+      "sha256": "4061592a6bb3a3e68bfbd3232797bd7e2ae80d8abead4016be4bb260775d274c"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/assessment.rs",
+      "sha256": "74490e573563ade6f59ca6eb6546993a6eff6958ca0ff4df3039f671d6f108bc"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/claim.rs",
+      "sha256": "287c329c0e8fe24604e6686f5c094dbcef232f33b0144bd9d1cd095bcd9c88f4"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/conflict.rs",
+      "sha256": "11eef1c930cb1e3c2c02e3dfd37bd3b88785f88ae9edc49ab8bf003e650292af"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/evidence.rs",
+      "sha256": "ad41944fa16f71d5ad03e3165076c03bcc73482c06ae1be25b8b9cb38f9c0b7b"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/mod.rs",
+      "sha256": "2af92fe8dba2e82ae69cb189f7e4dec351d26f8fd7e3e332e865e3d645a8f2c0"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/mutation.rs",
+      "sha256": "cb98e2341e155ebe126e35eb845c3e5d03f112acdc3c96fb8a2da92646417332"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/revalidation.rs",
+      "sha256": "4ec8b8c4cc0ffca17806853e2d0ebb2264be96c1de7f4882a9a76336e43ead66"
+    },
+    {
+      "path": "crates/vestrace-domain/src/claim/supersession.rs",
+      "sha256": "b08389369ab7583526b22cd17a5fb6a40077d7834ed92ad5bdfedac7bbe34e4a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/cognitive/agent.rs",
+      "sha256": "0fe7022950d7a4b1e95c9f899f61e812dac9c0937b150ece11d1d72b1af9249a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/cognitive/mod.rs",
+      "sha256": "ebe7924b00680dc2e715a6f664c094da44309cb7b4568cf8316c1d3696adb489"
+    },
+    {
+      "path": "crates/vestrace-domain/src/cognitive/skill.rs",
+      "sha256": "2b127cfa6ff2e3412f24f454c11c25e2ba4ba9c859c5e3763c1b0d5169f35c01"
+    },
+    {
+      "path": "crates/vestrace-domain/src/cognitive/workflow.rs",
+      "sha256": "25f36ed5243fd3efc9c61ddc231e33857455b8886e66bf9de9d8fe5abb675b15"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conformance/cases.rs",
+      "sha256": "c641048cd71fff5e9f3504949d2fb916bcf7230f10e915c43d10afc08f3677d2"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conformance/gate.rs",
+      "sha256": "c4c8d368281c4b2acb3a6f365e178ea929f153254db06183a9944cf9215ec2be"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conformance/mod.rs",
+      "sha256": "1132746692ad58bc40e27aded2bb0ece875554af68558148c889079ade6f03d5"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conformance/registry.rs",
+      "sha256": "625be7cf749f45383c69894bfbc5667f037215766df90409d29b52578fdde51a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conformance/runner.rs",
+      "sha256": "18b9c36a9a3be15f462331c7850c80c3e4451571791082d51a65828f0bfbaeee"
+    },
+    {
+      "path": "crates/vestrace-domain/src/connection/mod.rs",
+      "sha256": "b7881597fd015247b491b30d57fdbb6c120e7a59e877b3497c1db43cf2c9a345"
+    },
+    {
+      "path": "crates/vestrace-domain/src/connection/revision.rs",
+      "sha256": "1581eec63472072b7db6fd85e4de3c0638cb2d6e3afa97f7c4445b1a687b04eb"
+    },
+    {
+      "path": "crates/vestrace-domain/src/conversation/mod.rs",
+      "sha256": "be4dd7362df5a846e94122d9a420b4d3f3d70e4590b1cfc2b22f8152ec519376"
+    },
+    {
+      "path": "crates/vestrace-domain/src/credential/guard.rs",
+      "sha256": "20266e0e8c0a0136881f33b42ce32b8e84a860d5730642819409f471dcd358f1"
+    },
+    {
+      "path": "crates/vestrace-domain/src/credential/intent.rs",
+      "sha256": "a5082331dc5c8200c7135c37090ecdc589a869170fc312665630f3e62eca4495"
+    },
+    {
+      "path": "crates/vestrace-domain/src/credential/revision.rs",
+      "sha256": "260fe55674e65549d5b8622bd6cebad3c09d2ff720cd2e389be4f91a4476cb7b"
+    },
+    {
+      "path": "crates/vestrace-domain/src/credential/slot.rs",
+      "sha256": "49a097adf800222774de1019be332c9947837d894be6b6af80dd830a8c353a63"
+    },
+    {
+      "path": "crates/vestrace-domain/src/embedding/generation.rs",
+      "sha256": "c991486a92f77b45996d1d3c1cb92925e02aae250cbf751e9d7f702f58bd6e0f"
+    },
+    {
+      "path": "crates/vestrace-domain/src/embedding/job.rs",
+      "sha256": "77ae1b57ee35387e1c8980c273f4bbaf28acf488f2ac8c103cc9d0d88eecbc34"
+    },
+    {
+      "path": "crates/vestrace-domain/src/embedding/mod.rs",
+      "sha256": "d00c2c135d53dc8feb14c740f96594a43d605a8682a0f7712482db953dcc95fa"
+    },
+    {
+      "path": "crates/vestrace-domain/src/embedding/space.rs",
+      "sha256": "0e606f0378b83d582025dc6a31c43a8b2d1258deafd04587847b6ed775475f37"
+    },
+    {
+      "path": "crates/vestrace-domain/src/enterprise/federation.rs",
+      "sha256": "3ce94fdf2c416b3b069c4bf47ee05dc319fd35c0f9b00ed792d409334a4ecef7"
+    },
+    {
+      "path": "crates/vestrace-domain/src/enterprise/mod.rs",
+      "sha256": "1b151ebddf1ae7fb9c0d2e49f720e54136b6e95b4ebb5aab1cbdf12ef52bbe46"
+    },
+    {
+      "path": "crates/vestrace-domain/src/enterprise/sharing.rs",
+      "sha256": "134ae15d77f67aef3ed2dbe8343103d2a4ab5d2cdbbbbd98a90974f8e6c84684"
+    },
+    {
+      "path": "crates/vestrace-domain/src/error.rs",
+      "sha256": "1c4f1ab5ae4dededbd4a37d6a01c10b122ef1be4c6aeebe8e96b0fc1e3e86630"
+    },
+    {
+      "path": "crates/vestrace-domain/src/evaluation.rs",
+      "sha256": "f0bafe6fe8e21f20aad239e481b061862edeb979aa168547126f7db9b100fd42"
+    },
+    {
+      "path": "crates/vestrace-domain/src/event.rs",
+      "sha256": "9f10a12547eed7cf61e9ed203342c7d1a143f55ef19f381f840c661572d8cdf6"
+    },
+    {
+      "path": "crates/vestrace-domain/src/execution/mod.rs",
+      "sha256": "9d49f063c1dd0da393eb61f1aa5d7ded9c02da1e63657c0780f41775fc0c49db"
+    },
+    {
+      "path": "crates/vestrace-domain/src/execution/status.rs",
+      "sha256": "1c73a027cfdaeefb2c70b71e5b9df418c7c9b7b94e6ff62157080148fd48d503"
+    },
+    {
+      "path": "crates/vestrace-domain/src/external_effects.rs",
+      "sha256": "04aa79131904b600984fbd0f3e100832b51598a8980e57d14b0902a335bea5f1"
+    },
+    {
+      "path": "crates/vestrace-domain/src/health.rs",
+      "sha256": "1a32e965ab680f5d581837846e610b264c84edea3975b22859d90551a06ba4fd"
+    },
+    {
+      "path": "crates/vestrace-domain/src/id.rs",
+      "sha256": "e6ad294c1880b2377e295324deee411d38ea823255ae0d1f5a7e8fc22c074b76"
+    },
+    {
+      "path": "crates/vestrace-domain/src/identity.rs",
+      "sha256": "d48dec43814b857e6487dc56fb161fd0226ca343620a96644ed03f3355d96c74"
+    },
+    {
+      "path": "crates/vestrace-domain/src/installation/fingerprint.rs",
+      "sha256": "92c05d30f671e3f96c4a5b30d7b9e6b8c9e9a7349720932d99984b524a735524"
+    },
+    {
+      "path": "crates/vestrace-domain/src/job.rs",
+      "sha256": "02de6a0627b947d93d3ea986116142ce4c21c9713358799ad2cc3d3bc0a83ebd"
+    },
+    {
+      "path": "crates/vestrace-domain/src/learning.rs",
+      "sha256": "21ebe04a0bceef333d9765a53f68bd3b09bba879425b3eea32790c7f85b143a8"
+    },
+    {
+      "path": "crates/vestrace-domain/src/lib.rs",
+      "sha256": "0a413f23ca9ecce4445bd2a9700fd9cb1af5afd4275532fb9f0582a2325b6b01"
+    },
+    {
+      "path": "crates/vestrace-domain/src/material/content.rs",
+      "sha256": "cdcec4234f505fa385c65afbde1ad6b9ccfac123b37bede91321d9a7ff1382c6"
+    },
+    {
+      "path": "crates/vestrace-domain/src/material/identity.rs",
+      "sha256": "7d3bcf4e8cc5ef5ac6d7f4b36c956ad9966ce47003fc186a60c70c1c04090ea1"
+    },
+    {
+      "path": "crates/vestrace-domain/src/material/intent.rs",
+      "sha256": "e243e04ec39c10b513a3f45dcc409ae64fe479ddb653ba92ebf384a7f4e5f75a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/material/mod.rs",
+      "sha256": "d7ef7b2906b0b1784846acfdbd8ab6faf7bad8bf44b88f3e1b78fde5ee16539b"
+    },
+    {
+      "path": "crates/vestrace-domain/src/material/size_class.rs",
+      "sha256": "f48594a342205a084df12c066203bbbff5aa20444795f8fb329af4861d296b73"
+    },
+    {
+      "path": "crates/vestrace-domain/src/memory/kind.rs",
+      "sha256": "aba31970ff0530fc0d9eb2eae70233988ab5b6b45c58a1df8ffac0a9e5aca380"
+    },
+    {
+      "path": "crates/vestrace-domain/src/memory/mod.rs",
+      "sha256": "ebf05e5c54c180cbe34e71790c4b81abeaec0b13f95c20ab28de4494d98ef11c"
+    },
+    {
+      "path": "crates/vestrace-domain/src/memory/revision.rs",
+      "sha256": "e75ecbd18f97e0a1f1642795bc6165b6d49dc48ef62ebe05246bc940ad7a5b43"
+    },
+    {
+      "path": "crates/vestrace-domain/src/memory/structured.rs",
+      "sha256": "2081607a3f00831042df6467eb91e12c8dfcd439665a0aeaa8add37da093a6f6"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/admission.rs",
+      "sha256": "0fc3e35d21fb7a21408748fc8314e747a7b8a351f90c86aa8c204f5d9cda98b5"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/binding.rs",
+      "sha256": "846abbd5208c758c7d4bdf6fbd7335dc95faf5f7f76649da84760e6cafb9e275"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/evidence.rs",
+      "sha256": "86e0c0f419140ab25aff46adf5d89b534822fc320d5a02e1ceedc687dbbc4673"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/mod.rs",
+      "sha256": "7c229186223e5a74bc9b218ad37ae8b6e09c1e3e10602ce5f1064a70255e4676"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/qualification.rs",
+      "sha256": "542c39a3d8e88c30e1ae4246a749c17454b93a9a2501d2f4da2a2762d0dedae4"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/routing.rs",
+      "sha256": "d58e76dc2ebe291cd780ed1b91878d6066a3eadce0d4567e65ffd8d91e64c374"
+    },
+    {
+      "path": "crates/vestrace-domain/src/models/runtime.rs",
+      "sha256": "5b618f6d2d2dc67b234031790f0f95f8c45d18790d2d33bb244f59c96ac5a2a7"
+    },
+    {
+      "path": "crates/vestrace-domain/src/observability/mod.rs",
+      "sha256": "d608e1a929f3b44cfc80705a6896431536b78f86519aefd70c288e0865af398a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/package/mod.rs",
+      "sha256": "0d785d6fc3f99d2e411c7cb99e9347047495166571d6d3a906698723520a2032"
+    },
+    {
+      "path": "crates/vestrace-domain/src/planning/mod.rs",
+      "sha256": "7bc5030c7ea6faf4d4c9751fb5f5cddc288174970e564bd4afe32d946e8b28b4"
+    },
+    {
+      "path": "crates/vestrace-domain/src/policy.rs",
+      "sha256": "0c4760c2d33561ebd96a078e349cf344f34a45b12f48e3b0423b1250729821e6"
+    },
+    {
+      "path": "crates/vestrace-domain/src/product/mod.rs",
+      "sha256": "0579de49990ba4b60a06d519c22f816d3e6b84a0fecb89f5e2504760b6aa7940"
+    },
+    {
+      "path": "crates/vestrace-domain/src/product/transfer.rs",
+      "sha256": "c9462db29fd015e07ecd3f9ebec5de8873225d1538534242d0e1a48f769215b9"
+    },
+    {
+      "path": "crates/vestrace-domain/src/provenance.rs",
+      "sha256": "9162b73986ba634dfdf33107a849df76fa828dd5461c855b53ed03282f4d4a72"
+    },
+    {
+      "path": "crates/vestrace-domain/src/relation.rs",
+      "sha256": "3aad970c646cdaad521e1a8d17a4f934fc3e778eee4e24183bb3b73a4a589cc8"
+    },
+    {
+      "path": "crates/vestrace-domain/src/release/mod.rs",
+      "sha256": "1b2b1ea844225b0266fa21efd187880ecfad9c314ee4b956e95029e03d8ecf49"
+    },
+    {
+      "path": "crates/vestrace-domain/src/retrieval/hydration.rs",
+      "sha256": "45d8b39f8a7c06336bfd0b9831484c6db74a40a4197eebfc9cc6d1e8b7506df4"
+    },
+    {
+      "path": "crates/vestrace-domain/src/retrieval/mod.rs",
+      "sha256": "4b54dee7bad342e0ae013dce3c755e7615ad977a9dbbb8d02dcce89bfd023a81"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/checkpoint.rs",
+      "sha256": "f06961ccfb90b2be893bc9e5e3311601cba6b7d61fce34e3e83bc35ecf941432"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/command.rs",
+      "sha256": "57b23d4a093dd6d5c8338d685bd36421e92f18feb6509dd95331b52c05ad77a7"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/decision.rs",
+      "sha256": "f2b279bcfa9e861ff5ef419ca328a761cab340e5234c19ceef6f5f4a9bc1bb15"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/error.rs",
+      "sha256": "5209059c193539d5f492bc676c14399a5e02fcc13ea655e6dc146d04dc8e2689"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/event.rs",
+      "sha256": "3a5a933a41ce334e7a25ca0fd82ffe87f1333e6d5b6b91837dd401f3ad99250d"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/legacy_event.rs",
+      "sha256": "58cf5ff1f8091536acc0d381d063202f2d5461ee296ff66a3750ca3deaadfc2f"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/mod.rs",
+      "sha256": "64af613dbccadcc514804dc536ad5766766d3e27ced743f89ae459cf3a9f2993"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/reducer.rs",
+      "sha256": "ac32458beaafb9ecfd370c0b82c0393a098b90373d3a8a2fe12fab0664b2b405"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/state.rs",
+      "sha256": "2f23ab1aa48a048a500744ba5987d7ae75bde721003bb3885b2da263cbef85f0"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/status.rs",
+      "sha256": "8639d09850177966a6489ce56ad8a683826fff6dda6fd24d83cd476239e5b2ec"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/step.rs",
+      "sha256": "264e4c176cbdc09a8dc851f3cbca3ea678719f739e4e6d8c13442071829b8d1c"
+    },
+    {
+      "path": "crates/vestrace-domain/src/run/work.rs",
+      "sha256": "93ac04b5af8bb9f7da7b29b9ecace5f28d267c66430d6040d589b10490bd0810"
+    },
+    {
+      "path": "crates/vestrace-domain/src/security/capability.rs",
+      "sha256": "73ea58bd53ec2e07f57347a8b14895c5e31778b9ff6da3f8be9349c956790f0b"
+    },
+    {
+      "path": "crates/vestrace-domain/src/security/delegation.rs",
+      "sha256": "a68903ba936d2622ba62dc1937db4538b0927aac01069eb225d66c4fd9ba87b3"
+    },
+    {
+      "path": "crates/vestrace-domain/src/security/mod.rs",
+      "sha256": "73585afe6537b7505c8bac9ee39bf2077bf6d4415dd621ff4d22f4d4580975e2"
+    },
+    {
+      "path": "crates/vestrace-domain/src/security/scope.rs",
+      "sha256": "16691bdaf5603e7baad293b438b7baaabc205054fd228f18207465ef029ed1a1"
+    },
+    {
+      "path": "crates/vestrace-domain/src/settings.rs",
+      "sha256": "ca62a5791b049e5889da2ac09036defe9efb4b30a1d871a64802c9c8392175d1"
+    },
+    {
+      "path": "crates/vestrace-domain/src/state_engine/mod.rs",
+      "sha256": "086c87ced7f792da3e003a35640599693cfc305203103514c321e14b4e499430"
+    },
+    {
+      "path": "crates/vestrace-domain/src/time.rs",
+      "sha256": "41b3ad355ca446cd50886bcaf82c3d80a5ed8504c57a1a74c526f98f38e5bcad"
+    },
+    {
+      "path": "crates/vestrace-domain/src/tool/mod.rs",
+      "sha256": "e5adf8426e19da3444f6b5dc50bc5af52feab104789a450920ed87f568b89595"
+    },
+    {
+      "path": "crates/vestrace-domain/src/trust.rs",
+      "sha256": "9db7225ad06cd67d4abfa0de713e9ed7e142d1f4bf0a59ce80060c183f4d097a"
+    },
+    {
+      "path": "crates/vestrace-domain/src/webhook/mod.rs",
+      "sha256": "1bcc7a44972a2a6e7f2f86a48da921c147a5ba538200367c2d11e3275a8e95bd"
+    },
+    {
+      "path": "crates/vestrace-domain/tests/embedding_contract.rs",
+      "sha256": "ae86ca582bcb57b8ae68fb88ad9838d034838ff775f8389f001f867b1a78e68e"
+    },
+    {
+      "path": "crates/vestrace-domain/tests/evidence_is_readable.rs",
+      "sha256": "587f143d92024d059dba2ec85925d9109636db320f9133500449dec5151eed7d"
+    },
+    {
+      "path": "crates/vestrace-domain/tests/material_contract.rs",
+      "sha256": "af5df03ca57ce4e69f6af36c80b31f560bd376c13c10ad922c593afa338217e3"
+    },
+    {
+      "path": "crates/vestrace-domain/tests/run_state_engine.rs",
+      "sha256": "5ce6c254c1dcc793ccb7ffae5fc3c9e0d244d7119f19453b85de4ad12a7f9501"
+    },
+    {
+      "path": "crates/vestrace-domain/tests/the_registry_matches_the_specification.rs",
+      "sha256": "c29cdde685b3f1cf019b25ca0f08c230260ad54a2d7501a8926f07efda14fae8"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/Cargo.toml",
+      "sha256": "af4a4b56bd6d1cdad4889953b989c44f3670e15efb8b78ed18bd63ffdf0d403d"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/adapter_stub.rs",
+      "sha256": "1eafa30feed4b2f9aedd0a0cc7a1b4e0deee4a6f739e207cb45663b66131dab7"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/child.rs",
+      "sha256": "9c8555e8032780c378794d1f236b66e2c8835eff6d3c306bcdc262e80a17e23e"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/lib.rs",
+      "sha256": "df52350ebc244ae67882650f1a5b20586c47c57f8ab743c8cb83b98929d329e7"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/main.rs",
+      "sha256": "c25782e686e128ed8b3697d78415101249bb35cf21971938357c6d6fc088bb67"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/observe.rs",
+      "sha256": "d968f607ba5e35ac8d03e17d6c9dc067fbc87b687502f9e2a70bff09639d9746"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/report.rs",
+      "sha256": "bc71019edc9c3254eb4140307020da545c059e8806fca78fc4628ea6b4f97756"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/scenarios/credential_intent_crash.rs",
+      "sha256": "29329cf7d8b2ff4da15d3a0f67e17360bf222ed785fbb4681ef617385d5e7e0b"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
+      "sha256": "eec8397f8628f5cfad50578623bc9280ff4d24a2d828e5c9a0e5f2fb6f63f708"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_result_finalization_crash.rs",
+      "sha256": "b80d76da613c872c18462de07b91695cbaeb97438643bc110d5d62e277d1e83f"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs",
+      "sha256": "956597d6d070471461120221d472f5eeff6063fbf2e6ab13a0fa5c87ae1c74f0"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/scenarios/material_intent_crash.rs",
+      "sha256": "8c9e710f7d33c28480f785249cbfd67c4dcdaa04ec781241f6825369944e1c67"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/src/settings.rs",
+      "sha256": "05093770f3e9399e3828a906b996c8769f82f2b373c22f26288300e8d3a104e4"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/tests/adapter_stub.rs",
+      "sha256": "c0d6e0add16860459d630f3058d57aaaa91634d3911f0597b2936aa37ff420c1"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/tests/child_points.rs",
+      "sha256": "a4e8931f6641c1935d40853fc7503e4c46a9b0d7e0566a38a0f467c2d803c1b1"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/tests/contract.rs",
+      "sha256": "0b0706be1fb7dae034d5d1f80fafbe8d3e79144913e7f0af5229608271a6836b"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/tests/observation.rs",
+      "sha256": "639880934ef24cbd48e259ff8887a875c02013bfa07d6a2950e8ef2af9f42770"
+    },
+    {
+      "path": "crates/vestrace-fault-scenario/tests/output_contract.rs",
+      "sha256": "9da1eeed18ba987996a200fd05dae5015cfea88e9d257890529e2d1c372a8230"
+    },
+    {
+      "path": "crates/vestrace-http/Cargo.toml",
+      "sha256": "d2bbc88f7ea23e2b865e195c36710f19535e6762e753fc467f6b9b8ec79caa94"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/access_tokens.rs",
+      "sha256": "cd43d23c7123bd8ce7bf2f227ff6cf103c02651d214afceeffc1d61a1e8e5e91"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/ag_ui.rs",
+      "sha256": "7b775006e076892f49d4141698be461ea7949edf5f7214dfc275eeeac9077f2e"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/agents.rs",
+      "sha256": "35fc0ac0f9a1e4188ccdafa510d0c8f51818f5dd8ea86eeaca51b60ec3b7fd3f"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/artifacts.rs",
+      "sha256": "b458f7b709bae1650aa8a0a02f7ab08d0a2a492843d719164afe78f951b0883e"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/audit.rs",
+      "sha256": "0ae50d9d4b6d9978fcf7411942dd338631964aceb0b5ef9b9bfe647ad36fe9b1"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/capability_grants.rs",
+      "sha256": "fee7575bdd1712d8188f126f96fe274a74bb008f126711fd7e9cf2da8a280cb1"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/connections.rs",
+      "sha256": "9d22e45888a3d8a46b564ed9ff4bd0b12c7d58f2e9baf8875aaa03c9cacdb129"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/context.rs",
+      "sha256": "66636fc6314ad5ac4623488fada8ba721d99b805c40a42bc78eeeb3ad5ccfebb"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/effects.rs",
+      "sha256": "c02b7fa7e68d8d669b8d84d3bf4aacf1f2598ae3a55c02ed84860c4bf5d96874"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/embedding_jobs.rs",
+      "sha256": "86a388f63cc6c95c9756e26f23fbedd18aebaa8e07efa8bb4ab2a8bfd81ffed9"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/error.rs",
+      "sha256": "18c27e28e5a40260db31de2d2694c4b29ba9269d3dd2fe8cc1568f3987322085"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/evaluations.rs",
+      "sha256": "df53a489cc57f0542373d4abab5858fd5c28ede90c6865ae5117488281194e13"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/executions.rs",
+      "sha256": "b8e82e8f8419d21000e98aa3bc6dae52d8f8cc804d59da7eeee994db502a8d8d"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/learning.rs",
+      "sha256": "b2c2c1d0e46a46f0093301e20c2895a088c8517ab3bd71d10ca9bb153585b6ec"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "sha256": "761951d2526b12f387afa6ad57824377645f8627f86ff61a99e9fd81512c24b0"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/metrics_summary.rs",
+      "sha256": "559bb19123890c54a1f80b0a96e5794ce0caee26e0a62606a3a81308490243c6"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/mod.rs",
+      "sha256": "aa7443e4c688b5c2c1f0cfeaaa5a051a1f64b2766b837eeaa641de9c931223af"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/models.rs",
+      "sha256": "03f787ef6ab98b792717d774fe6447dc11e6100f9126b9b3c3e2229b5f4db625"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/profile.rs",
+      "sha256": "030cfa6f2d91afeba80c5745b0fc0afcbef758a85e33b0268f541da2ccfaf3c7"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "sha256": "c06a317a34437a18b6c938cae6dea355adccb7808979d2f27def4edd6ac27757"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/routing.rs",
+      "sha256": "b72fd527b6438ad34458112759169bf97a774ffabc0938053b8f6649cc4e4e71"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/runs.rs",
+      "sha256": "22d4087097e78758682411e2e05e69833d04ca5838204866ebce37f29d2bd343"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/secrets.rs",
+      "sha256": "5713e6a516559a32177ea719b7be45bbf3e42a961ce525691fe9e904253ff816"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/settings.rs",
+      "sha256": "39ea8fe68557dbdfd38959a10b04055ddf3912802d414c82178f3397ab656fe7"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/skills.rs",
+      "sha256": "041c771c563dac908c189940f08da2ff3215aaacc22cd47bd00f2735b4f14007"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/system.rs",
+      "sha256": "4e3fa4dc79b9f451e1d343ee577def1f296913d83509ee5fdcc5f115502a0833"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/triggers.rs",
+      "sha256": "122d117cb87198aea4ec1342c11422276e79a711efd902912239ffb362a838e7"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/workflow_executions.rs",
+      "sha256": "a30525fde3000fdc9949148acd33c816f72927ad8ade760df56dc9d3493b5734"
+    },
+    {
+      "path": "crates/vestrace-http/src/api/workflows.rs",
+      "sha256": "4ed8da8cff2177da09be2a2abf72d97da81e1a801172c7137be0c0ba74712f68"
+    },
+    {
+      "path": "crates/vestrace-http/src/auth.rs",
+      "sha256": "09677f7ef05b9098d42be40a411cd544071a601ac73b279a3e9fafe8af466921"
+    },
+    {
+      "path": "crates/vestrace-http/src/health.rs",
+      "sha256": "b424441c8f839b323194e58fc038e29f683b68d1c0d533ed96db86d23b8a2bb0"
+    },
+    {
+      "path": "crates/vestrace-http/src/lib.rs",
+      "sha256": "141ddc7fe740323e136cfe6a6775dda51f9a5f9149692a055b8cbe9ea0673886"
+    },
+    {
+      "path": "crates/vestrace-http/src/metrics.rs",
+      "sha256": "f4d1f602b97d52e3f2c0ff25f5d80e949abd3c0bd33912a9c1d1bf0b76f61760"
+    },
+    {
+      "path": "crates/vestrace-http/src/route_inventory.rs",
+      "sha256": "7db33993cec2806d9eaf1b2fa6ec118ebb4d405789579ab603ada350d1be8876"
+    },
+    {
+      "path": "crates/vestrace-http/src/router.rs",
+      "sha256": "ab69be41ceeb34d88f504beabbd676a3d9b5b95a44b6760130bc1cbd4bd213c3"
+    },
+    {
+      "path": "crates/vestrace-http/tests/health.rs",
+      "sha256": "a25b96830ac706c28bf62f9b250473ff0d0889f7f2b3d94a509608639e08cd34"
+    },
+    {
+      "path": "crates/vestrace-http/tests/provider_routes.rs",
+      "sha256": "7d44c068ca7ab1542193d86a5686f729e411dd7d41bf40500929062ecbe14ab8"
+    },
+    {
+      "path": "crates/vestrace-http/tests/request_span.rs",
+      "sha256": "28fa6e32193a17b012143b761f3058a304dd1ef355bd4bdb1341b7195e206905"
+    },
+    {
+      "path": "crates/vestrace-http/tests/route_inventory_is_exhaustive.rs",
+      "sha256": "3415178957d4d0db42321992bc691f217ba8743b748a70809c2040f389c4c88f"
+    },
+    {
+      "path": "crates/vestrace-http/tests/router_contract.rs",
+      "sha256": "c5e11a1e2bea09aaed34b1685779fe0d5d26f155d4030c0273b955cbf2db548d"
+    },
+    {
+      "path": "crates/vestrace-http/tests/run_routes.rs",
+      "sha256": "f5a2e593fd027b8ef5ba0ed9b26333501a1e14742b978e98a948fcffdc17c70e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/Cargo.toml",
+      "sha256": "2900e705d4d94fb2f3e6b28d9d6f283d081ba83b38eb8bddc131a1be6c67d0c8"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/config.rs",
+      "sha256": "c9ec1bda1e7c8a0d73b6822922e6acff1faf5cad85e69adfb7f3e5a24eb24d1c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/crypto/content_material_codec.rs",
+      "sha256": "33b3e32248ed244601c75b9d112f379f360edbfdadb4d5b45e84f5f0f8b48748"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/crypto/material_vault.rs",
+      "sha256": "d1342962660db84d0ba2acab162fc665cc91087c7a4b35067ca9e222a332cadd"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/crypto/mod.rs",
+      "sha256": "893cff4b9182f9d078fb19ad4dca68dd02ec7630ccd2a5785913115e97299dfd"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/crypto/mounted_secret_store.rs",
+      "sha256": "31c8846a1ea3cc4da418f03c3122c1b5280ee87abfffa14c2636b016a960cd5a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/crypto/mounted_store_probe.rs",
+      "sha256": "8cdee2a01b243ede1494e4f4337ff904f0cdf9db7ac5a8adc500821adbb07109"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/error.rs",
+      "sha256": "222dc4835211bc59e10d0553994e98112c4322ddf14cd28aa5f5d63e5fbdfce6"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/http_read_back.rs",
+      "sha256": "df13cb1b6adeb3fdeb16e4043723c99cce548a0ca9cfa112e92a7057b53a4224"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/lib.rs",
+      "sha256": "256465ed99d2543d73243fdd470ae0d7f9d11f2d8c63592b5da3b0ad7624087b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/openai_q1.rs",
+      "sha256": "87799837941d61fcb62dd2836a28641111afdd0b57340fd7dae41ef9196e91d9"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/access_token_repository.rs",
+      "sha256": "a7b6bb9012fbc84731d263d3a332a16db60926fe38013b93be29760842992217"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/ag_ui_repository.rs",
+      "sha256": "f2524ad7cb542c8435f99811034057b7ee24a1bc008277784c4b86a31707c95b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/agent_repository.rs",
+      "sha256": "b9fe199fec66654dc41d7f129fb2c9adfb2ee1b89f93d14fd39b6109d7e81ad6"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/artifact_repository.rs",
+      "sha256": "f4ccc3b92ca4fe60d561c5caa10bd3e699619a731c9b096ed54e6e41ef298c36"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/audit_repository.rs",
+      "sha256": "2eb9d9a99aa4dcfc42b7779c6c1340d47bdc14d534079f50049e799bf2bba8e7"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/capability_grant_repository.rs",
+      "sha256": "4a394e5ea12bd69a83698584605f52f9e9c502a6b6f215e12f2a40bee15efd32"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/cognitive_mutation_repository.rs",
+      "sha256": "316ae7182525ba7dcb31242089a316c820d5f0cce24099a3ee8c446cb220ac9e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/connection_repository.rs",
+      "sha256": "90c5f8c805a61d92745b7f09872e4634732f7bf3d7551e6c1555850ddcbc8200"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs",
+      "sha256": "fb0bb5afdd3bbcbeb0113f7f57fbde4c37092ad3d6522d45253347a78700bc8f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/credential_activation.rs",
+      "sha256": "f328a9c7e6c9a3b61ca3f19bbb7b16286a68b1659482b49e1b33141374c575c6"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/credential_dispatch_lease.rs",
+      "sha256": "74bdd2da1c636ad4fb6b75f2a942772c28d7d49faad5b77bf9371271b229c9b4"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/credential_guard.rs",
+      "sha256": "9912cefc7b4854f2c4bf148bfba535a71fce743ae5e528325f9477332cdcfc76"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/credential_intent.rs",
+      "sha256": "620ba26b9fece9a627ff7d1efec945d40df283ec9adea8eec45936db09e5126f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs",
+      "sha256": "62beecd93ad98b0795664d060a7f3035914c31edce28ed3307c3612aa9b6c0b1"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_job_repository.rs",
+      "sha256": "e319c0f432d6434349f4d82c206fe755aa21904c5aedcacac40e79496a4ace83"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs",
+      "sha256": "9f7dc84ec645fc9d93ee3b3a353885d584fb3adf05985bfe772c7913b48553dc"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_result_finalization_repository.rs",
+      "sha256": "36779b9a4cd6cdd2e1cbe564be01b26acec98aa64608f5a6eed3518e9b55e962"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_result_repository.rs",
+      "sha256": "8b8132e620f67c03df08f6592c0a4859e40b74e1f6827dd076bda79534b2b32e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
+      "sha256": "2140a5c599391649e7c99257139f28fa5a3cd8228fb8e0a32affccc651eb613f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
+      "sha256": "273d7d2e2ed9347fdff525a376b6e9c859ef24612d5459951e45b66ed4e57c14"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/erasure.rs",
+      "sha256": "27dcb16c153fc6a21314101d637dd35eec76b1eb809964868fa3b51f25139d10"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/event_repository.rs",
+      "sha256": "2b5db974af0b58d16a09ee4fe3aab3f8e8bd48e3ba08e6b72292feb80b451aca"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/execution_history_repository.rs",
+      "sha256": "979040cbead43ff0e59f6770fc5eac96001a374794074dac35855fc189845ec3"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/external_effect_repository.rs",
+      "sha256": "05455410f239954352436aa191a39d855b7c5d4fa544124ebe7f545ea21a9a3b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/fault_suite_evidence_repository.rs",
+      "sha256": "169755e115ef28c6c9ab5aa07cdc33448452f8343eaf95755540b0d7d02fbecc"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/health.rs",
+      "sha256": "b62d19be853276ee8fe43f115b046730cc3e30d814665447f1c901569e6d93a2"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/health_finding_repository.rs",
+      "sha256": "f784cb623938d78baea370a497ca25d64c68231ae24ede9ca68b4362c2396c07"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/idempotency_repository.rs",
+      "sha256": "06fe904132ac6a831542952b14ec30d57905d3e89a4b80b851d0b55f0e025276"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/installation_fingerprint.rs",
+      "sha256": "da30d8f8f673aa6dd7e81837059223890916f194a56bdee528acf2a653e746a6"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/installation_permit.rs",
+      "sha256": "7a58a36ddb24da16a46eebb8c10308ad0711c06d21b8bed527d3b7f8f93c9341"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/invariant_observer.rs",
+      "sha256": "e426dc72e1561b2c687f481494ec6b130dcf21985e31c77868c0db3de4746072"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/material_intent.rs",
+      "sha256": "3a7e92099e1eede373da4577ff18b8c05ac17d11836347c3b7cccc800af88d5b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_encoding.rs",
+      "sha256": "7794d37dbd341eaee7009ea29b95c923c2871aa5f8de4a1ca1efc013e8b84674"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
+      "sha256": "8fa582a828f0ea57771bd02b7d57109f9ed9abcb5c6e72357f6402413a34f172"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/mod.rs",
+      "sha256": "03b2379f700f05d9c67d45073092ba4737b33915abd1dc6ba3336ff50b3c28b7"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_binding_repository.rs",
+      "sha256": "b1b2cf13f53d97ab1a948f6b91a0ddc8c4946d8d262c6795fda7feae7504961f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_data_policy_decision_repository.rs",
+      "sha256": "07c2534e8390fae9ac0802edb6167442740a88ce68fd08f9870d5b1483855d37"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_execution_repository.rs",
+      "sha256": "a26fe044f2724d3e2c07affd95a2311981c5230b858b7db9011917bd9494372c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_repository.rs",
+      "sha256": "109554a6427695917e6ce3aee20e3b025419db268ebd286d39a82f7ee592e0f2"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs",
+      "sha256": "c153be611b5848d178f268ac4465f35532e97d4794ad99fc53727d6cfeaa654f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",
+      "sha256": "b2d66a2c27e15ce2cabb518c3a39e2b1d76aa24fd8b54dea1d27f85ead77dbbf"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/outbox_repository.rs",
+      "sha256": "2f67c44fbd3583a40d02747010e586679c000b516319f926568b7daae7cf6047"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/pool.rs",
+      "sha256": "480841bf786b4b1ee90897a394a14c319620f6f8c6100fffbb1aaefc18032733"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/provenance_repository.rs",
+      "sha256": "c17cc86437ef25121d33bf268f8472ff6165119371faa7ae12373677eaea7009"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
+      "sha256": "808fbbdbde791f0aa357a9d7431b69ab2bee1247eca2ea8308feef3a7145a19c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/provider_repository.rs",
+      "sha256": "3a7ecdf1363c6428ac6b3fcfa7c3713ca41263ee367baae946fb13bb6e64a0ca"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/provider_result_repository.rs",
+      "sha256": "cc24acec6f20229b43c3c22ef5f4cfbd942b10bc422b3a8504be45962d1a7978"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/purge_repository.rs",
+      "sha256": "6d2a1485140c3680fa3e35e8208f5e2ce1a49773850affd31bc743a09b82cc03"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/qualification_baseline_repository.rs",
+      "sha256": "4d10d4aad6b8a0a9c787863629ff63ad69c0277915635eea65519a071e3bfde3"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs",
+      "sha256": "9637bb398ca3af9f72cea2bc4cd66afdeec6728711509c0b0436d009caeb331e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/qualification_repository.rs",
+      "sha256": "581c7f140b8de032006d744401d369c2f0ba5870efa1bca4015c6f7aae4f776d"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/recovery_qualification_evidence_repository.rs",
+      "sha256": "9b33c15d706befee25a4e8ea755401e7d5920444bfdfd6dcc0b0dc670d0adc85"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/recovery_repository.rs",
+      "sha256": "95fdc204992949817176cbec50ed951fc767b3f801a18549c2f7c170b60936f9"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/relation_repository.rs",
+      "sha256": "46318f551c27cee169b67aa62771ec7953514ecc4815efa64a302cfcdfa8e504"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/retrieval_journal.rs",
+      "sha256": "e2cddd754706a30e74598f0109e21df9121e5ef1f8d6cff14633b03b06ae7f73"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
+      "sha256": "980eb68be475ff18606899be20633845861c30a973c23f8f8ad0ee3e054c2e44"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/routing_decision_repository.rs",
+      "sha256": "93887ce066e73c07d0de25fad7c082f964327113b2830231acaef8cd9668bb51"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run/lease.rs",
+      "sha256": "d36541fe98f6a88edfbbb25cb1556d045e12db690fe71f9423daeea438eeb51a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run/mod.rs",
+      "sha256": "66baec4c7eecbb304453b0eea63f3a70bcd1e544e528115782b975e7e7dc2054"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run/store.rs",
+      "sha256": "5ae4cf9c5bdfb26e295121a08d1cd81abcc89c4ef326965ad3e5bfa0eaf4cb41"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run/work_queue.rs",
+      "sha256": "6e055f7c5e3d3304283a7e9e6266496c2d2a17c0034a8e1fbbe79784e1c08a30"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run_command_committer.rs",
+      "sha256": "11c8ddf98eaf1d5fcf7968052ac00d7c5d863539343e1f955829647de17c32c5"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run_event_store.rs",
+      "sha256": "9c7a578dd00f585d4627363f9df18cf6772ae56a5aeb4ea367c4f0d0dc8fe712"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run_recovery_store.rs",
+      "sha256": "f3bfe1d2b3c37e598d2dbf86ef9135e9b3b26fe72215390b8610ac022e741ccd"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/run_repository.rs",
+      "sha256": "4556a87c28c6e82bdcbf2990cfbf3302ee52c306c0b39e92be6736b694380a94"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/secret_store.rs",
+      "sha256": "d7aee924d81d4967625eb0c5fe99e8f345a3daa74afa2829b79292f72983e01c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/settings_repository.rs",
+      "sha256": "5c30fb3492fb00beb24d77c7a1f0d30bb75c52a3a343483243ce58feca74abf4"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/shared_memory_revision_reader.rs",
+      "sha256": "5c5b53b0a68ffe3e6c7498eb23ad681de23fca2a5e501bd781ebac290bd1f908"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/skill_repository.rs",
+      "sha256": "3e66ed0c7bdf00273ec4c02d9a8386bcc8eda1f360684f8966f274236db2e3d5"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/startup_recovery_source.rs",
+      "sha256": "30a9b090071a8b94c32ae56baf6a6cf3c21d5a2a0730d5eec9fd8bc72e988316"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
+      "sha256": "9a5ebe536ba63471928905681af1bdbb41c84068155bdf48b6737588161eeccb"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/transaction.rs",
+      "sha256": "8c2cac7a4ca0e139d3cf2578fd5e4800db408f1de0b746e910b51d32325e6fd8"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/trigger_repository.rs",
+      "sha256": "19e3e409e24e98f4f6e2cd623dc406e4e022e6bbba6e5bd8a833e70c36f73240"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
+      "sha256": "5c0f400efdc393c6abd2fb94ed6309a830c378a4a101b6187ce2b884d894e012"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/workflow_evaluation_repository.rs",
+      "sha256": "028637c651fb9a5159cef1f88bc844bfdf28931c4f4ed0c84c6db4ca88c0fe79"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/workspace_counts.rs",
+      "sha256": "2fc29eae393a10868d4527e49c74b8f3501e0d4c01cdaea3db6bb4e68edd2998"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/egress.rs",
+      "sha256": "9c329c02798d7ef432cdcf70df4bc751862ba862cf71b4e396dbf92024ba0442"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/embeddings.rs",
+      "sha256": "92c210382a94f68bd81ca8af7f6f5fe13057b5416f5a5b5e58fa9fbcd2c14263"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/mod.rs",
+      "sha256": "5bc360df73437b0a519db21214ba4b598941c8324f65706862aaa05d34d2c8cf"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/openai_compatible.rs",
+      "sha256": "c467dc67bfbcc500a7246ee4c2d16b647c443d60d3df47dab825db8df36398de"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/secret_backed.rs",
+      "sha256": "20038aa2702af8148c55b9cfc9c00ab3d35132330895f5d252a69d95f222d380"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/providers/webhook.rs",
+      "sha256": "c05c2bd0efd96869ec3c7c64d5f0231df37c5ceae4c02480793b0b8b6ee45f91"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/token_entropy.rs",
+      "sha256": "dda39b7dba698fd85d511fa4693a757b75380aeb63e6e129b6fa9ae88e573c0e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/artifact_content.rs",
+      "sha256": "0c5da8d8c0249607aa467165626e7f9c7c20344b4f34ee264ed997605e9661f9"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/capability_grants.rs",
+      "sha256": "a49b73c8bde7af05dda1230a2e510c57d83ec5989a6959a8cac91c96b14b6a3f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/common/mod.rs",
+      "sha256": "06cf85e8a15d1a33609cc67779ff5e5b2dbfaf3fbc7035acf5a4cc869c6d852a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/config.rs",
+      "sha256": "21bd416f817cdbaff9cdd444a5b08b13985b61c3f2e02265afb17779986b122c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/connection_mutation_is_atomic.rs",
+      "sha256": "bca5918f637767ceceb7390d40bfb8264d350059dfac56e3e4a0cc3569f933b2"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/connection_revision_lifecycle.rs",
+      "sha256": "6f4d0350f869eb5652e2d179954359c97a59710e36a4beb655b0a69eceb51822"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/credential_activation.rs",
+      "sha256": "2e576c2212e3615a6cd9c39417f969c0759940ef2c51b5bf377fdc55ebacbbf0"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/credential_dispatch_lease.rs",
+      "sha256": "f0105c480e917dbd581eaf6aa8ce052d6a826a33733fc36919d665a7dd70021a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/credential_guards.rs",
+      "sha256": "b32fad04114a50c224bd67667d72d2ed5be900a2ed24239f909c809edc8fa9ca"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/credential_intent_lifecycle.rs",
+      "sha256": "94760822cccb14c768da64eee49b37784f9256f6556d9d8971e941f49b90ddf8"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/effect_outcome_delivery.rs",
+      "sha256": "1d3882fe76e241e0eed1475554521586508611ba6a657d53f47c0903293cbf89"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_carry_classification.rs",
+      "sha256": "f380417a5f3a01859ecc279b247337008c52bc21f8354386a0aeed5a52ffd091"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_data_policy_config.rs",
+      "sha256": "f1abc9a7a35ae4322f58259232c6818e5f6918512668579acb52b9c5c0ff0a6f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_data_policy_repository.rs",
+      "sha256": "7447e5136e8775bff282ad959c52b7f26208572929117670e31e2f1933e0e523"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs",
+      "sha256": "b82b49f2a8be93b27af421aa96cc243ca537d773414a10deda7cd781eb9987af"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs",
+      "sha256": "b2a69b5e130b20e9a3834b71f606f5341a79992acc11fed1887d0ebb4665f1fe"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_output_keys.rs",
+      "sha256": "533fd4dd092bbf6bda36607ef34fc331e6a4310413ca8cd6f1059fe5ac65b12f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_result_finalization.rs",
+      "sha256": "ded3e5944022719575f5e0a1a1e46b757e0b93411cfc03db07b733382698045a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
+      "sha256": "b2b497dd3d5a95973b02e0925b022d1712fa6d685a25055d153098e4c807ebb8"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
+      "sha256": "32939a59dafbb2d6aa1d98caa157bd757cefded74d0b41f67af25aeadbecd81e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
+      "sha256": "43c8bedff949d63951e4b1587497b57cd3f24f33d5a684558404cc1050d8f998"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
+      "sha256": "c55f32c2c31035b000e15f1359edd2022358f0a067eeaf406102363eb73a0aaa"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs",
+      "sha256": "2e215dc13f1bf270a7f3d9f7e3184af10e34299d90c81459d4b9675dd7bbdb83"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/embedding_transition_planning.rs",
+      "sha256": "f4870a56cbcd15945d6b7639af479b66c3278c4a7c95ceb630408b14c8c30339"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/erasure_holds_no_lock_during_vault_call.rs",
+      "sha256": "ebdeba57237e3e9b2083e84c56f1626d5b9f5324ba06775c7daeaa45c79503c0"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/erasure_is_one_way.rs",
+      "sha256": "04a55801fdedc313839c4a4dda57cdfc35028c3fb2d18709e3211219c48ad1c2"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/external_effect_repository.rs",
+      "sha256": "885b5ee7f8fc93a3fec5b36d23b3dcb6a02d5fc25f637459213b400b3bc1b7cf"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/fingerprint_continuity_is_fail_closed.rs",
+      "sha256": "f7859587f63dea38ae15a27c6cd69569c6a3fe451fcb6bdb4c0eb525d15b621b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/governed_mutation_is_atomic.rs",
+      "sha256": "cf19136ff6437a0941fe9cc743ff69db02abe32dbd84a23f378bf6438dec870c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/health_findings.rs",
+      "sha256": "4b1e2d3147dd3454d6e89981b4b807f295b3c184b68ba37b6209ac9f6063bba0"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/http_read_back.rs",
+      "sha256": "2711f171a41cd5061d4e8a561cc22817e2ce4ee2c161f3b9fe74448d8fdb2469"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/installation_permit_excludes.rs",
+      "sha256": "32c2721f5eba5e5c1cb2866a232e144a18558afa3a0b15941bd81754fb740ca8"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/intent_crash_boundaries.rs",
+      "sha256": "632ccf3a700ba9a0305aa1049f3aae485d564edd3ad9c0dcea5f5f0615c6b268"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/invariant_observer_contract.rs",
+      "sha256": "a3ab0b9886adb89737410c3c5a2d357744f45f3d1245c5dbbb3d58666646f524"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/lm_studio_embedding_data_policy.rs",
+      "sha256": "8ae8adccf571a453a123ecdcd4b2090e48700cefff739bd4767785721b06f67c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/lm_studio_embeddings.rs",
+      "sha256": "3dcda0868e22d14dbfec7153bb8b53a79f8d60c909b2db206295ff3c54d4c486"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/material_intent_lifecycle.rs",
+      "sha256": "3ac34102a401f7e32ed601dced1968bcc711d6a572b19baef10e257d168a82a7"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/material_vault_contract.rs",
+      "sha256": "8ea9fb9aecc14342927ced7c15fc226c17d1862349b63091aba7734bca51b9c2"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_classification.rs",
+      "sha256": "fcbf13fef212012151a675af4bccf25eda4219eed8870305feb7ac346e8ccca3"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/migrations_can_see_the_rows_they_change.rs",
+      "sha256": "fa69cfd5287f53a7d5806ac164deaa3aa52d879869f5927a000514553a2f268b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/model_binding_snapshot.rs",
+      "sha256": "ccc1f27ad228600254f6f7d6152d5f14348b652a83aeed4021db576619122a55"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/model_data_policy_repository.rs",
+      "sha256": "0b9c5f66ebbcfc7cbe84e899cf371898cb1b817532e887f0982eb4f38599f316"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
+      "sha256": "0f6bdbf25362181d84edac0cf5876f6906dd41ef2fa323a3e1050c304d38fd8e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/openai_auth_modes.rs",
+      "sha256": "ddd27df94f0347b802d2e773aafae8a847617359d08bf2070c2aa8bd66f80fe9"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/openai_compatible_embedding_proxy.rs",
+      "sha256": "ce4cbb190cd31c8b5977b56eaffb19e2b24ce87f0bc8b1d2f40c122c6518c346"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/openai_compatible_proxy.rs",
+      "sha256": "e3aecde861089bcb29d8d7669c32607f06305ffb9e87ea7d2bb85ca4e3bdd783"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/openai_transport_security.rs",
+      "sha256": "09a8c8c55e953d012a42014946ad71a9d735f3c27e5f2a70905324f15d1d67f5"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
+      "sha256": "0a7b5ecee2bd1218dfff9db166c82798404ddcbdf443a4b23386d3ca0f47518f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/postgres.rs",
+      "sha256": "eb3520c9b90e24d9a2ed4be01a7632286f92542492edcc23e8f50e5ccb4f49e6"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_admission.rs",
+      "sha256": "651eb53b6d6582b20c01596c62da5a6e5be4885f758abd1de3f2a4b7d6db3f95"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_branch_isolation.rs",
+      "sha256": "c8653e94d9ed63f24bfcb649142551e50dd97f4a15efb29f1b0b0e5cfac75a0a"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs",
+      "sha256": "20923518944ed85c166dd04a008f9d992de4912ef74764e83e50195152b0e4b0"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_result_binding.rs",
+      "sha256": "815fd0b56aca484100ec1d625ff32120f92549e450281aca7c43d6da19d4da85"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_runtime_role_refusals.rs",
+      "sha256": "6e7545a9f45f5707d3c86b96801291d81a500918c03871498513f02364ee3a70"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/provider_schema_contract.rs",
+      "sha256": "ba70b4cf48bffbc2b1cfde93b4695ee5f1a7e1bd115538426bd30073cd89704c"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/qualification_baseline_repository.rs",
+      "sha256": "f7bd4ad296691f953267c0464a454c6fb87123ad873d1f3cc53b563b96cac418"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/qualification_repository.rs",
+      "sha256": "7d374d81c96e1fd3168c7a7cc1f4f9ebfe15b4da183feaf13137389aceaa5c4e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/qualification_target_binding.rs",
+      "sha256": "bc5d9683cc70be6cd666d72f54f17b718d7c64cf8221c96a70a35e3a8cf7bed0"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/recovery_qualification_repository.rs",
+      "sha256": "f7b07b74d241a1c327d3e1e07f52ab515bd93955ce1f04db112e143272f06b49"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/recovery_repository.rs",
+      "sha256": "85980028258fb46e4af6ce74ea134ae80575b0920f268f5039b428699107d680"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
+      "sha256": "4b7a55bf8bbc9da9936da676a2f33d3b6dad22607e31c47ad6178de0e45ddb16"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/retrieval_classification_policy_config.rs",
+      "sha256": "2ceaf53da85c548782bf05beace02a1daae364ab878615e4c6f4cfcf2b68cdc3"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
+      "sha256": "0a3ed60cbb93c1d01fdbd3b3724ec29fc5fb8b8410f1fb89e70b123765fcddf1"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/revision_hydration.rs",
+      "sha256": "aa14ebfe955e9da860731843f0771df072ecad076398fe69f65235a427108a9b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/row_level_security.rs",
+      "sha256": "18c838e6cbdd52e6c80c1ded3237c7b0e0341822560c9cbe8362a104bf3bb504"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs",
+      "sha256": "f4ba8e9596013f3d7907c4fc915604a4cdb35d1ac271c064f3749b2af6c6f92b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/run_repository.rs",
+      "sha256": "7b06aca6a64dae4d4f5d5a2839cc0dc4f15b32b8bd5e772270518d4dad39b9d3"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/run_store.rs",
+      "sha256": "e10e1668f14ad378fdbd5e490e0426619dd886ab1b257bb8c8a514df0064863b"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
+      "sha256": "eef2b14c206cf517602c4cbba5552f6f37d1ac0e38c6a980e5718c87338b91f4"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/secret_store.rs",
+      "sha256": "41d1a3599a245d0c7610134acca4a25e01ef2a22b639964e0d78e882ea16b058"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/settings_repository.rs",
+      "sha256": "1473ce8a1f67c9685d79d7d4f3464b3dc4f1e90ceb2633131edc479d9454c33f"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/startup_recovery_schema_contract.rs",
+      "sha256": "5532431b669947ae4bb1cdd80987a03a40a4ddce86414cbe99f0a450fdda8253"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/startup_recovery_source.rs",
+      "sha256": "cbcc48a8330fe310102a4a35d15b58e2615969cb20788e6e1aba02e7cf6db97e"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/text_retriever.rs",
+      "sha256": "63eacc8f5d77523222b6c7252df9bcd57a6096e79adedc05d816e5447c74fe92"
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs",
+      "sha256": "43cb11a96ca6badbc5d048f8e40ee38b672f6a95cdfa62058822332eb702bb1d"
+    },
+    {
+      "path": "crates/vestrace-mcp/Cargo.toml",
+      "sha256": "663eafd6f508601012f3151237d309f84e835b2eb829100d51ff2c9914e5aa47"
+    },
+    {
+      "path": "crates/vestrace-mcp/src/lib.rs",
+      "sha256": "1c1f064351d5d75665d484403fe784f1711e11709733084ccc248860b339c603"
+    },
+    {
+      "path": "crates/vestrace-mcp/src/server.rs",
+      "sha256": "a2feb29e63528cea6ea3821a61ae116ea916f47eb53bf3fd7f0edc363b96e8b9"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/Cargo.toml",
+      "sha256": "e68ea0bcf32776b07f9b30779fa77c0cd1c0abba510c25a51d0fb9b24a9625cc"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/README.md",
+      "sha256": "c1069dceac6c814a503b357fbfb10b43571a6fb8833309faa04539f43e5c5f21"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/src/contracts.rs",
+      "sha256": "096eb218fe6746e734e4778f3dbc0429a323d781ec216ef2b9bc58d6263fe1c3"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/src/defaults.rs",
+      "sha256": "83cb6508499063b513edbb096f8a0e7304a34e2b2556781dbf69799c94112b15"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/src/driver.rs",
+      "sha256": "6ba04799f0e19573bf0d1782b5d1572bad12612266bbd8f15cc648bf2143a4f9"
+    },
+    {
+      "path": "crates/vestrace-rig-spike/src/lib.rs",
+      "sha256": "afcd2e663406c00374e34193b0cb87d9ae2ae05eccd2a96921f2eaaaef278303"
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha256": "69f388d922c278547e2fcd7a74a16a9fe21e96057279d175b0f156a0bd359f5b"
+    },
+    {
+      "path": "docker/postgres/20-dev-seed.sql",
+      "sha256": "dee1d5db978442764b7bbe0b5767a429436c4e51e2196428764527caea269613"
+    },
+    {
+      "path": "docker/postgres/init-runtime-role.sh",
+      "sha256": "3263e9d13141465fa50863f3d5231a8935426b7a6357d8f3e1a40ecfb0d7260b"
+    },
+    {
+      "path": "docs/adr/0001-memory-first-persistent-cognition.md",
+      "sha256": "4c2e7b888f2995fdea368a0360bd65c91c2ef81b5503b959ad01f6395aac5084"
+    },
+    {
+      "path": "docs/adr/0002-single-execution-state-engine-boundary.md",
+      "sha256": "81c07d64c79e159340824cf5ae3926de3d07938be3477e82628dc07f5b6a0b81"
+    },
+    {
+      "path": "docs/adr/0003-capabilities-are-runtime-authority.md",
+      "sha256": "f625b457f3e3696c5184c9feaecbf6ff0429beaa23a1ce5957cac615b7e5fc73"
+    },
+    {
+      "path": "docs/adr/0004-repair-follows-authority-hierarchy.md",
+      "sha256": "24afd0b85fe9d09ccc1ae8205a720c71839ed177b2fee43109098c4e7cd1f074"
+    },
+    {
+      "path": "docs/adr/0005-unknown-external-outcomes-require-reconciliation.md",
+      "sha256": "31db2d7934a87dd176f40c863ad0c83f7701646800a78491851b1b5b8bee8318"
+    },
+    {
+      "path": "docs/adr/0006-cross-workspace-sharing-is-grant-plus-mount.md",
+      "sha256": "c3e9fdacae74a098d6ad879fb0783d25d7a7efc7fd0e1330ffb059575defdaf5"
+    },
+    {
+      "path": "docs/adr/0007-trust-restoration-requires-revalidation.md",
+      "sha256": "775817ae7edc6b70af22922ff780be52b590fca6c0554cab0b3d25d96ff01011"
+    },
+    {
+      "path": "docs/adr/0008-v1-trust-is-a-qualification-contract.md",
+      "sha256": "3ad089d61ff502876def2c6f19ac5d6d0a7b6663ec1c210a7f316083b37fbe3d"
+    },
+    {
+      "path": "docs/adr/0009-finding-disposition-is-not-integrity-state.md",
+      "sha256": "664d5b669b239835cae7f3f3957ff68bf7da707593820c840fb8c99270dabea5"
+    },
+    {
+      "path": "docs/adr/0010-qualification-profile-scope-follows-evidence-closure.md",
+      "sha256": "cea3467535d5d65c8b039814b8a9bded285a00f56a7894f6ff462f836416c51e"
+    },
+    {
+      "path": "docs/adr/0011-brain-face-organ-system-decomposition.md",
+      "sha256": "3c9f102c57cdbed2e2c7748e1ed06dc0d6fa87b4838f4cd5adac61d1f4a769e9"
+    },
+    {
+      "path": "docs/adr/README.md",
+      "sha256": "1210630eea651ed05527c17a97c8ea2a313ab09d0e1d349f785d17cdb4b080cd"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-01-preflight.json",
+      "sha256": "3894e421966e53b4c1aca5c9544497241376d5172ed7e0e12fd850b9ccd27283"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-01-protocol-lock.md",
+      "sha256": "8c8a620e3394f57bdc7d117996957e17e371e4668a24db2ed647ad331be9f1f4"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-02-preflight.json",
+      "sha256": "19eab44516e6891fc5aedea52810128897f19af979f2fe706f53cb9fdac48368"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-02-security-material-foundation.md",
+      "sha256": "e608a79a46dcb4c96c3c7bf43d5123dbbf5cb152ade9277f6ac1f5d789c983ae"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-03-preflight.json",
+      "sha256": "21244311725fefb6eb1b80a4d8ae3a8295908f462c6c9baaedf8b0de681de2ec"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-03-provider-execution-foundation.md",
+      "sha256": "6d7ca3ca6888010e425d865502203fc89d8568830db64d4097164f554415bebc"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "36161f03e14237a22533ffb52b2c8effba002ab1c06936576506c593babd81cd"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-04-preflight.json",
+      "sha256": "463258939c216789c796211e7bb2e9924831b0909d2b24bf4d323ebe0d0f4155"
+    },
+    {
+      "path": "docs/development-evidence/v1-g0-04r-preflight.json",
+      "sha256": "3ee22670e44f07d5abf475945053612e7354ea12c8d59a8d20ec39d6290d3bee"
+    },
+    {
+      "path": "docs/documentation-post-merge-audit-v0.2.md",
+      "sha256": "d0ec35210818f3cbb8d9faf2be2faf19eba7461fc14dc1605b34507dd1bc7f87"
+    },
+    {
+      "path": "docs/documentation-readiness-v0.2.md",
+      "sha256": "9db0fd0acdf48e0119219a6f8015f457bc050bd77c8d15ba0bf6df323898e845"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "sha256": "22c58749ee4287fccf9d2c38699db0ac87e8ee00ef44496b754cac863d2878d0"
+    },
+    {
+      "path": "docs/external-corpus/vestrace-docss-2026-08-19.manifest.json",
+      "sha256": "f8100e1bcb070da6c6f540644d2fcae0862dd5c7cc3337cfa7c5bd29d10aac02"
+    },
+    {
+      "path": "docs/gap-analysis-v0.2.md",
+      "sha256": "387c2193db0878f91fd3a1a2345f702504f82092f52638fb09d1239522a46f99"
+    },
+    {
+      "path": "docs/implementation-plan-v0.2.md",
+      "sha256": "c7f5ffbd4af42a5d646170e9196b9e10aace1a25b0ec54d3f7a962bd56b28369"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/contracts/contracts.schema.json",
+      "sha256": "b8bccdff999d328c964375647333267b4190c8a38143029d1c22bde2e1f5bd27"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/contracts/openapi.proposed.json",
+      "sha256": "1607b2dd36b505d13423ee7c91b945d84ae7d3c23e3158e9c9e5d19e99694cca"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/catalog.json",
+      "sha256": "4297d04aa144fa4f98e238ab2bd3dec7f0b3447110992b7a24f0369d7d84145b"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/automatic-semantic-merge.json",
+      "sha256": "2d622f95892078285bea7eda93ea48db0fd3be4a4c737c5277bf89370e6fcfea"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/correction-label-bypass.json",
+      "sha256": "396441814097aeb869a4e83edd93b0f712488f77bf95d891989f0751b74f2615"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/correction-missing-precondition.json",
+      "sha256": "e7b6401f5591469a8fc702b287e0c1283f1dac045d02b9a5c7ba719741e8f83f"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/dangling-provenance.json",
+      "sha256": "dd83da85bb419a1df5d13fea837d9695493196fdfb9d2870b422aa10c2262d3d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/duplicate-external-id.json",
+      "sha256": "7fe5c63dc71c237a1917ffb3a5e5ac325a23fa7fc2980be58cc2bffaae262536"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/future-format.json",
+      "sha256": "169f435eb1e25d7bccaed8bd43c9a0fd927db057babe697baaadd17d66ceddb7"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/imported-authority.json",
+      "sha256": "1f011b4dbfcb09a07ff0f85b8b00183066502a6e6d1f446642adc1cdad17729e"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/path-traversal.json",
+      "sha256": "56d4ff5a9e98dc17f6da3ec82e27555313448ae92bb7ad9c5cb7488e13885492"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/token-budget-without-counter.json",
+      "sha256": "46c004e1eb15486db1123a8428f62b3edf84e739d8717c8b216022b4e4a6488f"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/utf8-byte-limit.json",
+      "sha256": "870f4894bb64685383a8be12c38c5000dfbfba9300e90c76659163b177584bd8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/apply-import.json",
+      "sha256": "c1c32cca71789064723ffc1d04aba4277c62d2a8af08f1a5bd7d0346847eabad"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/conflict-merge.json",
+      "sha256": "9d32f6b65d7f5250e7962a088e1eb5151b630f5a0887f082b071474e2035710a"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/context-request.json",
+      "sha256": "34115a81184abdd87d4ab95dfa4897c40da2bf304959fe397a07dd405f7b9f8a"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/context-response.json",
+      "sha256": "c1a9917628debf238091191573533a31522d575e5e89171cd357bfa1e81185a8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/correction.json",
+      "sha256": "c83e52a6e94d59c6a71d0d6141bf084bdb689229ae007c3e529dc92b58de551c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/export-request.json",
+      "sha256": "342c4f3d03324768b1364797ab622521fad8b087214a6f49b281279c1e14555c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/import-preview-request.json",
+      "sha256": "c2f8faa0573e3a5aaa7e2cae1dfabc638b30229fb5aa315ef28f0e1fe897ba8d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/import-preview.json",
+      "sha256": "48112254c937c8078d1832d97234dd6e85acf72e6b6d88af05afb56fcbf9d1bb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/memory-detail.json",
+      "sha256": "834e51b66275aaa8531c9bcbd76e5be16c02bee5b3d86b3ddd5f332c895f8637"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/mutation-receipt.json",
+      "sha256": "6c573cf970836ed5608580a4817625f9c7253da1de7d7aceb9d90ef2e65b4560"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/portable-import.json",
+      "sha256": "ea038ccbaa29dba82c1089eac2b60de9a2c35b0a93b1aedcf66190af148e6c3d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/portable-package.json",
+      "sha256": "81b5fbc6154e6a4b5888ceb5aef97559ba7c81e4aa0779ffcf7435d1ed565c55"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/restore.json",
+      "sha256": "1739d429e94c3431fc1c6529e14b0f0303db9b95cd64958b73b83092008931cd"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/file-manifest.json",
+      "sha256": "c2e37b5da534b1fe03f17c1782eac0b494173ee5075dcf8ad28ed77c37e6b2fb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-manifest.json",
+      "sha256": "96a50b89cde3777735d7556a4422480c3a4c1a063746b2a3336ce7279b0d8afb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-report.md",
+      "sha256": "6c31cc29af8b2742304f782a4475a3eed003fdf8caf289cae629566812515df0"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-result.json",
+      "sha256": "d8eaa5c4195315cb309ab3247f6706c45e3fc50b5c0f62e5a667f6f32953ae10"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/report.md",
+      "sha256": "dd4c9825204696266b8615345f3beadd581e1e0961650ef49862003ce6ce059c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/validation-result.json",
+      "sha256": "86aae5812c2d219c9174c9c1ef7b8705928654ed0f79221ee0a6bcadc250d9af"
+    },
+    {
+      "path": "docs/maintenance/authored-pages.json",
+      "sha256": "2d4e81ba091a83e1af970568be96fd69106ec50bdef7df1bd7b68b036e702d61"
+    },
+    {
+      "path": "docs/maintenance/input-documents.json",
+      "sha256": "1a0196b3de693dc4ae0e3ce72b9ea073f7c41cd677c4f8e3f6fdc605fffa8be5"
+    },
+    {
+      "path": "docs/maintenance/payload-manifest.json",
+      "sha256": "673d4062dfd7ce722bbe6621f32bf1ddda800d38aa979aa1edadda22da22e07a"
+    },
+    {
+      "path": "docs/maintenance/scope-result.json",
+      "sha256": "ba0936b92f11827a7a613f838efb60af1b7f2081199a1fd199567fea20321017"
+    },
+    {
+      "path": "docs/maintenance/validation-report.md",
+      "sha256": "45aedb4c544a4cd211c3996246e045e6846f25581ebfa1527a71024903d66c5c"
+    },
+    {
+      "path": "docs/maintenance/validation-result.json",
+      "sha256": "eaf19bb2433d52f6ea77e26d79ab56a8f73a00a9470307224f89f1d5d147e3de"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c1-c4-foundation-implementation.md",
+      "sha256": "d7403449ef37b0f2253ab62c3afaea466c1a9d2dfeda3e7cc6646df4909ef97b"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c4-mutation-reconciliation-service.md",
+      "sha256": "e77ef2ab6acb3590423b8e0429828b58b67ad758a9a0997a7b34be5aa936abde"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c5-exact-revision-retrieval.md",
+      "sha256": "fab411056d381469e1776c3e01b3db9224b2749c242c6e1af79874b5503a1aba"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c6-context-pack-assembly.md",
+      "sha256": "f3e00e31de1b524fe380478b9159976e12f9d553af886f1f909a4e144c8d2922"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c7-temporal-multichannel-retrieval.md",
+      "sha256": "81baf1c2727769b3f8c755961b64dca4cb530583dc39284e5306fd8bef2c393c"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c8-core-memory-fixtures.md",
+      "sha256": "0b95096ec7e5a88a959f0ed8a9a33ddf84c83ce1bca4ed6b365d5cf1baecf01d"
+    },
+    {
+      "path": "docs/plans/2026-08-11-l1-evaluation-fact-v2.md",
+      "sha256": "2684c6aecd9dc09191f4443b5d064610cb9765323f0d139780ffe85f20c98733"
+    },
+    {
+      "path": "docs/plans/2026-08-11-l2-learning-projection-proposal-boundary.md",
+      "sha256": "4129b7cbf06fb2ea19cb4fb860089aedba35ef3940b728ac42fde8a19a2ddff8"
+    },
+    {
+      "path": "docs/plans/2026-08-11-l3-cognition-benchmarks.md",
+      "sha256": "380cdc98237c765ef7d188722dbe1eb4df49eb5ca2ec4c3bb30a6aa7325ddd7b"
+    },
+    {
+      "path": "docs/plans/future-pr-review-checklist.md",
+      "sha256": "2a43f96055c37712fa7bc386c143d7f808485b56c2f4866ba06b1212a38bf9a4"
+    },
+    {
+      "path": "docs/plans/v0.2-to-v1.0-36-pr-execution-matrix.md",
+      "sha256": "7b12339975e0608a08b776903d98223533da503af0506c399448f2a3c5f20522"
+    },
+    {
+      "path": "docs/plans/v0.2-to-v1.0-pr-specification-index.md",
+      "sha256": "be10e49b26be19f8bef825ce8bfa9c85c121cd21e3b1c965ad905ec91bb936e3"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "sha256": "2732996aa8f203e72bc0f299da62e4a29c9ca13b98d9e21e8686a7d38e4ec57d"
+    },
+    {
+      "path": "docs/specs/LEGACY.md",
+      "sha256": "6e532357246b513fb89cdbb17b71c6c0d6d894fbdc18e304508af44e6b3064a0"
+    },
+    {
+      "path": "docs/specs/vestrace-architecture-contract-v0.2.md",
+      "sha256": "8bae0207cdc53bde6257f5bb85eb715a325c2784d1e7cf0fa0e86e702e3f8a7e"
+    },
+    {
+      "path": "docs/specs/vestrace-brain-face-organ-system-model.md",
+      "sha256": "53b105c058abaaabce8989433c35ce277956760d4ef10c062d0e1aeb9cf19621"
+    },
+    {
+      "path": "docs/specs/vestrace-crypto-data-governance-contract-v0.2.md",
+      "sha256": "caa638af70e201a526d5a896943bc8e1f98ec5e0c520cb0aebb77c947037bad3"
+    },
+    {
+      "path": "docs/specs/vestrace-data-temporal-model-v0.2.md",
+      "sha256": "e9086760544597780a7fda44c4ee40bab89024f746530e89db72b678df507de0"
+    },
+    {
+      "path": "docs/specs/vestrace-domain-model-v0.2.md",
+      "sha256": "add299867de96e0c81be89d408d5f20bf8c1c574008973dce031b5063b762a7f"
+    },
+    {
+      "path": "docs/specs/vestrace-execution-external-effects-contract-v0.2.md",
+      "sha256": "cf09940bd45d3ec9bdd8a8d05a285cbd7ee8927b45cf2bd0e2cd8888d9891569"
+    },
+    {
+      "path": "docs/specs/vestrace-health-repair-incident-contract-v0.2.md",
+      "sha256": "eb19577f474209a54cd342e874095b2ca8296cf5c39329e59a955a934c54c37a"
+    },
+    {
+      "path": "docs/specs/vestrace-normative-invariants-v0.2.md",
+      "sha256": "86b7231e03f44487b7afeb7390876581de47b29fa3053bf0f3a59728c64e565f"
+    },
+    {
+      "path": "docs/specs/vestrace-qualification-conformance-spec-v0.2.md",
+      "sha256": "6ca4bfe6f7890ddd76759aef5bf024ad0883ee20ee68ad492fd4a6d3d3030f78"
+    },
+    {
+      "path": "docs/specs/vestrace-trust-authority-model-v0.2.md",
+      "sha256": "f008a1fc414c21d46d130f65a3ae4e2ac83f9debbea322c127fdad5f138736dd"
+    },
+    {
+      "path": "docs/specs/vestrace-version-roadmap-v0.2-to-v1.0.md",
+      "sha256": "5372aa206573b2d93daab9eaeaf4a1212a5a0f09ff7b2de6f5b84a57c5834c4e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+      "sha256": "ca02673b85f85641d131a96af704b0f075740a097eb2a0e6115e0b7ffd6c0097"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "sha256": "9b917a2c589d860e3c4e199581adecbde927bf4d4db2a2810998a4d23b489dd3"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md",
+      "sha256": "6d5e817ffdb7543983377b59df5e859288194bceabcb9990d1639eee9920d85b"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md",
+      "sha256": "300d588142bb3cfc5fc7a5985cdd0531403307758375cdca244e5338949dcc18"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-01-vestrace-p03-task11-completion.md",
+      "sha256": "593e205c5b93c699258170a4c7369faf274c462c8d01ec8dc5059a45926710e1"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "18e939977a5610bbd522e42fa65c6a13a3b56353f60eb83a00bc7c0c7e7558ee"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-16-v1-idw-010-build-verified-evidence-design.md",
+      "sha256": "93ee5562ccab4fbcabdcd52cd00b27c934cb3f336db0883c603b0950e7037120"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-16-v1-idw-014-shared-read-adapter-design.md",
+      "sha256": "2123bce56f91e71b2c0201927f749da513761bb95fe297ae049fa6f73e421a13"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-16-v1-integration-baseline-design.md",
+      "sha256": "117c8a2b0d891b90eea609050370d4d5e74320a2637a2a9b076e0e1de5438104"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-19-mounted-secret-store-crypto-custody-design.md",
+      "sha256": "a73254d66cd70cd348718b0b4305acba0103005bc1112a073046f40c8a8b9fd8"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-20-external-effect-fault-scenario-design.md",
+      "sha256": "ce3644a0027470e3ba96fe2f621fa8fec3bb78518e417c2726ce3e67664a7ec7"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-25-console-interface-redesign-design.md",
+      "sha256": "fe961070a21bfba152ba8a17d59704dbc672120ad6db3128557009ffc168b0a9"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md",
+      "sha256": "b31b5be62504e1a65f411cd31b446cd41b3d032b7282f1aa42907706ef9c1473"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-09-01-vestrace-p03-task11-governed-run-input-design.md",
+      "sha256": "ecf9c37b5a6fe40b085d30f5aa8d840217119ef9f6593ec3a06c42b438a4bdd0"
+    },
+    {
+      "path": "migrations/0001_extensions.sql",
+      "sha256": "6cb3656e7311f172af0c97058fe939b5c52f3b470c71567b361d8f35e3e45424"
+    },
+    {
+      "path": "migrations/0002_identity_and_workspaces.sql",
+      "sha256": "781a89dc17104523dce78cac30c20e441e3857676c721b61588bb8890cc5d814"
+    },
+    {
+      "path": "migrations/0003_rls_baseline.sql",
+      "sha256": "dcddae6228fc701d9572351870d77b5fcdf2bcfc2e27bfaac55fc40fe21ac298"
+    },
+    {
+      "path": "migrations/0004_sessions_and_events.sql",
+      "sha256": "80cab3bf72b0ce4f5ad316d311cdb3af214bb2e7d5af951c8ed74171eacf4e23"
+    },
+    {
+      "path": "migrations/0005_memories_and_revisions.sql",
+      "sha256": "96f87dea326a8fc0f0e55480360253a2782b1ea440017f66734071c47adfb3d0"
+    },
+    {
+      "path": "migrations/0006_provenance_scopes_relations.sql",
+      "sha256": "717d7ce963086cfee66e66960d719dce46a3a65eca5ea0d509429d7835508c7f"
+    },
+    {
+      "path": "migrations/0007_idempotency_jobs_outbox.sql",
+      "sha256": "21a3b08bdc8f234ca84ca7e7aa33a32cf283fe93c61840d1a524eecca81a3209"
+    },
+    {
+      "path": "migrations/0008_search_documents.sql",
+      "sha256": "427d8d4e0fc1d31cdfa38d454f8311d73e55668d6232c5b2b4e6828ed174cc2b"
+    },
+    {
+      "path": "migrations/0009_embedding_spaces.sql",
+      "sha256": "3ee17c5852cd91a37ac02acd7b2f7b8ed4a27ef3d7dc4a310aff35a084859955"
+    },
+    {
+      "path": "migrations/0010_structured_search_indexes.sql",
+      "sha256": "80ac732b4cf9a61652856aeb348a650e4d40a75862835a367442243c287ff912"
+    },
+    {
+      "path": "migrations/0011_retrieval_journal_and_context_packs.sql",
+      "sha256": "6a8ca504cdbceb18a420e1aa9650296849ef70bdc350791b88debd844f1dd452"
+    },
+    {
+      "path": "migrations/0012_tokens_policies_and_approvals.sql",
+      "sha256": "5daf5baec0d1359aec8222d17eceb56f5df3c895aa5344d3086a81087df1eed2"
+    },
+    {
+      "path": "migrations/0013_audit_and_redaction.sql",
+      "sha256": "fec598f7ed63bca0b028134c9aeb3c8aec9b2305420d28d7b873135b4f9346ee"
+    },
+    {
+      "path": "migrations/0014_provider_and_model_registry.sql",
+      "sha256": "c84502dc93bc057716b70812e86c04912537465cf67481c0cff4ee2dde5fad1e"
+    },
+    {
+      "path": "migrations/0015_routing_executions_and_evaluations.sql",
+      "sha256": "1bc577fc643f35c957f57a03c35a8a3c75fddbe40dee0f1362861fe15e4caa61"
+    },
+    {
+      "path": "migrations/0016_agents_skills_workflows.sql",
+      "sha256": "aad0e81143ec996380cd3d9bc7f4a7adcd3fbf337bda1792da9d6f87d1001354"
+    },
+    {
+      "path": "migrations/0017_external_execution_history.sql",
+      "sha256": "f478c997b5ee39636457ba58b92b78586db110f9add968394503567ff16ed71d"
+    },
+    {
+      "path": "migrations/0018_workflows_and_evaluations.sql",
+      "sha256": "9c88419c3fb91f946392de0f1c4379030a7aacc41e9560b7e4d7edbf28910b16"
+    },
+    {
+      "path": "migrations/0019_agent_runs_and_steps.sql",
+      "sha256": "6b23e26d21fadddc03c372c1f791d82f3084f04473e7fabfcc2689bc285b603b"
+    },
+    {
+      "path": "migrations/0020_run_events_and_checkpoints.sql",
+      "sha256": "7dfcf458e5385c3d16b532bc373024c2bb54bed456dc1cfb42f619430f95392e"
+    },
+    {
+      "path": "migrations/0021_run_leases_and_work_items.sql",
+      "sha256": "c5219736c1e2a42e1270ba4f3b1cddd862fcd4772bfd7bd265f355ef2e87bf7e"
+    },
+    {
+      "path": "migrations/0023_policy_bundles_and_snapshots.sql",
+      "sha256": "4ff4bdb87a4772eea6b9c2974c2eb6f306aceffcdb2bb075c7e7231fd110a170"
+    },
+    {
+      "path": "migrations/0024_policy_decisions_tickets_and_approval_grants.sql",
+      "sha256": "ac2638fec52f19ee2b6df030021f7997dbb20e36d2940c441132284f88da630b"
+    },
+    {
+      "path": "migrations/0025_resource_budget_accounts_and_limits.sql",
+      "sha256": "84c4858e7b45ad349b924c11a7f92b560c59c7295d1d982ae27efa1b5c17b61f"
+    },
+    {
+      "path": "migrations/0029_model_execution_attempts_and_events.sql",
+      "sha256": "cb1eb3e3360b69d934fbd211df58856bee0e8c5d607d2477960fb894db51ded8"
+    },
+    {
+      "path": "migrations/0032_tool_definitions_and_invocations.sql",
+      "sha256": "8a6c77715c47e56bb22abc160ac06b92e05e3862f3bc0daa3c10a7fd5ed1d6f1"
+    },
+    {
+      "path": "migrations/0037_execution_plans_revisions_steps_validation.sql",
+      "sha256": "91b7e12a2dd24c68de71dc497d3a33f49179e56f2e4be561b103744d2790b977"
+    },
+    {
+      "path": "migrations/0042_artifacts_revisions_blobs_and_provenance.sql",
+      "sha256": "be39968073856ec6174b027b2455b39964efc594d5c22628849ea81fd25b1342"
+    },
+    {
+      "path": "migrations/0048_conversations_channels_and_triggers.sql",
+      "sha256": "3197bf1e5bfc50c7e6e6c09db06744c7b15dc5f4c2cdfb372298313e5cc75adf"
+    },
+    {
+      "path": "migrations/0054_connector_definitions_operations_and_backend_bindings.sql",
+      "sha256": "cf8aeb8510adc250706018d7f099672fdffb33a1a68f52c2d183b9fe780bc1f9"
+    },
+    {
+      "path": "migrations/0061_agent_packages_and_extension_registry.sql",
+      "sha256": "e34f57ca44816e5a03842e54dede480b7528edab00896bc8187a56a9ae8a7ccf"
+    },
+    {
+      "path": "migrations/0062_a2a_interoperability_gateway.sql",
+      "sha256": "410cfa56a071a40228ed2185c4a1b670449f871e9c3d8f17a4d29f62180203a3"
+    },
+    {
+      "path": "migrations/0063_observability_and_metric_rollups.sql",
+      "sha256": "eb449291546c9083cfc2f558716260b386c25bb576cce6480a4e609260a01100"
+    },
+    {
+      "path": "migrations/0081_product_surface_and_ag_ui_gateway.sql",
+      "sha256": "0a3f1f944bcdabc589401ef6d3f5289f7b14da6eee9effb02b2e03775e1101d9"
+    },
+    {
+      "path": "migrations/0082_product_api_transfers_and_releases.sql",
+      "sha256": "7923005e7379bc09ed760695e609a3ac92c818bbc257a3ff503799d93bd45cab"
+    },
+    {
+      "path": "migrations/0087_workspace_envelope_encryption_and_cross_sharing.sql",
+      "sha256": "5ad0e1108ba007082a4421520311736c15682dd7c59964a0a75f2b3cf22907c2"
+    },
+    {
+      "path": "migrations/0088_event_schemas_exports_and_capture_profiles.sql",
+      "sha256": "6d8dc99462fe8ac61c4bc1095ee9a6d11432ccadf831b2e60c2d95efc37dfeeb"
+    },
+    {
+      "path": "migrations/0089_webhook_subscriptions_and_deliveries.sql",
+      "sha256": "64828e81b916922494301adc98fbf51d4f15aaf65c67c05754990e093d155264"
+    },
+    {
+      "path": "migrations/0090_release_orchestration_and_manifests.sql",
+      "sha256": "e2c36a227a9cd4b5270b55a04d2a977802f28b7c7c05380b757fd0448c6b0280"
+    },
+    {
+      "path": "migrations/0110_ag_ui_endpoints_run_bindings_and_intakes.sql",
+      "sha256": "1d0cc5c4910872782b127ff1e48e61a99a7c4a54c807de08ebd19acd06d1f086"
+    },
+    {
+      "path": "migrations/0111_run_event_store_foundation.sql",
+      "sha256": "4b7f37c489909729de1834981d4f278248ac3ac8592b4df4e4579b347e06cd67"
+    },
+    {
+      "path": "migrations/0112_run_streams_and_recovery_checkpoints.sql",
+      "sha256": "2165f3c27dc399c3ff88ee594862b4f1d6df59b88fb7f32e47d629b774e271f4"
+    },
+    {
+      "path": "migrations/0113_event_append_only_trigger.sql",
+      "sha256": "7ee2385f5ac82b21f78d7cbffca7fe88da9add8d915ce089d9c822a64a4095e8"
+    },
+    {
+      "path": "migrations/0114_active_memory_source_invariant.sql",
+      "sha256": "0b328f0d53c92448d25971ffacdfbf5740d1454805eba47b72a7c74d0b3bc046"
+    },
+    {
+      "path": "migrations/0115_execution_ownership_link.sql",
+      "sha256": "f0da0093899c32c88cd5b02bd4fc7293065099d6586cfe6240255a4836cd54f6"
+    },
+    {
+      "path": "migrations/0116_memory_revision_temporal_fields.sql",
+      "sha256": "d6df2b0d74e2c645330adf413c663d7c1afcef0676c597e64126d8df620a87c5"
+    },
+    {
+      "path": "migrations/0117_evidence_ref_v2.sql",
+      "sha256": "ea36f5e89cdcad82461a41fe959a53ad1675f96905784a8448d5b1a5f52d2ebd"
+    },
+    {
+      "path": "migrations/0118_claim_conflict_core.sql",
+      "sha256": "59b829237916825bc161e69fed0cdf8c538bf493f0c2fe25fba87e7fcf36929f"
+    },
+    {
+      "path": "migrations/0119_mutation_reconciliation.sql",
+      "sha256": "2e22c39e9785a0286ec1db8f166c37b181139cd4c492c28ea72df769aee406ee"
+    },
+    {
+      "path": "migrations/0120_generic_event_temporal_fields.sql",
+      "sha256": "6e8b715c2cca71d8ac59e6c8ba9e68fb1fc961dbc369213753f83902dd6c4d5c"
+    },
+    {
+      "path": "migrations/0121_cognitive_mutation_concurrency.sql",
+      "sha256": "5fdaa2707bed1559a2f73827cbdda0ce8209b3b3967ea847ff495328ac2ee24f"
+    },
+    {
+      "path": "migrations/0122_retrieval_temporal_indexes.sql",
+      "sha256": "ebc4fdb5c6c38ae9b3dcd6ea20096ec076de377d97e1ce4f7c76f2c73a38541e"
+    },
+    {
+      "path": "migrations/0123_evaluation_facts_v2.sql",
+      "sha256": "fdaf96bf46eb6899d47a2acede9d847289cd4864f5f5d23af2dd2b9367a9063f"
+    },
+    {
+      "path": "migrations/0124_learning_projection_proposal_boundary.sql",
+      "sha256": "7d891d97593f0efd0bdc943c5269cee1b7fb3b87adf6f2e70414bf3d7fc44090"
+    },
+    {
+      "path": "migrations/0125_qualification_bundles.sql",
+      "sha256": "605c71e3dd70d515c27ef2181b115f4591192c9bf7e7406c298b5d7fdb48713f"
+    },
+    {
+      "path": "migrations/0126_incident_recovery_trust_records.sql",
+      "sha256": "744e45bea973c13101785817acdb302cef9bbf78f4a0c91bc8dbac6c1d5eaebd"
+    },
+    {
+      "path": "migrations/0127_external_effect_reconciliation_records.sql",
+      "sha256": "3fbf5b8cecbf65597756227e54a66783967f2f529db395316def732d03ee0987"
+    },
+    {
+      "path": "migrations/0128_external_effect_recovery_indexes.sql",
+      "sha256": "c56b4255ed803581075974bd6b5e3be28a9d94eb9e7e867240b567653a6c0c9b"
+    },
+    {
+      "path": "migrations/0129_external_effect_fault_suite_evidence.sql",
+      "sha256": "bf222a5e7e05bd3e9eff0a1d217d1298f81e69edb53f0bfd3da9b41986a4d9c0"
+    },
+    {
+      "path": "migrations/0130_pgcrypto_extension.sql",
+      "sha256": "590f6d3ae58b519f65f0406665313f6f145a3502a1251f31a67ff677d7edd019"
+    },
+    {
+      "path": "migrations/0131_drop_vestigial_run_checkpoint_columns.sql",
+      "sha256": "7569d29148b71978bd7e2733e7d81b2eba3b2e4eaf67a6e8afc1d34e16d653fb"
+    },
+    {
+      "path": "migrations/0132_workspace_settings.sql",
+      "sha256": "5ecfe5bd7375034393ac7f03f02354b65b95159409d28f4562036e6e0ebefc8b"
+    },
+    {
+      "path": "migrations/0133_workspace_secret_envelope_storage.sql",
+      "sha256": "f4fc64e5ba98a3c5b6e37d9124212ef82c47b43a2aceb34c7ed3687591e4606e"
+    },
+    {
+      "path": "migrations/0134_artifact_content_storage.sql",
+      "sha256": "58f4dc40c6c7674d0421c400fd20ac9f3a2ac503cb31a4ae515afe08e09d74c8"
+    },
+    {
+      "path": "migrations/0135_access_token_authentication.sql",
+      "sha256": "9cb2454d1f86f82b84f33f0391e1a7e477ce0e28164030c80abdd025e0026f28"
+    },
+    {
+      "path": "migrations/0136_access_token_authentication_policy.sql",
+      "sha256": "8b79a6a510114fe16c883071c24eb82119a59128eb9a4aae016e5657eac0c433"
+    },
+    {
+      "path": "migrations/0137_access_token_touch_visibility.sql",
+      "sha256": "6c89f39a6484faa471768b8956cfba55557bf14e494b3634c02bdd56239c921e"
+    },
+    {
+      "path": "migrations/0138_retrieval_journal_channels.sql",
+      "sha256": "6adc66d58e534f8c0f4d3e03cf6dc3aa57ef1582491a03f8580efa5cc02de1ec"
+    },
+    {
+      "path": "migrations/0139_force_rls_on_scoped_tables.sql",
+      "sha256": "d170c1b40b30793ed12b36e7ca92bc677fe78a200b8d4410c8781a8c5d9d6160"
+    },
+    {
+      "path": "migrations/0140_force_rls_on_memory_graph.sql",
+      "sha256": "8aed139b11499064217e01f4a20c396e03b27e3c500c42333378497f4744a48d"
+    },
+    {
+      "path": "migrations/0141_defer_memory_active_revision_fk.sql",
+      "sha256": "3688b045bb61f52474d6029c4c0fb514dc1b6a929aa1d4b85fef3d1ed046e855"
+    },
+    {
+      "path": "migrations/0142_search_document_is_one_per_memory.sql",
+      "sha256": "23be41f6750345c6df2e75fdcf9009ce131874a860aa1a238102a51222646efc"
+    },
+    {
+      "path": "migrations/0143_force_rls_on_execution_and_evaluation.sql",
+      "sha256": "6dd83a3286d7c74b1dfd861eba4b8c067c2499a7f2f78db89028c14284798a23"
+    },
+    {
+      "path": "migrations/0144_external_effects_belong_to_a_workspace.sql",
+      "sha256": "c91f52f56b1baf963aed684815e77f66abec166c2936d99d09169a624da9f535"
+    },
+    {
+      "path": "migrations/0145_force_rls_on_the_run_core.sql",
+      "sha256": "1b0a00ef7036148062f3832eb974ad9725852203fc6af1cbd1e4ab7a81baf537"
+    },
+    {
+      "path": "migrations/0146_health_findings_persist.sql",
+      "sha256": "cadcb601a7a9cd9b08ff8a8595db79c6b7e6fb2fb912c3fe2fdfb74416b31717"
+    },
+    {
+      "path": "migrations/0147_capability_grants.sql",
+      "sha256": "512fbad0ad2cd88ef77bbd695b438e5f446c320f02a190174ab6a58569ddc825"
+    },
+    {
+      "path": "migrations/0148_embeddings_have_a_space.sql",
+      "sha256": "2689d540e3c7e318ab075c03e053d3ddc67def5877239339c1c052502779eb26"
+    },
+    {
+      "path": "migrations/0149_the_outbox_survives_a_failing_handler.sql",
+      "sha256": "8dded81148ce1c62c7d3e86bf5796791e8ae5bd3065c0a399d77da1c190718e0"
+    },
+    {
+      "path": "migrations/0150_inert_policies_and_a_purge_that_removed_nothing.sql",
+      "sha256": "666babe0e61a5d2dfad1206c186d052dcdb3ca043ac8f2adfba22ce00431d719"
+    },
+    {
+      "path": "migrations/0151_a_recorded_attempt_is_not_a_settled_outcome.sql",
+      "sha256": "1eff5e1a85056d14837fdb17f3ea8484275d79090cead41d54c1650b20a72037"
+    },
+    {
+      "path": "migrations/0152_a_settled_outcome_is_owed_to_its_run.sql",
+      "sha256": "fc44c3f8d961a91c2b2970c479fd16b18044fe3241cf913e24868655e6f91203"
+    },
+    {
+      "path": "migrations/0153_external_effect_lifecycle_recovery.sql",
+      "sha256": "6649444482a43177eb78e7b0181ef3fd10070400e02f8b46d332a1f78e72377d"
+    },
+    {
+      "path": "migrations/0154_a_dispatch_states_its_owner_and_deadline.sql",
+      "sha256": "23036cf792579fdcabc34b5f26b3c220e88345493d28631314ab4a052892e638"
+    },
+    {
+      "path": "migrations/0155_lost_dispatch_adoption_is_ordered_evidence.sql",
+      "sha256": "691ef396373e1024fb5db0453dc81598256dfd8bd65ec23360e7d54a649f3e97"
+    },
+    {
+      "path": "migrations/0156_a_failed_recovery_attempt_is_not_a_reconciliation.sql",
+      "sha256": "683019bc99c6d70b7d22b0c51550e9a66d14270ca1c8096ed178d0d5dff896ae"
+    },
+    {
+      "path": "migrations/0157_acknowledged_receipts_require_reconciliation.sql",
+      "sha256": "94b789d9bdd07d3d0a37f7c049b77907ece50410277d35ad8fe81c2ddb772bd6"
+    },
+    {
+      "path": "migrations/0158_external_effect_authorizations.sql",
+      "sha256": "a2b6c9f31ef4265736cf1ac63f1bd3b8bfd04ea78bd583485c82d432aab685ad"
+    },
+    {
+      "path": "migrations/0159_a_dispatch_owner_can_be_known_dead.sql",
+      "sha256": "9ac61f5bd92d1b2857fd11841dbb16c72164fb19b9bc581c1c9174577f50761c"
+    },
+    {
+      "path": "migrations/0160_fault_suite_evidence_is_append_only.sql",
+      "sha256": "78f62a9c9634b07c30a1be31f13dabe941c020a3d09a879d160b1eca785c0b67"
+    },
+    {
+      "path": "migrations/0161_qualification_baselines.sql",
+      "sha256": "2b8e79a55bb9c1ead5f76fb7c11a2d618ff6333f79e142fb06d1c82d27e7654a"
+    },
+    {
+      "path": "migrations/0162_recovery_qualification_observations.sql",
+      "sha256": "c92b4e5479efd84e8cea9e118f62b67cc7d16ff6b4bd9253aa542fa0f1ed0f75"
+    },
+    {
+      "path": "migrations/0163_model_data_policy_decisions.sql",
+      "sha256": "5cf627037241c0d3f25cd3928bdc71ac2cf988a744c2f34604cf41fcd1756d7a"
+    },
+    {
+      "path": "migrations/0164_embedding_data_policy_decisions.sql",
+      "sha256": "e6d23c9589779a5c66936cfa25c7be8beb2a8886f9995b87ae6097b358d344c8"
+    },
+    {
+      "path": "migrations/0165_governed_mutation_audit_atomicity.sql",
+      "sha256": "da1f92fe9c31c4bc7466a9fd13a0574bda562b5e89d4a163c2ce713cb927e2ba"
+    },
+    {
+      "path": "migrations/0166_guarded_operation_owner_role.sql",
+      "sha256": "d3c83c26671ef2f98954c2320441e97080b187dfee33de9d860517438d7794ea"
+    },
+    {
+      "path": "migrations/0167_installation_fingerprint_continuity.sql",
+      "sha256": "5c324eb1e5b738e09d4de2c223f2a47eaa506d4392611af0265e42623c4de788"
+    },
+    {
+      "path": "migrations/0168_installation_mutation_permit.sql",
+      "sha256": "9cd517a5d843bc06282cdfc0221a55b17de3c48e433722a959b6e98770dc08da"
+    },
+    {
+      "path": "migrations/0169_material_key_creation_intents.sql",
+      "sha256": "e37e0b3525d0f0cea84f6ab71666561351142d252018624acc5c2d2e3c5b7e8b"
+    },
+    {
+      "path": "migrations/0170_content_material_guards.sql",
+      "sha256": "4f3b6af449c9f228541c3506fd8851a5551287445b49c352a552531621c1409d"
+    },
+    {
+      "path": "migrations/0171_connection_execution_guards.sql",
+      "sha256": "3dcf3619b18bcffe1291495bd1900583a2f1cf563f79fb362eba4771651a1fab"
+    },
+    {
+      "path": "migrations/0172_credential_slots_and_revisions.sql",
+      "sha256": "97171f352c021fa4869776c7328c497cfe4a4550ab1c992deeea4a8f4535dea9"
+    },
+    {
+      "path": "migrations/0173_credential_key_creation_intents.sql",
+      "sha256": "cee84f3f17340ddcdb979575346e9e9a71fa18a9b39560ddd247cc6e3807ef32"
+    },
+    {
+      "path": "migrations/0174_material_erasure_primitives.sql",
+      "sha256": "fdd0151b918fbe7c2422d1ba83c098f69277f6480c3e0d2f1f916233feb097b4"
+    },
+    {
+      "path": "migrations/0175_runtime_migration_history_read.sql",
+      "sha256": "829ca247b2908cc5aa0821505b2abec0379b98f4378c68fcc5622b313ee2802b"
+    },
+    {
+      "path": "migrations/0176_connection_revisions_and_no_auth_bindings.sql",
+      "sha256": "6271079fc1332434a57d20d33f5af0f4f6a71bdcee0feb1616174a83c19fe6d1"
+    },
+    {
+      "path": "migrations/0177_qualification_jobs_and_revisions.sql",
+      "sha256": "cc0147b5d609edf5c047d96761e374e42128af796b8a39a0a1dfaa02504270fe"
+    },
+    {
+      "path": "migrations/0178_model_revisions_and_binding_snapshots.sql",
+      "sha256": "0994695a038119170f61b17c0d446bb18999d2fcabc05f809730faf94ae61333"
+    },
+    {
+      "path": "migrations/0179_model_request_evidence.sql",
+      "sha256": "e18db88f55371d2bdaa699d639ede579c5cccb7db4e3ac40aaa59a6463add285"
+    },
+    {
+      "path": "migrations/0180_connection_admission_and_credential_leases.sql",
+      "sha256": "39d25038df2737b4b86657107557ba5c678597ff25b68e5963065dffe8814176"
+    },
+    {
+      "path": "migrations/0181_credential_activation_and_rotation.sql",
+      "sha256": "c60ff11efc8777d4e69751cdb097825f845204b2c7c259bb20a05d1515fd5e67"
+    },
+    {
+      "path": "migrations/0182_provider_effect_atomic_dispatch.sql",
+      "sha256": "a2a574339d5c9eceebfb71c638500440fa9910fd789173d29a2c100ed0564cab"
+    },
+    {
+      "path": "migrations/0183_model_request_reconstruction_contract.sql",
+      "sha256": "00af33279e020e02af59cafaca088fd5820cef3c3204544e47b7334d3fcf907a"
+    },
+    {
+      "path": "migrations/0184_provider_dispatch_and_result_contract.sql",
+      "sha256": "124ab8d60016d1126fae6082fa6794f39ef1831f51ff6f13e037118243f5828a"
+    },
+    {
+      "path": "migrations/0185_qualification_job_lifecycle.sql",
+      "sha256": "5d6c7ca64c21e7a3504f9f4ebf4c92f603be84e8e6693cd9466648fa05525a9e"
+    },
+    {
+      "path": "migrations/0186_provider_execution_wiring.sql",
+      "sha256": "c4d293e4027f0b9f39664fc12ac9818c248ceb858e070e072c5cb8be0b0f77d2"
+    },
+    {
+      "path": "migrations/0187_embedding_jobs_and_corpus_generations.sql",
+      "sha256": "4f899665ebf6f5ac8f58b00da2ef08af18ed9c9a42b3ce7dcf54eece7acd3543"
+    },
+    {
+      "path": "migrations/0188_embedding_transitions.sql",
+      "sha256": "52efbabf6764edf3a65ffd8d690a79ff4e4c9a5d8cae69cdb761e435e55f3e52"
+    },
+    {
+      "path": "migrations/0189_embedding_transition_carry.sql",
+      "sha256": "1250826e4bec80c1a5870f2bfef2167a2d26c09eea59c1cc4cf0308bce96ad46"
+    },
+    {
+      "path": "migrations/0190_embedding_transition_barriers.sql",
+      "sha256": "7b9fe7f437f71d1fbff23856c9bb8e9116f43e46c8924547f82a25b33ae6785c"
+    },
+    {
+      "path": "migrations/0191_embedding_corpus_generation_members.sql",
+      "sha256": "2a658619f599bdf23176241fc16ef3c876aa6dddd653f236c5bd9e730a0c990f"
+    },
+    {
+      "path": "migrations/0192_embedding_job_pre_dispatch_termination.sql",
+      "sha256": "6db03a1a5cf851c2980e2d21b5772b3f00947965e72e328f63d1c1861a7e8138"
+    },
+    {
+      "path": "migrations/0193_embedding_output_key_preparation.sql",
+      "sha256": "7876072b3a9184df7cb1f6fe105a8269ddea544d1920a022d968d86443c29c6b"
+    },
+    {
+      "path": "migrations/0194_embedding_job_result_preparation.sql",
+      "sha256": "54fbd28d39aad74f4759ffee2f943a0cc62404d00791bdf02a0378c1bcffdbb4"
+    },
+    {
+      "path": "migrations/0195_embedding_job_result_finalization.sql",
+      "sha256": "3c159deb3259e92a88a78cdc984897c778759a085ae459460c29a25c5b2e5bbc"
+    },
+    {
+      "path": "migrations/0196_retired_credential_erasure.sql",
+      "sha256": "c5b828df1a6b8e646905a5605cbc044aa73ab3b936e7a7e2df0563eb078ca230"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "dcd0eac3721e0957f7861349056649c079ae57eb78aeba3dedcba2afd8058d25"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "f32d2f03b3f4b1e295c79ed49d543f1205c7dac7c3dc74f05a5a27af4fea0584"
+    },
+    {
+      "path": "schemas/a2a/vestrace-v1-profile.json",
+      "sha256": "27091b99fc819f5b8d1437131886cbaf8b90105ad8bde73c1f704124cffed13a"
+    },
+    {
+      "path": "schemas/ag-ui/0.0.58/runtime-schemas.json",
+      "sha256": "ffd27f773b4a1c382e8e08c78ec03cf17ba72feceac76b1703b495f6f7a2fc29"
+    },
+    {
+      "path": "schemas/ag-ui/vestrace-v1-profile.json",
+      "sha256": "8e4d871a78185b428f8171b621996a3f5730db100d2904785c150630d249ffc2"
+    },
+    {
+      "path": "schemas/mcp-tools-v1.json",
+      "sha256": "732b89821932ccfe70be7bf263ccaa773b813042c260bfba03e9f05a7d7efd9e"
+    },
+    {
+      "path": "schemas/openai-compatible/openai-chat-completions-v1-q1.json",
+      "sha256": "6797ff6a7af2543f812ca9f050f4d2324eaa75e1ba2dd72bda9eddd2de91f528"
+    },
+    {
+      "path": "schemas/openapi-v1.json",
+      "sha256": "8b9c8c15e7c5b8d4fdd804e23d63ea6159133b6c2db78159ffb4ac159c1cd8b0"
+    },
+    {
+      "path": "schemas/protocol-lock.json",
+      "sha256": "dc643aa2f974e122d4272efa0e34053b9cf73ce98523833dbef39475b4a68e16"
+    },
+    {
+      "path": "scripts/external-corpus-manifest.mjs",
+      "sha256": "9d6beed5c64f182d9b7cef316b117253142c56c0076040d807a4dbf6d1ef7d21"
+    },
+    {
+      "path": "scripts/extract-ag-ui-runtime-schemas.mjs",
+      "sha256": "ed0cdc3cf19ee7515627cc28da9462986b29a8023303c672bcd148fbc9847444"
+    },
+    {
+      "path": "scripts/foundation-boundary-truth.sh",
+      "sha256": "74c31e232097a7d86d9411fb03447a8af0b6336ec86ea244abeb84927096cb52"
+    },
+    {
+      "path": "scripts/foundation-cli-truth.sh",
+      "sha256": "b2c36eb11de1652692c553b281dbcc90b7ded1f80d913b1b8e975afc70d46388"
+    },
+    {
+      "path": "scripts/foundation-doc-truth.sh",
+      "sha256": "2a2e9416eb411305b77e818bb654a4076f6dff8607af571e7be02ec645b51003"
+    },
+    {
+      "path": "scripts/foundation-run-smoke.sh",
+      "sha256": "890064c875ef323c593111afd7c1f9a407b8d4185a0870b689882ee22f6a681c"
+    },
+    {
+      "path": "scripts/foundation-runtime-rls.sh",
+      "sha256": "681e8972ccc4d36fdaa3873a6d234aa8e70c62da196d75ae4b886a473c1a6247"
+    },
+    {
+      "path": "scripts/foundation-smoke.sh",
+      "sha256": "36d19a1f90b2d076c89b5e8751d4fcab3346c6734aedafbbb28c64608ce7cedb"
+    },
+    {
+      "path": "scripts/generate-openai-q1-marker.mjs",
+      "sha256": "68474d7a8c5c36714186cc1f508987642e1e8b98c375d0e4757f641fb2a1a097"
+    },
+    {
+      "path": "scripts/p01-scope.mjs",
+      "sha256": "8462af6e3dcaceb6040ec31a121db8d70ebee71e4cd70c89d32977243dd765ce"
+    },
+    {
+      "path": "scripts/p02-scope.mjs",
+      "sha256": "ca54917ac655fe0fe06cfea616eb5f2fd3d98e1bd46fb89c0a2732f45b94566e"
+    },
+    {
+      "path": "scripts/p03-scope.mjs",
+      "sha256": "4bb1987bed54700ee690cd1b3b67f8841fa67db617ec87e81f8780812d5f07fe"
+    },
+    {
+      "path": "scripts/p04-scope.mjs",
+      "sha256": "46e6976d733f74b3b89874cb8ef41501a1388ad24d479926a010d987363e8bb7"
+    },
+    {
+      "path": "scripts/protocol-lock.mjs",
+      "sha256": "0b461773554835a4ad5717c664e54cf1229cc50f51e8d8cd89534e8f07c2c8ed"
+    },
+    {
+      "path": "scripts/protocol-provenance.mjs",
+      "sha256": "244d29296814944036eb87cd01f5a76ade17f6801d57eaab0a1f1c7ac6c05e5f"
+    },
+    {
+      "path": "scripts/verify-dirty-baseline.mjs",
+      "sha256": "aceeffbf91404b9e81a2b01dcf20a8638cc30a0c14a4fa8289a9fd205e05f9b2"
+    },
+    {
+      "path": "scripts/verify-p01-text-hygiene.mjs",
+      "sha256": "23a388cc7de78f876bdf7d3b5e56f85c44acec87c94a8e39118b6a5d06ae5f50"
+    },
+    {
+      "path": "scripts/verify-protocol-provenance.mjs",
+      "sha256": "3a0cb84dd498bf342257c227e514a6b3e3cadc7a353b96b223fe5170a820722b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c488cca14d2cec2e63b395163044c72836b6c2a4ead5ef25cfbf45725621b7e4"
+    },
+    {
+      "path": "tests/a2a_interoperability.rs",
+      "sha256": "48661cc6e8c30653445453dae2262e9363e13daae9e8421674579937f2463e31"
+    },
+    {
+      "path": "tests/ag_ui_input_contract.rs",
+      "sha256": "7aae3b3ac88b5b6e01eab44230ab57a39ab7f05977bf5040c9b1e423d8598f64"
+    },
+    {
+      "path": "tests/artifact_persistence.rs",
+      "sha256": "5eee5e785f1b3279ed847c08d227e58dec2f6620f5e69f69cf76075ffe25f098"
+    },
+    {
+      "path": "tests/authorization.rs",
+      "sha256": "bd551afb52786e6fe23374fb3a228cc3e5b564540535bbdc6b17eee926a280c7"
+    },
+    {
+      "path": "tests/budget_accounts.rs",
+      "sha256": "91b0841850635019c75ad96b5e0717777776dd3166a6a6c8483d9b90a46c2e10"
+    },
+    {
+      "path": "tests/c8_core_memory_qualification.rs",
+      "sha256": "f5bdd6309e00db9f7b1f2c1b45413a230a62e953be643ceccc19a53e6e7a82b9"
+    },
+    {
+      "path": "tests/capability_restoration.rs",
+      "sha256": "c00c2d467e6bba0a1132fa6821d3aae844577a348bf878d487638544beac55c8"
+    },
+    {
+      "path": "tests/compose_smoke.rs",
+      "sha256": "8d5581699e8dcca3fff04be5b0d0ff3613239b811cc5afa1832bdcd3bb40fb20"
+    },
+    {
+      "path": "tests/configured_policy.rs",
+      "sha256": "99208603d7f1c4916466e7e6cb8059aba702e9ca447a418a8d7ff4b02598ebad"
+    },
+    {
+      "path": "tests/connection_persistence.rs",
+      "sha256": "72ed3b6d8535d6b80cb120e45f5c797cb317a1174c2320c62fbbe2a8c1ef31bd"
+    },
+    {
+      "path": "tests/conversation_triggers.rs",
+      "sha256": "995c7f8ab4d3750e0abd348f25caebbacb0b8bd0aac79f7043538dc3d13d5a19"
+    },
+    {
+      "path": "tests/crypto_adapter_qualification.rs",
+      "sha256": "f7f426bb34a14c981664ff4ed115ca195e4f0cbb5c799b1a0045428c88e4a6ef"
+    },
+    {
+      "path": "tests/direct_planning.rs",
+      "sha256": "6ced9073a312be7744907b98e880534dddaa3bf0856612ed0db312461fc3ba89"
+    },
+    {
+      "path": "tests/e1_e4_connect.rs",
+      "sha256": "d3707af2cdfeaac41d0d900d5569d1d140ba5ed4806762d1500a159e13e65f19"
+    },
+    {
+      "path": "tests/effect_fault_admission.rs",
+      "sha256": "cf56cf78853ce487db1643a9d7691ab8621405eda2731230eb773517c09a9eba"
+    },
+    {
+      "path": "tests/effect_fault_bundle.rs",
+      "sha256": "b61592e60d74e298416ac825eaa6e312dc398d6234a19f355fbf41426a451b00"
+    },
+    {
+      "path": "tests/effect_fault_evidence.rs",
+      "sha256": "dc511736d1ad318912b95d450fc001bf4fdedb9e41711496ab99759681bc9fc7"
+    },
+    {
+      "path": "tests/effect_fault_gate_evidence.rs",
+      "sha256": "37950396a975b2b86392a0e2d63c835abec731a4d4e4638f45debe212609c996"
+    },
+    {
+      "path": "tests/effect_fault_qualification.rs",
+      "sha256": "50c6dc1b53be7eee86497b30d14a8ae1d9426e01e8dbec56d1198a0ae0a9fbfb"
+    },
+    {
+      "path": "tests/effect_fault_runtime.rs",
+      "sha256": "3a0b08a1912f0b3004b7e67b1836038683da6022b2b6d6139cfbb7dcaadb4a0d"
+    },
+    {
+      "path": "tests/effect_fault_scenario_e2e.rs",
+      "sha256": "9f035dd309ebc1aee7c11a9b1fe2b0d3277727a4ce152e4f10f7ef3cfc91d980"
+    },
+    {
+      "path": "tests/effect_fault_suite.rs",
+      "sha256": "409c1918e306c6e4d524615af1dabcae879a60fdb2b45ef538785223db8c8382"
+    },
+    {
+      "path": "tests/effect_recovery.rs",
+      "sha256": "449407683cf0d1d346aa46656e1bd8410072443cc2c95f80b3dfbd5cb4669153"
+    },
+    {
+      "path": "tests/embedding_fault_scenario_e2e.rs",
+      "sha256": "777e2b77902deac6ed1f95298ea6b99144bd1753009a788c909d6ba331784abb"
+    },
+    {
+      "path": "tests/external_corpus_manifest.rs",
+      "sha256": "4b49cd1ac57dd0a7a0aada4ada0269bac68f4d011f659397bcb04cace68a0cbf"
+    },
+    {
+      "path": "tests/fixtures/openai-compatible/chat_completion.json",
+      "sha256": "5f380ee9cd0058420b02cb7c1415004ccfac749450d920fced130878775c12e1"
+    },
+    {
+      "path": "tests/fixtures/openai-compatible/embeddings.json",
+      "sha256": "107d4244d5c972db52c47e07106c2ae8ecc51a8252560e46f00da67aefbbf5c3"
+    },
+    {
+      "path": "tests/fixtures/openai-compatible/evaluation.json",
+      "sha256": "f232b3d819f0088ad72a75d9bea01a1f38ec896e1170b5aadcbeae94ffcb8653"
+    },
+    {
+      "path": "tests/fixtures/openai-q1/marker.png",
+      "sha256": "b0343846f3c9f250e25edb45b73993b747bc85143f040c207cd76b6936af4de6"
+    },
+    {
+      "path": "tests/fixtures/qualification/c8-core-memory.json",
+      "sha256": "fd3f2916fb84f035fb03695867c6cd9f1fa804a33195dd30161063ed03132b07"
+    },
+    {
+      "path": "tests/fixtures/qualification/e1-e4-connect.json",
+      "sha256": "e5c1284c4ad5a2f4293e06794f8714f552972fd849dfd0e34b8d10be33d34342"
+    },
+    {
+      "path": "tests/fixtures/qualification/g1-governance.json",
+      "sha256": "64cac5defbc0870b734e613606f7a7ad776696a365c3ae3d99d2023d91a90323"
+    },
+    {
+      "path": "tests/fixtures/qualification/g2-universal-authorization.json",
+      "sha256": "9a1740c4e6e33853737447b264cb62cdea8ac715493429f143a1a6eccb126f17"
+    },
+    {
+      "path": "tests/fixtures/qualification/g3-governance.json",
+      "sha256": "e7731e82a5362a41bec93697794b2b9e3e0743c8f3df0d5e79267318101ce04f"
+    },
+    {
+      "path": "tests/fixtures/qualification/g4-governance.json",
+      "sha256": "70f03845d1d89073a7d3533b6f9fdac0e1fe6623046a4cba0672ed44a6dd328e"
+    },
+    {
+      "path": "tests/fixtures/qualification/g5-federation.json",
+      "sha256": "ff15f90ec13b2afb1ceeddd9a4ebeabf4d3ff546b3928048b8fa6654ef02b604"
+    },
+    {
+      "path": "tests/fixtures/qualification/g6-governance-federation.json",
+      "sha256": "bc2e3362fb4d7b5c8f58b4874f45c2b33e97c7f049cc602c19199b717e3f98aa"
+    },
+    {
+      "path": "tests/fixtures/qualification/h1-h5-understand.json",
+      "sha256": "1c860045d928284949575ccfaeb83f126492142426e6aad1cbf94b1bf83c0fd3"
+    },
+    {
+      "path": "tests/fixtures/qualification/l3-cognition.json",
+      "sha256": "d65e94f2b0f020d197ba85b870611a81ff4c0d43fe924d0bed5f2813c795cea2"
+    },
+    {
+      "path": "tests/fixtures/qualification/t1-t8-trust.json",
+      "sha256": "2837684142190ed182d63345318652c62d90b73c0ad77b6f3420a40996cae30c"
+    },
+    {
+      "path": "tests/g1_capability_policy.rs",
+      "sha256": "3eef8b23736433086932d80c14e74274c83e9ce9295169d358f766ace5ef11c7"
+    },
+    {
+      "path": "tests/g2_authorization_boundary.rs",
+      "sha256": "f15f2f2f042afb9d1aa2606c285e56866636cee155ef6df0ee8ddc53dd0c027c"
+    },
+    {
+      "path": "tests/g3_delegation_budgets.rs",
+      "sha256": "120a0fa4056f545e7611cf5028f99c4b3a16b47ab643afdccdce70a1eaaefec0"
+    },
+    {
+      "path": "tests/g4_cross_workspace_sharing.rs",
+      "sha256": "952541fae381b6c33180ba830e9448a00517d12fe2b7654ef80aead509a1d052"
+    },
+    {
+      "path": "tests/g5_federation_trust.rs",
+      "sha256": "8341db173e3e06eb523939ef87e92fe6fd0a474f945cbd2173a3c8b041b18d1c"
+    },
+    {
+      "path": "tests/g6_governance_federation_gate.rs",
+      "sha256": "8f89e6f35e632d556dc2ded16674f0343e604081d5c1f5a5a733dbee94bf3652"
+    },
+    {
+      "path": "tests/h1_h5_understand.rs",
+      "sha256": "8afc5257c7401faabd0e7658dfaca39b4bf257bdf6fa6e8e5591c86a12ba41cf"
+    },
+    {
+      "path": "tests/http_command_contract.rs",
+      "sha256": "902216bf89e8bdfc5b2db2f8a744ace1c91cf602a68d922e1d90df8efe061711"
+    },
+    {
+      "path": "tests/idw_014_shared_read_postgres.rs",
+      "sha256": "f7a4c6d82a54bed684fc671dd56a02b73a38a67624b169569ce9d67bb0652e81"
+    },
+    {
+      "path": "tests/jobs.rs",
+      "sha256": "4dc55d4f764c4b4ff263635890b7808c4f73129c21d9830355ec600b7ca4253d"
+    },
+    {
+      "path": "tests/l1_evaluation_fact.rs",
+      "sha256": "2114b8818a8a8f73e3a5ffe43087bf0e1de9b1c297652ff60f37456806d9a2cd"
+    },
+    {
+      "path": "tests/l2_learning_boundary.rs",
+      "sha256": "d7b1ddd750e8eaebbbc72cab1087b4aef3fee1f55cefdd4ae6a51128fcab4332"
+    },
+    {
+      "path": "tests/l3_cognition_benchmarks.rs",
+      "sha256": "bfcc3dcab22e425fd61572d0d0b2992a309a6a9856b838d51c55441459eaa270"
+    },
+    {
+      "path": "tests/memory_lifecycle.rs",
+      "sha256": "5062da35711658f4b42d0e7ea2d3378cb07afecc0cc1c7805844cc52f47cc25b"
+    },
+    {
+      "path": "tests/migration_operations.rs",
+      "sha256": "9a3c0ad19ce4caa958208a10092ac23d0de938b5bc9822690a51e7d8e27506bd"
+    },
+    {
+      "path": "tests/migrations.rs",
+      "sha256": "c073adeb8f5376f0702d0e4279f181cfd30a96f40d10e9fe74f1fea4127bc7fb"
+    },
+    {
+      "path": "tests/model_registry.rs",
+      "sha256": "df4986cc1517b16d059244df4fbc5a76548f48fc4616616707aff0a9c246f79c"
+    },
+    {
+      "path": "tests/model_request_semantic_observation.rs",
+      "sha256": "f32c25303588ea3f231092640effce04c2e6b8bc15af7cdef6e65d5589a28783"
+    },
+    {
+      "path": "tests/mounted_secret_store.rs",
+      "sha256": "ea281203063196f6354de01273cf885256aed26615613792b7a186fc3666e7a1"
+    },
+    {
+      "path": "tests/native_provider_conformance.rs",
+      "sha256": "016aca4ea3cf065f2c9230cb18ff5f985c3798dc79e25b36747029a0efef7f36"
+    },
+    {
+      "path": "tests/observability_evaluation.rs",
+      "sha256": "6fc1fa626c2477c61a8e4ca806474fe93d4195ad282b15c610ade42777a80fc7"
+    },
+    {
+      "path": "tests/openai_q1_loopback.rs",
+      "sha256": "d63f176f4492e9572974f4e7bee8db75e75501ee8f08389606ee798819a951f4"
+    },
+    {
+      "path": "tests/p01_text_hygiene.test.mjs",
+      "sha256": "94240959e0c8c0980e12cab7a78bf2ab4db300fdf8cb64b410cb2454d9203c00"
+    },
+    {
+      "path": "tests/p02_scope.test.mjs",
+      "sha256": "2343b271a68e1b7988d8d294eac97846ce082e942a5fdc9afc2a582b21922355"
+    },
+    {
+      "path": "tests/p03_scope.test.mjs",
+      "sha256": "23b3cb982e2cc9183e9beadc470df32942843d6865961dcea4580c4bdd41df79"
+    },
+    {
+      "path": "tests/p04_scope.test.mjs",
+      "sha256": "bb6d7daf7678aa51eeb50f589c7670ccb076477dab9edecb3d7f0cb14a53a1ef"
+    },
+    {
+      "path": "tests/package_registry.rs",
+      "sha256": "d51e89604e1d852dc9ae10a72960b05cd0221dbea3d6907225c3e98106209274"
+    },
+    {
+      "path": "tests/product_api_transfer.rs",
+      "sha256": "9e63174edf576495a4c5bb2f7ba5152409a305e28a9406b2fa1c28d37c32eca5"
+    },
+    {
+      "path": "tests/product_surface.rs",
+      "sha256": "45a2f6618d492d23a457643d1d57472ae6c4a62f5f4e7fd915aa57a3855c0efd"
+    },
+    {
+      "path": "tests/progressive_trust_restoration.rs",
+      "sha256": "886df649746a67cbe44954f64a3cc970b18c20cf4f46a3137989386ee2b09126"
+    },
+    {
+      "path": "tests/protocol_a2a_lock.rs",
+      "sha256": "b57f2d2b3711f4d39c16e545a93c78bfb278e20cc982dbbb437840fa6aab76c4"
+    },
+    {
+      "path": "tests/protocol_q1_manifest.rs",
+      "sha256": "8dece0096834031b225759940b38264b96041101002e54bd46f8fa18623236fa"
+    },
+    {
+      "path": "tests/protocol_q1_marker.test.mjs",
+      "sha256": "4480c003eb37d4a52a8523cee582888d27292da2d66e09c09bff145364be42ab"
+    },
+    {
+      "path": "tests/provider_contract.rs",
+      "sha256": "00da0ea8b103f58f6abe0b40dca10cf53762df14709993baaf6bd1679f76eac4"
+    },
+    {
+      "path": "tests/q10_post_incident_requalification.rs",
+      "sha256": "424b1a6323ee80cd3cc1357fdde3fb35912356a1d50e1ec2cea3cae0273d65aa"
+    },
+    {
+      "path": "tests/q1_qualification_artifact.rs",
+      "sha256": "24d68dfa37354f37c77e6a2e6929c9689f5a555a0c30a0dcd6358652b65f868a"
+    },
+    {
+      "path": "tests/q5_manifest_binding.rs",
+      "sha256": "7c5dcebbfe147ca61a04027eb8c5bbfb0faf85f7c49ad76f076673cbb8463c7b"
+    },
+    {
+      "path": "tests/q6_deployment_qualification.rs",
+      "sha256": "8f91ab26c3e329e8fe172f95f165655a29fb71f12caa48867ada7dcea7391fda"
+    },
+    {
+      "path": "tests/recovery_reconciliation.rs",
+      "sha256": "52d97607a8e7934c51a1a782049a91e3de9382b20bd582e8f5fcc509bdee414a"
+    },
+    {
+      "path": "tests/release_approval.rs",
+      "sha256": "c038fadef6565a0517669ed9aba9355103889fefcdff82ffdff7e6fefa743161"
+    },
+    {
+      "path": "tests/release_orchestration.rs",
+      "sha256": "3f15c4af9f74a87b87045349e6618f8c13fff51a82e88014937eb8f4c9d95796"
+    },
+    {
+      "path": "tests/retrieval_e2e.rs",
+      "sha256": "883474c6b5517faf13fd67a41601904ac9203b0903a938148e68b5f460be69b7"
+    },
+    {
+      "path": "tests/rls.rs",
+      "sha256": "c7329e7b5164e586df3ed481017f1759c5305c5e25d89c8d7a15a9cfe3a73979"
+    },
+    {
+      "path": "tests/run_command_committer.rs",
+      "sha256": "5e97cfded567121e99e4d3c5b26f1848859a00cf7a2535cb9e65150ce40126d2"
+    },
+    {
+      "path": "tests/run_command_service.rs",
+      "sha256": "e5132045fab7a7b559794abbcd6fe50d9005fd7c49d67bf3e8481cd30b6dc3cf"
+    },
+    {
+      "path": "tests/run_event_store.rs",
+      "sha256": "60f2a4d4a429a01d16dd80bb11b9e77c50650edb7cbdfa48b99d603329659491"
+    },
+    {
+      "path": "tests/run_event_store_append.rs",
+      "sha256": "ae43f05d922c8a3e2967da9460a52a85d3fd5808869cf07b1c446ff893a55b2a"
+    },
+    {
+      "path": "tests/run_event_store_migrations.rs",
+      "sha256": "860710e3a2bb1809f7b04ea5bd64680d0155121172fce5ec8e0c270d3f9f745a"
+    },
+    {
+      "path": "tests/run_event_store_rls.rs",
+      "sha256": "a5e0134d78b4674c388e241a2946d86c7843888afad0de5be047bae59107594e"
+    },
+    {
+      "path": "tests/run_lifecycle.rs",
+      "sha256": "53a381f979d88664af004dfdb522f98cf495b794ea2182a7a68fce389fa22510"
+    },
+    {
+      "path": "tests/run_projection_independence.rs",
+      "sha256": "ee9b583bfec950fa4cb583767bbbd48040440f4cd818000403e1fed6fce88090"
+    },
+    {
+      "path": "tests/run_recovery_service.rs",
+      "sha256": "0480511018939229ce2344482fee9dc4cfb5f7553a5165b48bb8ec7ab544303c"
+    },
+    {
+      "path": "tests/run_recovery_snapshot_boundary.rs",
+      "sha256": "9d2b879bf12bbd56a1cda26fbb3f656f69e96bc17e4ecb4e5e9a1e4ba23ee56a"
+    },
+    {
+      "path": "tests/run_recovery_store.rs",
+      "sha256": "d731cd36ef79b845d7e496a46fb30e253976b0d06145fe9772ad4e91be0d7656"
+    },
+    {
+      "path": "tests/run_state_engine_recovery.rs",
+      "sha256": "aba563981a17dc925597e8cb4937895fd0102ede78b832e0192f8f1183870236"
+    },
+    {
+      "path": "tests/run_stream_recovery_migrations.rs",
+      "sha256": "c4529887c9fa4380676c8b8ff7bd3282620fc449b2158e57fa64fa4c1fdaf3d5"
+    },
+    {
+      "path": "tests/run_worker_lifecycle.rs",
+      "sha256": "7c3f887552e98982baf438e2d5c0cf7653c6f12432d65a194dd0d523cfd42101"
+    },
+    {
+      "path": "tests/signed_run_export.rs",
+      "sha256": "824e610906341645d2aebb069651678b1fd16d6418185aba029fa9205e6c1d43"
+    },
+    {
+      "path": "tests/startup_recovery.rs",
+      "sha256": "a53f17a609bd54ce3d3386b3990a16af14674fb95c627cce392e0e07a8129a48"
+    },
+    {
+      "path": "tests/support/mod.rs",
+      "sha256": "f3cdc02ddcbd64f8488194572fca112354328ba85c75774397cdae113e560d75"
+    },
+    {
+      "path": "tests/t1_t8_trust.rs",
+      "sha256": "49453c3e859a20f7e35237bd9cc472263b51d0bb5c18cd87ea5dbcd242fc97b4"
+    },
+    {
+      "path": "tests/tool_prepare.rs",
+      "sha256": "3c8610734542909f3aa3165c4c92c7953fcb0489eedbcc8c5be34b7ac1d27052"
+    },
+    {
+      "path": "tests/v01_acceptance.rs",
+      "sha256": "f7da983c1cc6b1281fdb5194f376d07d662d690b326412ce134866550910c796"
+    },
+    {
+      "path": "tests/v1_release_evidence.rs",
+      "sha256": "e34024bf889b55e089aec72a61181a19e3f30ce58c02e23f4a0a3238e60a765e"
+    },
+    {
+      "path": "tests/webhook_extension.rs",
+      "sha256": "038136644c8b46b45a99ace942c6ef8940509dd6dab53a2d125a76541fb163fe"
+    },
+    {
+      "path": "tests/workspace_envelope_encryption.rs",
+      "sha256": "e66a78ee7b7fdd575fb2212828ac805a1cafacde9b0d3ce30dadef5c0f00ae6f"
+    },
+    {
+      "path": "tests/workspace_settings.rs",
+      "sha256": "2d1da66c53abf1ee4aa0675f25381ec8d78330f00b69655cd266bf464b353c8a"
+    }
+  ]
+}

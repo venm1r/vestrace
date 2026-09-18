@@ -1,0 +1,38 @@
+[package]
+name = "vestrace-cli"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vestrace"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+ring.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The capability manifest digests the binary that produced it, because a build
+# digest somebody typed identifies nothing.
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+vestrace-application = { path = "../vestrace-application" }
+vestrace-domain = { path = "../vestrace-domain" }
+vestrace-http = { path = "../vestrace-http" }
+vestrace-infrastructure = { path = "../vestrace-infrastructure" }
+vestrace-mcp = { path = "../vestrace-mcp" }
+
+[dev-dependencies]
+async-trait.workspace = true
+ring.workspace = true
+serde_json.workspace = true

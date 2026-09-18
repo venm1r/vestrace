@@ -1,0 +1,665 @@
+{
+  "format": "vestrace-doc-payload/1",
+  "baseline": "07e2977a20b05c5b16953a206a6d68bdbff3a052",
+  "excluded": [
+    "docs/maintenance/payload-manifest.json",
+    "docs/maintenance/validation-result.json"
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 6496,
+      "sha256": "59eb84bf656dc5e2c34a5f76317fbf1fa03ea7d98dc26f38a83033009deffbe5"
+    },
+    {
+      "path": "docs/README.md",
+      "bytes": 6178,
+      "sha256": "ad8c9c5aec1b2d7a52d8aaded1d47854b5005637eecbdeef419ea960e7393493"
+    },
+    {
+      "path": "docs/architecture.md",
+      "bytes": 6541,
+      "sha256": "c3d41907894aca54d9189255b0afcfcb0bac2f1af97856ba63d711013c70b7d9"
+    },
+    {
+      "path": "docs/database-schema.md",
+      "bytes": 5241,
+      "sha256": "48c6fb40b98fd9568ea99116e4cdd818889a6969450c0dcf8c45cdf770dc73fd"
+    },
+    {
+      "path": "docs/design/consolidation.md",
+      "bytes": 4301,
+      "sha256": "a58533d353bfd6a16deee6be1b2f0d6abb1976d0a3806f327dd9475363373aa6"
+    },
+    {
+      "path": "docs/design/context-observability.md",
+      "bytes": 3519,
+      "sha256": "64b47b3395cf314eee59dea7028366c08cb7732df303ae8c8a29ed8dd8e61468"
+    },
+    {
+      "path": "docs/design/execution.md",
+      "bytes": 4820,
+      "sha256": "313e42617fd8e9f7cb7ee194d909f7224434520625e190a7f0f18370d56508d9"
+    },
+    {
+      "path": "docs/design/integration-boundaries.md",
+      "bytes": 4124,
+      "sha256": "4e8b1136c23bb55aff226ab3a5b7629f4d64997f7965c7f33df12c18589de969"
+    },
+    {
+      "path": "docs/design/learning-health.md",
+      "bytes": 4591,
+      "sha256": "cf16a63549951bedb89ab9ec5c183b12d019d72b5511fc13ed1c557c0f9483f6"
+    },
+    {
+      "path": "docs/design/materials.md",
+      "bytes": 4999,
+      "sha256": "93970959e44db9b44b1503167e2f0dea81e4d246eb5263fee1912d2c2adb9f96"
+    },
+    {
+      "path": "docs/design/memory-time.md",
+      "bytes": 5669,
+      "sha256": "f394a3d6957eb9d0ce25b448a1c93cb1a6546ce89c1827e620c93e4209c1fdce"
+    },
+    {
+      "path": "docs/design/retrieval-context.md",
+      "bytes": 5273,
+      "sha256": "409023bf37896f55afb59d1ee30c8e82adf4c65ead9f70212e79e0d5a45ce0f7"
+    },
+    {
+      "path": "docs/design/temporal-conflicts.md",
+      "bytes": 4854,
+      "sha256": "10a37dc69dd3bfe95ae89787a130ad49fa7d00d946ff2f84458cf472f4835644"
+    },
+    {
+      "path": "docs/design/transactions.md",
+      "bytes": 5647,
+      "sha256": "7c9b1180297c76d1624c0243dafbaad6dad334f49e596823c14123a750cd9922"
+    },
+    {
+      "path": "docs/development/README.md",
+      "bytes": 4151,
+      "sha256": "2d9ced715f4b0a9e5ea993762f2e32cb9538847cdffcaf04b10d4a1ddd55f768"
+    },
+    {
+      "path": "docs/development/agent-workflow.md",
+      "bytes": 3486,
+      "sha256": "51960395949f72bcb27a23e774cadadcdf354fc975a347147fa2fcab2ea045a4"
+    },
+    {
+      "path": "docs/development/release.md",
+      "bytes": 4049,
+      "sha256": "21a50cbebcdac39783563e1d3e55d82b1803826a27c9d6ab7beba53767e60180"
+    },
+    {
+      "path": "docs/development/testing.md",
+      "bytes": 4921,
+      "sha256": "002be541415a20fc4d42b118d3c006e0b57f319f24dc8b88e58931b2575aee23"
+    },
+    {
+      "path": "docs/domain-model.md",
+      "bytes": 5720,
+      "sha256": "217402ffa68e97dd3f98703725ccaa4d2647d4bbad186eeaa95d12ea0a158091"
+    },
+    {
+      "path": "docs/evaluation/README.md",
+      "bytes": 3582,
+      "sha256": "82856f6367f0bc826407665ae13fd32917ec8de8a6bfad75e04841e674b49635"
+    },
+    {
+      "path": "docs/evaluation/corpus.json",
+      "bytes": 7382,
+      "sha256": "60eae24d58c01bf7d78ca39d36153b7e6ed7bfbdef79d89c2a48af3e237ed659"
+    },
+    {
+      "path": "docs/getting-started.md",
+      "bytes": 6596,
+      "sha256": "899080da0d544c35f7963b0fa3f9383f199bac4e0e01c11efbec1b77d38ea286"
+    },
+    {
+      "path": "docs/guides/console.md",
+      "bytes": 4461,
+      "sha256": "d1dda16d4a54db77ec0d0faeb42f8cddef1c33b6a2f78a96220a43a61bceab43"
+    },
+    {
+      "path": "docs/guides/memory-api-exercise.md",
+      "bytes": 5553,
+      "sha256": "66b39834525617f30fd3eeb4248eb6bd29bc8026fa4c772e670b7bca217d3ebd"
+    },
+    {
+      "path": "docs/history/README.md",
+      "bytes": 3349,
+      "sha256": "9397100c70ff0035f48c03ef1c31a959f021235f9f8f6490cb3f07b078039543"
+    },
+    {
+      "path": "docs/implementation/README.md",
+      "bytes": 3015,
+      "sha256": "b114b1079fb2d52ca9cf90b5964c3d305cc4e26f9858456582167a25d5940c9e"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/00-baseline.md",
+      "bytes": 7696,
+      "sha256": "4621a32baed9937e5c3cfd69dedb9a9dec18dbd7b95c31828912bf6be6f9be9e"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/01-design.md",
+      "bytes": 8282,
+      "sha256": "79884a7cf50f492f8479e66e24accf1f396fde9f7480b40be5686be75f00c95c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/02-data-and-transactions.md",
+      "bytes": 13859,
+      "sha256": "76b2938c0856255f4c0976236a256dbc743934bc0780c0fab04f665a747b9103"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/03-api.md",
+      "bytes": 11528,
+      "sha256": "caf0107bbc87ee3b3c0896609e2164eeedeb36080afdad3b7ba8dbce8b5ca043"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/04-console.md",
+      "bytes": 7764,
+      "sha256": "bfb46c541df874d34f68499080490f1873ecccd61ec5ac256df307b47e3e0afa"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/05-import-sync.md",
+      "bytes": 17131,
+      "sha256": "50db41287e6dff127239ef3bdf349f1a742f95aaf50335a0fb4bf3ffe18c5351"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/06-portability.md",
+      "bytes": 9767,
+      "sha256": "9504c8a6d9a57f6ea7cf25392537f504d411d9ef070d473d698533e4d6a0efa3"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/07-security-operations.md",
+      "bytes": 7256,
+      "sha256": "eb1b5b6195b68f90c11d145d9560f7b3d2823d2f0c766c88f326161dd0ec3e16"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/08-program.md",
+      "bytes": 6918,
+      "sha256": "08e213b076f14652eea74bc7a5e64af77812f0d46407f93c08a48c8a79516f95"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/09-acceptance.md",
+      "bytes": 25766,
+      "sha256": "f929db5d6dd8612aa4b06c331d06bc2f77561b332b8ec91e11127ec7c663c115"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/10-migrations.md",
+      "bytes": 8982,
+      "sha256": "0835476f20f5d5a2dd9cda03f713b300773eb3a0915cc4abe7aec4c937ee052c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/11-handoff.md",
+      "bytes": 5608,
+      "sha256": "b9f205788ee97fc160efa4eb82caef8ba4961d1bb855d607ddf963fecab21de8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/12-integration.md",
+      "bytes": 11434,
+      "sha256": "4b9af52414e11693040f742ecdbb974642bfe1e4ca02aabb3304e738c1e63bc6"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/README.md",
+      "bytes": 5270,
+      "sha256": "58d9e4321994891674205bc7368bef88bace394e3880aff166dc79b08d5422bd"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/contracts/contracts.schema.json",
+      "bytes": 48922,
+      "sha256": "b8bccdff999d328c964375647333267b4190c8a38143029d1c22bde2e1f5bd27"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/contracts/openapi.proposed.json",
+      "bytes": 82095,
+      "sha256": "1607b2dd36b505d13423ee7c91b945d84ae7d3c23e3158e9c9e5d19e99694cca"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/contracts/sync-decision-contract.md",
+      "bytes": 2503,
+      "sha256": "b7e5926ec38fa7ee6c6c5d2cffbad2909e644736bcaf4335488ed294abc33076"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/catalog.json",
+      "bytes": 3189,
+      "sha256": "4297d04aa144fa4f98e238ab2bd3dec7f0b3447110992b7a24f0369d7d84145b"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/automatic-semantic-merge.json",
+      "bytes": 429,
+      "sha256": "2d622f95892078285bea7eda93ea48db0fd3be4a4c737c5277bf89370e6fcfea"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/correction-label-bypass.json",
+      "bytes": 370,
+      "sha256": "396441814097aeb869a4e83edd93b0f712488f77bf95d891989f0751b74f2615"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/correction-missing-precondition.json",
+      "bytes": 274,
+      "sha256": "e7b6401f5591469a8fc702b287e0c1283f1dac045d02b9a5c7ba719741e8f83f"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/dangling-provenance.json",
+      "bytes": 1718,
+      "sha256": "dd83da85bb419a1df5d13fea837d9695493196fdfb9d2870b422aa10c2262d3d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/duplicate-external-id.json",
+      "bytes": 834,
+      "sha256": "7fe5c63dc71c237a1917ffb3a5e5ac325a23fa7fc2980be58cc2bffaae262536"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/future-format.json",
+      "bytes": 1720,
+      "sha256": "169f435eb1e25d7bccaed8bd43c9a0fd927db057babe697baaadd17d66ceddb7"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/imported-authority.json",
+      "bytes": 1765,
+      "sha256": "1f011b4dbfcb09a07ff0f85b8b00183066502a6e6d1f446642adc1cdad17729e"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/path-traversal.json",
+      "bytes": 497,
+      "sha256": "56d4ff5a9e98dc17f6da3ec82e27555313448ae92bb7ad9c5cb7488e13885492"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/token-budget-without-counter.json",
+      "bytes": 239,
+      "sha256": "46c004e1eb15486db1123a8428f62b3edf84e739d8717c8b216022b4e4a6488f"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/invalid/utf8-byte-limit.json",
+      "bytes": 650,
+      "sha256": "870f4894bb64685383a8be12c38c5000dfbfba9300e90c76659163b177584bd8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/apply-import.json",
+      "bytes": 92,
+      "sha256": "c1c32cca71789064723ffc1d04aba4277c62d2a8af08f1a5bd7d0346847eabad"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/conflict-merge.json",
+      "bytes": 426,
+      "sha256": "9d32f6b65d7f5250e7962a088e1eb5151b630f5a0887f082b071474e2035710a"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/context-request.json",
+      "bytes": 215,
+      "sha256": "34115a81184abdd87d4ab95dfa4897c40da2bf304959fe397a07dd405f7b9f8a"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/context-response.json",
+      "bytes": 1072,
+      "sha256": "c1a9917628debf238091191573533a31522d575e5e89171cd357bfa1e81185a8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/correction.json",
+      "bytes": 340,
+      "sha256": "c83e52a6e94d59c6a71d0d6141bf084bdb689229ae007c3e529dc92b58de551c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/export-request.json",
+      "bytes": 181,
+      "sha256": "342c4f3d03324768b1364797ab622521fad8b087214a6f49b281279c1e14555c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/import-preview-request.json",
+      "bytes": 499,
+      "sha256": "c2f8faa0573e3a5aaa7e2cae1dfabc638b30229fb5aa315ef28f0e1fe897ba8d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/import-preview.json",
+      "bytes": 566,
+      "sha256": "48112254c937c8078d1832d97234dd6e85acf72e6b6d88af05afb56fcbf9d1bb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/memory-detail.json",
+      "bytes": 844,
+      "sha256": "834e51b66275aaa8531c9bcbd76e5be16c02bee5b3d86b3ddd5f332c895f8637"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/mutation-receipt.json",
+      "bytes": 296,
+      "sha256": "6c573cf970836ed5608580a4817625f9c7253da1de7d7aceb9d90ef2e65b4560"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/portable-import.json",
+      "bytes": 1989,
+      "sha256": "ea038ccbaa29dba82c1089eac2b60de9a2c35b0a93b1aedcf66190af148e6c3d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/portable-package.json",
+      "bytes": 1718,
+      "sha256": "81b5fbc6154e6a4b5888ceb5aef97559ba7c81e4aa0779ffcf7435d1ed565c55"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/examples/valid/restore.json",
+      "bytes": 281,
+      "sha256": "1739d429e94c3431fc1c6529e14b0f0303db9b95cd64958b73b83092008931cd"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/file-plan.json",
+      "bytes": 25472,
+      "sha256": "7b4a399f094d5d8d71dbcf1e48b4799fdd129981dafd09c8576f033b7da85ec7"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/00-preflight.md",
+      "bytes": 11889,
+      "sha256": "4dae0b131e60e968c08b256d323dbdf9df335e2e773220a2e399e47dfdd86072"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/01-memory-read-context.md",
+      "bytes": 21447,
+      "sha256": "67b37a4f4032e2730d6bfdde3c6c2b26a2ccac79f7bc85d04ba30c6f1869570d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/02-atomic-corrections.md",
+      "bytes": 21087,
+      "sha256": "1e1221fe4743e5f40ce067f779d6c8bbc97e18d52a1b9d086d25efebd9c31ae0"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/03-console.md",
+      "bytes": 18115,
+      "sha256": "3a4bfc9bf4fbe8f92cb9125df92ace087b94a1546580f410e07214fcea2cd0a8"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/04-import.md",
+      "bytes": 27367,
+      "sha256": "d8316e7b9a13547175643954f35fee78440bcb7e1689b8c61fa1f1508c4bcc1d"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/05-sync.md",
+      "bytes": 21718,
+      "sha256": "890fd4d1179eb22d355ffb81976564e83f5fe78f573da031ebd13afdf5f42508"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/06-portability.md",
+      "bytes": 20772,
+      "sha256": "b1776275448fc199351be85f441a2f365bb1797c3865b47f5abf12ae8d5f0f52"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/07-qualification.md",
+      "bytes": 13047,
+      "sha256": "787ab1b20b2c1c1ee9a6e889e6217057b037efc60e2726478f698c24042a3aaa"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/plans/README.md",
+      "bytes": 1343,
+      "sha256": "51cea7301ed2187b1267107e72fe68f14e609bedd3e93cec6199ce41aacd0fc1"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/source-manifest.json",
+      "bytes": 11277,
+      "sha256": "9bf8eee91c690a6dad12569de7868e29a88dfe66bdfca01929586c53716e0c1b"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/sources.md",
+      "bytes": 6686,
+      "sha256": "c2c1390d041b740add0449e93163a02d68c4b2c1e19fe9c006375668cee31b1c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/traceability.json",
+      "bytes": 45132,
+      "sha256": "c97ed9f3dcb75ece02b089153de7aa503724f7b9fe732d6151a9956e4ef7c6e9"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/file-manifest.json",
+      "bytes": 9677,
+      "sha256": "c2e37b5da534b1fe03f17c1782eac0b494173ee5075dcf8ad28ed77c37e6b2fb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-manifest.json",
+      "bytes": 2164,
+      "sha256": "96a50b89cde3777735d7556a4422480c3a4c1a063746b2a3336ce7279b0d8afb"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-report.md",
+      "bytes": 4041,
+      "sha256": "6c31cc29af8b2742304f782a4475a3eed003fdf8caf289cae629566812515df0"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/integration-result.json",
+      "bytes": 14347,
+      "sha256": "d8eaa5c4195315cb309ab3247f6706c45e3fc50b5c0f62e5a667f6f32953ae10"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/report.md",
+      "bytes": 5963,
+      "sha256": "dd4c9825204696266b8615345f3beadd581e1e0961650ef49862003ce6ce059c"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/validate_bundle.py",
+      "bytes": 13557,
+      "sha256": "fd657ba497d90747f75d737f049889979b9ade93f6329ce86b8f08f516ba27f3"
+    },
+    {
+      "path": "docs/implementation/memory-workspace/verification/validation-result.json",
+      "bytes": 903,
+      "sha256": "86aae5812c2d219c9174c9c1ef7b8705928654ed0f79221ee0a6bcadc250d9af"
+    },
+    {
+      "path": "docs/maintenance/README.md",
+      "bytes": 4027,
+      "sha256": "f4034e5761666a02bfc5bfbb640d1e0d82501b8b31bce06349c3df1b09850bf7"
+    },
+    {
+      "path": "docs/maintenance/authored-pages.json",
+      "bytes": 2112,
+      "sha256": "2d4e81ba091a83e1af970568be96fd69106ec50bdef7df1bd7b68b036e702d61"
+    },
+    {
+      "path": "docs/maintenance/input-documents.json",
+      "bytes": 1842,
+      "sha256": "1a0196b3de693dc4ae0e3ce72b9ea073f7c41cd677c4f8e3f6fdc605fffa8be5"
+    },
+    {
+      "path": "docs/maintenance/input-reconciliation.md",
+      "bytes": 3057,
+      "sha256": "cf7cfeb31556277907cd9d49880c21532128d508893f47f7242a9229c5d6ba45"
+    },
+    {
+      "path": "docs/maintenance/migration-map.md",
+      "bytes": 4444,
+      "sha256": "ebb94f2ee90548ba7d81af31a575b77c80e42be2db3a482ec22a38fe343c2cb0"
+    },
+    {
+      "path": "docs/maintenance/scope-result.json",
+      "bytes": 11682,
+      "sha256": "ba0936b92f11827a7a613f838efb60af1b7f2081199a1fd199567fea20321017"
+    },
+    {
+      "path": "docs/maintenance/sources.json",
+      "bytes": 17275,
+      "sha256": "9012c86bd0d648e1228c9874f60784a5cc84eab3189332e489ba2c310d47b309"
+    },
+    {
+      "path": "docs/maintenance/sources.md",
+      "bytes": 12459,
+      "sha256": "c669d47b64d2186b7ab67e0703eb4262d76888c9d38f92713f4888854d2afc50"
+    },
+    {
+      "path": "docs/maintenance/validate_documentation.py",
+      "bytes": 9085,
+      "sha256": "9dd8b7958ab5e24574ebd830db5e36c1ca9b2fedf2d85be37c1586a5533e3998"
+    },
+    {
+      "path": "docs/maintenance/validation-report.md",
+      "bytes": 5479,
+      "sha256": "45aedb4c544a4cd211c3996246e045e6846f25581ebfa1527a71024903d66c5c"
+    },
+    {
+      "path": "docs/operations/backup-restore.md",
+      "bytes": 4210,
+      "sha256": "b2220ef38414837506d28767e7d119c7c3d7206d2a260708630a647208544b9a"
+    },
+    {
+      "path": "docs/operations/deployment.md",
+      "bytes": 4048,
+      "sha256": "84d550d928126481386670980346c64aeb5447f9adbc336f44ec0f17e956da45"
+    },
+    {
+      "path": "docs/operations/runbook.md",
+      "bytes": 4355,
+      "sha256": "d863e84325714f08bb84b365a239bc1ad146a1f851abaf409daaade1c9f18e20"
+    },
+    {
+      "path": "docs/operations/troubleshooting.md",
+      "bytes": 4535,
+      "sha256": "56df35cc047e1f5c1098f68e268e4889e69ad44cafa24557dfdec1f870cccf7d"
+    },
+    {
+      "path": "docs/plans/README.md",
+      "bytes": 3789,
+      "sha256": "42795665fac73292696fb335268ce34738d81e81e2b9168bc18c4f8000c4d142"
+    },
+    {
+      "path": "docs/product/memory-workspace.md",
+      "bytes": 4363,
+      "sha256": "81abd148832dd849f9429f05416df303391ac69e348370b225e68b8e0e8ac2aa"
+    },
+    {
+      "path": "docs/product/overview.md",
+      "bytes": 5140,
+      "sha256": "824abe351383a6b0a780fa6a4c708b18c8608253ee8f4b4e93fcb6f8d0c58a1f"
+    },
+    {
+      "path": "docs/product/scenarios.md",
+      "bytes": 5958,
+      "sha256": "1cad5c71472c5bf138f9ab1a4fe98512f96ccd836901f0590c6abb13beeb0928"
+    },
+    {
+      "path": "docs/reference/cli.md",
+      "bytes": 3366,
+      "sha256": "154e517493648dd28d1bbd304dc85a9d441fc501c603160cc91d62825b8b4c62"
+    },
+    {
+      "path": "docs/reference/configuration.md",
+      "bytes": 4111,
+      "sha256": "ed059d8272e769ffc0a0a92e3bc2622e43469ed65b2d9d33fe0473b3f1201cd8"
+    },
+    {
+      "path": "docs/reference/glossary.md",
+      "bytes": 4271,
+      "sha256": "32c99f48784f79a1a846758608948a40f25f7566de6b5d6522ab5ff7640177b8"
+    },
+    {
+      "path": "docs/reference/http.md",
+      "bytes": 5583,
+      "sha256": "feb0f70aa25b419eeee892fa49bf11d38a426af3da5cad5a10b0976b4b1251ef"
+    },
+    {
+      "path": "docs/reference/mcp.md",
+      "bytes": 3135,
+      "sha256": "c679353e92f9893674dcc6ccde8a443bd1b4603887edc19c2b6fd5f61a65b16e"
+    },
+    {
+      "path": "docs/reference/memory.md",
+      "bytes": 4994,
+      "sha256": "eafd6b8f5e41eec9369123588f46b01c8f511c48931e03f73c71a6a31a08b42b"
+    },
+    {
+      "path": "docs/reference/retrieval.md",
+      "bytes": 4810,
+      "sha256": "c235269a7a6d1a74f04fd151ad027a4769b0c939a0d7bec73679c6ce9644545f"
+    },
+    {
+      "path": "docs/reference/route-catalog.json",
+      "bytes": 6670,
+      "sha256": "235f90d83891ca57b20bb840c804e069f9eef43ab9200b10268f3d554c971938"
+    },
+    {
+      "path": "docs/reference/route-catalog.md",
+      "bytes": 3883,
+      "sha256": "b55deff8fc8f5e0b878e2c405bc65fe2a054fa3a7d9726804fbfb56af6564027"
+    },
+    {
+      "path": "docs/roadmap/README.md",
+      "bytes": 11416,
+      "sha256": "a3122a0c07786a157b865e45cf24b0b18837823a69549a4578fb8f5e2e951966"
+    },
+    {
+      "path": "docs/roadmap/adoption.md",
+      "bytes": 4056,
+      "sha256": "3c80c230a54e79fb3661aba9e010b86d6c20016e0145cad2ca6bc7c0c72b1597"
+    },
+    {
+      "path": "docs/roadmap/feature-register.json",
+      "bytes": 63592,
+      "sha256": "f02f2f7c568baf1108a4f889b2411ef3b86bd0c0bc0e023d9ea9e15c46c99ce1"
+    },
+    {
+      "path": "docs/roadmap/milestones.md",
+      "bytes": 5455,
+      "sha256": "e076c4c02eebea9e2a9dbd9c22611c61d9349bba87a78a237f7e70ec60d90b59"
+    },
+    {
+      "path": "docs/roadmap/next-actions.md",
+      "bytes": 4218,
+      "sha256": "5c4c5d4119ab9084779334c8bcafc5eed9a7ba08e3299f7a9950d00a4796a8cb"
+    },
+    {
+      "path": "docs/roadmap/p0-foundation.md",
+      "bytes": 21038,
+      "sha256": "620e7cbd19705efd274cabe559e729386a772e59098ac0d4aaf81068fafe3306"
+    },
+    {
+      "path": "docs/roadmap/p1-memory-workspace.md",
+      "bytes": 22005,
+      "sha256": "7822796e9b7d78c297a55d8fb1ddcf8dae8767e1ed7a9379c6579d3ce92e027a"
+    },
+    {
+      "path": "docs/roadmap/p2-knowledge-quality.md",
+      "bytes": 17991,
+      "sha256": "d3417061b1711ecc2d76b13dd9792cf2add75106e634b9944a26cee3bee04f20"
+    },
+    {
+      "path": "docs/roadmap/p3-full-platform.md",
+      "bytes": 12507,
+      "sha256": "a24dbe5fb63c134f59b882b752a90d9588b3c01d0b6f7be064876d2d139b9d2f"
+    },
+    {
+      "path": "docs/roadmap/p4-expansion.md",
+      "bytes": 8767,
+      "sha256": "d4049e8edd5cc9ae69b790e623deb324a096a0f34548e70016999b4cfba911be"
+    },
+    {
+      "path": "docs/roadmap/program-mapping.md",
+      "bytes": 5459,
+      "sha256": "909fe829abef989235a2695c36ac1ef108bb995324081ae8921b561ef43646fe"
+    },
+    {
+      "path": "docs/roadmap/risks-and-decisions.md",
+      "bytes": 5278,
+      "sha256": "fe6cbce4f4b82b94d8344119bc376525376d8aa095bfe38a27d855a8c6ad11de"
+    },
+    {
+      "path": "docs/security-and-rls.md",
+      "bytes": 5497,
+      "sha256": "f24d5aa82079f5861b359619f94a2b0706105cf728909539bb1e4a570048a0f3"
+    },
+    {
+      "path": "docs/specs/README.md",
+      "bytes": 4808,
+      "sha256": "48dfbfdb7f8e7b2b704f34c4803dcd07ea58d37188da7dba2a29d7dd8b8962ac"
+    },
+    {
+      "path": "docs/status.md",
+      "bytes": 8225,
+      "sha256": "2f66717e7be99ea529a73d5e627210616f58bdf0e5b36b4c12119135656e96dd"
+    },
+    {
+      "path": "docs/status/capabilities.json",
+      "bytes": 5009,
+      "sha256": "9aa4e4203caa52b9b4d0a4a26775bcb9156df1085d066f6ef66c5b1cb43c7e32"
+    },
+    {
+      "path": "docs/status/open-gaps.md",
+      "bytes": 5615,
+      "sha256": "bee37b601e0dfca80ea76c5353ebb3374b7673ae071b2f7055e6a15a9d3b6807"
+    }
+  ]
+}

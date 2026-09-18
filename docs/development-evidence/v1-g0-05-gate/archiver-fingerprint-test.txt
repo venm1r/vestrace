@@ -1,0 +1,33 @@
+$ cargo test -p vestrace-cli --test safety_archive_host_custody
+
+running 6 tests
+test compose_does_not_own_archive_or_key_custody_or_a_supervisor_service ... ok
+test host_archive_adapters_require_distinct_roots ... ok
+test prepared_deletion_removes_only_the_manifest_named_final_object_and_retries_exactly ... ok
+test staged_archive_is_create_only_durable_and_exact_orphan_cleanup_never_targets_final_objects ... ok
+test ciphertext_cannot_open_with_another_set_or_changed_object_metadata ... ok
+test streamed_ciphertext_spool_is_chunked_verified_and_removed_after_exact_staging ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+exit: 0
+
+$ DATABASE_URL=postgres://test:test@127.0.0.1:55432/vestrace_test VESTRACE_RUNTIME_DATABASE_URL=postgres://vestrace:runtime-local-development-only@127.0.0.1:55432/vestrace_test cargo test -p vestrace-infrastructure --test fingerprint_continuity_is_fail_closed
+
+running 12 tests
+test continuity_proof_uses_the_exact_domain_separation_string ... ok
+test external_id_fingerprint_is_not_the_continuity_proof ... ok
+test external_id_fingerprint_never_hashes_retention_governed_content ... ok
+test production_readiness_reloads_the_host_fingerprint_record ... ok
+test absent_vault_root_retains_a_distinct_readiness_cause ... ok
+test readiness_fails_closed_on_missing_proof ... ok
+test key_record_is_never_stored_in_postgres ... ok
+test readiness_fails_closed_on_same_key_id_different_key ... ok
+test readiness_fails_closed_on_wrong_key_version ... ok
+test no_rotation_or_overwrite_operation_exists ... ok
+test readiness_fails_closed_on_wrong_key_id ... ok
+test rejected_create_only_record_retains_a_distinct_readiness_cause ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.40s
+
+exit: 0

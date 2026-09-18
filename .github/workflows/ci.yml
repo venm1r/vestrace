@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo fmt --all --check
+      - run: bash ./scripts/foundation-doc-truth.sh
+      - run: bash ./scripts/foundation-boundary-truth.sh
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://vestrace:vestrace@localhost:5432/vestrace_test
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: vestrace_test
+          POSTGRES_USER: vestrace
+          POSTGRES_PASSWORD: vestrace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vestrace -d vestrace_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Run Rust tests
+        shell: bash
+        run: |
+          set +e
+          cargo test --workspace --all-targets --all-features --no-fail-fast -- --nocapture > /tmp/rust-tests.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "Rust test failure summary:"
+            grep -nE "FAILED|failures:|panicked at|Error:|error:|test result:" /tmp/rust-tests.log | tail -200 || true
+            echo "Last 200 log lines:"
+            tail -200 /tmp/rust-tests.log
+          fi
+          exit "$status"
+      - name: Build CLI
+        run: cargo build -p vestrace-cli --bin vestrace
+      - name: Verify standalone migrations
+        shell: bash
+        run: |
+          VESTRACE_DATABASE__URL="$DATABASE_URL" target/debug/vestrace migrate
+          VESTRACE_DATABASE__URL="$DATABASE_URL" target/debug/vestrace migrate
+      - name: Verify CLI truthfulness
+        run: bash ./scripts/foundation-cli-truth.sh
+
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Run v0.1 acceptance suite
+        run: cargo test -p vestrace-integration-tests --test v01_acceptance -- --nocapture
+
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+      - run: npm ci
+        working-directory: apps/console
+      - run: npm run typecheck
+        working-directory: apps/console
+      - run: npm run build
+        working-directory: apps/console
+
+  compose-acceptance:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: vestrace-foundation-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: timeout 300s docker compose up --build --detach --wait --wait-timeout 180
+      - run: ./scripts/foundation-smoke.sh
+      - run: bash ./scripts/foundation-run-smoke.sh
+      - run: timeout 90s ./scripts/foundation-runtime-rls.sh
+      - name: Run compose smoke tests
+        run: cargo test -p vestrace-integration-tests --test compose_smoke -- --ignored --nocapture
+      - if: always()
+        run: docker compose down --volumes --remove-orphans

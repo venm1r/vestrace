@@ -1,0 +1,32 @@
+{
+  "status": "pass",
+  "scope": "documentation only; not product qualification",
+  "metrics": {
+    "json_files_parsed": 33,
+    "schema_definitions": 41,
+    "proposed_http_operations": 20,
+    "openapi_refs_resolved": 81,
+    "valid_examples": 13,
+    "invalid_examples": 10,
+    "structural_negative_examples": 6,
+    "semantic_negative_examples": 4,
+    "markdown_files": 27,
+    "internal_links_checked": 114,
+    "requirements": 45,
+    "implementation_tasks": 23,
+    "acceptance_cases": 54,
+    "implementation_packages": 8,
+    "file_plan_entries": 96,
+    "manifest_entries_checked": 58
+  },
+  "errors": [],
+  "not_run": [
+    "Rust build/test/doctests",
+    "PostgreSQL migrations/roles/races",
+    "HTTP/MCP runtime",
+    "Browser end-to-end",
+    "Source import/export application",
+    "Full OpenAPI standards-validator conformance",
+    "Live external source availability recheck"
+  ]
+}

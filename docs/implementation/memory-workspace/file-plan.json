@@ -1,0 +1,831 @@
+{
+  "baseline_commit": "6f6102536e9a535b7086db14573bf45fe750ad71",
+  "scope_status": "proposal, not a write allowlist",
+  "numbering": "0196–0199 are historical candidates, not reservations. The supplied 3e05dfbd archive already has 0196_retired_credential_erasure.sql; MW-00 must reconcile all candidate references before SQL.",
+  "files": [
+    {
+      "path": "crates/vestrace-application/src/memory/mod.rs",
+      "status": "existing_inspected",
+      "purpose": "Shared memory use cases and exports for new query/write ports.",
+      "packages": [
+        "MW-01",
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/ports.rs",
+      "status": "existing_inspected",
+      "purpose": "MemoryRepository compatibility and the caller-owned write contract.",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/services.rs",
+      "status": "existing_inspected",
+      "purpose": "Move affected canonical mutations onto the shared atomic writer.",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
+      "status": "existing_inspected",
+      "purpose": "Existing CAS and writes in a UoW; no nested independent commit.",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/governed_mutation.rs",
+      "status": "existing_inspected",
+      "purpose": "Reuse commit_in without introducing another authority.",
+      "packages": [
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/idempotency.rs",
+      "status": "existing_inspected",
+      "purpose": "Compatibility existing scoped receipts",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/outbox.rs",
+      "status": "existing_inspected",
+      "purpose": "Reuse at-least-once delivery and the handler contract.",
+      "packages": [
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "status": "existing_inspected",
+      "purpose": "Preserve legacy wire shapes and connect the shared correction writer.",
+      "packages": [
+        "MW-01",
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "status": "existing_inspected",
+      "purpose": "Preserve legacy retrieval; reuse the new shared context service.",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/retrieval/context_builder.rs",
+      "status": "existing_inspected",
+      "purpose": "Actual sections, exact final rendering, and counter qualification.",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/material/commands.rs",
+      "status": "existing_inspected",
+      "purpose": "Consume ordinary material lifecycle; no embedding-specific shortcut.",
+      "packages": [
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "apps/console/src/memory/MemoryConsole.tsx",
+      "status": "existing_inspected",
+      "purpose": "Reusable memory detail view.",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/src/sdk/client.ts",
+      "status": "existing_inspected",
+      "purpose": "Existing HTTP transport, errors, and authentication; re-export memory client.",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/src/main.tsx",
+      "status": "existing_inspected",
+      "purpose": "Mount memory/source/import/conflict/export routes.",
+      "packages": [
+        "MW-03",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "apps/console/package.json",
+      "status": "existing_inspected",
+      "purpose": "Explicit scripts and approved development-only dependencies.",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/lib.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Connect new modules with narrow exports.",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/mod.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Export PostgreSQL adapters.",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/pool.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Inspect existing permits/UoW; edit only when necessity is demonstrated.",
+      "packages": [
+        "MW-00",
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-domain/src/lib.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Connect the typed source/import domain.",
+      "packages": [
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-domain/src/id.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Declare typed IDs through the current macro.",
+      "packages": [
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/mod.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Mount new endpoints through the route inventory.",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/router.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Wire AppState dependencies rather than default-success placeholders.",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/route_inventory.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Every new route capability/risk and negative coverage",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/server.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Production read/write/import/export composition",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/mcp.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Shared read service composition",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-mcp/src/server.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Preserve tool names; lawful content hydration",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/worker.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Register exact import/export topics in existing cycle",
+      "packages": [
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/schema.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Served OpenAPI generator; do not replace whole schema",
+      "packages": [
+        "MW-01",
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/main.rs",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "New sources subcommands definitions",
+      "packages": [
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "docker/postgres/init-runtime-role.sh",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Exact guarded ownership/execute allowlists",
+      "packages": [
+        "MW-02",
+        "MW-04",
+        "MW-05",
+        "MW-06",
+        "MW-07"
+      ]
+    },
+    {
+      "path": "apps/console/src/shell/AppLayout.tsx",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Navigation under existing shell, not new app",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/package-lock.json",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Dev-dependency exact pin only after approved diff",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "status": "existing_referenced_recheck_before_edit",
+      "purpose": "Proposed memory CI coverage including docs and browser gates",
+      "packages": [
+        "MW-07"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/read.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "MemoryReadService and lawful view ports",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/write.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "MemoryMutationPlan/receipt writer over shared UoW",
+      "packages": [
+        "MW-02",
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/memory/context_delivery.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "RenderedMemoryContext, renderer and token-counter port",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_read_repository.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Consistent detail/history/browse queries",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_mutation_repository.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Caller-owned atomic correction and import participant",
+      "packages": [
+        "MW-02",
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/memory_workspace.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "New detail/history/correction routes and DTO conversion",
+      "packages": [
+        "MW-01",
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/context_packs.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "ContextRequest/ContextResponse endpoint",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "apps/console/src/sdk/memoryClient.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Typed memory API wrapper over existing transport",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/src/memory/editorModel.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Pure editor state transitions; unknown/conflict safety",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/src/routes/MemoryPage.tsx",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Browse/detail/history/editor routes",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/src/routes/SourcesPage.tsx",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Collections/source revisions, upload entry",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "apps/console/src/routes/ImportPage.tsx",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Durable preview and progress",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "apps/console/src/routes/SourceConflictPage.tsx",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "B/I/M explicit resolution",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "apps/console/src/routes/MemoryExportPage.tsx",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Bounded export intent/status/download",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-domain/src/source/mod.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "SourceCollection/KnowledgeSource/SourceRevision values",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-domain/src/source/sync.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Pure classify_sync and closed conflict vocabulary",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/mod.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Exports for shared source use cases",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/ports.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "SourcePayloadStore, SourceImportRepository contracts",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/import.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Preview creation/application validation",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/import_handler.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Idempotent memory.source_import.apply handler",
+      "packages": [
+        "MW-04",
+        "MW-05",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/sync.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Conflict resolution through shared mutation",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/export.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Pinned export selection, prepare handler, download check",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/src/source/portable.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Closed portable schema and foreign/local mapping",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/source_repository.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Scoped source heads/revisions and import receipt authority",
+      "packages": [
+        "MW-04",
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/source_payload_store.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Facade over ordinary material authority; no new cipher",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/src/postgres/memory_export_repository.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Pinned selection, export operation and result ref",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/source_imports.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Collection/source/preview/apply/cancel routes",
+      "packages": [
+        "MW-04",
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/source_conflicts.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Exact conflict details/resolution routes",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/src/api/memory_exports.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Export prepare/status/content routes",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/sources.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "HTTP client CLI scan/preview/apply/status/export",
+      "packages": [
+        "MW-04",
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/src/commands/source_scanner.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Bounded root scanner, external ID state and sealed input",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_read_contract.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/tests/memory_workspace_api.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/tests/context_delivery.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/tests/memory_read_wiring.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_mutation_atomicity.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_mutation_replay.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/tests/memory_correction_api.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-02"
+      ]
+    },
+    {
+      "path": "apps/console/tests/memoryEditor.test.mjs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/tests/memoryClient.test.mjs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/e2e/memory.spec.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/playwright.config.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/source_import_contract.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/source_payload_lifecycle.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/tests/source_scanner.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/tests/source_import_worker.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-http/tests/source_import_api.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "crates/vestrace-domain/tests/source_sync.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/source_sync_races.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "apps/console/e2e/source-conflict.spec.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_export_authority.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-application/tests/portable_contract.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "crates/vestrace-cli/tests/memory_portability.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "apps/console/e2e/memory-export.spec.ts",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "tests/memory_workspace_acceptance.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-07"
+      ]
+    },
+    {
+      "path": "crates/vestrace-infrastructure/tests/memory_workspace_upgrade.rs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-07"
+      ]
+    },
+    {
+      "path": "scripts/memory-workspace-acceptance.sh",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Planned verification target, not an existing passed suite",
+      "packages": [
+        "MW-07"
+      ]
+    },
+    {
+      "path": "migrations/0196_memory_workspace_receipts.sql",
+      "status": "candidate_number_not_reserved",
+      "purpose": "Candidate M01 in MW-01: transactional epoch triggers, exact links and receipt schema; MW-02 reads/uses, never rewrites applied SQL",
+      "packages": [
+        "MW-01"
+      ]
+    },
+    {
+      "path": "migrations/0197_source_import_authority.sql",
+      "status": "candidate_number_not_reserved",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Collections, source revisions, staged ownership, import ops/items",
+      "packages": [
+        "MW-04"
+      ]
+    },
+    {
+      "path": "migrations/0198_source_sync_conflicts.sql",
+      "status": "candidate_number_not_reserved",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Bindings, B/I/M conflicts, resolution guards",
+      "packages": [
+        "MW-05"
+      ]
+    },
+    {
+      "path": "migrations/0199_memory_export_authority.sql",
+      "status": "candidate_number_not_reserved",
+      "purpose": "PROPOSED number after the historical 0195 proposal; MW-00 reallocates atomically if occupied. Pinned selection, ordinary result ownership, portable mapping",
+      "packages": [
+        "MW-06"
+      ]
+    },
+    {
+      "path": "apps/console/tsconfig.memory-tests.json",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Isolated compilation of pure TS view-model/client helpers for Node tests",
+      "packages": [
+        "MW-03"
+      ]
+    },
+    {
+      "path": "apps/console/scripts/run-memory-tests.mjs",
+      "status": "proposed_new_check_name_collisions",
+      "purpose": "Compile pure test modules into disposable output, run node --test, clean output",
+      "packages": [
+        "MW-03"
+      ]
+    }
+  ]
+}

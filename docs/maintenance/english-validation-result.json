@@ -1,0 +1,675 @@
+{
+  "status": "PASS",
+  "scope": "documentation only; no product execution or qualification",
+  "baseline": "3e05dfbdce063aa44a3a9e5a7a84c274597e8188",
+  "metrics": {
+    "markdown_files": 165,
+    "local_links": 838,
+    "json_fences": 8,
+    "bash_fences_parse_only": 39,
+    "pre_existing_reference_or_syntax_issues_retained": 111,
+    "new_markdown_issues": 0,
+    "json_files": 61,
+    "structural_contract_groups": 8,
+    "roadmap_features": 34,
+    "roadmap_acceptance_criteria": 92,
+    "priority_groups": {
+      "P0": 8,
+      "P1": 9,
+      "P2": 7,
+      "P3": 6,
+      "P4": 4
+    },
+    "synthetic_sources": 8,
+    "synthetic_cases": 12,
+    "generated_views_checked": 15,
+    "normative_reading_editions_checked": 11,
+    "english_markdown_pages_checked": 102,
+    "preserved_files_checked": 927,
+    "payload_hashes_checked": 232,
+    "mw": {
+      "json_files_parsed": 35,
+      "schema_definitions": 41,
+      "proposed_http_operations": 20,
+      "openapi_refs_resolved": 81,
+      "valid_examples": 13,
+      "invalid_examples": 10,
+      "structural_negative_examples": 6,
+      "semantic_negative_examples": 4,
+      "markdown_files": 29,
+      "internal_links_checked": 155,
+      "requirements": 45,
+      "implementation_tasks": 23,
+      "acceptance_cases": 54,
+      "implementation_packages": 8,
+      "file_plan_entries": 96,
+      "manifest_entries_checked": 64
+    }
+  },
+  "errors": [],
+  "pre_existing_issues": [
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c1-c4.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c4-service.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c5-exact-revision.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c6-context-pack.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c7-temporal-multichannel.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-c8-core-memory-fixtures.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-l1-evaluation-fact-v2.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-l2-learning-projection-proposal.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-l3-cognition-benchmarks.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-g1-capability-policy-kernel.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-11-g2-universal-authorization-boundary.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-g3-delegation-budgets.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-g4-cross-workspace-sharing.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-g5-g6-federation-governance.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-h1-h5-understand.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-e1-e4-connect.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-t1-t8-trust.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q1-qualification-artifact.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q2-qualification-persistence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q3-cli-qualification-persistence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q4-capability-manifest.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q5-manifest-qualified-bundle.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q6-deployment-qualification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q7-signed-artifacts.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q8-automatic-runtime-qualification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q9-key-provider-signer-trust.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q10-post-incident-requalification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q11-recovery-persistence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q12-startup-recovery-orchestration.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q13-runtime-reconciliation.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q14-effect-persistence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q15-effect-fault-suite.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q16-effect-recovery-discovery.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q17-fault-suite-evidence-persistence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q18-fault-suite-qualification-orchestration.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q19-fault-suite-evidence-admission.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q20-fault-gate-evidence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q21-fault-runtime-wiring.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q22-fault-bundle-assembly.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q23-fault-process-runtime.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q24-progressive-trust-restoration.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q25-release-approval.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q26-capability-restoration.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q27-crypto-adapter-qualification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q28-v1-release-evidence.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-q29-diagnostics-lease-schema.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "superpowers/plans/2026-08-12-open-follow-up-gates.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-configured-capability-policy.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-audit-health-metrics.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-workspace-settings.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-remaining-http-surfaces.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-execution-and-secrets.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-run-model-unification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-live-provider-verification.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-conformance-gate-honesty.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-13-authentication-with-attribution.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-retrieval-conformance.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-row-level-security-was-inert.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-forcing-and-scoping-are-one-change.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-external-effects-belong-to-a-workspace.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-the-lease-was-not-a-read-leak.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-retrieval-did-not-search.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-the-last-behavioural-attestations.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-a-silence-nobody-was-still-choosing.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-findings-come-from-a-registry.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-a-finding-with-a-history.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-authority-that-only-narrows.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-the-first-capability-grant.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-a-grant-covers-what-is-beneath-it.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-what-deletion-has-to-prove.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-a-timeout-is-not-a-verdict.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-fusion-had-one-channel.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-nothing-drained-the-outbox.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-a-failure-nobody-could-see.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-14-policies-nobody-consulted.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-boundary-that-can-be-asked.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-recovery-kept-evidence-nobody-could-read.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-qualification-asked-about-itself.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-the-effect-family-closes.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-hundred-facts-nobody-could-read.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-two-gates-and-a-deletion.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-skip-that-described-the-wrong-requirement.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-the-first-thing-that-can-be-destroyed.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-finding-somebody-can-answer.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-grant-that-could-not-say-any.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-topic-nobody-was-listening-to.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-the-first-effect-that-left-the-process.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-asking-whether-it-actually-happened.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-what-a-written-claim-is-worth.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-manifest-that-describes-its-own-build.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-claim-loses-its-footing.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-derivation-remembers-whose-content-it-was.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-proposal-that-could-never-be-applied.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-five-vocabularies-for-one-question.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-recorded-attempt-is-not-a-settled-outcome.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-a-guard-for-the-trap-in-the-last-slice.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-an-effect-that-could-not-say-who-asked-for-it.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-telling-the-run-what-happened.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-the-gate-was-measuring-the-wrong-requirements.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-15-three-of-seven-skips-were-about-something-else.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-16-the-gate-now-states-what-is-required.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-19-a-gate-nobody-could-run.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-19-custody-that-can-refuse.md"
+    },
+    {
+      "path": "docs/documentation-status-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-20-a-fault-nobody-had-injected.md"
+    },
+    {
+      "path": "docs/plans/2026-08-11-c1-c4-foundation-implementation.md",
+      "kind": "missing-target",
+      "detail": "../documentation-gap-delta-2026-08-11-c1-c4.md"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-g4-cross-workspace-sharing.md"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-g5-g6-federation-governance.md"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-h1-h5-understand.md"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-e1-e4-connect.md"
+    },
+    {
+      "path": "docs/requirement-coverage-v0.2.md",
+      "kind": "missing-target",
+      "detail": "documentation-gap-delta-2026-08-12-t1-t8-trust.md"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+      "kind": "json-fence",
+      "detail": "Extra data: line 1 column 16 (char 15)"
+    }
+  ],
+  "not_run": [
+    "Rust builds/tests/doctests",
+    "PostgreSQL migration/role/race tests",
+    "HTTP/MCP/worker runtime",
+    "Browser or official-client interoperability",
+    "Real provider/model calls",
+    "Actual import/sync/export or backup/restore",
+    "Live external URL checks",
+    "Full specialized OpenAPI standards validator",
+    "Independent human translation/architecture review"
+  ],
+  "executed_documentation_regression_tests": {
+    "command": "python -m unittest discover -s docs/maintenance/tests -p 'test_*.py' -v",
+    "exit_code": 0,
+    "tests_passed": 31,
+    "log": "test_ascii_substitution_cannot_change_fixture_semantics (test_documentation.FixtureTests.test_ascii_substitution_cannot_change_fixture_semantics) ... ok\ntest_context_byte_mismatch_is_detected (test_documentation.FixtureTests.test_context_byte_mismatch_is_detected) ... ok\ntest_human_acceptance_contains_every_mapped_case (test_documentation.FixtureTests.test_human_acceptance_contains_every_mapped_case) ... ok\ntest_multibyte_negative_fixture_still_exceeds_byte_limit (test_documentation.FixtureTests.test_multibyte_negative_fixture_still_exceeds_byte_limit) ... ok\ntest_cycle_is_detected (test_documentation.GraphTests.test_cycle_is_detected) ... ok\ntest_duplicate_id_is_detected (test_documentation.GraphTests.test_duplicate_id_is_detected) ... ok\ntest_empty_acceptance_is_detected (test_documentation.GraphTests.test_empty_acceptance_is_detected) ... ok\ntest_generated_acceptance_ids_are_stable (test_documentation.GraphTests.test_generated_acceptance_ids_are_stable) ... ok\ntest_original_graph_is_valid (test_documentation.GraphTests.test_original_graph_is_valid) ... ok\ntest_required_v1_scope_cannot_be_downgraded (test_documentation.GraphTests.test_required_v1_scope_cannot_be_downgraded) ... ok\ntest_unearned_pass_is_detected (test_documentation.GraphTests.test_unearned_pass_is_detected) ... ok\ntest_unknown_dependency_is_detected (test_documentation.GraphTests.test_unknown_dependency_is_detected) ... ok\ntest_duplicate_keys_are_rejected (test_documentation.JsonTests.test_duplicate_keys_are_rejected) ... ok\ntest_nonfinite_constants_are_rejected (test_documentation.JsonTests.test_nonfinite_constants_are_rejected) ... ok\ntest_valid_unicode_json_is_preserved (test_documentation.JsonTests.test_valid_unicode_json_is_preserved) ... ok\ntest_bad_bash_is_detected (test_documentation.MarkdownTests.test_bad_bash_is_detected) ... ok\ntest_correct_anchor_is_accepted (test_documentation.MarkdownTests.test_correct_anchor_is_accepted) ... ok\ntest_duplicate_headings_get_suffixes (test_documentation.MarkdownTests.test_duplicate_headings_get_suffixes) ... ok\ntest_escape_is_rejected (test_documentation.MarkdownTests.test_escape_is_rejected) ... ok\ntest_explicit_anchor_is_accepted (test_documentation.MarkdownTests.test_explicit_anchor_is_accepted) ... ok\ntest_external_links_do_not_trigger_network (test_documentation.MarkdownTests.test_external_links_do_not_trigger_network) ... ok\ntest_invalid_json_fence_is_detected (test_documentation.MarkdownTests.test_invalid_json_fence_is_detected) ... ok\ntest_missing_anchor_is_detected (test_documentation.MarkdownTests.test_missing_anchor_is_detected) ... ok\ntest_missing_target_is_detected (test_documentation.MarkdownTests.test_missing_target_is_detected) ... ok\ntest_shell_examples_are_parsed_not_executed (test_documentation.MarkdownTests.test_shell_examples_are_parsed_not_executed) ... ok\ntest_unclosed_fence_is_detected (test_documentation.MarkdownTests.test_unclosed_fence_is_detected) ... ok\ntest_changed_technical_fence_is_detected (test_documentation.NormativeTests.test_changed_technical_fence_is_detected) ... ok\ntest_changed_technical_identifier_is_detected (test_documentation.NormativeTests.test_changed_technical_identifier_is_detected) ... ok\ntest_editorial_wrapper_does_not_change_parity (test_documentation.NormativeTests.test_editorial_wrapper_does_not_change_parity) ... ok\ntest_lost_requirement_is_detected (test_documentation.NormativeTests.test_lost_requirement_is_detected) ... ok\ntest_weakened_modal_is_detected (test_documentation.NormativeTests.test_weakened_modal_is_detected) ... ok\n\n----------------------------------------------------------------------\nRan 31 tests in 0.019s\n\nOK\n"
+  },
+  "intentional_negative_probes": {
+    "negative_checks": [
+      {
+        "probe": "broken-current-link",
+        "exit_code": 1,
+        "expected_failure_observed": "missing-target",
+        "restored_sha256": "6dfd9f97c7728c7e6274a0fcb6f3cc3660c282e55fc6158aa7bddc195fa6ced4"
+      },
+      {
+        "probe": "unearned-product-verdict",
+        "exit_code": 1,
+        "expected_failure_observed": "unearned feature verdict",
+        "restored_sha256": "c491db78826dd31b09b7c5262344b76da2660a3056c26cf01669180342dd77b3"
+      },
+      {
+        "probe": "weakened-normative-language",
+        "exit_code": 1,
+        "expected_failure_observed": "normative keywords",
+        "restored_sha256": "57c5d12a7f60e9d4d092fb966e2302d35f43ebb7a98e4cf523aa892cd47e5492"
+      },
+      {
+        "probe": "runtime-source-scope-violation",
+        "exit_code": 1,
+        "expected_failure_observed": "preserved source changed/missing",
+        "restored_sha256": "761951d2526b12f387afa6ad57824377645f8627f86ff61a99e9fd81512c24b0"
+      },
+      {
+        "probe": "unicode-fixture-semantic-regression",
+        "exit_code": 1,
+        "expected_failure_observed": "unsupported or unbounded fixture operation",
+        "restored_sha256": "870f4894bb64685383a8be12c38c5000dfbfba9300e90c76659163b177584bd8"
+      }
+    ],
+    "final_restore_check": {
+      "status": "PASS",
+      "exit_code": 0
+    }
+  },
+  "delivery_checks": {
+    "git_diff_check_exit": 0,
+    "git_apply_check_exit": 0,
+    "git_apply_exit": 0,
+    "all_delivered_files_match_after_patch": 1057,
+    "changed_documentation_files": 129
+  },
+  "environment": {
+    "python": "3.13.5",
+    "markdown-it-py": "4.2.0",
+    "jsonschema": "4.26.0",
+    "platform": "linux"
+  }
+}

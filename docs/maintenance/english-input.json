@@ -1,0 +1,13 @@
+{
+  "archive": "vestrace-main.zip",
+  "sha256": "f79bf527191e05e2cf0a49b6ac30645a187d9de8d091f0cfe6774a3b6120310b",
+  "bytes": 21747339,
+  "zip_comment": "3e05dfbdce063aa44a3a9e5a7a84c274597e8188",
+  "excluded_file_count": 2619,
+  "excluded_components": [
+    "node_modules",
+    ".git",
+    "target"
+  ],
+  "extraction": "relative regular-file paths only; no traversal or symlink extraction"
+}

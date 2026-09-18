@@ -1,0 +1,243 @@
+{
+  "format": "vestrace-mw-task-details/1",
+  "status": "proposed",
+  "tasks": [
+    {
+      "id": "T00.1",
+      "files": [
+        "file-plan.json",
+        "source-manifest.json",
+        "00-baseline.md"
+      ],
+      "details_markdown": "**Interface:** Fresh remote main, the original source manifest, and applicable Accepted\nspecifications produce an MW-only preflight with exact paths and an authority-by-authority\ndelta. This is documentation, not a new runtime API.\n\nPin HEAD and compare with 6f610253. Reread affected memory/retrieval/material/pool/worker/\nConsole paths. Check tracked names, SQL objects, API inventory, and pending branches for\ncollisions. The original plan must not claim 0195/14E; supplied archive 0196 is occupied too.\nReconcile all candidate migration names, not only the first occurrence. Record read versus\nunavailable sources, scope, and required amendments. Do not alter PLAN.md, P04 preflights,\nor frozen specifications just to satisfy a checker.\n\nA01 is an observational preflight, not an artificial RED/GREEN exercise. Preserve unrelated\ndirty bytes and review source drift before writing."
+    },
+    {
+      "id": "T00.2",
+      "files": [
+        "apps/console/package.json",
+        ".github/workflows/ci.yml"
+      ],
+      "details_markdown": "**Interface:** Existing toolchain/scripts produce an accurate command/role/development-dependency\nmatrix. The Cargo reference is E01; browser infrastructure belongs to T03.3.\n\nCheck the configured disposable PostgreSQL namespace and restricted runtime login. Record\nwhich suites actually execute without changing old evidence. Verify explicit doctests;\ndo not invoke an absent general npm test. Read the actual authentication flow and approve\nsupported labels, ordinary-material reads, and counter boundaries. A missing environment\nis BLOCKED, not PASS inherited from another commit. Browser/DB unavailability cannot be\nreplaced with a test double for qualification.\n\nFor A51, only the observed command and exit establish execution. This preflight needs no\nartificial business-logic mutation."
+    },
+    {
+      "id": "T01.1",
+      "files": [
+        "crates/vestrace-application/src/memory/read.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_read_repository.rs",
+        "crates/vestrace-http/src/api/memory_workspace.rs",
+        "crates/vestrace-cli/tests/memory_read_wiring.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed MemoryReadRepository::detail(&RequestContext, MemoryId) returns\nResult<Option<MemoryDetail>, ApplicationError>; revision(&RequestContext, MemoryId,\nMemoryRevisionId) returns Result<Option<Revision>, ApplicationError>. MemoryReadService\napplies existing capability/content/disclosure policy before DTO conversion. Keep application\nresults separate from HTTP serialization and reuse RequestContext/Memory/MemoryRevision.\n\nOpen one consistent scoped read for memory, active revision, and permitted origins. Validate\nrevision/workspace identity and current content rights. Return only permitted fields;\nunknown/denied objects share 404. Wire actual server and MCP composition rather than leaving\nan unnoticed default-unavailable adapter. Preserve the old metadata GET. MW-02 supplies\nexact new provenance links; legacy associations remain legacy_unattributed.\n\nA02/A09 require real server/MCP composition and refusal without source metadata leakage;\na direct service-object test alone is insufficient."
+    },
+    {
+      "id": "T01.2",
+      "files": [
+        "crates/vestrace-application/src/memory/read.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_read_repository.rs",
+        "crates/vestrace-http/tests/memory_workspace_api.rs",
+        "migrations/0196_memory_workspace_receipts.sql",
+        "docker/postgres/init-runtime-role.sh"
+      ],
+      "details_markdown": "**Interface:** Proposed MemoryReadRepository::list(&RequestContext, BrowseRequest) returns\nMemoryPage; history(&RequestContext, MemoryId, HistoryRequest) returns RevisionPage, both\nthrough Result<_, ApplicationError>. BrowseRequest includes kind/status/collection filters,\nlimit, and opaque cursor; HistoryRequest includes limit/cursor. Follow chapter 02.6.\nThe collection filter is unavailable until MW-04 supplies its lawful relationship.\n\nApply disclosure predicates before keyset (created_at,id) selection with limit N+1. Bind\ncursors to scope/filter/epoch/policy without hidden IDs. History filters inaccessible content\nand pins the highest visible revision on page one. MW-01 applies M01 schema and transactional\nepoch triggers covering existing writers. Test read consistency now rather than defer it to\nMW-02; the correction receipt schema exists, but its new writer is enabled in MW-02.\n\nA03/A04 cover equal timestamps, concurrent mutation, explicit cursor expiry, and direct\nhistorical URL authorization. No silently duplicated/omitted records."
+    },
+    {
+      "id": "T01.3",
+      "files": [
+        "crates/vestrace-application/src/memory/context_delivery.rs",
+        "crates/vestrace-application/src/retrieval/context_builder.rs",
+        "crates/vestrace-http/src/api/context_packs.rs",
+        "crates/vestrace-application/tests/context_delivery.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed ContextDeliveryService::build(&RequestContext, ContextRequest) returns\nResult<ContextResponse, ApplicationError>. QualifiedTextCounter::count(&str) returns\nResult<u32, ApplicationError>, with identity() -> &str and registration bound to an approved\nmodel/destination. No default counter promises an arbitrary-model ceiling. Consume existing\nRetrievalService/ContextPack items and output the exact sections/rendered_context schema.\nByte-only output is not normative ContextPack2 qualification.\n\nUse existing generation/policy guards and hydrate only authorized exact revisions. Render\nreal content and retain SourceRef; omit absent text instead of substituting explanation.\nBuild one deterministic final string with citations/separators and enforce its complete\nUTF-8 cap. Qualified token mode counts that final string; missing counters return 422.\nRecheck policy/generation before disclosure: one bounded stale retry without a new external\ndispatch, otherwise a typed error.\n\nRun A06–A08 and cross-cutting A09/A52. Estimates cannot silently become strict guarantees."
+    },
+    {
+      "id": "T02.1",
+      "files": [
+        "crates/vestrace-application/src/memory/write.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_mutation_repository.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_repository.rs",
+        "crates/vestrace-infrastructure/tests/memory_mutation_atomicity.rs"
+      ],
+      "details_markdown": "**Interface:** MemoryMutationPlan carries authenticated context, target/base content and state\nrevisions, action payload, reason, exact source link, and semantic key. Proposed\nMemoryMutationRepository::apply_in(&RequestContext, &mut dyn UnitOfWork, &MemoryMutationPlan)\nreturns Result<MutationReceipt, ApplicationError>. Reuse InstallationMutationPermit and\nGovernedMutationRepository::commit_in. Result IDs become authoritative at caller commit;\nno child method commits independently. Applied M01 is a dependency, not a writable task file.\n\nTake approved guards and existing database CAS with bounded revision conversion. Write\ncapture/correction Event, MemoryRevision, MemorySource, exact link, and storage projection\nin the same UoW. Shared governed mutation includes audit/outbox/receipt. The database trigger\nadvances epoch once; do not repeat it in application code. No provider/vault/network work\nruns inside the transaction. Do not edit the M01 checksum or infer old attribution.\n\nA05/A10 verify exact new provenance and rollback of revision/audit/outbox/receipt/epoch,\nincluding active-head integrity."
+    },
+    {
+      "id": "T02.2",
+      "files": [
+        "crates/vestrace-application/src/memory/write.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_mutation_repository.rs",
+        "crates/vestrace-application/src/idempotency.rs",
+        "crates/vestrace-infrastructure/tests/memory_mutation_replay.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed MemoryMutationRepository::commit(&RequestContext, MemoryMutationPlan)\nreturns Result<MutationReceipt, ApplicationError>, coordinating the existing UoW and apply_in.\nUse chapter 02.5 key scope, normalized input, and approved keyed commitments, not generated\nresult IDs. Store the receipt schema without plaintext bodies.\n\nReauthorize and lock the existing canonical key. Exact committed replay returns the original\nreceipt before stale CAS and never invokes Apply again. Changed intent returns 409; pending\ncontenders wait boundedly or receive busy. Only the no-receipt path applies and commits.\nReplay lost responses from durable state. Exercise independent connections and actual child\nprocess death after commit/before response. Removing the winner check must fail the unchanged test.\n\nA11–A13 require one effect, identical winner receipt, changed-body refusal, and no receipt\naccess for an unauthorized principal."
+    },
+    {
+      "id": "T02.3",
+      "files": [
+        "crates/vestrace-http/src/api/memory_workspace.rs",
+        "crates/vestrace-http/src/api/memory.rs",
+        "crates/vestrace-application/src/memory/services.rs",
+        "crates/vestrace-http/tests/memory_correction_api.rs"
+      ],
+      "details_markdown": "**Interface:** POST corrections accepts closed CorrectionRequest with a required UUID key,\nreturning 201 MutationReceipt. action=restore reads old content under current policy and\ncreates a new revision. Preserve legacy remember/revise signatures and MemoryResponse;\nadapt both to the shared participant. Inherit labels, without a new classification write field.\n\nValidate closed bodies. Preserve legacy numeric If-Match; new corrections use explicit body\npreconditions only. Refuse restore when target classification would weaken source obligations.\nExecute the common writer with 409 on basis mismatch. Do not infer extra lifecycle actions.\nUpdate route inventory, schema generator, and production composition together. Replay precedes\nCAS through the same writer. Run legacy regressions alongside the new endpoint suite.\n\nA14–A16 require concurrent-edit protection, restored text in a new r5 with history preserved,\nand no remaining legacy non-atomic bypass."
+    },
+    {
+      "id": "T03.1",
+      "files": [
+        "apps/console/src/sdk/memoryClient.ts",
+        "apps/console/src/sdk/client.ts",
+        "apps/console/src/main.tsx",
+        "apps/console/src/routes/MemoryPage.tsx",
+        "apps/console/tests/memoryClient.test.mjs",
+        "apps/console/package.json",
+        "apps/console/tsconfig.memory-tests.json",
+        "apps/console/scripts/run-memory-tests.mjs"
+      ],
+      "details_markdown": "**Interface:** Proposed MemoryClient methods list(BrowseRequest), detail(memoryId),\nhistory(memoryId,cursor), correct(memoryId,CorrectionRequest,key), and context(ContextRequest)\nfollow the schema. Existing transport owns authentication and error parsing. Mount real\n/memory routes with browse/detail/history states. Create test:memory before its first invocation;\nT03.3 adds browser testing.\n\nReuse transport without adding browser token storage. Map closed DTOs and abort requests on\nscope change. Distinguish browse/search, empty/503, and safe 404/403 responses. Use existing\ndesign primitives without hardcoded successful mock data. Compare actual served JSON.\n\nCreate tsconfig.memory-tests.json and scripts/run-memory-tests.mjs in the approved package.json\nscope. Compile pure editor/client helpers without React DOM to an isolated temporary output,\nrun named node --test targets, remove output, and preserve nonzero compile/test exits.\nDo not assume unsupported native Node TypeScript behavior. This pure runner adds no production\ndependency. A17 must preserve request_id and show unavailable rather than an empty library."
+    },
+    {
+      "id": "T03.2",
+      "files": [
+        "apps/console/src/memory/editorModel.ts",
+        "apps/console/src/memory/MemoryConsole.tsx",
+        "apps/console/src/routes/MemoryPage.tsx",
+        "apps/console/tests/memoryEditor.test.mjs"
+      ],
+      "details_markdown": "**Interface:** Proposed EditorState variants are viewing, editing(base,draft),\nsubmitting(base,draft,key,request), conflict(base,current,draft),\nresult_unknown(base,draft,key,request), and failed(base,draft,error).\nreduceEditor(state,event) is pure; drafts stay in browser memory, not persistent cache.\n\nSave captures the exact body and UUID key once; retry reuses both. A 409 preserves base,\ncurrent, and draft. Only explicit user acceptance of a new basis creates new intent/key.\nTimeout becomes result_unknown, not a claim of no change. Restore requires a reason.\nLogout/workspace switch cancels pending requests and clears plaintext state. Treat can_correct\nas a hint subject to server checks; show classification read-only with an explanation.\n\nA18/A19 verify stable retry identity, preserved unresolved drafts, and discarded late\nresponses from the previous scope."
+    },
+    {
+      "id": "T03.3",
+      "files": [
+        "apps/console/package.json",
+        "apps/console/package-lock.json",
+        "apps/console/playwright.config.ts",
+        "apps/console/e2e/memory.spec.ts"
+      ],
+      "details_markdown": "**Interface:** Reuse test:memory and introduce test:e2e:memory. Choose and lock an exact\nPlaywright development-only version during dependency review. Do not claim a browser is\ninstalled without verifying it. Real E2E targets a prepared HTTP server and creates data\nthrough production endpoints. Keep credentials out of test source, screenshots, and reports.\n\nReuse T03.1's pure-TypeScript runner; add browser infrastructure/fixtures here. Bootstrap\nonly the installation, then invoke real POST operations. Test keyboard editor/restore,\ntwo-user CAS, unavailable state, hostile text, and late scope-switch responses. Sanitize\noutput. A mock server does not qualify the backend; typecheck is not browser execution.\n\nA20/A21 require no script/remote-image execution, accessible focus/error/status behavior,\nand recorded actual browser results."
+    },
+    {
+      "id": "T04.1",
+      "files": [
+        "crates/vestrace-domain/src/source/mod.rs",
+        "crates/vestrace-application/src/source/ports.rs",
+        "crates/vestrace-infrastructure/src/postgres/source_repository.rs",
+        "migrations/0197_source_import_authority.sql",
+        "crates/vestrace-infrastructure/tests/source_import_contract.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed SourceCollection/KnowledgeSource/SourceRevision/SourceImportOperation/\nSourceImportItem follow chapter 02. Use existing typed-ID macros. SourceImportRepository\nprovides create_collection(ctx,CreateCollectionRequest,key), get_operation(ctx,id), and\nclosed-schema source listing/history. M02 creates MemorySourceBinding with manual_override=false,\nexact origins, and item receipts; MW-05 adds resolution rather than inventing binding later.\n\nCreate scoped keys/FKs and immutable revisions with ordinary-material references. Identity\nis collection + external UUID, not global hash. Through the shared writer record capture\nEvent, one Observation memory, and exact revision link. Do not auto-confirm facts or elevate\nlabels. Check supported policy and exact catalog/grant names on clean and populated databases.\n\nA22/A23 plus A28 require distinct source identities, immutable payloads, and no authority\nfrom imported instructions."
+    },
+    {
+      "id": "T04.2",
+      "files": [
+        "crates/vestrace-application/src/source/ports.rs",
+        "crates/vestrace-application/src/source/import.rs",
+        "crates/vestrace-infrastructure/src/postgres/source_payload_store.rs",
+        "crates/vestrace-http/src/api/source_imports.rs",
+        "crates/vestrace-infrastructure/tests/source_payload_lifecycle.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed SourcePayloadStore::stage(ctx,operation_id,item_id,bytes) returns\nStagedPayloadRef; read(ctx,ref) returns a protected bounded buffer; retire(ctx,ref) returns\na lawful erasure outcome. References carry same-workspace ordinary material/intent identities\nand readiness evidence, never arbitrary paths. SourceImportService::preview(ctx,request,key)\nreturns 201 only for a fully durable ImportPreview.\n\nBound/validate input, reserve operation/items and ordinary intents, then commit intent before\nvault work. Prepare ciphertext outside SQL through the existing protocol. Recheck item bindings\nand publish immutable PreviewReady only after all inputs are durable. Pre-preparation death\nmeans needs_upload; retransmission retires the old reservation lawfully before a successor.\nNever guess plaintext or trust client-fabricated hashes/receipts. Exact body/key returns the\nwinner; changed body returns 409. Read policy precedes source content disclosure.\n\nA24/A25 verify exact staged bytes, both preparation/crash boundaries, and no plaintext fallback."
+    },
+    {
+      "id": "T04.3",
+      "files": [
+        "crates/vestrace-cli/src/commands/source_scanner.rs",
+        "crates/vestrace-cli/src/commands/sources.rs",
+        "crates/vestrace-cli/src/main.rs",
+        "crates/vestrace-cli/tests/source_scanner.rs"
+      ],
+      "details_markdown": "**Interface:** Proposed local CLI:\n`vestrace sources scan --root <explicit-root> --state-file <outside-root> --output <sealed-input>`.\nPreview/apply/status use HTTP. ScannerManifest matches SourceDocument; keep UUID mappings\noutside the input root. Input shape follows ImportPreviewRequest with .md/.txt or closed JSON.\nThe server accepts no source path/URL to read itself.\n\nOpen the explicit root and reject nonregular/symlink/reparse or ambiguous hard-link scope\naccording to the supported platform policy. Capture bytes once, validate UTF-8/BOM/limits,\nand retain stable mapped IDs; do not reread at Apply. Reject absolute/dot-dot/drive/backslash\nambiguity and path collisions. Uncertain rename requires user mapping, not inode/time/hash guesses.\nThe server repeats decoded-size and duplicate-key checks. A complete scan must actually cover\nits scope; interruption means partial with no Missing assertion.\n\nA26/A27 cover Windows junctions/Linux symlinks/traversal and byte-versus-character limits.\nRecord tested platforms and refuse unsupported safe modes."
+    },
+    {
+      "id": "T04.4",
+      "files": [
+        "crates/vestrace-application/src/source/import_handler.rs",
+        "crates/vestrace-infrastructure/src/postgres/source_repository.rs",
+        "crates/vestrace-cli/src/commands/worker.rs",
+        "apps/console/src/routes/SourcesPage.tsx",
+        "apps/console/src/routes/ImportPage.tsx",
+        "crates/vestrace-cli/tests/source_import_worker.rs"
+      ],
+      "details_markdown": "**Interface:** SourceImportApplyHandler implements existing OutboxHandler with topic\nmemory.source_import.apply. handle(ctx,message) reads durable operation/item authority,\nnot a client-supplied principal. SourceImportService::apply(ctx,id,ApplyImportRequest,key)\nreturns ImportOperation. A separately checked cancel command is completed in MW-05.\nThe handler participates in MemoryMutationRepository::apply_in and uses item receipts.\n\nLock collection/operation; check exact preview, selection, expiry, and current rights.\nAtomically transition/enqueue through the registered topic, processing bounded items.\nEach item reauthorizes the original actor, checks immutable inputs/base versions, and commits\nsource/memory/audit/outbox/receipt together. Business outcome is durable before the dispatcher's\nseparate acknowledgement. Replay converges. Show application separately from index_state;\nunavailable embeddings do not erase pending obligations. Complete from durable results,\nincluding partial failures, not unconditional success.\n\nRun all A28–A31, including revoked-actor handling. Real worker --once and process-death replay\nare required, not only direct service calls."
+    },
+    {
+      "id": "T05.1",
+      "files": [
+        "crates/vestrace-domain/src/source/sync.rs",
+        "crates/vestrace-application/src/source/sync.rs",
+        "crates/vestrace-domain/tests/source_sync.rs",
+        "crates/vestrace-application/src/source/import_handler.rs"
+      ],
+      "details_markdown": "**Interface:** Trusted internal SyncFacts compares immutable B/I/M payloads, identities, and\noverride state; it cannot be deserialized from HTTP. classify_sync returns the closed decisions\nUnchanged/Rename/Update/Conflict/Missing/Blocked. Read materials under authorization, compute\nequality outside SQL, then recheck exact versions under locks. No public digest oracle.\n\nIdentical identity/content with no relevant change is Unchanged. Locator-only change with\nestablished identity is Rename, not a content revision. I != B without an edit allows Update;\nmanual override or changed M requires Conflict. Partial scans cannot assert Missing; complete\nscans may record it, not deletion. Changed labels are Blocked. Existing open conflicts produce\nconflict_pending, not an overwrite. Enumerate decisions and reject client comparison flags.\n\nA32/A36 verify no extra canonical revision for unchanged/rename and no purge from Missing."
+    },
+    {
+      "id": "T05.2",
+      "files": [
+        "migrations/0198_source_sync_conflicts.sql",
+        "crates/vestrace-application/src/source/sync.rs",
+        "crates/vestrace-http/src/api/source_conflicts.rs",
+        "apps/console/src/routes/SourceConflictPage.tsx",
+        "crates/vestrace-infrastructure/tests/source_sync_races.rs",
+        "crates/vestrace-application/src/memory/write.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_mutation_repository.rs"
+      ],
+      "details_markdown": "**Interface:** SourceSyncService::resolve(ctx,conflict_id,ResolveConflictRequest,key) returns\nMutationReceipt. Only accept_source/keep_manual/merge are accepted with common idempotency\nand exact conflict/memory/incoming-source preconditions. One source has one open conflict.\nConflictDetail exposes immutable original_manual_revision=M0 and permitted current\nmanual_revision=M separately; current need not equal detection-time M0.\n\nTake approved collection/source/conflict/memory guards and reauthorize every basis. Check\ncurrent pointer/state and immutable conflict refs without silent rebase. accept_source creates\nI and clears override; keep_manual preserves M and its revision with a recorded override;\nmerge creates explicit user text with override. Atomically record resolution Event, binding,\nversion, audit, and receipt before closing the conflict. Source bytes never change.\n\nShow M0→M, retain drafts after stale rejection, and refresh bases. Ordinary correction updates\nmanual_override in the shared MW-02 writer files; include both in exact scope before editing.\nA35 must first reject stale resolution, then succeed after fresh detail while preserving M0\nand the intervening edit. No model-driven merging."
+    },
+    {
+      "id": "T05.3",
+      "files": [
+        "crates/vestrace-application/src/source/import.rs",
+        "crates/vestrace-application/src/source/import_handler.rs",
+        "crates/vestrace-infrastructure/src/postgres/source_repository.rs",
+        "crates/vestrace-infrastructure/tests/source_sync_races.rs"
+      ],
+      "details_markdown": "**Interface:** cancel(ctx,operation_id,CancelRequest,key) returns ImportOperation.\ncollection.active_import_id serializes batch admission, not ordinary editing. Item/completion\nlocks fence post-cancel writes. Cleanup consumes existing retention/material authorities,\nnot an independent scheduler.\n\nReject a second active Apply while permitting individual edits. Before item commit, recheck\nbases and cancellation under consistent lock order. A committed-first item stays committed;\ncancellation skips the rest. A winning cancel prevents later mutation. Expiry applies to\nstaging/preview_ready; accepted Apply owns its material until lawful retirement. Clear the\nactive import only after a durable terminal outcome. Replay cancel from its receipt; elapsed\ntime does not prove a writer dead.\n\nA37–A39 exercise both winners with bounded race/crash fixtures. No fictional rollback or\nerasure of already applied material is acceptable."
+    },
+    {
+      "id": "T06.1",
+      "files": [
+        "crates/vestrace-application/src/source/export.rs",
+        "crates/vestrace-infrastructure/src/postgres/memory_export_repository.rs",
+        "crates/vestrace-http/src/api/memory_exports.rs",
+        "migrations/0199_memory_export_authority.sql",
+        "crates/vestrace-infrastructure/tests/memory_export_authority.rs"
+      ],
+      "details_markdown": "**Interface:** MemoryExportService::prepare(ctx,ExportRequest,key) returns ExportOperation.\nMemoryExportHandler uses existing OutboxDispatcher/topic memory.export.prepare.\ndownload(ctx,id) returns bounded JSON/Markdown only after current read/export authorization.\nPersist selection/result refs and serialize only the PortablePackage allowlist.\n\nSelect a bounded permitted immutable revision set and safe provenance closure. Atomically\nrecord operation, selection, audit/outbox; render via ordinary materials outside SQL.\nPublish Ready only for the exact complete protected result. Reauthorize every pinned source/\nmemory/revision at download; any revoked access blocks the entire output and initiates lawful\nretirement. Use existing expiry; no public/CDN/static URL bypass.\n\nA40/A41 require exact selected scope, no authority fields, and refusal after revocation even\nwhen preparation succeeded earlier."
+    },
+    {
+      "id": "T06.2",
+      "files": [
+        "crates/vestrace-application/src/source/portable.rs",
+        "crates/vestrace-application/src/source/import_handler.rs",
+        "crates/vestrace-application/tests/portable_contract.rs",
+        "crates/vestrace-cli/tests/memory_portability.rs"
+      ],
+      "details_markdown": "**Interface:** validate_portable(bytes:&[u8]) validates the closed versioned PortablePackage,\nlimits, and references. PortableImportMapping is operation-scoped foreign-to-local mapping,\nnot imported trust. Reuse mode=portable and the same handler's persisted phases entities →\nlinks → complete; do not add an unhandled topic.\n\nBefore mutation validate version, depth, bytes, nodes, intra-package refs, and active revision\nselection. Allocate mappings once per operation. Import each entity/history with actual\nimporter and local recording time; keep origin actor/time as annotations. Local policy owns\nclassification; reject imported grants/confirmed flags and never copy ACLs. The same topic's\nidempotent linking pass reuses mappings after entity commits. Keep partial until closure.\nExact replay reuses IDs; new explicit imports warn about duplicates rather than overwrite.\n\nRun A42–A45 including linking restart and authority rejection, not only parser success."
+    },
+    {
+      "id": "T06.3",
+      "files": [
+        "apps/console/src/routes/MemoryExportPage.tsx",
+        "crates/vestrace-cli/src/commands/sources.rs",
+        "apps/console/e2e/memory-export.spec.ts"
+      ],
+      "details_markdown": "**Interface:** CLI sources export submits ExportRequest, polls ExportOperation, and downloads\nthrough existing HTTP transport. UI selection/history/format/reason is explicit and displays\nstatus/expiry. Markdown is a deterministic reading representation, not a backup format.\n\nCreate a stable key once per intention and poll boundedly without new operations. Download\nonly by explicit user action; no embedded tokens or plaintext content cache. CLI writes only\nto a selected safe destination, refuses overwrite by default, and tests platform permissions.\nEscape Markdown delimiters and mark partial history/provenance and origin annotations.\nWarn that client copies cannot be revoked by the server and transfer no authority.\n\nA46 and the download flow verify exact selection, escaping, explicit rather than automatic\nexport, and truthful expiry."
+    },
+    {
+      "id": "T07.1",
+      "files": [
+        "crates/vestrace-infrastructure/tests/memory_workspace_upgrade.rs",
+        "docker/postgres/init-runtime-role.sh",
+        "tests/memory_workspace_acceptance.rs"
+      ],
+      "details_markdown": "**Interface:** Consume logical M01–M04, existing provisioner/schema gates, and ordinary-material\nrequirements. Produce restricted-runtime clean-install/upgrade/refusal observations—not a\nnew repair authority.\n\nPrepare a disposable clean database and a populated baseline via real old interfaces. Apply\nforward migrations and exact roles; compare historical data and legacy receipts. Attempt\nraw DML on every new guarded table and cross-workspace reference and assert the intended\nrefusal mechanism. Test ordinary-material recovery/erasure with source/export refs and no\ncross-source cascade leakage. Existing migration checksums and protocol locks remain unchanged\noutside approved new scope.\n\nA47/A48 require both clean and populated upgrade under the limited runtime role. A privileged\nfixture cannot replace those checks or conceal missing grants."
+    },
+    {
+      "id": "T07.2",
+      "files": [
+        "tests/memory_workspace_acceptance.rs",
+        "scripts/memory-workspace-acceptance.sh",
+        ".github/workflows/ci.yml"
+      ],
+      "details_markdown": "**Interface:** Consume actual built binary, HTTP, worker, Console, registered topics, scoped\nfixtures, and the complete A01–A54 matrix. Produce a versioned evidence manifest with source,\nbuild, environment, exact commands, and limitations. MW completion does not set TRUSTED.\n\nRun upload → read → edit → sync conflict → resolve → export → new target with production\nproducers. Kill actual child processes after business commit/before acknowledgement and\nduring linking; inspect durable outcomes through a fresh reader. Compare served OpenAPI,\nactual JSON, and SDK fields. Run doctests and browser checks explicitly. Mutate receipt/CAS/\nworkspace/atomicity/override/download-policy guards in disposable copies, restore, and rerun.\nIndependent final review reads the whole contract and current tree; list unresolved material,\ngeneration, migration, or environment blockers. Qualify only the approved supported scenario,\nnot full v1.0 or P04 closure.\n\nRun all linked A49/A50/A52/A53/A54 and complete relevant suites. Syntax/typecheck alone is\nnever feature acceptance."
+    }
+  ]
+}

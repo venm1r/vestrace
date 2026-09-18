@@ -1,0 +1,9 @@
+{
+  "resolution": "auto_llm",
+  "expected_conflict_version": 1,
+  "expected_memory_revision_id": "00000000-0000-4000-8000-000000000012",
+  "expected_memory_state_revision": 2,
+  "incoming_source_revision_id": "00000000-0000-4000-8000-000000000032",
+  "reason": "Согласование нового документа и ручного уточнения",
+  "content": "Согласованный текст решения."
+}

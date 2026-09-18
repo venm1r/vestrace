@@ -1,0 +1,2425 @@
+{
+  "captured_at_utc": "2026-09-12T13:03:35.699Z",
+  "change_scope_paths": [
+    ".dockerignore",
+    "Cargo.lock",
+    "apps/console/src/routes/ConnectionsPage.tsx",
+    "apps/console/src/routes/ModelsPage.tsx",
+    "apps/console/src/routes/SettingsPage.tsx",
+    "apps/console/src/sdk/client.ts",
+    "apps/console/src/sdk/useQualificationPolling.ts",
+    "crates/vestrace-application/Cargo.toml",
+    "crates/vestrace-application/src/backup_archive.rs",
+    "crates/vestrace-application/src/connections.rs",
+    "crates/vestrace-application/src/installation_drain.rs",
+    "crates/vestrace-application/src/installation_safety.rs",
+    "crates/vestrace-application/src/lib.rs",
+    "crates/vestrace-application/src/models/revisions.rs",
+    "crates/vestrace-application/src/ports.rs",
+    "crates/vestrace-application/src/provider_qualification.rs",
+    "crates/vestrace-application/src/restore_cutover.rs",
+    "crates/vestrace-cli/src/commands/migrate.rs",
+    "crates/vestrace-cli/src/commands/mod.rs",
+    "crates/vestrace-cli/src/commands/safety_supervisor.rs",
+    "crates/vestrace-cli/src/commands/worker.rs",
+    "crates/vestrace-cli/src/main.rs",
+    "crates/vestrace-cli/tests/command_contract.rs",
+    "crates/vestrace-cli/tests/embedding_worker_once.rs",
+    "crates/vestrace-cli/tests/recovery_qualification_cli_contract.rs",
+    "crates/vestrace-cli/tests/runtime_schema_gate.rs",
+    "crates/vestrace-cli/tests/safety_archive_host_custody.rs",
+    "crates/vestrace-cli/tests/safety_archive_recovery.rs",
+    "crates/vestrace-cli/tests/safety_journal_compose.rs",
+    "crates/vestrace-cli/tests/safety_restore_host_custody.rs",
+    "crates/vestrace-cli/tests/safety_restore_recovery.rs",
+    "crates/vestrace-cli/tests/safety_supervisor_readiness.rs",
+    "crates/vestrace-cli/tests/safety_supervisor_recovery.rs",
+    "crates/vestrace-cli/tests/safety_supervisor_witness.rs",
+    "crates/vestrace-cli/tests/v1_release_gate_cli.rs",
+    "crates/vestrace-cli/tests/worker_once_cli.rs",
+    "crates/vestrace-domain/Cargo.toml",
+    "crates/vestrace-domain/src/backup_archive.rs",
+    "crates/vestrace-domain/src/installation/fingerprint.rs",
+    "crates/vestrace-domain/src/installation_drain.rs",
+    "crates/vestrace-domain/src/installation_safety.rs",
+    "crates/vestrace-domain/src/lib.rs",
+    "crates/vestrace-domain/src/restore_cutover.rs",
+    "crates/vestrace-domain/tests/backup_archive_contract.rs",
+    "crates/vestrace-domain/tests/installation_drain_contract.rs",
+    "crates/vestrace-domain/tests/installation_safety_contract.rs",
+    "crates/vestrace-domain/tests/restore_cutover_contract.rs",
+    "crates/vestrace-http/src/api/ag_ui.rs",
+    "crates/vestrace-http/src/api/connections.rs",
+    "crates/vestrace-http/src/api/mod.rs",
+    "crates/vestrace-http/src/api/models.rs",
+    "crates/vestrace-http/src/route_inventory.rs",
+    "crates/vestrace-http/tests/provider_routes.rs",
+    "crates/vestrace-http/tests/router_contract.rs",
+    "crates/vestrace-http/tests/run_routes.rs",
+    "crates/vestrace-infrastructure/src/backup_archive/file_store.rs",
+    "crates/vestrace-infrastructure/src/backup_archive/key_custody.rs",
+    "crates/vestrace-infrastructure/src/backup_archive/mod.rs",
+    "crates/vestrace-infrastructure/src/lib.rs",
+    "crates/vestrace-infrastructure/src/postgres/backup_archive_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/installation_drain.rs",
+    "crates/vestrace-infrastructure/src/postgres/mod.rs",
+    "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/pool.rs",
+    "crates/vestrace-infrastructure/src/postgres/qualification_work_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/restore_cutover_repository.rs",
+    "crates/vestrace-infrastructure/src/postgres/safety_authority_repository.rs",
+    "crates/vestrace-infrastructure/src/restore_target/file_target.rs",
+    "crates/vestrace-infrastructure/src/restore_target/mod.rs",
+    "crates/vestrace-infrastructure/src/safety/journal_file.rs",
+    "crates/vestrace-infrastructure/src/safety/mod.rs",
+    "crates/vestrace-infrastructure/src/safety/witness_file.rs",
+    "crates/vestrace-infrastructure/tests/artifact_content.rs",
+    "crates/vestrace-infrastructure/tests/backup_archive_authority.rs",
+    "crates/vestrace-infrastructure/tests/capability_grants.rs",
+    "crates/vestrace-infrastructure/tests/common/mod.rs",
+    "crates/vestrace-infrastructure/tests/connection_mutation_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/connection_revision_lifecycle.rs",
+    "crates/vestrace-infrastructure/tests/credential_activation.rs",
+    "crates/vestrace-infrastructure/tests/credential_dispatch_lease.rs",
+    "crates/vestrace-infrastructure/tests/credential_guards.rs",
+    "crates/vestrace-infrastructure/tests/credential_intent_lifecycle.rs",
+    "crates/vestrace-infrastructure/tests/deployment_qualification.rs",
+    "crates/vestrace-infrastructure/tests/effect_outcome_delivery.rs",
+    "crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs",
+    "crates/vestrace-infrastructure/tests/embedding_carry_classification.rs",
+    "crates/vestrace-infrastructure/tests/embedding_data_policy_repository.rs",
+    "crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/embedding_effect_recovery.rs",
+    "crates/vestrace-infrastructure/tests/embedding_legacy_adoption.rs",
+    "crates/vestrace-infrastructure/tests/embedding_output_keys.rs",
+    "crates/vestrace-infrastructure/tests/embedding_result_finalization.rs",
+    "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
+    "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
+    "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
+    "crates/vestrace-infrastructure/tests/embedding_transition_activation.rs",
+    "crates/vestrace-infrastructure/tests/embedding_transition_barriers.rs",
+    "crates/vestrace-infrastructure/tests/embedding_transition_planning.rs",
+    "crates/vestrace-infrastructure/tests/erasure_holds_no_lock_during_vault_call.rs",
+    "crates/vestrace-infrastructure/tests/erasure_is_one_way.rs",
+    "crates/vestrace-infrastructure/tests/external_effect_repository.rs",
+    "crates/vestrace-infrastructure/tests/fingerprint_continuity_is_fail_closed.rs",
+    "crates/vestrace-infrastructure/tests/governed_mutation_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/health_findings.rs",
+    "crates/vestrace-infrastructure/tests/installation_drain_request.rs",
+    "crates/vestrace-infrastructure/tests/installation_permit_excludes.rs",
+    "crates/vestrace-infrastructure/tests/installation_safety_authority.rs",
+    "crates/vestrace-infrastructure/tests/intent_crash_boundaries.rs",
+    "crates/vestrace-infrastructure/tests/lm_studio_embedding_data_policy.rs",
+    "crates/vestrace-infrastructure/tests/material_intent_lifecycle.rs",
+    "crates/vestrace-infrastructure/tests/material_vault_contract.rs",
+    "crates/vestrace-infrastructure/tests/memory_classification.rs",
+    "crates/vestrace-infrastructure/tests/model_binding_snapshot.rs",
+    "crates/vestrace-infrastructure/tests/model_data_policy_repository.rs",
+    "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
+    "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
+    "crates/vestrace-infrastructure/tests/postgres.rs",
+    "crates/vestrace-infrastructure/tests/provider_admission.rs",
+    "crates/vestrace-infrastructure/tests/provider_branch_isolation.rs",
+    "crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs",
+    "crates/vestrace-infrastructure/tests/provider_result_binding.rs",
+    "crates/vestrace-infrastructure/tests/provider_runtime_role_refusals.rs",
+    "crates/vestrace-infrastructure/tests/provider_schema_contract.rs",
+    "crates/vestrace-infrastructure/tests/qualification_baseline_repository.rs",
+    "crates/vestrace-infrastructure/tests/qualification_repository.rs",
+    "crates/vestrace-infrastructure/tests/qualification_target_binding.rs",
+    "crates/vestrace-infrastructure/tests/qualification_work_claims.rs",
+    "crates/vestrace-infrastructure/tests/recovery_qualification_repository.rs",
+    "crates/vestrace-infrastructure/tests/recovery_repository.rs",
+    "crates/vestrace-infrastructure/tests/restore_cutover_authority.rs",
+    "crates/vestrace-infrastructure/tests/revision_hydration.rs",
+    "crates/vestrace-infrastructure/tests/row_level_security.rs",
+    "crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs",
+    "crates/vestrace-infrastructure/tests/run_repository.rs",
+    "crates/vestrace-infrastructure/tests/run_store.rs",
+    "crates/vestrace-infrastructure/tests/runtime_role_cannot_write_directly.rs",
+    "crates/vestrace-infrastructure/tests/safety_supervisor_provisioning.rs",
+    "crates/vestrace-infrastructure/tests/secret_store.rs",
+    "crates/vestrace-infrastructure/tests/settings_repository.rs",
+    "crates/vestrace-infrastructure/tests/startup_recovery_source.rs",
+    "docker-compose.yml",
+    "docker/postgres/Dockerfile",
+    "docker/postgres/init-runtime-role.sh",
+    "docker/postgres/vestrace_safety_verify/Makefile",
+    "docker/postgres/vestrace_safety_verify/vestrace_safety_verify--1.0.sql",
+    "docker/postgres/vestrace_safety_verify/vestrace_safety_verify.c",
+    "docker/postgres/vestrace_safety_verify/vestrace_safety_verify.control",
+    "docs/development-evidence/v1-g0-05-backup-restore-foundation.md",
+    "docs/development-evidence/v1-g0-05-gate.json",
+    "docs/development-evidence/v1-g0-05-gate/admission-leases-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/archiver-fingerprint-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/backup-restore-authority-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/candidate-abandon-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/compose-config.txt",
+    "docs/development-evidence/v1-g0-05-gate/compose-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/connection-credential-guards-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/credential-intent-lifecycle-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/dirty-baseline.txt",
+    "docs/development-evidence/v1-g0-05-gate/drain-mutation-permit-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/effect-authority-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/embedding-transition-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/material-intent-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/material-lifecycle-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/migration-ledger.txt",
+    "docs/development-evidence/v1-g0-05-gate/model-request-evidence-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/mutation-audit-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/p06-credentialed-run-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/p06-no-auth-run-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-connections-create-failure.png",
+    "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-credentialed-create-failure.png",
+    "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-models-register-blocked.png",
+    "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-settings-default-model-post-restart.png",
+    "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-settings-default-model-pre-restart.png",
+    "docs/development-evidence/v1-g0-05-gate/protocol-lock-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/readiness-grants.txt",
+    "docs/development-evidence/v1-g0-05-gate/readiness-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/retrieval-retry-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/route-authority-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/scope-test.txt",
+    "docs/development-evidence/v1-g0-05-gate/transport-security-test.txt",
+    "docs/development-evidence/v1-g0-05-preflight.json",
+    "docs/development-evidence/v1-g0-05e-test-migrator.md",
+    "docs/development-evidence/v1-g0-05f-fresh-closure.md",
+    "docs/development-evidence/v1-g0-05g-fresh-closure.md",
+    "docs/development-evidence/v1-g0-05h-fresh-closure.md",
+    "docs/development-evidence/v1-g0-05i-drain-mutation-permit.md",
+    "docs/development-evidence/v1-g0-05j-backup-restore-closure.md",
+    "docs/development-evidence/v1-g0-06-real-execution.md",
+    "docs/superpowers/plans/2026-09-12-vestrace-v1-g0-05-backup-restore-foundation.md",
+    "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05b-archive-retention.md",
+    "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05b-base-backup-completion.md",
+    "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05c-restore-cutover.md",
+    "docs/superpowers/plans/2026-09-14-vestrace-v1-g0-05d-compose-g0-evidence.md",
+    "docs/superpowers/plans/2026-09-14-vestrace-v1-g0-05e-test-migrator.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05f-fresh-closure.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05g-fresh-closure.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05h-fresh-closure.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05j-backup-restore-closure.md",
+    "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md",
+    "docs/superpowers/plans/2026-09-18-vestrace-v1-p06-followup-real-execution.md",
+    "docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md",
+    "docs/superpowers/specs/2026-09-12-vestrace-v1-g0-05-backup-restore-foundation-design.md",
+    "docs/superpowers/specs/2026-09-14-vestrace-v1-g0-05e-test-migrator-design.md",
+    "docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md",
+    "docs/superpowers/specs/2026-09-18-vestrace-v1-p06-followup-real-execution-design.md",
+    "docs/superpowers/specs/2026-09-18-vestrace-v1-p06-real-execution-design.md",
+    "migrations/0210_managed_backup_archive_retention.sql",
+    "migrations/0211_managed_backup_base_capture.sql",
+    "migrations/0212_managed_restore_cutover.sql",
+    "migrations/0213_managed_restore_refusal.sql",
+    "migrations/0214_managed_restore_safety_events.sql",
+    "migrations/0215_managed_safety_readiness.sql",
+    "migrations/0216_installation_drain_request.sql",
+    "migrations/0217_qualification_job_work_claims.sql",
+    "scripts/p05-g0-gate.mjs",
+    "scripts/p05-scope.mjs",
+    "tests/p05_g0_gate.test.mjs",
+    "tests/p05_provisioner_prefix.test.mjs",
+    "tests/p05_scope.test.mjs",
+    "tests/p05e_test_migrator.test.mjs"
+  ],
+  "dirty_files": [
+    {
+      "bytes": 2437,
+      "path": "Cargo.toml",
+      "sha256": "c977d9296fdd2fca0740fc27fd6dbee69adeb7e53b1f5818539e70ad1e7375ea",
+      "status": " M"
+    },
+    {
+      "bytes": 70902,
+      "path": "crates/vestrace-application/src/conformance_cases.rs",
+      "sha256": "d2d0e92bec21fead2fef9c33d0c15c07643ae73141f38edb1eba9030442c5984",
+      "status": " M"
+    },
+    {
+      "bytes": 12980,
+      "path": "crates/vestrace-application/src/embedding_data_policy.rs",
+      "sha256": "2823c8831b733f5b8f7572bdfe6facd14aa19e494dfc9fc497bdacc48b45e8ac",
+      "status": " M"
+    },
+    {
+      "bytes": 15932,
+      "path": "crates/vestrace-application/src/embedding/adoption.rs",
+      "sha256": "3d8dd90b9d4885b5259d4eb9449fe33e732c9c9276dd89cb823e9f6ae266e2ab",
+      "status": "??"
+    },
+    {
+      "bytes": 1308,
+      "path": "crates/vestrace-application/src/embedding/barrier.rs",
+      "sha256": "66248835ed6aa55107dc2cc09cc285cb727c000040c42333d03eccff941d8318",
+      "status": " M"
+    },
+    {
+      "bytes": 1567,
+      "path": "crates/vestrace-application/src/embedding/carry.rs",
+      "sha256": "d2332f4e5185163d8b6c8b67d08e028d2d636631ae17336621750b051a7751c7",
+      "status": " M"
+    },
+    {
+      "bytes": 9224,
+      "path": "crates/vestrace-application/src/embedding/erasure.rs",
+      "sha256": "3dd713021dd6956eae3ac98208ac8ddcccd2b74b53cf46514b1185e18728bb32",
+      "status": "??"
+    },
+    {
+      "bytes": 18596,
+      "path": "crates/vestrace-application/src/embedding/executor.rs",
+      "sha256": "f120ddcab97d1adf5c2589f634336245aaf44617f2e4eca7bd37fa7e7e632260",
+      "status": "??"
+    },
+    {
+      "bytes": 24755,
+      "path": "crates/vestrace-application/src/embedding/finalization.rs",
+      "sha256": "a93af3987fc4815bc55f45986a0486efbd29bb1e8dc0dece4c9e30b53eee0e3d",
+      "status": " M"
+    },
+    {
+      "bytes": 19488,
+      "path": "crates/vestrace-application/src/embedding/index.rs",
+      "sha256": "b08efb75bf601c3c786aebb48901df6c9bfbbac3c401def219efba8f9b685aec",
+      "status": "??"
+    },
+    {
+      "bytes": 5521,
+      "path": "crates/vestrace-application/src/embedding/keys.rs",
+      "sha256": "bff23e1cee757a06c11730a5f2b3535f7d19a2b4b8a0334187c1b44a7aa1ddc7",
+      "status": " M"
+    },
+    {
+      "bytes": 3982,
+      "path": "crates/vestrace-application/src/embedding/mod.rs",
+      "sha256": "87e69b651b235943c2c7a2e5803143204a3219d2c0bebaaf6e871425c3e579e2",
+      "status": " M"
+    },
+    {
+      "bytes": 29800,
+      "path": "crates/vestrace-application/src/embedding/result.rs",
+      "sha256": "18dfc7762bdf43fc2de57584173ce2a1a1a87b9bf7e2ce207bb29d447bdb8e0e",
+      "status": " M"
+    },
+    {
+      "bytes": 29130,
+      "path": "crates/vestrace-application/src/embedding/retrieval.rs",
+      "sha256": "e0639a5ae528d0ea32e644d7e282ecc8ca1883fbcefe918b9649c4e9559dcc5a",
+      "status": "??"
+    },
+    {
+      "bytes": 2250,
+      "path": "crates/vestrace-application/src/embedding/transition_coordinator.rs",
+      "sha256": "6a3bfba44ccf93eb93015b30be2f3be33bd3324ab9da62d220b2c6c48368966c",
+      "status": "??"
+    },
+    {
+      "bytes": 6894,
+      "path": "crates/vestrace-application/src/embedding/transition.rs",
+      "sha256": "80cca78e6c213e47f6e1ce0fd60b0a4f01941fab1b3d0b3b989934208bf391d0",
+      "status": " M"
+    },
+    {
+      "bytes": 1898,
+      "path": "crates/vestrace-application/src/embedding/work.rs",
+      "sha256": "bdb73987a86f961dcb3357b2d89df120c0d02d401f222b4a2877b4f93c878e5c",
+      "status": "??"
+    },
+    {
+      "bytes": 8023,
+      "path": "crates/vestrace-application/src/material/erasure.rs",
+      "sha256": "eba7f4393a5822f3d7527a2d4cbde8ce4fabbbf4ae85682500261843dbbe22c8",
+      "status": " M"
+    },
+    {
+      "bytes": 50439,
+      "path": "crates/vestrace-application/src/model_request_evidence.rs",
+      "sha256": "f40e7d02fd19b2dcd16b327d4086ade72ac66ba87d00c7a2a433c1eee0cb3936",
+      "status": " M"
+    },
+    {
+      "bytes": 49391,
+      "path": "crates/vestrace-application/src/provider_dispatch.rs",
+      "sha256": "9a5649e4f99813871db0d306d15939311a7317528a1acf38e96ab26a981ced03",
+      "status": " M"
+    },
+    {
+      "bytes": 10900,
+      "path": "crates/vestrace-application/src/retrieval/ports.rs",
+      "sha256": "33306da3a0ee896d3fd3a033bd23dcc20bd7e65e4065b322d789cb76ffb20d29",
+      "status": " M"
+    },
+    {
+      "bytes": 60484,
+      "path": "crates/vestrace-application/src/retrieval/service.rs",
+      "sha256": "88ab5712be4fdb3ced4a79115cf89a196006b98085050dec1a237410877c860f",
+      "status": " M"
+    },
+    {
+      "bytes": 8827,
+      "path": "crates/vestrace-cli/src/commands/doctor.rs",
+      "sha256": "eb679cca008047eb124e0694b97f070d59994252c3c77bd65c56f109f10730e7",
+      "status": " M"
+    },
+    {
+      "bytes": 5063,
+      "path": "crates/vestrace-cli/src/commands/mcp.rs",
+      "sha256": "a617b42f5df69ef4ecf840dc22ab852f0cc349a5cab3811d8426d3652090cce7",
+      "status": " M"
+    },
+    {
+      "bytes": 12849,
+      "path": "crates/vestrace-cli/src/commands/rebuild.rs",
+      "sha256": "dc8f82374e5e7d9cd3e64f85862eb5ef2521bb8c31cc103792af04bb9c3a80c9",
+      "status": " M"
+    },
+    {
+      "bytes": 106634,
+      "path": "crates/vestrace-cli/src/commands/schema.rs",
+      "sha256": "1b5fa10ccc9c40ed10f9fd45172324ff84269b519da18a19dec27ce248a79e20",
+      "status": " M"
+    },
+    {
+      "bytes": 58112,
+      "path": "crates/vestrace-cli/src/commands/server.rs",
+      "sha256": "f0e4d484aaf39d6923e25ca01e4066e37de3cd4c38d6ed717ee3589770ee5617",
+      "status": " M"
+    },
+    {
+      "bytes": 40041,
+      "path": "crates/vestrace-cli/src/commands/worker.rs",
+      "sha256": "affbfa8ddf95d1df10fa10f2f66c94c163db85f359e05648fcdad7b431f4803e",
+      "status": " M"
+    },
+    {
+      "bytes": 16441,
+      "path": "crates/vestrace-cli/tests/embedding_worker_once.rs",
+      "sha256": "a63fe4df18a66a2668c18ed2bbac4346f1d20b48d651ef76d9bcb95b3184ed0a",
+      "status": "??"
+    },
+    {
+      "bytes": 15422,
+      "path": "crates/vestrace-cli/tests/provider_openapi_contract.rs",
+      "sha256": "78b9aaf7cc14f6a7205c007ce4f9aed449282377acbf43108879fb4b7ad9e57b",
+      "status": " M"
+    },
+    {
+      "bytes": 9304,
+      "path": "crates/vestrace-cli/tests/provider_runtime_wiring.rs",
+      "sha256": "8c09241f7c56c23883b35ac12eca31b488ac2c4ce724e893aaac43bc849b2bdb",
+      "status": " M"
+    },
+    {
+      "bytes": 1201,
+      "path": "crates/vestrace-domain/src/embedding/adoption.rs",
+      "sha256": "062a74e6fbcc94b0a2c8427d437045aba7089eb73293e91d1dd7edeb1ef7b230",
+      "status": "??"
+    },
+    {
+      "bytes": 3135,
+      "path": "crates/vestrace-domain/src/embedding/generation.rs",
+      "sha256": "a2c0bdc17dfc14da5d4748c23fada1b3e46e65a58b77d4fa41756639dc8d9b8d",
+      "status": " M"
+    },
+    {
+      "bytes": 5121,
+      "path": "crates/vestrace-domain/src/embedding/index.rs",
+      "sha256": "16bbea662cf4ed14d76f1954b8c667f4c4c3438027be7a0db6f3eccdc8c09d3d",
+      "status": "??"
+    },
+    {
+      "bytes": 1156,
+      "path": "crates/vestrace-domain/src/embedding/mod.rs",
+      "sha256": "4a3c95e10901e4d53cd8bcb6e689562c59373f76f68dd98ca2eea5c4d5181017",
+      "status": " M"
+    },
+    {
+      "bytes": 7250,
+      "path": "crates/vestrace-domain/src/embedding/readiness.rs",
+      "sha256": "f743adc2ab8d597f4776c3687af91493ba0bb417e490b51fad6303f55fbcf86d",
+      "status": "??"
+    },
+    {
+      "bytes": 1738,
+      "path": "crates/vestrace-domain/src/embedding/retrieval.rs",
+      "sha256": "7f0b7014d5f78d2675a6e961f54d96d029a4b30a510f1ef42e8af85467d92d3e",
+      "status": "??"
+    },
+    {
+      "bytes": 5583,
+      "path": "crates/vestrace-domain/src/embedding/space.rs",
+      "sha256": "1446f92240069dc1855c18da3282fa065acb75ce3fb1891d0dce5098cede2097",
+      "status": " M"
+    },
+    {
+      "bytes": 5022,
+      "path": "crates/vestrace-domain/src/id.rs",
+      "sha256": "767dcd9b802e590eded15a6292bf5a771727b883a26397fa1b8f82a232a363bb",
+      "status": " M"
+    },
+    {
+      "bytes": 2624,
+      "path": "crates/vestrace-domain/src/material/intent.rs",
+      "sha256": "896be9ec47b92d3ea55c7afd4f921db96a1c978757488fe83cf16aeedc0cff6c",
+      "status": " M"
+    },
+    {
+      "bytes": 15218,
+      "path": "crates/vestrace-domain/src/security/mod.rs",
+      "sha256": "94b5471c0d16e2f20e7ac3c77c6faf43622ec54577d2badf73b62cb7f6fddf95",
+      "status": " M"
+    },
+    {
+      "bytes": 25767,
+      "path": "crates/vestrace-domain/tests/embedding_contract.rs",
+      "sha256": "0c4a61c6d38d78f73a860f99cc8fdd74910542ca885a0d02161dd2d3d368292e",
+      "status": " M"
+    },
+    {
+      "bytes": 31862,
+      "path": "crates/vestrace-fault-scenario/src/main.rs",
+      "sha256": "c835d920f362f6c27cad5825dbc368ce746cadd9df9da507e5be148ed95c9c38",
+      "status": " M"
+    },
+    {
+      "bytes": 52337,
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_dispatch_crash.rs",
+      "sha256": "bfe04ae4d347c96dd4fb0d08e43a8b1d697aa5476d22ae20f38fd59262b2adbb",
+      "status": " M"
+    },
+    {
+      "bytes": 40043,
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_result_finalization_crash.rs",
+      "sha256": "8c02b08928dfc0ba0765d59e61d71ac5526e45aeb8dff0e9caf7626418ed9c1c",
+      "status": " M"
+    },
+    {
+      "bytes": 34042,
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_result_preparation_crash.rs",
+      "sha256": "4f67a99e905615ad7e915b296c5d3f5acd8db1a88bdabd4b77fc3b1bd66e9d23",
+      "status": " M"
+    },
+    {
+      "bytes": 52162,
+      "path": "crates/vestrace-fault-scenario/src/scenarios/embedding_worker_completion_crash.rs",
+      "sha256": "b7bb3c748b3be4ad137dcf4b49da81a2b688c02656dfaac50838ce10fc7d697c",
+      "status": "??"
+    },
+    {
+      "bytes": 18985,
+      "path": "crates/vestrace-fault-scenario/src/settings.rs",
+      "sha256": "9c3e18e1db7a494b6978e4c6fb845289407227ceda33febb44bad5ced9c64714",
+      "status": " M"
+    },
+    {
+      "bytes": 54183,
+      "path": "crates/vestrace-http/src/api/embedding_jobs.rs",
+      "sha256": "eeb17a4d2981cbb648f0ae9e8b8ce4f3fb0ff6f648703132780f02bea7ce7140",
+      "status": " M"
+    },
+    {
+      "bytes": 16733,
+      "path": "crates/vestrace-http/src/api/models.rs",
+      "sha256": "ead31b3a408d641574e236fe98e5a79948b0791ae06547507bf1543dfa5f06bf",
+      "status": " M"
+    },
+    {
+      "bytes": 12420,
+      "path": "crates/vestrace-http/src/route_inventory.rs",
+      "sha256": "c8628d9f56564fee16e79620110794d56020a8dede9cab86ead862dc304c5208",
+      "status": " M"
+    },
+    {
+      "bytes": 37634,
+      "path": "crates/vestrace-http/src/router.rs",
+      "sha256": "d3da7db8a015a4706b0ea2fc598369a4095d1029d5613f396bd98040091517d1",
+      "status": " M"
+    },
+    {
+      "bytes": 10491,
+      "path": "crates/vestrace-http/tests/embedding_retrieval_routes.rs",
+      "sha256": "602c7d8d76d97a576b5c1e5a9cef203f804cc62834b52b0a45ffca69fa13465e",
+      "status": "??"
+    },
+    {
+      "bytes": 86759,
+      "path": "crates/vestrace-infrastructure/src/config.rs",
+      "sha256": "37991b5d9ee12aec1ed7fffc348f6227fe5722a5a21d04d551a214362942acba",
+      "status": " M"
+    },
+    {
+      "bytes": 19206,
+      "path": "crates/vestrace-infrastructure/src/embedding_index/flat.rs",
+      "sha256": "261612be63fc7815138242b58650bf8752216f8c91b764e8a365fa2a3544c912",
+      "status": "??"
+    },
+    {
+      "bytes": 3004,
+      "path": "crates/vestrace-infrastructure/src/embedding_index/mod.rs",
+      "sha256": "99c5df8fdd78e272ab0de2759476473d86e654bb110bb43e722f09de913fc16a",
+      "status": "??"
+    },
+    {
+      "bytes": 3071,
+      "path": "crates/vestrace-infrastructure/src/embedding_index/registry.rs",
+      "sha256": "9d0bff3e2f0550a31d41f7f62b2f5cbf18a1af435348619bcc23bae974a30af3",
+      "status": "??"
+    },
+    {
+      "bytes": 722,
+      "path": "crates/vestrace-infrastructure/src/lib.rs",
+      "sha256": "521a9987795fb64c95294ce1348fcffe9325cd946733a16c96399a83098006eb",
+      "status": " M"
+    },
+    {
+      "bytes": 38894,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_adoption_repository.rs",
+      "sha256": "3c2b9e003f88372ecbe59921754e4cc6dae1df777167926087b0414a1a5c3244",
+      "status": "??"
+    },
+    {
+      "bytes": 4183,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_data_policy_decision_repository.rs",
+      "sha256": "bc9bf09be50d5aae09fea3df63c918710340af66c64dde42a0d160d559b8145e",
+      "status": " M"
+    },
+    {
+      "bytes": 9341,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_erasure_repository.rs",
+      "sha256": "21fc518c86c1680367212f8e1e729cfa12a3e4efbac122d0b3552218033c2b9c",
+      "status": "??"
+    },
+    {
+      "bytes": 14963,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_index_repository.rs",
+      "sha256": "42f2434a63c40408a5f2a8fbf909b7cf0205a9ed2888274fc0f0e476cef7c58f",
+      "status": "??"
+    },
+    {
+      "bytes": 19748,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_key_repository.rs",
+      "sha256": "824889e2e8cddd66daf9b8ac25b7c6169c78b236548049b223b7f74dc1193423",
+      "status": " M"
+    },
+    {
+      "bytes": 25125,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_result_finalization_repository.rs",
+      "sha256": "cc3dbca985d8bc3c7d5cf88cc881e41d68d7683a689b3bf29eceb014dd9fbfd1",
+      "status": " M"
+    },
+    {
+      "bytes": 26193,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_retrieval_client.rs",
+      "sha256": "063b5fa4b914cf8cf633420c3c59afa43b1d91f4f62d8c82c314bd8e2405d6e4",
+      "status": "??"
+    },
+    {
+      "bytes": 24924,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_retrieval_repository.rs",
+      "sha256": "0280451325152894819622e460dcb19fb6a79cf4c594e10aaf610462156bb6f1",
+      "status": "??"
+    },
+    {
+      "bytes": 8024,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_store.rs",
+      "sha256": "4524e88b4255a489a4825eaa46898ca95d5fdec60fab4741cb2b923aa83e5108",
+      "status": " M"
+    },
+    {
+      "bytes": 14751,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_transition_repository.rs",
+      "sha256": "3a422ea5018072353582beef95677ab3d8659ecf7134d93b7a736b70bebf0634",
+      "status": " M"
+    },
+    {
+      "bytes": 4908,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_work_repository.rs",
+      "sha256": "9de74a4eabcb3c0f56889c063f9556b208d32e4ecb43dfe326e0a9927a805f8f",
+      "status": "??"
+    },
+    {
+      "bytes": 8668,
+      "path": "crates/vestrace-infrastructure/src/postgres/embedding_write_route.rs",
+      "sha256": "933c1e34b9ff89f0473120749250b48b48fd2cd5de21c03de5fc713386ca0868",
+      "status": "??"
+    },
+    {
+      "bytes": 12238,
+      "path": "crates/vestrace-infrastructure/src/postgres/material_intent.rs",
+      "sha256": "9f2d9d7afa86a592d0e3e04ddfbe1e61a6895c948dbca0ca655d0b0b54fc74fc",
+      "status": " M"
+    },
+    {
+      "bytes": 29176,
+      "path": "crates/vestrace-infrastructure/src/postgres/mod.rs",
+      "sha256": "bd0e3ca5914ac302ecc286ab6b077829899482815ee7143bb475d28a47c8de85",
+      "status": " M"
+    },
+    {
+      "bytes": 60581,
+      "path": "crates/vestrace-infrastructure/src/postgres/model_request_evidence_repository.rs",
+      "sha256": "dbbde7df4a4bc75076071d393267b19d281b9c96b524cfa46e6565d9d6c0f895",
+      "status": " M"
+    },
+    {
+      "bytes": 27570,
+      "path": "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",
+      "sha256": "c12fbe52102e26956913a437667341b519b94f799df68594b18f3942a9f0b611",
+      "status": " M"
+    },
+    {
+      "bytes": 84119,
+      "path": "crates/vestrace-infrastructure/src/postgres/provider_dispatch_repository.rs",
+      "sha256": "0fa5abf2b1c8b617daf99121a497132d145b06c8936d14ac8354af5daba46659",
+      "status": " M"
+    },
+    {
+      "bytes": 8524,
+      "path": "crates/vestrace-infrastructure/src/postgres/revision_hydrator.rs",
+      "sha256": "14b164137960b738911ba1a8c4b4481594ba02a08f021fb0142796f5bd2d408d",
+      "status": " M"
+    },
+    {
+      "bytes": 16486,
+      "path": "crates/vestrace-infrastructure/src/postgres/text_retriever.rs",
+      "sha256": "a5455e872ed396119d4e683bfbf813a78bb84cad093fed1ca8aacf4c8453cef4",
+      "status": " M"
+    },
+    {
+      "bytes": 8083,
+      "path": "crates/vestrace-infrastructure/src/postgres/vector_retriever.rs",
+      "sha256": "9dcb2c412a731b81573f0d3f85142c60f447a5e002c63c575f44a77006d9bc03",
+      "status": " M"
+    },
+    {
+      "bytes": 106444,
+      "path": "crates/vestrace-infrastructure/tests/common/mod.rs",
+      "sha256": "48a10a7abe766b08e463acff7833e1578f4641895b20bba5ffe83ec78821ba14",
+      "status": " M"
+    },
+    {
+      "bytes": 119236,
+      "path": "crates/vestrace-infrastructure/tests/embedding_canonical_generations.rs",
+      "sha256": "228953def41cbcb583ec70f2761f06e0c73b065fbcea590653456b83225a1f5e",
+      "status": "??"
+    },
+    {
+      "bytes": 67144,
+      "path": "crates/vestrace-infrastructure/tests/embedding_dispatch_is_atomic.rs",
+      "sha256": "21403c8f3e7aa75ab42870736b9ff6ebb54841033048fcd5afef1aebdf10a6ff",
+      "status": " M"
+    },
+    {
+      "bytes": 48174,
+      "path": "crates/vestrace-infrastructure/tests/embedding_erasure_propagation.rs",
+      "sha256": "1838a158b5fc2f6510d67de152cd0d4361edbae3c779bf7c151295360fc2df09",
+      "status": "??"
+    },
+    {
+      "bytes": 10045,
+      "path": "crates/vestrace-infrastructure/tests/embedding_executor.rs",
+      "sha256": "e2888516de84e386e4650fdf9360c6cf2720f3847163dd2931fe82fe9710ecd1",
+      "status": "??"
+    },
+    {
+      "bytes": 78299,
+      "path": "crates/vestrace-infrastructure/tests/embedding_index_builds.rs",
+      "sha256": "a65cbc0b8e7d1c6bffbe2d6a9b8b2c0d66e948f046d1b08f1085b1e95a23bba1",
+      "status": "??"
+    },
+    {
+      "bytes": 38225,
+      "path": "crates/vestrace-infrastructure/tests/embedding_legacy_adoption.rs",
+      "sha256": "c6a1196faaf2ee1fa1cc7a538919d13ab373afb75e7456dda5672d3a57d0246b",
+      "status": "??"
+    },
+    {
+      "bytes": 71897,
+      "path": "crates/vestrace-infrastructure/tests/embedding_result_finalization.rs",
+      "sha256": "a688c66c5bc57d66044b47df21531527c6eb36ccd429203042ad73c539e319a4",
+      "status": " M"
+    },
+    {
+      "bytes": 74638,
+      "path": "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
+      "sha256": "90ea8b55a9a5bb9d8cae4b3a7101aa00b8289008f92401176b6bf7442a63090c",
+      "status": " M"
+    },
+    {
+      "bytes": 88102,
+      "path": "crates/vestrace-infrastructure/tests/embedding_retrieval_results.rs",
+      "sha256": "e6f73e83f21033c904007baab5ad39001a1f19c14283c8ce3d57c82725b9aef8",
+      "status": "??"
+    },
+    {
+      "bytes": 10627,
+      "path": "crates/vestrace-infrastructure/tests/embedding_runtime_role_refusals.rs",
+      "sha256": "f384e64c76191d51e3e20a188cfaebd9dadde6e89fb8146c3da1caba379e1618",
+      "status": " M"
+    },
+    {
+      "bytes": 53371,
+      "path": "crates/vestrace-infrastructure/tests/embedding_schema_contract.rs",
+      "sha256": "f09c962a91669faf60992a974bf03a95ca0066ea4314188e9135c6ab51ddbe6f",
+      "status": " M"
+    },
+    {
+      "bytes": 8736,
+      "path": "crates/vestrace-infrastructure/tests/embedding_space_isolation.rs",
+      "sha256": "0a48e02ac0e56c28db6896860b911479e16cade7783c44dd2aac7cc38a62055f",
+      "status": " M"
+    },
+    {
+      "bytes": 95631,
+      "path": "crates/vestrace-infrastructure/tests/embedding_transition_activation.rs",
+      "sha256": "3e54680ccd5044ae5a0912a112f50aa496e5eb3cc8b53fee86f37748ed1fb530",
+      "status": "??"
+    },
+    {
+      "bytes": 17253,
+      "path": "crates/vestrace-infrastructure/tests/embedding_worker_restart.rs",
+      "sha256": "f4140be4c31247373626792baaa0cf858035d356e2341248f5f1ba333b218ae3",
+      "status": "??"
+    },
+    {
+      "bytes": 134871,
+      "path": "crates/vestrace-infrastructure/tests/model_request_evidence.rs",
+      "sha256": "63f891e3a5c1774e4f3da6dbc6e3f140c0bae42d02bf1826e54a04d063ffade1",
+      "status": " M"
+    },
+    {
+      "bytes": 86713,
+      "path": "crates/vestrace-infrastructure/tests/p03_upgrade_provisioning.rs",
+      "sha256": "df855d7e532b6fdc196c459a246d2b192fea5d13b0774bebdcc74588217192f3",
+      "status": " M"
+    },
+    {
+      "bytes": 15218,
+      "path": "crates/vestrace-infrastructure/tests/retrieval_classification_boundary.rs",
+      "sha256": "18ffad24dfd6df799e38f66a64fe3d1ef86e3f0d25d6f1bdf4c9b35d78ae3fc8",
+      "status": " M"
+    },
+    {
+      "bytes": 17339,
+      "path": "crates/vestrace-infrastructure/tests/retrieval_generation_fence.rs",
+      "sha256": "ae655bd84c485368ba11ab262d2fe6f9b8cf82db98cb3831850b1d6127013179",
+      "status": " M"
+    },
+    {
+      "bytes": 17850,
+      "path": "crates/vestrace-infrastructure/tests/text_retriever.rs",
+      "sha256": "19fab8352b0f62f2052a84831b60122a8c7bc4c759967fede7851d5796a42746",
+      "status": " M"
+    },
+    {
+      "bytes": 11322,
+      "path": "crates/vestrace-infrastructure/tests/vector_retriever_data_policy.rs",
+      "sha256": "4b07fe9c5c8aaec3348fc4704d19c7f38c6d6b5aebbf415be2b0a55847a31f6f",
+      "status": " M"
+    },
+    {
+      "bytes": 47971,
+      "path": "crates/vestrace-mcp/src/server.rs",
+      "sha256": "6b06210aeb917eb7bd468a3cb52f95a23683c224b44e053d4f0d8d9b91e4ff1d",
+      "status": " M"
+    },
+    {
+      "bytes": 17748,
+      "path": "crates/vestrace-mcp/tests/embedding_retrieval.rs",
+      "sha256": "be2b0ceac3c7b3330ffc732eeaa9d55882469138c9a289ddf9b93517dd97dc98",
+      "status": "??"
+    },
+    {
+      "bytes": 236241,
+      "path": "docker/postgres/init-runtime-role.sh",
+      "sha256": "af20d4a796df80352663a73e1db20b0955b540649dcedbecca949dc9fd84a048",
+      "status": "MM"
+    },
+    {
+      "bytes": 415240,
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "b879e092917cb0791c0a957c1af81a946944255416fdf5f3a33b544bf847f3ca",
+      "status": " M"
+    },
+    {
+      "bytes": 83770,
+      "path": "docs/development-evidence/v1-g0-04c-preflight.json",
+      "sha256": "d7a1c52f006627318e9bc26474c10f83c6c9449faceaf3504ad2fac3e12c2791",
+      "status": "??"
+    },
+    {
+      "bytes": 78652,
+      "path": "docs/development-evidence/v1-g0-05-preflight.json",
+      "sha256": "56cc516e35fad815e6ad771e15212c88fe90e6e70c6cf5c80b6c612b7e2b3b74",
+      "status": "??"
+    },
+    {
+      "bytes": 72370,
+      "path": "docs/superpowers/plans/2026-09-08-vestrace-v1-g0-04-completion.md",
+      "sha256": "212424bfbb14477811b2411a8eb00a30063d26531a573ade3d8256ab3c026439",
+      "status": "??"
+    },
+    {
+      "bytes": 13883,
+      "path": "docs/superpowers/plans/2026-09-12-vestrace-v1-g0-05-backup-restore-foundation.md",
+      "sha256": "ed64ad0b6b2cc1c5838995fd2e2f7c3c91001370da59174ecb12eae0b3605d7f",
+      "status": "??"
+    },
+    {
+      "bytes": 47002,
+      "path": "docs/superpowers/specs/2026-09-08-vestrace-v1-g0-04-completion-design.md",
+      "sha256": "c7b64c16aaa0d034499220756cae3d3d478cc70c06657bec2a3a80904cf8db89",
+      "status": "??"
+    },
+    {
+      "bytes": 9161,
+      "path": "docs/superpowers/specs/2026-09-12-vestrace-v1-g0-05-backup-restore-foundation-design.md",
+      "sha256": "04a1073d36571836b59745bcca65c3ec16f483a91486ab9905b2df872d9ac4a8",
+      "status": "??"
+    },
+    {
+      "bytes": 11358,
+      "path": "LICENSE-APACHE",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+      "status": "??"
+    },
+    {
+      "bytes": 46302,
+      "path": "migrations/0197_embedding_canonical_generations.sql",
+      "sha256": "a773a50f38e689bb9e43280a54c581fbbcb0c76bdd8f14361c3a2369e81115ea",
+      "status": "??"
+    },
+    {
+      "bytes": 37483,
+      "path": "migrations/0198_embedding_index_builds.sql",
+      "sha256": "66f8e83e2f38df643ac30b824d71b0a934598ac652ba63383619450cef60cd4e",
+      "status": "??"
+    },
+    {
+      "bytes": 11947,
+      "path": "migrations/0199_embedding_executor_work.sql",
+      "sha256": "a982a499885c1f5eedd835dd9147b4dc40d16f4ccb97083d038675eebcc0276f",
+      "status": "??"
+    },
+    {
+      "bytes": 54116,
+      "path": "migrations/0200_embedding_transition_execution.sql",
+      "sha256": "cd84cbfa1d05d7e72450e39e94eb899e6957909a4d0c4a5c033856a4e12fa99a",
+      "status": "??"
+    },
+    {
+      "bytes": 23014,
+      "path": "migrations/0201_embedding_transition_activation.sql",
+      "sha256": "d2144409689b8e8e9d24ee5cccea3227387c5144a85f2b5d28172f984669a52c",
+      "status": "??"
+    },
+    {
+      "bytes": 19810,
+      "path": "migrations/0202_embedding_retrieval_results.sql",
+      "sha256": "ae7a566daa66e9111b145285beac6d55f576a363e92c43385ae18db811ad4ed3",
+      "status": "??"
+    },
+    {
+      "bytes": 42341,
+      "path": "migrations/0203_embedding_erasure_propagation.sql",
+      "sha256": "62d8390e887a041d46d4dc1aced6f2e78df12be7f3eb51fa004a52765e10b26b",
+      "status": "??"
+    },
+    {
+      "bytes": 40171,
+      "path": "migrations/0204_embedding_legacy_adoption.sql",
+      "sha256": "f1d724509c5d158ed77ac0b9877bcaece5b8d4c7899bed6fe371f24ce1bca9f7",
+      "status": "??"
+    },
+    {
+      "bytes": 7533,
+      "path": "migrations/0205_embedding_retrieval_dispatch.sql",
+      "sha256": "854ed13fe873addaa773c7369c4b12ccb451bfd2f35198d50ee66cf7950cdeb4",
+      "status": "??"
+    },
+    {
+      "bytes": 5768,
+      "path": "migrations/0206_embedding_transition_header_progress.sql",
+      "sha256": "6ffa3d5078af6ae8ff12d3b9ce213d5cbd5d1bddfaed1c15b4fd2758f82ce6c7",
+      "status": "??"
+    },
+    {
+      "bytes": 9192,
+      "path": "migrations/0207_embedding_delivery_rebuild_xor.sql",
+      "sha256": "a4dc3db96ad8e19c26c0e8d65d154d7c75d47c54fcfcef909fc770f6de6d081d",
+      "status": "??"
+    },
+    {
+      "bytes": 47889,
+      "path": "migrations/0208_embedding_memory_references.sql",
+      "sha256": "934987ece066d0d5f7e94a71f2e8f0e3c9c55051e3acca5bdd24b4994526ce58",
+      "status": "??"
+    },
+    {
+      "bytes": 3182,
+      "path": "migrations/0209_installation_safety_authority.sql",
+      "sha256": "ba6fab1fb604cb7600d5a9678dfac805adb7f7e7cdfea92c301f3043186566ca",
+      "status": "??"
+    },
+    {
+      "bytes": 10765,
+      "path": "scripts/p04-scope.mjs",
+      "sha256": "f441f74077648a2c02a35b3bf1f7de98385d8f9fc849b4cecf3328662d922a20",
+      "status": " M"
+    },
+    {
+      "bytes": 9897,
+      "path": "scripts/p05-scope.mjs",
+      "sha256": "9ce66e03eb2fdc59d2a4ff3ce16d6cfc1634a56250b2b2eade05819fbbe8fe19",
+      "status": "??"
+    },
+    {
+      "bytes": 27663,
+      "path": "tests/embedding_fault_scenario_e2e.rs",
+      "sha256": "b7944810cfccaebf05a1401a73476b3ab637af1788f7327657d8a86214ec1a99",
+      "status": " M"
+    },
+    {
+      "bytes": 12350,
+      "path": "tests/model_request_semantic_observation.rs",
+      "sha256": "9a97b121965121689937a6023e191843316af069151efb726e11727a4f7750b0",
+      "status": " M"
+    },
+    {
+      "bytes": 20711,
+      "path": "tests/p04_scope.test.mjs",
+      "sha256": "c42ca257d621777c9e71a6ba2dfc6810c9adf1cea85562d8b169f0e1407f6024",
+      "status": " M"
+    },
+    {
+      "bytes": 5273,
+      "path": "tests/p05_scope.test.mjs",
+      "sha256": "3d7e4de5b18c1cb90d347d6f1f19cecb67338bd9c1e37e3f9dcb7137d1179cc0",
+      "status": "??"
+    }
+  ],
+  "head": "a6014633b50a15a35e63600236edf6552580290f",
+  "protected_authority_digests": [
+    {
+      "bytes": 20039,
+      "path": "crates/vestrace-http/src/api/memory.rs",
+      "sha256": "761951d2526b12f387afa6ad57824377645f8627f86ff61a99e9fd81512c24b0"
+    },
+    {
+      "bytes": 7090,
+      "path": "crates/vestrace-http/src/api/retrieval.rs",
+      "sha256": "c06a317a34437a18b6c938cae6dea355adccb7808979d2f27def4edd6ac27757"
+    },
+    {
+      "bytes": 30118,
+      "path": "docs/development-evidence/v1-g0-01-preflight.json",
+      "sha256": "3894e421966e53b4c1aca5c9544497241376d5172ed7e0e12fd850b9ccd27283"
+    },
+    {
+      "bytes": 5307,
+      "path": "docs/development-evidence/v1-g0-01-protocol-lock.md",
+      "sha256": "8c8a620e3394f57bdc7d117996957e17e371e4668a24db2ed647ad331be9f1f4"
+    },
+    {
+      "bytes": 70228,
+      "path": "docs/development-evidence/v1-g0-02-preflight.json",
+      "sha256": "19eab44516e6891fc5aedea52810128897f19af979f2fe706f53cb9fdac48368"
+    },
+    {
+      "bytes": 50796,
+      "path": "docs/development-evidence/v1-g0-02-security-material-foundation.md",
+      "sha256": "d03b5d68ee834c91ca5b25f7f18c7bebd257200660cd4c40c1010d6eca147dd4"
+    },
+    {
+      "bytes": 119860,
+      "path": "docs/development-evidence/v1-g0-03-preflight.json",
+      "sha256": "21244311725fefb6eb1b80a4d8ae3a8295908f462c6c9baaedf8b0de681de2ec"
+    },
+    {
+      "bytes": 69764,
+      "path": "docs/development-evidence/v1-g0-03-provider-execution-foundation.md",
+      "sha256": "6d7ca3ca6888010e425d865502203fc89d8568830db64d4097164f554415bebc"
+    },
+    {
+      "bytes": 415240,
+      "path": "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "b879e092917cb0791c0a957c1af81a946944255416fdf5f3a33b544bf847f3ca"
+    },
+    {
+      "bytes": 83770,
+      "path": "docs/development-evidence/v1-g0-04c-preflight.json",
+      "sha256": "d7a1c52f006627318e9bc26474c10f83c6c9449faceaf3504ad2fac3e12c2791"
+    },
+    {
+      "bytes": 7007,
+      "path": "docs/external-corpus/vestrace-docss-2026-08-19.manifest.json",
+      "sha256": "f8100e1bcb070da6c6f540644d2fcae0862dd5c7cc3337cfa7c5bd29d10aac02"
+    },
+    {
+      "bytes": 39445,
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+      "sha256": "ca02673b85f85641d131a96af704b0f075740a097eb2a0e6115e0b7ffd6c0097"
+    },
+    {
+      "bytes": 8843,
+      "path": "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+      "sha256": "9b917a2c589d860e3c4e199581adecbde927bf4d4db2a2810998a4d23b489dd3"
+    },
+    {
+      "bytes": 61312,
+      "path": "docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md",
+      "sha256": "6d5e817ffdb7543983377b59df5e859288194bceabcb9990d1639eee9920d85b"
+    },
+    {
+      "bytes": 140806,
+      "path": "docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md",
+      "sha256": "300d588142bb3cfc5fc7a5985cdd0531403307758375cdca244e5338949dcc18"
+    },
+    {
+      "bytes": 50365,
+      "path": "docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md",
+      "sha256": "18e939977a5610bbd522e42fa65c6a13a3b56353f60eb83a00bc7c0c7e7558ee"
+    },
+    {
+      "bytes": 72370,
+      "path": "docs/superpowers/plans/2026-09-08-vestrace-v1-g0-04-completion.md",
+      "sha256": "212424bfbb14477811b2411a8eb00a30063d26531a573ade3d8256ab3c026439"
+    },
+    {
+      "bytes": 419382,
+      "path": "docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md",
+      "sha256": "b31b5be62504e1a65f411cd31b446cd41b3d032b7282f1aa42907706ef9c1473"
+    },
+    {
+      "bytes": 47002,
+      "path": "docs/superpowers/specs/2026-09-08-vestrace-v1-g0-04-completion-design.md",
+      "sha256": "c7b64c16aaa0d034499220756cae3d3d478cc70c06657bec2a3a80904cf8db89"
+    },
+    {
+      "bytes": 81,
+      "path": "migrations/0001_extensions.sql",
+      "sha256": "dba9b83ebd399235ce206eacdd847083fb364a4a259b35729de380402987352c"
+    },
+    {
+      "bytes": 3278,
+      "path": "migrations/0002_identity_and_workspaces.sql",
+      "sha256": "4a83f2a06db50b7f7417ae3fc1bb21da00ea636e2c18ad4fa7bd396d92872a8e"
+    },
+    {
+      "bytes": 2042,
+      "path": "migrations/0003_rls_baseline.sql",
+      "sha256": "59ba81d3e28db5d5e57d97a413e8a6ab603c8447dea1f18871182c2fdfe8fa9d"
+    },
+    {
+      "bytes": 1484,
+      "path": "migrations/0004_sessions_and_events.sql",
+      "sha256": "4ef2fe11ba3d1a55d562c4a6e6fbd8923f54c8bbddc63e25a408b00e2f2a8693"
+    },
+    {
+      "bytes": 1746,
+      "path": "migrations/0005_memories_and_revisions.sql",
+      "sha256": "b706144fd58a35fb32745af23dde172015be1d72e68902fb75226c25928d2f92"
+    },
+    {
+      "bytes": 2093,
+      "path": "migrations/0006_provenance_scopes_relations.sql",
+      "sha256": "bf99dfaccf43f647889aab10cd45eb33725084ee7bf494fa1813d78c8576eeaf"
+    },
+    {
+      "bytes": 2704,
+      "path": "migrations/0007_idempotency_jobs_outbox.sql",
+      "sha256": "8d93497320e626a711d97890ed541df325b18267c6754c3785574d071ba7f6ba"
+    },
+    {
+      "bytes": 991,
+      "path": "migrations/0008_search_documents.sql",
+      "sha256": "a1095eba2bdfafe29d50b39c7a5512856b1de0507e1a9d8e46d94fe3207e9ac5"
+    },
+    {
+      "bytes": 1264,
+      "path": "migrations/0009_embedding_spaces.sql",
+      "sha256": "2e7aaee7022c13a5ac0e112bf412266d32821140954814e48f2e4f408ca1359f"
+    },
+    {
+      "bytes": 871,
+      "path": "migrations/0010_structured_search_indexes.sql",
+      "sha256": "e914fd20100b698b4f692ee5d8e6729ed1fd80be654f855320671f2cdd440b80"
+    },
+    {
+      "bytes": 1303,
+      "path": "migrations/0011_retrieval_journal_and_context_packs.sql",
+      "sha256": "ad86b7d976433615469cc058b55d2300f62a45a29a00b99a50cf65551ec90f75"
+    },
+    {
+      "bytes": 1464,
+      "path": "migrations/0012_tokens_policies_and_approvals.sql",
+      "sha256": "3f84dcc7830420213b08dd7a2af17400c516bea3398f8c9f0a74dc588c7b12b9"
+    },
+    {
+      "bytes": 1351,
+      "path": "migrations/0013_audit_and_redaction.sql",
+      "sha256": "5bd318a35d42e195902f1387d03aa7ecce88b00637b3c5c27c1d869942ce1208"
+    },
+    {
+      "bytes": 1292,
+      "path": "migrations/0014_provider_and_model_registry.sql",
+      "sha256": "f93b87d4687f2178e936cfe209263c52d6733c03b12f0409d36463464853f5a2"
+    },
+    {
+      "bytes": 1352,
+      "path": "migrations/0015_routing_executions_and_evaluations.sql",
+      "sha256": "c0ff8ff8bd7c37840a796e4a9b9726a2185ea9e66345e30c5674ad121d973033"
+    },
+    {
+      "bytes": 1086,
+      "path": "migrations/0016_agents_skills_workflows.sql",
+      "sha256": "7533c68747911363174ce6e291ae08037d124a805baa6ebf691be9c94c401710"
+    },
+    {
+      "bytes": 3996,
+      "path": "migrations/0017_external_execution_history.sql",
+      "sha256": "f478c997b5ee39636457ba58b92b78586db110f9add968394503567ff16ed71d"
+    },
+    {
+      "bytes": 2205,
+      "path": "migrations/0018_workflows_and_evaluations.sql",
+      "sha256": "9c88419c3fb91f946392de0f1c4379030a7aacc41e9560b7e4d7edbf28910b16"
+    },
+    {
+      "bytes": 8633,
+      "path": "migrations/0019_agent_runs_and_steps.sql",
+      "sha256": "6b23e26d21fadddc03c372c1f791d82f3084f04473e7fabfcc2689bc285b603b"
+    },
+    {
+      "bytes": 6455,
+      "path": "migrations/0020_run_events_and_checkpoints.sql",
+      "sha256": "7dfcf458e5385c3d16b532bc373024c2bb54bed456dc1cfb42f619430f95392e"
+    },
+    {
+      "bytes": 4113,
+      "path": "migrations/0021_run_leases_and_work_items.sql",
+      "sha256": "c5219736c1e2a42e1270ba4f3b1cddd862fcd4772bfd7bd265f355ef2e87bf7e"
+    },
+    {
+      "bytes": 712,
+      "path": "migrations/0023_policy_bundles_and_snapshots.sql",
+      "sha256": "2a48e2edd4b5683ce758007f103f1556a4a6ddbb6ec1bf28df39b862c6e357b9"
+    },
+    {
+      "bytes": 693,
+      "path": "migrations/0024_policy_decisions_tickets_and_approval_grants.sql",
+      "sha256": "7cfbf1b086530e8e3bd60cf0e1632c28914888d3d6f6a338fb2746d93bf1cedd"
+    },
+    {
+      "bytes": 725,
+      "path": "migrations/0025_resource_budget_accounts_and_limits.sql",
+      "sha256": "f8397b33ad999dad8d38d5efa6fc25a85659a28f1e037cee6ad932bd1ad3e56f"
+    },
+    {
+      "bytes": 916,
+      "path": "migrations/0029_model_execution_attempts_and_events.sql",
+      "sha256": "519722cda29a70de5e56342666455a1c86f28513b47af9862c40b71d860e509f"
+    },
+    {
+      "bytes": 1369,
+      "path": "migrations/0032_tool_definitions_and_invocations.sql",
+      "sha256": "5d559b9ede3bd2a06867e3bc693f8e79bfe66f80f214342b397928076d3d6108"
+    },
+    {
+      "bytes": 1462,
+      "path": "migrations/0037_execution_plans_revisions_steps_validation.sql",
+      "sha256": "ab170e463b3a4ffbfa2e87d2f75878c214624a74025ab76fd2df39746763a962"
+    },
+    {
+      "bytes": 1359,
+      "path": "migrations/0042_artifacts_revisions_blobs_and_provenance.sql",
+      "sha256": "3046556a9343961a9bc95c4f98d7acec02e5160bf81a048302a779a9c25da3e9"
+    },
+    {
+      "bytes": 1199,
+      "path": "migrations/0048_conversations_channels_and_triggers.sql",
+      "sha256": "76854bdef33003cfbcd56bcf3d2d1f549c23cbca72dea987878e35c4450dc98c"
+    },
+    {
+      "bytes": 1274,
+      "path": "migrations/0054_connector_definitions_operations_and_backend_bindings.sql",
+      "sha256": "6e94486ac8ce8f2b86bf97592085f672a2cc07fe4865694ca9ded93578d8d9ce"
+    },
+    {
+      "bytes": 745,
+      "path": "migrations/0061_agent_packages_and_extension_registry.sql",
+      "sha256": "e3dddef2bcf724ed416b29c58caf7b997c93ae1ee3125b3a8191675e34885c76"
+    },
+    {
+      "bytes": 747,
+      "path": "migrations/0062_a2a_interoperability_gateway.sql",
+      "sha256": "e79663c3a59b320774bf7bcf24630337ee1c4d806c2dfa55d0f92217b3c128cb"
+    },
+    {
+      "bytes": 594,
+      "path": "migrations/0063_observability_and_metric_rollups.sql",
+      "sha256": "e981226d8ac82a0dff2435590ee67532b7ace762c39e95572caac7643c9a855d"
+    },
+    {
+      "bytes": 906,
+      "path": "migrations/0081_product_surface_and_ag_ui_gateway.sql",
+      "sha256": "44fffd428eb9cb0a936f6805848bf863d8aad6abf022a9ba0174eb3d1232b5b3"
+    },
+    {
+      "bytes": 783,
+      "path": "migrations/0082_product_api_transfers_and_releases.sql",
+      "sha256": "69a677df82dda44330e2a12d99fc155ebf13ac9d2e101105150e5ae570de6b6b"
+    },
+    {
+      "bytes": 1309,
+      "path": "migrations/0087_workspace_envelope_encryption_and_cross_sharing.sql",
+      "sha256": "ac2b759db6c9c40e7782982b4e130ebbb9b0d7cf55b2de6175059b9c7473b2f3"
+    },
+    {
+      "bytes": 682,
+      "path": "migrations/0088_event_schemas_exports_and_capture_profiles.sql",
+      "sha256": "4a2e4e0950d8977709d7eabe322df66603912456586442bde99781dc9ea24a99"
+    },
+    {
+      "bytes": 710,
+      "path": "migrations/0089_webhook_subscriptions_and_deliveries.sql",
+      "sha256": "2b6ef13a2dcd1b9bdbcd17b2597ba11d1d13608003f38eb3c9d8113e879e0df4"
+    },
+    {
+      "bytes": 315,
+      "path": "migrations/0090_release_orchestration_and_manifests.sql",
+      "sha256": "04bc9a6be8eeee9b844beba828c5d650f0526ee371bcdbea40ed4c997736958c"
+    },
+    {
+      "bytes": 642,
+      "path": "migrations/0110_ag_ui_endpoints_run_bindings_and_intakes.sql",
+      "sha256": "a464885dd68d9d7bda804e9dac041dd69ce74af3eaeb36cb78e8be9dd2d0d528"
+    },
+    {
+      "bytes": 2434,
+      "path": "migrations/0111_run_event_store_foundation.sql",
+      "sha256": "0d6ba94691e25f43aee167bd481c8bd05d7f795a2eebfa6c42541855bbdcf798"
+    },
+    {
+      "bytes": 4760,
+      "path": "migrations/0112_run_streams_and_recovery_checkpoints.sql",
+      "sha256": "ce0c4afb6bd032a1f8311a9e53b84b72ec46fb9d823b7d35f95baecc78cc8842"
+    },
+    {
+      "bytes": 526,
+      "path": "migrations/0113_event_append_only_trigger.sql",
+      "sha256": "7ee2385f5ac82b21f78d7cbffca7fe88da9add8d915ce089d9c822a64a4095e8"
+    },
+    {
+      "bytes": 816,
+      "path": "migrations/0114_active_memory_source_invariant.sql",
+      "sha256": "0b328f0d53c92448d25971ffacdfbf5740d1454805eba47b72a7c74d0b3bc046"
+    },
+    {
+      "bytes": 402,
+      "path": "migrations/0115_execution_ownership_link.sql",
+      "sha256": "f0da0093899c32c88cd5b02bd4fc7293065099d6586cfe6240255a4836cd54f6"
+    },
+    {
+      "bytes": 534,
+      "path": "migrations/0116_memory_revision_temporal_fields.sql",
+      "sha256": "d6df2b0d74e2c645330adf413c663d7c1afcef0676c597e64126d8df620a87c5"
+    },
+    {
+      "bytes": 345,
+      "path": "migrations/0117_evidence_ref_v2.sql",
+      "sha256": "ea36f5e89cdcad82461a41fe959a53ad1675f96905784a8448d5b1a5f52d2ebd"
+    },
+    {
+      "bytes": 3246,
+      "path": "migrations/0118_claim_conflict_core.sql",
+      "sha256": "59b829237916825bc161e69fed0cdf8c538bf493f0c2fe25fba87e7fcf36929f"
+    },
+    {
+      "bytes": 1337,
+      "path": "migrations/0119_mutation_reconciliation.sql",
+      "sha256": "2e22c39e9785a0286ec1db8f166c37b181139cd4c492c28ea72df769aee406ee"
+    },
+    {
+      "bytes": 447,
+      "path": "migrations/0120_generic_event_temporal_fields.sql",
+      "sha256": "6e8b715c2cca71d8ac59e6c8ba9e68fb1fc961dbc369213753f83902dd6c4d5c"
+    },
+    {
+      "bytes": 3220,
+      "path": "migrations/0121_cognitive_mutation_concurrency.sql",
+      "sha256": "5fdaa2707bed1559a2f73827cbdda0ce8209b3b3967ea847ff495328ac2ee24f"
+    },
+    {
+      "bytes": 274,
+      "path": "migrations/0122_retrieval_temporal_indexes.sql",
+      "sha256": "ebc4fdb5c6c38ae9b3dcd6ea20096ec076de377d97e1ce4f7c76f2c73a38541e"
+    },
+    {
+      "bytes": 1244,
+      "path": "migrations/0123_evaluation_facts_v2.sql",
+      "sha256": "fdaf96bf46eb6899d47a2acede9d847289cd4864f5f5d23af2dd2b9367a9063f"
+    },
+    {
+      "bytes": 3795,
+      "path": "migrations/0124_learning_projection_proposal_boundary.sql",
+      "sha256": "7d891d97593f0efd0bdc943c5269cee1b7fb3b87adf6f2e70414bf3d7fc44090"
+    },
+    {
+      "bytes": 1544,
+      "path": "migrations/0125_qualification_bundles.sql",
+      "sha256": "605c71e3dd70d515c27ef2181b115f4591192c9bf7e7406c298b5d7fdb48713f"
+    },
+    {
+      "bytes": 2554,
+      "path": "migrations/0126_incident_recovery_trust_records.sql",
+      "sha256": "744e45bea973c13101785817acdb302cef9bbf78f4a0c91bc8dbac6c1d5eaebd"
+    },
+    {
+      "bytes": 1995,
+      "path": "migrations/0127_external_effect_reconciliation_records.sql",
+      "sha256": "3fbf5b8cecbf65597756227e54a66783967f2f529db395316def732d03ee0987"
+    },
+    {
+      "bytes": 882,
+      "path": "migrations/0128_external_effect_recovery_indexes.sql",
+      "sha256": "c56b4255ed803581075974bd6b5e3be28a9d94eb9e7e867240b567653a6c0c9b"
+    },
+    {
+      "bytes": 742,
+      "path": "migrations/0129_external_effect_fault_suite_evidence.sql",
+      "sha256": "bf222a5e7e05bd3e9eff0a1d217d1298f81e69edb53f0bfd3da9b41986a4d9c0"
+    },
+    {
+      "bytes": 125,
+      "path": "migrations/0130_pgcrypto_extension.sql",
+      "sha256": "590f6d3ae58b519f65f0406665313f6f145a3502a1251f31a67ff677d7edd019"
+    },
+    {
+      "bytes": 1403,
+      "path": "migrations/0131_drop_vestigial_run_checkpoint_columns.sql",
+      "sha256": "7569d29148b71978bd7e2733e7d81b2eba3b2e4eaf67a6e8afc1d34e16d653fb"
+    },
+    {
+      "bytes": 1683,
+      "path": "migrations/0132_workspace_settings.sql",
+      "sha256": "5ecfe5bd7375034393ac7f03f02354b65b95159409d28f4562036e6e0ebefc8b"
+    },
+    {
+      "bytes": 3901,
+      "path": "migrations/0133_workspace_secret_envelope_storage.sql",
+      "sha256": "f4fc64e5ba98a3c5b6e37d9124212ef82c47b43a2aceb34c7ed3687591e4606e"
+    },
+    {
+      "bytes": 2580,
+      "path": "migrations/0134_artifact_content_storage.sql",
+      "sha256": "58f4dc40c6c7674d0421c400fd20ac9f3a2ac503cb31a4ae515afe08e09d74c8"
+    },
+    {
+      "bytes": 4807,
+      "path": "migrations/0135_access_token_authentication.sql",
+      "sha256": "9cb2454d1f86f82b84f33f0391e1a7e477ce0e28164030c80abdd025e0026f28"
+    },
+    {
+      "bytes": 3733,
+      "path": "migrations/0136_access_token_authentication_policy.sql",
+      "sha256": "8b79a6a510114fe16c883071c24eb82119a59128eb9a4aae016e5657eac0c433"
+    },
+    {
+      "bytes": 1416,
+      "path": "migrations/0137_access_token_touch_visibility.sql",
+      "sha256": "6c89f39a6484faa471768b8956cfba55557bf14e494b3634c02bdd56239c921e"
+    },
+    {
+      "bytes": 2422,
+      "path": "migrations/0138_retrieval_journal_channels.sql",
+      "sha256": "6adc66d58e534f8c0f4d3e03cf6dc3aa57ef1582491a03f8580efa5cc02de1ec"
+    },
+    {
+      "bytes": 2367,
+      "path": "migrations/0139_force_rls_on_scoped_tables.sql",
+      "sha256": "d170c1b40b30793ed12b36e7ca92bc677fe78a200b8d4410c8781a8c5d9d6160"
+    },
+    {
+      "bytes": 1696,
+      "path": "migrations/0140_force_rls_on_memory_graph.sql",
+      "sha256": "8aed139b11499064217e01f4a20c396e03b27e3c500c42333378497f4744a48d"
+    },
+    {
+      "bytes": 2149,
+      "path": "migrations/0141_defer_memory_active_revision_fk.sql",
+      "sha256": "3688b045bb61f52474d6029c4c0fb514dc1b6a929aa1d4b85fef3d1ed046e855"
+    },
+    {
+      "bytes": 1431,
+      "path": "migrations/0142_search_document_is_one_per_memory.sql",
+      "sha256": "23be41f6750345c6df2e75fdcf9009ce131874a860aa1a238102a51222646efc"
+    },
+    {
+      "bytes": 4105,
+      "path": "migrations/0143_force_rls_on_execution_and_evaluation.sql",
+      "sha256": "6dd83a3286d7c74b1dfd861eba4b8c067c2499a7f2f78db89028c14284798a23"
+    },
+    {
+      "bytes": 5739,
+      "path": "migrations/0144_external_effects_belong_to_a_workspace.sql",
+      "sha256": "c91f52f56b1baf963aed684815e77f66abec166c2936d99d09169a624da9f535"
+    },
+    {
+      "bytes": 3085,
+      "path": "migrations/0145_force_rls_on_the_run_core.sql",
+      "sha256": "1b0a00ef7036148062f3832eb974ad9725852203fc6af1cbd1e4ab7a81baf537"
+    },
+    {
+      "bytes": 4832,
+      "path": "migrations/0146_health_findings_persist.sql",
+      "sha256": "cadcb601a7a9cd9b08ff8a8595db79c6b7e6fb2fb912c3fe2fdfb74416b31717"
+    },
+    {
+      "bytes": 3789,
+      "path": "migrations/0147_capability_grants.sql",
+      "sha256": "512fbad0ad2cd88ef77bbd695b438e5f446c320f02a190174ab6a58569ddc825"
+    },
+    {
+      "bytes": 1976,
+      "path": "migrations/0148_embeddings_have_a_space.sql",
+      "sha256": "2689d540e3c7e318ab075c03e053d3ddc67def5877239339c1c052502779eb26"
+    },
+    {
+      "bytes": 3197,
+      "path": "migrations/0149_the_outbox_survives_a_failing_handler.sql",
+      "sha256": "8dded81148ce1c62c7d3e86bf5796791e8ae5bd3065c0a399d77da1c190718e0"
+    },
+    {
+      "bytes": 3552,
+      "path": "migrations/0150_inert_policies_and_a_purge_that_removed_nothing.sql",
+      "sha256": "666babe0e61a5d2dfad1206c186d052dcdb3ca043ac8f2adfba22ce00431d719"
+    },
+    {
+      "bytes": 2769,
+      "path": "migrations/0151_a_recorded_attempt_is_not_a_settled_outcome.sql",
+      "sha256": "1eff5e1a85056d14837fdb17f3ea8484275d79090cead41d54c1650b20a72037"
+    },
+    {
+      "bytes": 1974,
+      "path": "migrations/0152_a_settled_outcome_is_owed_to_its_run.sql",
+      "sha256": "fc44c3f8d961a91c2b2970c479fd16b18044fe3241cf913e24868655e6f91203"
+    },
+    {
+      "bytes": 3320,
+      "path": "migrations/0153_external_effect_lifecycle_recovery.sql",
+      "sha256": "6649444482a43177eb78e7b0181ef3fd10070400e02f8b46d332a1f78e72377d"
+    },
+    {
+      "bytes": 2311,
+      "path": "migrations/0154_a_dispatch_states_its_owner_and_deadline.sql",
+      "sha256": "23036cf792579fdcabc34b5f26b3c220e88345493d28631314ab4a052892e638"
+    },
+    {
+      "bytes": 5265,
+      "path": "migrations/0155_lost_dispatch_adoption_is_ordered_evidence.sql",
+      "sha256": "691ef396373e1024fb5db0453dc81598256dfd8bd65ec23360e7d54a649f3e97"
+    },
+    {
+      "bytes": 2793,
+      "path": "migrations/0156_a_failed_recovery_attempt_is_not_a_reconciliation.sql",
+      "sha256": "683019bc99c6d70b7d22b0c51550e9a66d14270ca1c8096ed178d0d5dff896ae"
+    },
+    {
+      "bytes": 1630,
+      "path": "migrations/0157_acknowledged_receipts_require_reconciliation.sql",
+      "sha256": "94b789d9bdd07d3d0a37f7c049b77907ece50410277d35ad8fe81c2ddb772bd6"
+    },
+    {
+      "bytes": 4975,
+      "path": "migrations/0158_external_effect_authorizations.sql",
+      "sha256": "a2b6c9f31ef4265736cf1ac63f1bd3b8bfd04ea78bd583485c82d432aab685ad"
+    },
+    {
+      "bytes": 3700,
+      "path": "migrations/0159_a_dispatch_owner_can_be_known_dead.sql",
+      "sha256": "9ac61f5bd92d1b2857fd11841dbb16c72164fb19b9bc581c1c9174577f50761c"
+    },
+    {
+      "bytes": 897,
+      "path": "migrations/0160_fault_suite_evidence_is_append_only.sql",
+      "sha256": "78f62a9c9634b07c30a1be31f13dabe941c020a3d09a879d160b1eca785c0b67"
+    },
+    {
+      "bytes": 3920,
+      "path": "migrations/0161_qualification_baselines.sql",
+      "sha256": "2b8e79a55bb9c1ead5f76fb7c11a2d618ff6333f79e142fb06d1c82d27e7654a"
+    },
+    {
+      "bytes": 3300,
+      "path": "migrations/0162_recovery_qualification_observations.sql",
+      "sha256": "c92b4e5479efd84e8cea9e118f62b67cc7d16ff6b4bd9253aa542fa0f1ed0f75"
+    },
+    {
+      "bytes": 2837,
+      "path": "migrations/0163_model_data_policy_decisions.sql",
+      "sha256": "5cf627037241c0d3f25cd3928bdc71ac2cf988a744c2f34604cf41fcd1756d7a"
+    },
+    {
+      "bytes": 4506,
+      "path": "migrations/0164_embedding_data_policy_decisions.sql",
+      "sha256": "e6d23c9589779a5c66936cfa25c7be8beb2a8886f9995b87ae6097b358d344c8"
+    },
+    {
+      "bytes": 999,
+      "path": "migrations/0165_governed_mutation_audit_atomicity.sql",
+      "sha256": "da1f92fe9c31c4bc7466a9fd13a0574bda562b5e89d4a163c2ce713cb927e2ba"
+    },
+    {
+      "bytes": 2056,
+      "path": "migrations/0166_guarded_operation_owner_role.sql",
+      "sha256": "d3c83c26671ef2f98954c2320441e97080b187dfee33de9d860517438d7794ea"
+    },
+    {
+      "bytes": 2250,
+      "path": "migrations/0167_installation_fingerprint_continuity.sql",
+      "sha256": "5c324eb1e5b738e09d4de2c223f2a47eaa506d4392611af0265e42623c4de788"
+    },
+    {
+      "bytes": 2947,
+      "path": "migrations/0168_installation_mutation_permit.sql",
+      "sha256": "9cd517a5d843bc06282cdfc0221a55b17de3c48e433722a959b6e98770dc08da"
+    },
+    {
+      "bytes": 8883,
+      "path": "migrations/0169_material_key_creation_intents.sql",
+      "sha256": "e37e0b3525d0f0cea84f6ab71666561351142d252018624acc5c2d2e3c5b7e8b"
+    },
+    {
+      "bytes": 24892,
+      "path": "migrations/0170_content_material_guards.sql",
+      "sha256": "4f3b6af449c9f228541c3506fd8851a5551287445b49c352a552531621c1409d"
+    },
+    {
+      "bytes": 3500,
+      "path": "migrations/0171_connection_execution_guards.sql",
+      "sha256": "3dcf3619b18bcffe1291495bd1900583a2f1cf563f79fb362eba4771651a1fab"
+    },
+    {
+      "bytes": 12811,
+      "path": "migrations/0172_credential_slots_and_revisions.sql",
+      "sha256": "97171f352c021fa4869776c7328c497cfe4a4550ab1c992deeea4a8f4535dea9"
+    },
+    {
+      "bytes": 38220,
+      "path": "migrations/0173_credential_key_creation_intents.sql",
+      "sha256": "cee84f3f17340ddcdb979575346e9e9a71fa18a9b39560ddd247cc6e3807ef32"
+    },
+    {
+      "bytes": 76950,
+      "path": "migrations/0174_material_erasure_primitives.sql",
+      "sha256": "fdd0151b918fbe7c2422d1ba83c098f69277f6480c3e0d2f1f916233feb097b4"
+    },
+    {
+      "bytes": 209,
+      "path": "migrations/0175_runtime_migration_history_read.sql",
+      "sha256": "829ca247b2908cc5aa0821505b2abec0379b98f4378c68fcc5622b313ee2802b"
+    },
+    {
+      "bytes": 47349,
+      "path": "migrations/0176_connection_revisions_and_no_auth_bindings.sql",
+      "sha256": "6271079fc1332434a57d20d33f5af0f4f6a71bdcee0feb1616174a83c19fe6d1"
+    },
+    {
+      "bytes": 11596,
+      "path": "migrations/0177_qualification_jobs_and_revisions.sql",
+      "sha256": "cc0147b5d609edf5c047d96761e374e42128af796b8a39a0a1dfaa02504270fe"
+    },
+    {
+      "bytes": 38776,
+      "path": "migrations/0178_model_revisions_and_binding_snapshots.sql",
+      "sha256": "0994695a038119170f61b17c0d446bb18999d2fcabc05f809730faf94ae61333"
+    },
+    {
+      "bytes": 5957,
+      "path": "migrations/0179_model_request_evidence.sql",
+      "sha256": "e18db88f55371d2bdaa699d639ede579c5cccb7db4e3ac40aaa59a6463add285"
+    },
+    {
+      "bytes": 26040,
+      "path": "migrations/0180_connection_admission_and_credential_leases.sql",
+      "sha256": "39d25038df2737b4b86657107557ba5c678597ff25b68e5963065dffe8814176"
+    },
+    {
+      "bytes": 41148,
+      "path": "migrations/0181_credential_activation_and_rotation.sql",
+      "sha256": "c60ff11efc8777d4e69751cdb097825f845204b2c7c259bb20a05d1515fd5e67"
+    },
+    {
+      "bytes": 23686,
+      "path": "migrations/0182_provider_effect_atomic_dispatch.sql",
+      "sha256": "a2a574339d5c9eceebfb71c638500440fa9910fd789173d29a2c100ed0564cab"
+    },
+    {
+      "bytes": 37429,
+      "path": "migrations/0183_model_request_reconstruction_contract.sql",
+      "sha256": "00af33279e020e02af59cafaca088fd5820cef3c3204544e47b7334d3fcf907a"
+    },
+    {
+      "bytes": 132418,
+      "path": "migrations/0184_provider_dispatch_and_result_contract.sql",
+      "sha256": "124ab8d60016d1126fae6082fa6794f39ef1831f51ff6f13e037118243f5828a"
+    },
+    {
+      "bytes": 108768,
+      "path": "migrations/0185_qualification_job_lifecycle.sql",
+      "sha256": "5d6c7ca64c21e7a3504f9f4ebf4c92f603be84e8e6693cd9466648fa05525a9e"
+    },
+    {
+      "bytes": 58618,
+      "path": "migrations/0186_provider_execution_wiring.sql",
+      "sha256": "c4d293e4027f0b9f39664fc12ac9818c248ceb858e070e072c5cb8be0b0f77d2"
+    },
+    {
+      "bytes": 133561,
+      "path": "migrations/0187_embedding_jobs_and_corpus_generations.sql",
+      "sha256": "4f899665ebf6f5ac8f58b00da2ef08af18ed9c9a42b3ce7dcf54eece7acd3543"
+    },
+    {
+      "bytes": 71767,
+      "path": "migrations/0188_embedding_transitions.sql",
+      "sha256": "52efbabf6764edf3a65ffd8d690a79ff4e4c9a5d8cae69cdb761e435e55f3e52"
+    },
+    {
+      "bytes": 38672,
+      "path": "migrations/0189_embedding_transition_carry.sql",
+      "sha256": "1250826e4bec80c1a5870f2bfef2167a2d26c09eea59c1cc4cf0308bce96ad46"
+    },
+    {
+      "bytes": 35308,
+      "path": "migrations/0190_embedding_transition_barriers.sql",
+      "sha256": "7b9fe7f437f71d1fbff23856c9bb8e9116f43e46c8924547f82a25b33ae6785c"
+    },
+    {
+      "bytes": 13466,
+      "path": "migrations/0191_embedding_corpus_generation_members.sql",
+      "sha256": "2a658619f599bdf23176241fc16ef3c876aa6dddd653f236c5bd9e730a0c990f"
+    },
+    {
+      "bytes": 101330,
+      "path": "migrations/0192_embedding_job_pre_dispatch_termination.sql",
+      "sha256": "6db03a1a5cf851c2980e2d21b5772b3f00947965e72e328f63d1c1861a7e8138"
+    },
+    {
+      "bytes": 60562,
+      "path": "migrations/0193_embedding_output_key_preparation.sql",
+      "sha256": "7876072b3a9184df7cb1f6fe105a8269ddea544d1920a022d968d86443c29c6b"
+    },
+    {
+      "bytes": 99624,
+      "path": "migrations/0194_embedding_job_result_preparation.sql",
+      "sha256": "54fbd28d39aad74f4759ffee2f943a0cc62404d00791bdf02a0378c1bcffdbb4"
+    },
+    {
+      "bytes": 114003,
+      "path": "migrations/0195_embedding_job_result_finalization.sql",
+      "sha256": "3c159deb3259e92a88a78cdc984897c778759a085ae459460c29a25c5b2e5bbc"
+    },
+    {
+      "bytes": 16282,
+      "path": "migrations/0196_retired_credential_erasure.sql",
+      "sha256": "c5b828df1a6b8e646905a5605cbc044aa73ab3b936e7a7e2df0563eb078ca230"
+    },
+    {
+      "bytes": 46302,
+      "path": "migrations/0197_embedding_canonical_generations.sql",
+      "sha256": "a773a50f38e689bb9e43280a54c581fbbcb0c76bdd8f14361c3a2369e81115ea"
+    },
+    {
+      "bytes": 37483,
+      "path": "migrations/0198_embedding_index_builds.sql",
+      "sha256": "66f8e83e2f38df643ac30b824d71b0a934598ac652ba63383619450cef60cd4e"
+    },
+    {
+      "bytes": 11947,
+      "path": "migrations/0199_embedding_executor_work.sql",
+      "sha256": "a982a499885c1f5eedd835dd9147b4dc40d16f4ccb97083d038675eebcc0276f"
+    },
+    {
+      "bytes": 54116,
+      "path": "migrations/0200_embedding_transition_execution.sql",
+      "sha256": "cd84cbfa1d05d7e72450e39e94eb899e6957909a4d0c4a5c033856a4e12fa99a"
+    },
+    {
+      "bytes": 23014,
+      "path": "migrations/0201_embedding_transition_activation.sql",
+      "sha256": "d2144409689b8e8e9d24ee5cccea3227387c5144a85f2b5d28172f984669a52c"
+    },
+    {
+      "bytes": 19810,
+      "path": "migrations/0202_embedding_retrieval_results.sql",
+      "sha256": "ae7a566daa66e9111b145285beac6d55f576a363e92c43385ae18db811ad4ed3"
+    },
+    {
+      "bytes": 42341,
+      "path": "migrations/0203_embedding_erasure_propagation.sql",
+      "sha256": "62d8390e887a041d46d4dc1aced6f2e78df12be7f3eb51fa004a52765e10b26b"
+    },
+    {
+      "bytes": 40171,
+      "path": "migrations/0204_embedding_legacy_adoption.sql",
+      "sha256": "f1d724509c5d158ed77ac0b9877bcaece5b8d4c7899bed6fe371f24ce1bca9f7"
+    },
+    {
+      "bytes": 7533,
+      "path": "migrations/0205_embedding_retrieval_dispatch.sql",
+      "sha256": "854ed13fe873addaa773c7369c4b12ccb451bfd2f35198d50ee66cf7950cdeb4"
+    },
+    {
+      "bytes": 5768,
+      "path": "migrations/0206_embedding_transition_header_progress.sql",
+      "sha256": "6ffa3d5078af6ae8ff12d3b9ce213d5cbd5d1bddfaed1c15b4fd2758f82ce6c7"
+    },
+    {
+      "bytes": 9192,
+      "path": "migrations/0207_embedding_delivery_rebuild_xor.sql",
+      "sha256": "a4dc3db96ad8e19c26c0e8d65d154d7c75d47c54fcfcef909fc770f6de6d081d"
+    },
+    {
+      "bytes": 47889,
+      "path": "migrations/0208_embedding_memory_references.sql",
+      "sha256": "934987ece066d0d5f7e94a71f2e8f0e3c9c55051e3acca5bdd24b4994526ce58"
+    },
+    {
+      "bytes": 3182,
+      "path": "migrations/0209_installation_safety_authority.sql",
+      "sha256": "ba6fab1fb604cb7600d5a9678dfac805adb7f7e7cdfea92c301f3043186566ca"
+    },
+    {
+      "bytes": 7874,
+      "path": "PLAN.md",
+      "sha256": "621d7d6d5fcfe098d7197c4e89ed2e275007d4fd235782d4be36c7ae8afe5a00"
+    },
+    {
+      "bytes": 19181,
+      "path": "schemas/openai-compatible/openai-chat-completions-v1-q1.json",
+      "sha256": "6797ff6a7af2543f812ca9f050f4d2324eaa75e1ba2dd72bda9eddd2de91f528"
+    },
+    {
+      "bytes": 4094,
+      "path": "schemas/protocol-lock.json",
+      "sha256": "dc643aa2f974e122d4272efa0e34053b9cf73ce98523833dbef39475b4a68e16"
+    },
+    {
+      "bytes": 9336,
+      "path": "scripts/p03-scope.mjs",
+      "sha256": "4bb1987bed54700ee690cd1b3b67f8841fa67db617ec87e81f8780812d5f07fe"
+    },
+    {
+      "bytes": 10765,
+      "path": "scripts/p04-scope.mjs",
+      "sha256": "f441f74077648a2c02a35b3bf1f7de98385d8f9fc849b4cecf3328662d922a20"
+    },
+    {
+      "bytes": 8470,
+      "path": "scripts/protocol-lock.mjs",
+      "sha256": "0b461773554835a4ad5717c664e54cf1229cc50f51e8d8cd89534e8f07c2c8ed"
+    },
+    {
+      "bytes": 3680,
+      "path": "scripts/protocol-provenance.mjs",
+      "sha256": "244d29296814944036eb87cd01f5a76ade17f6801d57eaab0a1f1c7ac6c05e5f"
+    },
+    {
+      "bytes": 14140,
+      "path": "scripts/verify-dirty-baseline.mjs",
+      "sha256": "aceeffbf91404b9e81a2b01dcf20a8638cc30a0c14a4fa8289a9fd205e05f9b2"
+    },
+    {
+      "bytes": 509,
+      "path": "tests/fixtures/openai-q1/marker.png",
+      "sha256": "b0343846f3c9f250e25edb45b73993b747bc85143f040c207cd76b6936af4de6"
+    },
+    {
+      "bytes": 17784,
+      "path": "tests/p03_scope.test.mjs",
+      "sha256": "23b3cb982e2cc9183e9beadc470df32942843d6865961dcea4580c4bdd41df79"
+    },
+    {
+      "bytes": 20711,
+      "path": "tests/p04_scope.test.mjs",
+      "sha256": "c42ca257d621777c9e71a6ba2dfc6810c9adf1cea85562d8b169f0e1407f6024"
+    }
+  ],
+  "protected_authority_paths": [
+    "PLAN.md",
+    "crates/vestrace-http/src/api/memory.rs",
+    "crates/vestrace-http/src/api/retrieval.rs",
+    "docs/development-evidence/v1-g0-01-preflight.json",
+    "docs/development-evidence/v1-g0-01-protocol-lock.md",
+    "docs/development-evidence/v1-g0-02-preflight.json",
+    "docs/development-evidence/v1-g0-02-security-material-foundation.md",
+    "docs/development-evidence/v1-g0-03-preflight.json",
+    "docs/development-evidence/v1-g0-03-provider-execution-foundation.md",
+    "docs/development-evidence/v1-g0-04-embedding-transition-foundation.md",
+    "docs/development-evidence/v1-g0-04c-preflight.json",
+    "docs/external-corpus/vestrace-docss-2026-08-19.manifest.json",
+    "docs/superpowers/plans/2026-08-26-vestrace-v1-g0-01-protocol-lock.md",
+    "docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md",
+    "docs/superpowers/plans/2026-08-27-vestrace-v1-g0-02-security-material-foundation.md",
+    "docs/superpowers/plans/2026-08-28-vestrace-v1-g0-03-provider-execution-foundation.md",
+    "docs/superpowers/plans/2026-09-03-vestrace-v1-g0-04-embedding-transition-foundation.md",
+    "docs/superpowers/plans/2026-09-08-vestrace-v1-g0-04-completion.md",
+    "docs/superpowers/specs/2026-08-25-vestrace-v1-full-product-ag-ui-a2a-design.md",
+    "docs/superpowers/specs/2026-09-08-vestrace-v1-g0-04-completion-design.md",
+    "migrations/0001_extensions.sql",
+    "migrations/0002_identity_and_workspaces.sql",
+    "migrations/0003_rls_baseline.sql",
+    "migrations/0004_sessions_and_events.sql",
+    "migrations/0005_memories_and_revisions.sql",
+    "migrations/0006_provenance_scopes_relations.sql",
+    "migrations/0007_idempotency_jobs_outbox.sql",
+    "migrations/0008_search_documents.sql",
+    "migrations/0009_embedding_spaces.sql",
+    "migrations/0010_structured_search_indexes.sql",
+    "migrations/0011_retrieval_journal_and_context_packs.sql",
+    "migrations/0012_tokens_policies_and_approvals.sql",
+    "migrations/0013_audit_and_redaction.sql",
+    "migrations/0014_provider_and_model_registry.sql",
+    "migrations/0015_routing_executions_and_evaluations.sql",
+    "migrations/0016_agents_skills_workflows.sql",
+    "migrations/0017_external_execution_history.sql",
+    "migrations/0018_workflows_and_evaluations.sql",
+    "migrations/0019_agent_runs_and_steps.sql",
+    "migrations/0020_run_events_and_checkpoints.sql",
+    "migrations/0021_run_leases_and_work_items.sql",
+    "migrations/0023_policy_bundles_and_snapshots.sql",
+    "migrations/0024_policy_decisions_tickets_and_approval_grants.sql",
+    "migrations/0025_resource_budget_accounts_and_limits.sql",
+    "migrations/0029_model_execution_attempts_and_events.sql",
+    "migrations/0032_tool_definitions_and_invocations.sql",
+    "migrations/0037_execution_plans_revisions_steps_validation.sql",
+    "migrations/0042_artifacts_revisions_blobs_and_provenance.sql",
+    "migrations/0048_conversations_channels_and_triggers.sql",
+    "migrations/0054_connector_definitions_operations_and_backend_bindings.sql",
+    "migrations/0061_agent_packages_and_extension_registry.sql",
+    "migrations/0062_a2a_interoperability_gateway.sql",
+    "migrations/0063_observability_and_metric_rollups.sql",
+    "migrations/0081_product_surface_and_ag_ui_gateway.sql",
+    "migrations/0082_product_api_transfers_and_releases.sql",
+    "migrations/0087_workspace_envelope_encryption_and_cross_sharing.sql",
+    "migrations/0088_event_schemas_exports_and_capture_profiles.sql",
+    "migrations/0089_webhook_subscriptions_and_deliveries.sql",
+    "migrations/0090_release_orchestration_and_manifests.sql",
+    "migrations/0110_ag_ui_endpoints_run_bindings_and_intakes.sql",
+    "migrations/0111_run_event_store_foundation.sql",
+    "migrations/0112_run_streams_and_recovery_checkpoints.sql",
+    "migrations/0113_event_append_only_trigger.sql",
+    "migrations/0114_active_memory_source_invariant.sql",
+    "migrations/0115_execution_ownership_link.sql",
+    "migrations/0116_memory_revision_temporal_fields.sql",
+    "migrations/0117_evidence_ref_v2.sql",
+    "migrations/0118_claim_conflict_core.sql",
+    "migrations/0119_mutation_reconciliation.sql",
+    "migrations/0120_generic_event_temporal_fields.sql",
+    "migrations/0121_cognitive_mutation_concurrency.sql",
+    "migrations/0122_retrieval_temporal_indexes.sql",
+    "migrations/0123_evaluation_facts_v2.sql",
+    "migrations/0124_learning_projection_proposal_boundary.sql",
+    "migrations/0125_qualification_bundles.sql",
+    "migrations/0126_incident_recovery_trust_records.sql",
+    "migrations/0127_external_effect_reconciliation_records.sql",
+    "migrations/0128_external_effect_recovery_indexes.sql",
+    "migrations/0129_external_effect_fault_suite_evidence.sql",
+    "migrations/0130_pgcrypto_extension.sql",
+    "migrations/0131_drop_vestigial_run_checkpoint_columns.sql",
+    "migrations/0132_workspace_settings.sql",
+    "migrations/0133_workspace_secret_envelope_storage.sql",
+    "migrations/0134_artifact_content_storage.sql",
+    "migrations/0135_access_token_authentication.sql",
+    "migrations/0136_access_token_authentication_policy.sql",
+    "migrations/0137_access_token_touch_visibility.sql",
+    "migrations/0138_retrieval_journal_channels.sql",
+    "migrations/0139_force_rls_on_scoped_tables.sql",
+    "migrations/0140_force_rls_on_memory_graph.sql",
+    "migrations/0141_defer_memory_active_revision_fk.sql",
+    "migrations/0142_search_document_is_one_per_memory.sql",
+    "migrations/0143_force_rls_on_execution_and_evaluation.sql",
+    "migrations/0144_external_effects_belong_to_a_workspace.sql",
+    "migrations/0145_force_rls_on_the_run_core.sql",
+    "migrations/0146_health_findings_persist.sql",
+    "migrations/0147_capability_grants.sql",
+    "migrations/0148_embeddings_have_a_space.sql",
+    "migrations/0149_the_outbox_survives_a_failing_handler.sql",
+    "migrations/0150_inert_policies_and_a_purge_that_removed_nothing.sql",
+    "migrations/0151_a_recorded_attempt_is_not_a_settled_outcome.sql",
+    "migrations/0152_a_settled_outcome_is_owed_to_its_run.sql",
+    "migrations/0153_external_effect_lifecycle_recovery.sql",
+    "migrations/0154_a_dispatch_states_its_owner_and_deadline.sql",
+    "migrations/0155_lost_dispatch_adoption_is_ordered_evidence.sql",
+    "migrations/0156_a_failed_recovery_attempt_is_not_a_reconciliation.sql",
+    "migrations/0157_acknowledged_receipts_require_reconciliation.sql",
+    "migrations/0158_external_effect_authorizations.sql",
+    "migrations/0159_a_dispatch_owner_can_be_known_dead.sql",
+    "migrations/0160_fault_suite_evidence_is_append_only.sql",
+    "migrations/0161_qualification_baselines.sql",
+    "migrations/0162_recovery_qualification_observations.sql",
+    "migrations/0163_model_data_policy_decisions.sql",
+    "migrations/0164_embedding_data_policy_decisions.sql",
+    "migrations/0165_governed_mutation_audit_atomicity.sql",
+    "migrations/0166_guarded_operation_owner_role.sql",
+    "migrations/0167_installation_fingerprint_continuity.sql",
+    "migrations/0168_installation_mutation_permit.sql",
+    "migrations/0169_material_key_creation_intents.sql",
+    "migrations/0170_content_material_guards.sql",
+    "migrations/0171_connection_execution_guards.sql",
+    "migrations/0172_credential_slots_and_revisions.sql",
+    "migrations/0173_credential_key_creation_intents.sql",
+    "migrations/0174_material_erasure_primitives.sql",
+    "migrations/0175_runtime_migration_history_read.sql",
+    "migrations/0176_connection_revisions_and_no_auth_bindings.sql",
+    "migrations/0177_qualification_jobs_and_revisions.sql",
+    "migrations/0178_model_revisions_and_binding_snapshots.sql",
+    "migrations/0179_model_request_evidence.sql",
+    "migrations/0180_connection_admission_and_credential_leases.sql",
+    "migrations/0181_credential_activation_and_rotation.sql",
+    "migrations/0182_provider_effect_atomic_dispatch.sql",
+    "migrations/0183_model_request_reconstruction_contract.sql",
+    "migrations/0184_provider_dispatch_and_result_contract.sql",
+    "migrations/0185_qualification_job_lifecycle.sql",
+    "migrations/0186_provider_execution_wiring.sql",
+    "migrations/0187_embedding_jobs_and_corpus_generations.sql",
+    "migrations/0188_embedding_transitions.sql",
+    "migrations/0189_embedding_transition_carry.sql",
+    "migrations/0190_embedding_transition_barriers.sql",
+    "migrations/0191_embedding_corpus_generation_members.sql",
+    "migrations/0192_embedding_job_pre_dispatch_termination.sql",
+    "migrations/0193_embedding_output_key_preparation.sql",
+    "migrations/0194_embedding_job_result_preparation.sql",
+    "migrations/0195_embedding_job_result_finalization.sql",
+    "migrations/0196_retired_credential_erasure.sql",
+    "migrations/0197_embedding_canonical_generations.sql",
+    "migrations/0198_embedding_index_builds.sql",
+    "migrations/0199_embedding_executor_work.sql",
+    "migrations/0200_embedding_transition_execution.sql",
+    "migrations/0201_embedding_transition_activation.sql",
+    "migrations/0202_embedding_retrieval_results.sql",
+    "migrations/0203_embedding_erasure_propagation.sql",
+    "migrations/0204_embedding_legacy_adoption.sql",
+    "migrations/0205_embedding_retrieval_dispatch.sql",
+    "migrations/0206_embedding_transition_header_progress.sql",
+    "migrations/0207_embedding_delivery_rebuild_xor.sql",
+    "migrations/0208_embedding_memory_references.sql",
+    "migrations/0209_installation_safety_authority.sql",
+    "schemas/openai-compatible/openai-chat-completions-v1-q1.json",
+    "schemas/protocol-lock.json",
+    "scripts/p03-scope.mjs",
+    "scripts/p04-scope.mjs",
+    "scripts/protocol-lock.mjs",
+    "scripts/protocol-provenance.mjs",
+    "scripts/verify-dirty-baseline.mjs",
+    "tests/fixtures/openai-q1/marker.png",
+    "tests/p03_scope.test.mjs",
+    "tests/p04_scope.test.mjs"
+  ],
+  "schema_version": 1,
+  "status_porcelain_v1_z_base64": "IE0gQ2FyZ28udG9tbAAgTSBjcmF0ZXMvdmVzdHJhY2UtYXBwbGljYXRpb24vc3JjL2NvbmZvcm1hbmNlX2Nhc2VzLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL2JhcnJpZXIucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvY2FycnkucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvZmluYWxpemF0aW9uLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL2tleXMucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvbW9kLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL3Jlc3VsdC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtYXBwbGljYXRpb24vc3JjL2VtYmVkZGluZy90cmFuc2l0aW9uLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nX2RhdGFfcG9saWN5LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvbWF0ZXJpYWwvZXJhc3VyZS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtYXBwbGljYXRpb24vc3JjL21vZGVsX3JlcXVlc3RfZXZpZGVuY2UucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9wcm92aWRlcl9kaXNwYXRjaC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtYXBwbGljYXRpb24vc3JjL3JldHJpZXZhbC9wb3J0cy5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtYXBwbGljYXRpb24vc3JjL3JldHJpZXZhbC9zZXJ2aWNlLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1jbGkvc3JjL2NvbW1hbmRzL2RvY3Rvci5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtY2xpL3NyYy9jb21tYW5kcy9tY3AucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWNsaS9zcmMvY29tbWFuZHMvcmVidWlsZC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtY2xpL3NyYy9jb21tYW5kcy9zY2hlbWEucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWNsaS9zcmMvY29tbWFuZHMvc2VydmVyLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1jbGkvc3JjL2NvbW1hbmRzL3dvcmtlci5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtY2xpL3Rlc3RzL3Byb3ZpZGVyX29wZW5hcGlfY29udHJhY3QucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWNsaS90ZXN0cy9wcm92aWRlcl9ydW50aW1lX3dpcmluZy5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZG9tYWluL3NyYy9lbWJlZGRpbmcvZ2VuZXJhdGlvbi5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZG9tYWluL3NyYy9lbWJlZGRpbmcvbW9kLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1kb21haW4vc3JjL2VtYmVkZGluZy9zcGFjZS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZG9tYWluL3NyYy9pZC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZG9tYWluL3NyYy9tYXRlcmlhbC9pbnRlbnQucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWRvbWFpbi9zcmMvc2VjdXJpdHkvbW9kLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1kb21haW4vdGVzdHMvZW1iZWRkaW5nX2NvbnRyYWN0LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1mYXVsdC1zY2VuYXJpby9zcmMvbWFpbi5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZmF1bHQtc2NlbmFyaW8vc3JjL3NjZW5hcmlvcy9lbWJlZGRpbmdfZGlzcGF0Y2hfY3Jhc2gucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWZhdWx0LXNjZW5hcmlvL3NyYy9zY2VuYXJpb3MvZW1iZWRkaW5nX3Jlc3VsdF9maW5hbGl6YXRpb25fY3Jhc2gucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWZhdWx0LXNjZW5hcmlvL3NyYy9zY2VuYXJpb3MvZW1iZWRkaW5nX3Jlc3VsdF9wcmVwYXJhdGlvbl9jcmFzaC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtZmF1bHQtc2NlbmFyaW8vc3JjL3NldHRpbmdzLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1odHRwL3NyYy9hcGkvZW1iZWRkaW5nX2pvYnMucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWh0dHAvc3JjL2FwaS9tb2RlbHMucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWh0dHAvc3JjL3JvdXRlX2ludmVudG9yeS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaHR0cC9zcmMvcm91dGVyLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvY29uZmlnLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvbGliLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvZW1iZWRkaW5nX2RhdGFfcG9saWN5X2RlY2lzaW9uX3JlcG9zaXRvcnkucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy9lbWJlZGRpbmdfa2V5X3JlcG9zaXRvcnkucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy9lbWJlZGRpbmdfcmVzdWx0X2ZpbmFsaXphdGlvbl9yZXBvc2l0b3J5LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvZW1iZWRkaW5nX3N0b3JlLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvZW1iZWRkaW5nX3RyYW5zaXRpb25fcmVwb3NpdG9yeS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL21hdGVyaWFsX2ludGVudC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL21vZC5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL21vZGVsX3JlcXVlc3RfZXZpZGVuY2VfcmVwb3NpdG9yeS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL21vZGVsX3JldmlzaW9uX3JlcG9zaXRvcnkucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy9wcm92aWRlcl9kaXNwYXRjaF9yZXBvc2l0b3J5LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvcmV2aXNpb25faHlkcmF0b3IucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy90ZXh0X3JldHJpZXZlci5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL3ZlY3Rvcl9yZXRyaWV2ZXIucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL2NvbW1vbi9tb2QucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL2VtYmVkZGluZ19kaXNwYXRjaF9pc19hdG9taWMucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL2VtYmVkZGluZ19yZXN1bHRfZmluYWxpemF0aW9uLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfcmVzdWx0X3ByZXBhcmF0aW9uLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfcnVudGltZV9yb2xlX3JlZnVzYWxzLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfc2NoZW1hX2NvbnRyYWN0LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfc3BhY2VfaXNvbGF0aW9uLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9tb2RlbF9yZXF1ZXN0X2V2aWRlbmNlLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9wMDNfdXBncmFkZV9wcm92aXNpb25pbmcucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL3JldHJpZXZhbF9jbGFzc2lmaWNhdGlvbl9ib3VuZGFyeS5ycwAgTSBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvcmV0cmlldmFsX2dlbmVyYXRpb25fZmVuY2UucnMAIE0gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL3RleHRfcmV0cmlldmVyLnJzACBNIGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy92ZWN0b3JfcmV0cmlldmVyX2RhdGFfcG9saWN5LnJzACBNIGNyYXRlcy92ZXN0cmFjZS1tY3Avc3JjL3NlcnZlci5ycwBNTSBkb2NrZXIvcG9zdGdyZXMvaW5pdC1ydW50aW1lLXJvbGUuc2gAIE0gZG9jcy9kZXZlbG9wbWVudC1ldmlkZW5jZS92MS1nMC0wNC1lbWJlZGRpbmctdHJhbnNpdGlvbi1mb3VuZGF0aW9uLm1kACBNIHNjcmlwdHMvcDA0LXNjb3BlLm1qcwAgTSB0ZXN0cy9lbWJlZGRpbmdfZmF1bHRfc2NlbmFyaW9fZTJlLnJzACBNIHRlc3RzL21vZGVsX3JlcXVlc3Rfc2VtYW50aWNfb2JzZXJ2YXRpb24ucnMAIE0gdGVzdHMvcDA0X3Njb3BlLnRlc3QubWpzAD8/IExJQ0VOU0UtQVBBQ0hFAD8/IGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL2Fkb3B0aW9uLnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL2VyYXN1cmUucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvZXhlY3V0b3IucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvaW5kZXgucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvcmV0cmlldmFsLnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1hcHBsaWNhdGlvbi9zcmMvZW1iZWRkaW5nL3RyYW5zaXRpb25fY29vcmRpbmF0b3IucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWFwcGxpY2F0aW9uL3NyYy9lbWJlZGRpbmcvd29yay5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtY2xpL3Rlc3RzL2VtYmVkZGluZ193b3JrZXJfb25jZS5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtZG9tYWluL3NyYy9lbWJlZGRpbmcvYWRvcHRpb24ucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWRvbWFpbi9zcmMvZW1iZWRkaW5nL2luZGV4LnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1kb21haW4vc3JjL2VtYmVkZGluZy9yZWFkaW5lc3MucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWRvbWFpbi9zcmMvZW1iZWRkaW5nL3JldHJpZXZhbC5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtZmF1bHQtc2NlbmFyaW8vc3JjL3NjZW5hcmlvcy9lbWJlZGRpbmdfd29ya2VyX2NvbXBsZXRpb25fY3Jhc2gucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWh0dHAvdGVzdHMvZW1iZWRkaW5nX3JldHJpZXZhbF9yb3V0ZXMucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9lbWJlZGRpbmdfaW5kZXgvZmxhdC5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL2VtYmVkZGluZ19pbmRleC9tb2QucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9lbWJlZGRpbmdfaW5kZXgvcmVnaXN0cnkucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy9lbWJlZGRpbmdfYWRvcHRpb25fcmVwb3NpdG9yeS5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL2VtYmVkZGluZ19lcmFzdXJlX3JlcG9zaXRvcnkucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3NyYy9wb3N0Z3Jlcy9lbWJlZGRpbmdfaW5kZXhfcmVwb3NpdG9yeS5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL2VtYmVkZGluZ19yZXRyaWV2YWxfY2xpZW50LnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvZW1iZWRkaW5nX3JldHJpZXZhbF9yZXBvc2l0b3J5LnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS9zcmMvcG9zdGdyZXMvZW1iZWRkaW5nX3dvcmtfcmVwb3NpdG9yeS5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvc3JjL3Bvc3RncmVzL2VtYmVkZGluZ193cml0ZV9yb3V0ZS5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvZW1iZWRkaW5nX2Nhbm9uaWNhbF9nZW5lcmF0aW9ucy5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvZW1iZWRkaW5nX2VyYXN1cmVfcHJvcGFnYXRpb24ucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLWluZnJhc3RydWN0dXJlL3Rlc3RzL2VtYmVkZGluZ19leGVjdXRvci5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvZW1iZWRkaW5nX2luZGV4X2J1aWxkcy5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvZW1iZWRkaW5nX2xlZ2FjeV9hZG9wdGlvbi5ycwA/PyBjcmF0ZXMvdmVzdHJhY2UtaW5mcmFzdHJ1Y3R1cmUvdGVzdHMvZW1iZWRkaW5nX3JldHJpZXZhbF9yZXN1bHRzLnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfdHJhbnNpdGlvbl9hY3RpdmF0aW9uLnJzAD8/IGNyYXRlcy92ZXN0cmFjZS1pbmZyYXN0cnVjdHVyZS90ZXN0cy9lbWJlZGRpbmdfd29ya2VyX3Jlc3RhcnQucnMAPz8gY3JhdGVzL3Zlc3RyYWNlLW1jcC90ZXN0cy9lbWJlZGRpbmdfcmV0cmlldmFsLnJzAD8/IGRvY3MvZGV2ZWxvcG1lbnQtZXZpZGVuY2UvdjEtZzAtMDRjLXByZWZsaWdodC5qc29uAD8/IGRvY3MvZGV2ZWxvcG1lbnQtZXZpZGVuY2UvdjEtZzAtMDUtcHJlZmxpZ2h0Lmpzb24APz8gZG9jcy9zdXBlcnBvd2Vycy9wbGFucy8yMDI2LTA5LTA4LXZlc3RyYWNlLXYxLWcwLTA0LWNvbXBsZXRpb24ubWQAPz8gZG9jcy9zdXBlcnBvd2Vycy9wbGFucy8yMDI2LTA5LTEyLXZlc3RyYWNlLXYxLWcwLTA1LWJhY2t1cC1yZXN0b3JlLWZvdW5kYXRpb24ubWQAPz8gZG9jcy9zdXBlcnBvd2Vycy9zcGVjcy8yMDI2LTA5LTA4LXZlc3RyYWNlLXYxLWcwLTA0LWNvbXBsZXRpb24tZGVzaWduLm1kAD8/IGRvY3Mvc3VwZXJwb3dlcnMvc3BlY3MvMjAyNi0wOS0xMi12ZXN0cmFjZS12MS1nMC0wNS1iYWNrdXAtcmVzdG9yZS1mb3VuZGF0aW9uLWRlc2lnbi5tZAA/PyBtaWdyYXRpb25zLzAxOTdfZW1iZWRkaW5nX2Nhbm9uaWNhbF9nZW5lcmF0aW9ucy5zcWwAPz8gbWlncmF0aW9ucy8wMTk4X2VtYmVkZGluZ19pbmRleF9idWlsZHMuc3FsAD8/IG1pZ3JhdGlvbnMvMDE5OV9lbWJlZGRpbmdfZXhlY3V0b3Jfd29yay5zcWwAPz8gbWlncmF0aW9ucy8wMjAwX2VtYmVkZGluZ190cmFuc2l0aW9uX2V4ZWN1dGlvbi5zcWwAPz8gbWlncmF0aW9ucy8wMjAxX2VtYmVkZGluZ190cmFuc2l0aW9uX2FjdGl2YXRpb24uc3FsAD8/IG1pZ3JhdGlvbnMvMDIwMl9lbWJlZGRpbmdfcmV0cmlldmFsX3Jlc3VsdHMuc3FsAD8/IG1pZ3JhdGlvbnMvMDIwM19lbWJlZGRpbmdfZXJhc3VyZV9wcm9wYWdhdGlvbi5zcWwAPz8gbWlncmF0aW9ucy8wMjA0X2VtYmVkZGluZ19sZWdhY3lfYWRvcHRpb24uc3FsAD8/IG1pZ3JhdGlvbnMvMDIwNV9lbWJlZGRpbmdfcmV0cmlldmFsX2Rpc3BhdGNoLnNxbAA/PyBtaWdyYXRpb25zLzAyMDZfZW1iZWRkaW5nX3RyYW5zaXRpb25faGVhZGVyX3Byb2dyZXNzLnNxbAA/PyBtaWdyYXRpb25zLzAyMDdfZW1iZWRkaW5nX2RlbGl2ZXJ5X3JlYnVpbGRfeG9yLnNxbAA/PyBtaWdyYXRpb25zLzAyMDhfZW1iZWRkaW5nX21lbW9yeV9yZWZlcmVuY2VzLnNxbAA/PyBzY3JpcHRzL3AwNS1zY29wZS5tanMAPz8gdGVzdHMvcDA1X3Njb3BlLnRlc3QubWpzAD8/IG1pZ3JhdGlvbnMvMDIwOV9pbnN0YWxsYXRpb25fc2FmZXR5X2F1dGhvcml0eS5zcWwA",
+  "status_porcelain_v1_z_sha256": "feb22ecdd9cd7f43f3eec493691f71463eadda802a7c98c2ca6d9688f155b3bc",
+  "scope_amendments": [
+    {
+      "authorized_at_utc": "2026-09-18T00:00:16.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up Task 4 (expose the real no-auth binding revision id) is complete and reviewed (PASS/PASS, no fix round needed, APPROVE). GovernedConnectionProjection/ConnectionResponse gain no_auth_binding_revision_id, populated via a new LEFT JOIN on no_auth_binding_revisions in list_safe_connections, keyed on connection_id AND connection_revision_id = head.current_revision_id so a superseded revision's binding can never leak (verified against the table's real UNIQUE constraint on connection_revision_id). Closes the backend half of the gap where the console currently fakes this id with crypto.randomUUID(), which never matches a real row; a later task updates the console to consume it. One necessary compile-consequence ripple fix to an existing exact-JSON test in provider_routes.rs, independently confirmed complete (only other GovernedConnectionProjection/ConnectionResponse construction site in the workspace).",
+      "paths": [
+        "crates/vestrace-application/src/connections.rs",
+        "crates/vestrace-http/src/api/connections.rs",
+        "crates/vestrace-http/tests/provider_routes.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:15.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up Task 3 (connector and provider auto-materialization) is complete and reviewed (PASS/PASS, no fix round needed). Fixes the two architectural gaps where connections.connector_id/models.provider_id are real foreign keys with no HTTP route ever creating the referenced connectors/providers rows. insert_stable_connection/insert_or_verify_stable_model now auto-materialize a minimal compatibility row transactionally, ON CONFLICT (id) DO NOTHING, per the design's chosen approach (rejecting full CRUD and rejecting relaxed foreign keys). Review confirmed this is safe under the only real caller today (the console always mints a fresh UUID per creation) and flagged, as a non-blocking follow-up note rather than a defect, that a future non-console caller reusing the same id across genuinely different connections/models would have its data silently dropped by DO NOTHING with no verify-on-mismatch guard (asymmetric with the pre-existing check on the models table itself).",
+      "paths": [
+        "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:14.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up Task 2 (qualification job executor / worker) is complete and reviewed. Adds the Rust side that calls Task 1's SQL claim/finish functions: a QualificationWorkRepository port, PgQualificationWorkRepository, and a poll_qualification_work worker loop driving QualificationJobService::run_next_probe/finalize_success. The implementer found and fixed a real bug in the plan's own worker-loop code during implementation: run_next_probe's returned state can never equal Succeeded (migrations/0185's vestrace_record_qualification_probe_result always leaves the job in state='running' after a passing probe, even the last ordinal, and only vestrace_finalize_qualification_job ever sets 'succeeded'), so the plan's original finalize_success trigger was dead code; the implementer correctly moved it to fire when next_qualification_ordinal returns None on a reclaimed job instead, verified with a new end-to-end test driving a job through all 12 ordinals to succeeded.",
+      "paths": [
+        "crates/vestrace-application/src/provider_qualification.rs",
+        "crates/vestrace-cli/src/commands/worker.rs",
+        "crates/vestrace-infrastructure/src/postgres/qualification_work_repository.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:13.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up Task 1 (migration: qualification job work claims) is complete and reviewed. Adds a claim/finish lease pair over qualification_jobs, modeled on migrations/0199_embedding_executor_work.sql, so a future worker process can pick up qualification jobs for real execution. Review round 1 found a CRITICAL gap (missing ownership/RLS-forcing/grant hardening, reproducing the defect class migrations/0139-0145 already fixed codebase-wide) and a HIGH gap (no test proving the runtime role is refused raw DML); both were fixed in fix round 1 and confirmed RESOLVED by a scoped re-review.",
+      "paths": [
+        "migrations/0217_qualification_job_work_claims.sql",
+        "crates/vestrace-infrastructure/tests/qualification_work_claims.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:12.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up's implementation plan is admitted, following the approved (and, during writing, revised) design at docs/superpowers/specs/2026-09-18-vestrace-v1-p06-followup-real-execution-design.md. Task 5 (RunCoordinator/GovernedRunStepInputAuthority composition) was scoped out of both the spec and this plan during writing, deferred to a further package, per the operator's explicit decision after tracing PrepareGovernedRunStepInput's full 15-field shape revealed real design gaps (no production sampling default, no production effect-intent derivation for a Run step) rather than a pure composition task.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-18-vestrace-v1-p06-followup-real-execution.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:11.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 follow-up designs closing the four architectural gaps P06 Task 8 found live (connector/provider auto-materialization, a qualification-job worker executor, and composing GovernedRunStepInputAuthority into the server), per the operator's explicit decision to close P06 as blocked and address these in a separate package. Admitting only the design-spec path at this stage, per the operator's chosen sequencing: design doc first, implementation plan and code only after the design is reviewed.",
+      "paths": [
+        "docs/superpowers/specs/2026-09-18-vestrace-v1-p06-followup-real-execution-design.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:10.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 8 closes real model-backed Run execution evidence, recorded honestly as BLOCKED (not pass) rather than expanding scope now, per docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md and the operator's explicit closure decision. Restart-cycle and Docker-networking evidence is real and green; a real completion could not be produced for four independently-confirmed, live-verified backend gaps (no connector-creation route, no provider-creation route, no qualification-job executor composed into any binary, no GovernedRunStepInputAuthority composed into the server) plus, for the credentialed branch only, no real credential material or a way to create it.",
+      "paths": [
+        "docs/development-evidence/v1-g0-06-real-execution.md",
+        "docs/development-evidence/v1-g0-05-gate/p06-no-auth-run-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/p06-credentialed-run-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-connections-create-failure.png",
+        "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-credentialed-create-failure.png",
+        "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-models-register-blocked.png",
+        "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-settings-default-model-post-restart.png",
+        "docs/development-evidence/v1-g0-05-gate/p06-screenshots/p06-settings-default-model-pre-restart.png"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:09.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 7 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) adds a read-only Settings Models tab showing the workspace's chat default.",
+      "paths": [
+        "apps/console/src/routes/SettingsPage.tsx"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:08.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 6 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) rebinds Model publication to a real Connection and adds the workspace chat-default action.",
+      "paths": [
+        "apps/console/src/routes/ModelsPage.tsx"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:07.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 5 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) rewires the Connections page to real governed Connection creation and qualification.",
+      "paths": [
+        "apps/console/src/routes/ConnectionsPage.tsx"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:06.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 4 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) adds a shared qualification-state polling hook for the console, used by the Connections page's Test Connection status.",
+      "paths": [
+        "apps/console/src/sdk/useQualificationPolling.ts"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:05.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 3 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) fixes the console SDK's governed-mutation idempotency header and Connections/Models payload/response types to match the real backend contracts.",
+      "paths": [
+        "apps/console/src/sdk/client.ts"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:04.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 2 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) implements real AG-UI run execution over the existing RunOrchestrator, replacing the hard-coded refusal stub.",
+      "paths": [
+        "crates/vestrace-http/src/api/ag_ui.rs",
+        "crates/vestrace-http/tests/router_contract.rs",
+        "crates/vestrace-http/tests/run_routes.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:03.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 Task 1 (implementation plan docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md) adds the workspace-default-model read/write route. Two files were previously clean; three others were already dirty from earlier work but had never been added to changeScopePaths, so the dirty-baseline verifier's own rule (any further edit to an already-dirty-but-unscoped file is flagged) requires listing them explicitly now that this task edits them.",
+      "paths": [
+        "crates/vestrace-application/src/models/revisions.rs",
+        "crates/vestrace-http/src/api/mod.rs",
+        "crates/vestrace-http/src/api/models.rs",
+        "crates/vestrace-http/src/route_inventory.rs",
+        "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:02.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06's implementation plan is admitted, following the approved design at docs/superpowers/specs/2026-09-18-vestrace-v1-p06-real-execution-design.md. Implementation paths themselves are admitted by the plan's own tasks, not here.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-18-vestrace-v1-p06-real-execution.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-18T00:00:01.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P06 (G1) designs real Connections/Models/Agents/Runs/Settings execution, following the closed P05 program. Admitting only the design-spec path at this stage, per the operator's chosen sequencing: design doc first, implementation plan and code only after the design is reviewed.",
+      "paths": [
+        "docs/superpowers/specs/2026-09-18-vestrace-v1-p06-real-execution-design.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:07.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-J closes g0-16 and the remaining conjuncts of g0-17 (the archiver and create-only fingerprint-key identity/proof conjuncts) via fresh evidence, per docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md's sequencing. No new design; reuses the disposable-Compose/Linux-runner recipe already exercised by P05-A through P05-D.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05j-backup-restore-closure.md",
+        "docs/development-evidence/v1-g0-05j-backup-restore-closure.md",
+        "docs/development-evidence/v1-g0-05-gate/archiver-fingerprint-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/backup-restore-authority-test.txt"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:06.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-I's Task 1 scope admission missed two implementation paths that later tasks legitimately touched (crates/vestrace-application/src/ports.rs, modified rather than a new installation_drain.rs file in that crate; crates/vestrace-domain/tests/installation_drain_contract.rs, omitted from the original list) and Task 9's own new evidence file. Caught by verify-dirty-baseline.mjs before any push, as designed.",
+      "paths": [
+        "crates/vestrace-application/src/ports.rs",
+        "crates/vestrace-domain/tests/installation_drain_contract.rs",
+        "docs/development-evidence/v1-g0-05-gate/drain-mutation-permit-test.txt"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:05.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-I implements DrainMutationPermit/Quiescing (g0-12, g0-13, and the remaining conjunct of g0-10), per the approved plan and design at docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit.md.",
+      "paths": [
+        "migrations/0216_installation_drain_request.sql",
+        "crates/vestrace-domain/src/installation_drain.rs",
+        "crates/vestrace-application/src/installation_drain.rs",
+        "crates/vestrace-infrastructure/src/postgres/installation_drain.rs",
+        "crates/vestrace-infrastructure/tests/installation_drain_request.rs",
+        "docs/development-evidence/v1-g0-05i-drain-mutation-permit.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:04.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-I's detailed implementation plan is admitted, following the approved design at docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md. Implementation paths themselves are admitted by the plan's own Task 1, not here.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:03.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-I designs DrainMutationPermit/Quiescing (g0-12, g0-13, and the remaining conjunct of g0-10). Admitting only the design-spec path at this stage, per the operator's chosen sequencing: design doc first, implementation plan and code only after the design is reviewed.",
+      "paths": [
+        "docs/superpowers/specs/2026-09-17-vestrace-v1-g0-05i-drain-mutation-permit-design.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:02.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-H closes G0 criteria g0-10, g0-14, and g0-15 with fresh digest-pinned evidence, recorded honestly as blocked (not pass) because each is a conjunction with a conjunct this package cannot prove: DrainMutationPermit/Quiescing confirmed absent from the repository (g0-10), an unavailable browser oracle (g0-14), and an unfound dictionary-resistant comparison-scope mechanism (g0-15). Per docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05h-fresh-closure.md",
+        "docs/development-evidence/v1-g0-05-gate/embedding-transition-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/retrieval-retry-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/material-lifecycle-test.txt",
+        "docs/development-evidence/v1-g0-05h-fresh-closure.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:01.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-G closes G0 criteria g0-03, g0-04, g0-05, g0-06, g0-07, g0-09, and g0-11 with fresh digest-pinned evidence from P03-scope suites confirmed passing this session, per docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05g-fresh-closure.md",
+        "docs/development-evidence/v1-g0-05-gate/effect-authority-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/model-request-evidence-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/transport-security-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/connection-credential-guards-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/admission-leases-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/credential-intent-lifecycle-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/candidate-abandon-test.txt",
+        "docs/development-evidence/v1-g0-05g-fresh-closure.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-F closes G0 criteria g0-01, g0-02, g0-08, and g0-18 with fresh digest-pinned evidence from suites confirmed passing this session, per docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-05f-fresh-closure.md",
+        "docs/development-evidence/v1-g0-05-gate/route-authority-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/mutation-audit-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/material-intent-test.txt",
+        "docs/development-evidence/v1-g0-05-gate/protocol-lock-test.txt",
+        "docs/development-evidence/v1-g0-05f-fresh-closure.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-17T00:00:00.000Z",
+      "authorized_by": "user instruction: дальше",
+      "reason": "G0 closure roadmap doc was written and pushed ahead of amending scope, which the dirty-baseline verifier correctly flagged as a new dirty path outside P05 scope. Admitting docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md retroactively, before any further P05-F implementation write.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-17-vestrace-v1-g0-closure-program.md"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-15T00:00:00.000Z",
+      "authorized_by": "user instruction: разрешаю",
+      "reason": "P05-E follow-up found six historical P04 upgrade paths that invoke the complete migrator after migration 0194 or 0199 and therefore reach the protected 0209 suffix. The user authorized admitting these test-only paths so they can use the bounded historical migrator through 0208.",
+      "paths": [
+        "crates/vestrace-infrastructure/tests/embedding_result_finalization.rs",
+        "crates/vestrace-infrastructure/tests/embedding_result_preparation.rs",
+        "crates/vestrace-infrastructure/tests/embedding_transition_activation.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-15T00:00:00.000Z",
+      "authorized_by": "user instruction: приступай к реализации",
+      "reason": "P05-E exposed that the shared real-provisioner test helper used the final rather than the first SQL heredoc terminator after P05 added a second psql block, sending a literal SQL terminator and shell text to PostgreSQL.",
+      "paths": [
+        "crates/vestrace-infrastructure/tests/common/mod.rs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-14T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-E bounds the test schema at the historical 0001-0208 prefix. Every #[sqlx::test] suite has failed at migration 0209 since P05-A, so the database-backed regression net has been down for three packages.",
+      "paths": [
+        "see change_scope_paths entries under crates/vestrace-infrastructure/tests and crates/vestrace-cli/tests"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-14T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-D repair of two inherited defects. P05-B added a `ring` dev-dependency to crates/vestrace-application/Cargo.toml for the archive signing tests in backup_archive.rs and never admitted that manifest, so the baseline reported it as an unexplained dirty file. The captured change_scope_paths also held the same paths as scripts/p05-scope.mjs in a different collation; the verifier compares the two element by element, so the capture is now the module verbatim.",
+      "paths": [
+        "crates/vestrace-application/Cargo.toml"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-12T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-A implementation paths after approved independent plan audit",
+      "paths": [
+        "Cargo.lock",
+        "crates/vestrace-application/src/installation_safety.rs",
+        "crates/vestrace-application/src/lib.rs",
+        "crates/vestrace-cli/src/commands/migrate.rs",
+        "crates/vestrace-cli/src/commands/mod.rs",
+        "crates/vestrace-cli/src/commands/safety_supervisor.rs",
+        "crates/vestrace-cli/src/main.rs",
+        "crates/vestrace-cli/tests/command_contract.rs",
+        "crates/vestrace-cli/tests/safety_journal_compose.rs",
+        "crates/vestrace-cli/tests/safety_supervisor_recovery.rs",
+        "crates/vestrace-cli/tests/safety_supervisor_witness.rs",
+        "crates/vestrace-domain/Cargo.toml",
+        "crates/vestrace-domain/src/installation/fingerprint.rs",
+        "crates/vestrace-domain/src/installation_safety.rs",
+        "crates/vestrace-domain/src/lib.rs",
+        "crates/vestrace-domain/tests/installation_safety_contract.rs",
+        "crates/vestrace-infrastructure/src/lib.rs",
+        "crates/vestrace-infrastructure/src/postgres/mod.rs",
+        "crates/vestrace-infrastructure/src/postgres/pool.rs",
+        "crates/vestrace-infrastructure/src/postgres/safety_authority_repository.rs",
+        "crates/vestrace-infrastructure/src/safety/journal_file.rs",
+        "crates/vestrace-infrastructure/src/safety/mod.rs",
+        "crates/vestrace-infrastructure/src/safety/witness_file.rs",
+        "crates/vestrace-infrastructure/tests/installation_safety_authority.rs",
+        "crates/vestrace-infrastructure/tests/safety_supervisor_provisioning.rs",
+        "docker-compose.yml",
+        "docker/postgres/Dockerfile",
+        "docker/postgres/init-runtime-role.sh",
+        "docker/postgres/vestrace_safety_verify/Makefile",
+        "docker/postgres/vestrace_safety_verify/vestrace_safety_verify--1.0.sql",
+        "docker/postgres/vestrace_safety_verify/vestrace_safety_verify.c",
+        "docker/postgres/vestrace_safety_verify/vestrace_safety_verify.control",
+        "docs/development-evidence/v1-g0-05-backup-restore-foundation.md",
+        "migrations/0209_installation_safety_authority.sql",
+        "tests/p05_provisioner_prefix.test.mjs"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-13T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-B Task 1 archive and retention scope amendment; P05-A migration 0209 is removed from the writable scope and pinned as protected authority.",
+      "paths": [
+        "crates/vestrace-application/src/backup_archive.rs",
+        "crates/vestrace-cli/tests/safety_archive_host_custody.rs",
+        "crates/vestrace-cli/tests/safety_archive_recovery.rs",
+        "crates/vestrace-domain/src/backup_archive.rs",
+        "crates/vestrace-domain/tests/backup_archive_contract.rs",
+        "crates/vestrace-infrastructure/src/backup_archive/file_store.rs",
+        "crates/vestrace-infrastructure/src/backup_archive/key_custody.rs",
+        "crates/vestrace-infrastructure/src/backup_archive/mod.rs",
+        "crates/vestrace-infrastructure/src/postgres/backup_archive_repository.rs",
+        "crates/vestrace-infrastructure/tests/backup_archive_authority.rs",
+        "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05b-archive-retention.md",
+        "migrations/0210_managed_backup_archive_retention.sql"
+      ],
+      "frozen_paths": [
+        "migrations/0209_installation_safety_authority.sql"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-13T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-B base-backup completion after audit found that BaseChunk existed only as a type and no pg_basebackup invocation or guarded base-before-WAL invariant had been implemented.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05b-base-backup-completion.md",
+        "migrations/0211_managed_backup_base_capture.sql"
+      ],
+      "frozen_paths": [
+        "migrations/0209_installation_safety_authority.sql"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-13T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-C restore/cutover plan entry; implementation paths remain excluded until their task-specific scope amendment.",
+      "paths": [
+        "docs/superpowers/plans/2026-09-13-vestrace-v1-g0-05c-restore-cutover.md"
+      ],
+      "frozen_paths": [
+        "migrations/0209_installation_safety_authority.sql",
+        "migrations/0210_managed_backup_archive_retention.sql",
+        "migrations/0211_managed_backup_base_capture.sql"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-13T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-C Task 2 canonical restore and activation domain values.",
+      "paths": [
+        "crates/vestrace-domain/src/restore_cutover.rs",
+        "crates/vestrace-domain/tests/restore_cutover_contract.rs"
+      ],
+      "frozen_paths": [
+        "migrations/0209_installation_safety_authority.sql",
+        "migrations/0210_managed_backup_archive_retention.sql",
+        "migrations/0211_managed_backup_base_capture.sql"
+      ]
+    },
+    {
+      "authorized_at_utc": "2026-09-13T00:00:00.000Z",
+      "authorized_by": "user standing authorization",
+      "reason": "P05-C Task 3 guarded restore attempt and hold-release authority.",
+      "paths": [
+        "crates/vestrace-infrastructure/src/postgres/restore_cutover_repository.rs",
+        "crates/vestrace-infrastructure/tests/restore_cutover_authority.rs",
+        "migrations/0212_managed_restore_cutover.sql"
+      ],
+      "frozen_paths": [
+        "migrations/0209_installation_safety_authority.sql",
+        "migrations/0210_managed_backup_archive_retention.sql",
+        "migrations/0211_managed_backup_base_capture.sql"
+      ]
+    }
+  ]
+}

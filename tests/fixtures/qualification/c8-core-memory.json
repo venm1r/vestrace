@@ -1,0 +1,62 @@
+{
+  "schema_version": "vestrace.c8.core-memory-fixture.v1",
+  "profile": "CORE+MEMORY",
+  "release_gate": "v0.2 Correct",
+  "status": "evidence_fixture_only",
+  "cases": [
+    {
+      "id": "CORE-MEMORY-EVOLUTION",
+      "status": "covered",
+      "requirements": [
+        "ARC-001", "ARC-002", "ARC-003", "ARC-006", "ARC-010",
+        "MEM-001", "MEM-002", "MEM-003", "MEM-004", "MEM-007", "MEM-008", "MEM-009", "MEM-010", "MEM-019",
+        "TMP-001", "TMP-002", "TMP-003", "TMP-004", "TMP-005", "TMP-008", "TMP-009",
+        "MUT-001", "MUT-002",
+        "RET-002", "RET-004", "RET-005", "RET-006", "RET-008", "RET-009", "RET-010", "RET-013", "RET-015"
+      ],
+      "test": "c8_memory_evolution_preserves_revisions_evidence_and_status_history",
+      "note": "The fixture exercises immutable revision identity, lifecycle guards, evidence references, and current-versus-historical retrieval metadata."
+    },
+    {
+      "id": "MEMORY-EVIDENCE-STRUCTURE",
+      "status": "covered",
+      "requirements": ["MEM-005", "MEM-006", "MEM-012"],
+      "test": "c8_memory_evolution_preserves_revisions_evidence_and_status_history",
+      "note": "Direct source and derivation output references are required fixture evidence; the fixture does not qualify repository-wide evidence closure."
+    },
+    {
+      "id": "TEMPORAL-CONTEXTPACK",
+      "status": "covered",
+      "requirements": ["RET-004", "RET-005", "RET-006", "RET-008", "RET-009", "RET-010", "RET-013", "RET-015"],
+      "test": "c8_temporal_retrieval_and_context_fixture_preserve_perspective_provenance_and_budget",
+      "note": "AsOf perspective, historical status, source generation, provenance identity, inclusion explanation, and hard budget are asserted together."
+    },
+    {
+      "id": "STRUCTURED-TEMPORAL-VALIDATION",
+      "status": "covered",
+      "requirements": ["MEM-008", "MEM-009", "MEM-010"],
+      "test": "c8_structured_memory_fixture_carries_schema_identity_and_temporal_range_rejects_inversion",
+      "note": "Structured schema identity and finite bounded confidence/importance are represented in the fixture surface."
+    },
+    {
+      "id": "UNIMPLEMENTED-C8-CLOSURE",
+      "status": "blocked",
+      "requirements": [
+        "ARC-004", "ARC-005", "ARC-007", "ARC-008", "ARC-009",
+        "MEM-011", "MEM-013", "MEM-014", "MEM-015", "MEM-016", "MEM-017", "MEM-018", "MEM-020",
+        "TMP-006", "TMP-007", "TMP-010",
+        "MUT-003", "MUT-004", "MUT-005", "MUT-006", "MUT-007", "MUT-008",
+        "RET-001", "RET-003", "RET-007", "RET-011", "RET-012", "RET-014",
+        "CAP-001", "CAP-002", "CAP-003", "CAP-004", "CAP-010", "CAP-011", "CAP-012"
+      ],
+      "test": "c8_fixture_manifest_is_traceable_but_does_not_claim_qualification",
+      "note": "These MUSTs require later runtime contracts or qualification gates: unified policy/audit boundaries, claims/conflicts, concurrency preconditions, reconciliation, classification, cache invalidation, mounts, and capability enforcement."
+    }
+  ],
+  "known_limitations": [
+    "This artifact is a deterministic test fixture and traceability map, not a QualificationBundle.",
+    "A blocked or absent fixture result cannot be interpreted as PASS; CORE+MEMORY is not qualified by this artifact.",
+    "Database-backed RLS and migration runtime evidence still requires an isolated PostgreSQL environment.",
+    "The fixture does not implement Claim, Conflict, capability authorization, classification policy, mounted retrieval, or cache invalidation semantics."
+  ]
+}

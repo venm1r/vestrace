@@ -1,0 +1,21 @@
+{
+  "id": "eval-fixture-001",
+  "object": "chat.completion",
+  "created": 0,
+  "model": "vestrace-eval-fixture",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"quality_score\": 0.85, \"relevance\": 0.9, \"coherence\": 0.8, \"notes\": \"Response aligns with architecture context and addresses the query correctly.\"}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 80,
+    "completion_tokens": 30,
+    "total_tokens": 110
+  }
+}

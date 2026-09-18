@@ -1,0 +1,95 @@
+{
+  "event_types": [
+    "TEXT_MESSAGE_START",
+    "TEXT_MESSAGE_CONTENT",
+    "TEXT_MESSAGE_END",
+    "TEXT_MESSAGE_CHUNK",
+    "TOOL_CALL_START",
+    "TOOL_CALL_ARGS",
+    "TOOL_CALL_END",
+    "TOOL_CALL_CHUNK",
+    "TOOL_CALL_RESULT",
+    "THINKING_START",
+    "THINKING_END",
+    "THINKING_TEXT_MESSAGE_START",
+    "THINKING_TEXT_MESSAGE_CONTENT",
+    "THINKING_TEXT_MESSAGE_END",
+    "STATE_SNAPSHOT",
+    "STATE_DELTA",
+    "MESSAGES_SNAPSHOT",
+    "ACTIVITY_SNAPSHOT",
+    "ACTIVITY_DELTA",
+    "CUSTOM",
+    "RUN_STARTED",
+    "RUN_FINISHED",
+    "RUN_ERROR",
+    "STEP_STARTED",
+    "STEP_FINISHED",
+    "REASONING_START",
+    "REASONING_MESSAGE_START",
+    "REASONING_MESSAGE_CONTENT",
+    "REASONING_MESSAGE_END",
+    "REASONING_MESSAGE_CHUNK",
+    "REASONING_END"
+  ],
+  "profile_id": "vestrace-v1-ag-ui/0.0.58",
+  "request_root": "RunAgentInputSchema",
+  "supported_roots": [
+    "RunAgentInputSchema",
+    "MessageSchema",
+    "StateSchema",
+    "ContextSchema",
+    "ToolSchema",
+    "InterruptSchema",
+    "InputContentSchema",
+    "EventSchemas"
+  ],
+  "surface": {
+    "context": {
+      "root": "ContextSchema"
+    },
+    "events": {
+      "root": "EventSchemas"
+    },
+    "interrupts_resume": {
+      "interrupt_root": "InterruptSchema",
+      "resume_entry": "ResumeEntrySchema"
+    },
+    "messages": {
+      "root": "MessageSchema"
+    },
+    "multimedia": {
+      "input_content_root": "InputContentSchema",
+      "types": [
+        "text",
+        "image",
+        "audio",
+        "video",
+        "binary",
+        "document"
+      ]
+    },
+    "request": {
+      "required_identity_fields": [
+        "threadId",
+        "runId"
+      ],
+      "root": "RunAgentInputSchema"
+    },
+    "state": {
+      "root": "StateSchema"
+    },
+    "tools": {
+      "root": "ToolSchema"
+    }
+  },
+  "transport": {
+    "method": "POST",
+    "streaming": "SSE"
+  },
+  "unsupported_event_reason": "The v1 profile does not accept raw or encrypted reasoning event payloads.",
+  "unsupported_event_types": [
+    "RAW",
+    "REASONING_ENCRYPTED_VALUE"
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "schema_version": "vestrace.t1-t8.trust-fixture.v1",
+  "profile": "TRUSTED",
+  "release_gate": "v1.0 Trust",
+  "status": "evidence_fixture_only",
+  "required_requirements": [
+    "REC-001", "REC-002", "REC-003", "REC-004", "REC-005", "REC-006",
+    "REC-007", "REC-008", "REC-009", "REC-010", "REC-011", "REC-012",
+    "REC-013", "REC-014", "REC-015", "REC-016", "REC-017", "REC-018",
+    "GOV-001", "GOV-002", "GOV-003", "GOV-004", "GOV-005", "GOV-006",
+    "GOV-007", "GOV-008", "GOV-009", "GOV-010", "GOV-011", "GOV-012",
+    "GOV-013", "GOV-014", "GOV-015", "GOV-016", "GOV-017", "GOV-018",
+    "GOV-019", "GOV-020", "GOV-021", "GOV-022", "GOV-023", "GOV-024",
+    "GOV-025", "GOV-026",
+    "QUAL-001", "QUAL-002", "QUAL-003", "QUAL-004", "QUAL-005", "QUAL-006",
+    "QUAL-007", "QUAL-008", "QUAL-009", "QUAL-010", "QUAL-011", "QUAL-012",
+    "QUAL-013", "QUAL-014", "QUAL-015", "QUAL-016", "QUAL-017", "QUAL-018"
+  ],
+  "cases": [
+    {
+      "id": "T1-001",
+      "requirements": ["REC-001", "REC-002", "REC-003", "REC-007", "REC-008", "REC-009"],
+      "test": "t1_incident_requires_containment_before_recovery_and_trust_is_explicit",
+      "status": "covered"
+    },
+    {
+      "id": "T2-001",
+      "requirements": ["REC-004", "REC-005", "REC-006", "REC-010", "REC-011", "REC-012", "REC-013", "REC-015"],
+      "test": "t2_recovery_classification_and_revalidation_gate_trust_restoration",
+      "status": "covered"
+    },
+    {
+      "id": "T3-001",
+      "requirements": ["GOV-001", "GOV-002", "GOV-005", "GOV-006", "GOV-008", "GOV-013", "GOV-014", "GOV-017"],
+      "test": "t3_secret_refs_are_opaque_and_key_lifecycle_is_explicit",
+      "status": "covered"
+    },
+    {
+      "id": "T4-001",
+      "requirements": ["GOV-003", "GOV-004", "GOV-011", "GOV-012", "GOV-015", "GOV-021", "GOV-022", "GOV-024"],
+      "test": "t4_classification_is_conservative_and_model_boundary_is_governed",
+      "status": "covered"
+    },
+    {
+      "id": "T5-001",
+      "requirements": ["GOV-013", "GOV-014", "GOV-015", "GOV-016", "GOV-017", "GOV-021"],
+      "test": "t5_retention_hold_and_deletion_verification_preserve_uncertainty",
+      "status": "covered"
+    },
+    {
+      "id": "T6-001",
+      "requirements": ["GOV-018", "GOV-019", "GOV-020", "GOV-023", "GOV-026"],
+      "test": "t6_export_is_governed_and_audit_chain_is_tamper_evident",
+      "status": "covered"
+    },
+    {
+      "id": "T7-001",
+      "requirements": ["QUAL-001", "QUAL-002", "QUAL-003", "QUAL-004", "QUAL-006", "QUAL-007", "QUAL-010", "QUAL-015", "QUAL-016"],
+      "test": "t7_qualification_bundle_is_target_bound_and_baseline_drift_is_explicit",
+      "status": "covered"
+    },
+    {
+      "id": "T8-001",
+      "requirements": ["QUAL-005", "QUAL-008", "QUAL-009", "QUAL-011", "QUAL-012", "QUAL-013", "QUAL-017", "QUAL-018"],
+      "test": "t8_trusted_gate_requires_full_local_evidence_and_qualified_baseline",
+      "status": "covered"
+    }
+  ],
+  "known_limitations": [
+    "The Trust models and gate are additive in-memory contracts; no durable incident, governance, export, or qualification repositories are wired.",
+    "SecretRef and KeyProvider define an opaque resolution boundary but do not deploy a KMS, HSM, Vault, or OS keyring backend.",
+    "Export and deletion models preserve scope, provenance, integrity, holds, and remaining-copy evidence but do not execute storage or network disposal.",
+    "This fixture does not claim a signed deployment QualificationBundle, v1.0 release readiness, or TRUSTED qualification for the current worktree."
+  ]
+}
