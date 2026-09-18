@@ -603,11 +603,12 @@ things must exist that do not exist today:
       creating the connector row in the same transaction. Without one of these
       the Connections page's Create button can never succeed.
 
-  (b) A way to register a Provider, or a governed model-creation route the
-      console actually calls. `POST /v1/providers` is permanently retired and
-      ModelsPage still posts to the legacy shape. ModelsPage also needs
-      Connection and wire_model_id fields to express what
-      `POST /v1/models/{id}/revisions` already accepts.
+  (b) A way to create a Provider row (or an equivalent relaxation of the
+      foreign key). `models.provider_id` references `providers(id)`, and
+      nothing — no HTTP route, no other mechanism — creates a real
+      `providers` row on a fresh workspace. `POST /v1/models/{id}/revisions`
+      fails on that FK even though the console's form and request shape
+      (Connection, wire_model_id) are already correct, as re-verified above.
 
   (c) A qualification executor in the worker: a poller that leases
       `qualification_jobs` rows in `requested`, drives

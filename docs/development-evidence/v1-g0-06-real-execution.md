@@ -20,9 +20,14 @@ for reasons independent of Tasks 1-7's own correctness.
 **Restart durability — PASS.** Every piece of state this package's own work
 created (a Connection, a Connection revision, two Model revisions, the
 workspace's chat-default pointer) survived a genuine `docker compose down`
-(volume preserved, no `-v`) + `up` byte-identically. The full migration
-chain replayed cleanly with no manual intervention, and no restart-fragility
-symptom of any kind appeared. See
+(volume preserved, no `-v`) + `up` byte-identically. (The connector and
+provider rows underneath this state were seeded directly via SQL — the same
+mechanism this repository's own test suites use — and the Connection and
+both Model revisions were themselves created via direct API calls rather
+than through the console's own forms, per Blockers One and Two; see
+`p06-no-auth-run-test.txt`, Blockers One and Two, for the full account.)
+The full migration chain replayed cleanly with no manual intervention, and
+no restart-fragility symptom of any kind appeared. See
 `docs/development-evidence/v1-g0-05-gate/p06-no-auth-run-test.txt`, section 5.
 
 **Docker networking and LM Studio reachability — PASS.** `host.docker.internal`
