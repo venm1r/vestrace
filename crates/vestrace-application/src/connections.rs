@@ -34,6 +34,7 @@ pub struct GovernedConnectionProjection {
     pub state: String,
     pub qualification_state: String,
     pub blockers: Vec<String>,
+    pub no_auth_binding_revision_id: Option<uuid::Uuid>,
 }
 
 #[async_trait]

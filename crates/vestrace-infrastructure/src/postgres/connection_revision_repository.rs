@@ -120,7 +120,8 @@ impl ConnectionRevisionRepository for PgConnectionRevisionRepository {
             SELECT connection.id,
                    head.current_revision_id AS connection_revision_id,
                    head.state AS connection_state,
-                   qualification.valid_until AS qualification_valid_until
+                   qualification.valid_until AS qualification_valid_until,
+                   no_auth.id AS no_auth_binding_revision_id
               FROM connections AS connection
               LEFT JOIN connection_revision_heads AS head
                 ON head.workspace_id=connection.workspace_id
@@ -131,6 +132,10 @@ impl ConnectionRevisionRepository for PgConnectionRevisionRepository {
               LEFT JOIN connection_qualification_revisions AS qualification
                 ON qualification.workspace_id=connection.workspace_id
                AND qualification.id=qualification_head.current_qualification_revision_id
+              LEFT JOIN no_auth_binding_revisions AS no_auth
+                ON no_auth.workspace_id=connection.workspace_id
+               AND no_auth.connection_id=connection.id
+               AND no_auth.connection_revision_id=head.current_revision_id
              WHERE connection.workspace_id=$1
              ORDER BY connection.created_at, connection.id
             "#,
@@ -160,6 +165,9 @@ fn decode_safe_connection_projection(
         row.try_get("connection_state").map_err(storage_error)?;
     let qualification_valid_until: Option<DateTime<Utc>> = row
         .try_get("qualification_valid_until")
+        .map_err(storage_error)?;
+    let no_auth_binding_revision_id: Option<uuid::Uuid> = row
+        .try_get("no_auth_binding_revision_id")
         .map_err(storage_error)?;
 
     let mut blockers = Vec::new();
@@ -201,6 +209,7 @@ fn decode_safe_connection_projection(
         state: state.to_owned(),
         qualification_state: qualification_state.to_owned(),
         blockers,
+        no_auth_binding_revision_id,
     })
 }
 

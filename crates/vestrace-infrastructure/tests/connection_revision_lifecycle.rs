@@ -198,6 +198,48 @@ async fn no_auth_revision_atomically_creates_one_no_auth_binding(pool: PgPool) {
     assert_eq!(bindings, 1);
 }
 
+/// The projection the console reads to test-qualify a no-auth Connection must
+/// carry the real `no_auth_binding_revisions` row id for the connection's
+/// *current* revision, not a value the surface invents. The console today
+/// fakes this with `crypto.randomUUID()`, which never matches a real row and
+/// always fails qualification; this closes that gap on the backend.
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
+async fn safe_connection_projection_exposes_the_real_no_auth_binding_revision_id(pool: PgPool) {
+    let context = context();
+    let command = command(&context);
+    seed_context(&pool, &context, &command).await;
+    let repository = PgConnectionRevisionRepository::new(PgStore::from_pool(pool.clone()));
+    repository
+        .create_governed(context.clone(), command.clone())
+        .await
+        .unwrap();
+
+    // Read the real row directly via SQL, independent of the projection under
+    // test, so the assertion below cannot pass by both sides sharing a bug.
+    let expected_binding_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM no_auth_binding_revisions WHERE connection_revision_id = $1",
+    )
+    .bind(command.revision_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let projections = repository
+        .list_safe_connections(&context)
+        .await
+        .expect("lists the governed connection projection");
+    let governed = projections
+        .iter()
+        .find(|projection| projection.id == command.connection.id)
+        .unwrap();
+    assert_eq!(
+        governed.no_auth_binding_revision_id,
+        Some(expected_binding_id),
+        "the projection must expose the exact no_auth_binding_revisions row for the \
+         connection's current revision"
+    );
+}
+
 #[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
 async fn safe_connection_projection_marks_legacy_and_unqualified_heads_non_executable(
     pool: PgPool,
