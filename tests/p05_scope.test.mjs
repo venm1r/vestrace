@@ -84,7 +84,7 @@ test('P04 dispatch remains unchanged when P05 arrives', () => {
 test('P05 scope is sorted, minimal, and disjoint from protected authority', () => {
   assert.deepEqual(changeScopePaths, [...changeScopePaths].sort());
   assert.deepEqual(protectedAuthorityPaths, [...protectedAuthorityPaths].sort());
-  assert.equal(changeScopePaths.length, 214);
+  assert.equal(changeScopePaths.length, 216);
   assert.equal(new Set(changeScopePaths).size, changeScopePaths.length);
   assert.equal(new Set(protectedAuthorityPaths).size, protectedAuthorityPaths.length);
   for (const path of protectedAuthorityPaths) assert.equal(changeScopePaths.includes(path), false, path);
@@ -175,6 +175,7 @@ test('P05-C admits only the reviewed restore/cutover implementation increment', 
       'migrations/0214_managed_restore_safety_events.sql',
       'migrations/0215_managed_safety_readiness.sql',
       'migrations/0216_installation_drain_request.sql',
+      'migrations/0217_qualification_job_work_claims.sql',
     ],
   );
 });

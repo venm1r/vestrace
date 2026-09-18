@@ -30,6 +30,15 @@ const P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION: i64 = 213;
 const P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION: i64 = 214;
 const P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION: i64 = 215;
 const P05_DRAIN_PREFIX_VERSION: i64 = 216;
+/// Migration 0217 (`qualification_job_work_claims`) is an ordinary migration,
+/// not a P05 bootstrap-custody assertion: it calls no `vestrace_install_p0N_*`
+/// provisioning function and needs no fixed three-phase route, so it carries
+/// no entry in `P05_ASSERTION_MIGRATION_VERSIONS` or `p05_assertion_migration`
+/// below. It still needs its own bounded test migrator for the same reason
+/// 216 did: `#[sqlx::test]` cannot have run the P05 safety-bootstrap
+/// provisioning that migrations 209-215 assert, so any migrator that reaches
+/// past 208 must keep excluding them explicitly.
+const QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION: i64 = 217;
 const P05_ASSERTION_MIGRATION_VERSIONS: [i64; 7] = [
     P05_SAFETY_ASSERTION_MIGRATION_VERSION,
     P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
@@ -477,6 +486,21 @@ pub static DRAIN_HISTORICAL_MIGRATOR: std::sync::LazyLock<sqlx::migrate::Migrato
             .expect("the drain historical prefix is embedded")
     });
 
+/// The migrations an ordinary test database may hold when it needs
+/// `qualification_job_work_claims` (migration 217): the historical 0001-0208
+/// prefix, plus 216 and 217, excluding the P05 safety-bootstrap assertions
+/// 209-215 for the same reason `DRAIN_HISTORICAL_MIGRATOR` excludes them --
+/// `#[sqlx::test]` cannot have provisioned the P05 safety catalog.
+pub static QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR: std::sync::LazyLock<
+    sqlx::migrate::Migrator,
+> = std::sync::LazyLock::new(|| {
+    bounded_migrator_excluding(
+        QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION,
+        &P05_ASSERTION_MIGRATION_VERSIONS,
+    )
+    .expect("the qualification work claims historical prefix is embedded")
+});
+
 fn bounded_migrator(version: i64) -> Result<sqlx::migrate::Migrator, InfrastructureError> {
     if !MIGRATOR.version_exists(version) {
         return Err(InfrastructureError::configuration(
@@ -547,6 +571,7 @@ mod tests {
         P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
         P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
         P05_SAFETY_ASSERTION_MIGRATION_VERSION, P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+        QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR, QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION,
         p05_assertion_migration,
     };
 
@@ -700,6 +725,65 @@ mod tests {
             versions.len(),
             expected,
             "the drain historical migrator dropped or added a migration"
+        );
+    }
+
+    #[test]
+    fn the_qualification_work_claims_historical_migrator_extends_the_drain_prefix_excluding_p05_assertions()
+     {
+        let versions: Vec<i64> = QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR
+            .iter()
+            .map(|m| m.version)
+            .collect();
+
+        assert!(
+            !versions.is_empty(),
+            "the qualification work claims historical migrator embedded nothing"
+        );
+        assert_eq!(
+            versions.iter().copied().max(),
+            Some(QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION),
+            "the qualification work claims historical migrator must end at its declared prefix",
+        );
+        assert!(
+            versions.contains(&P05_DRAIN_PREFIX_VERSION),
+            "the qualification work claims historical migrator must still carry migration 216",
+        );
+        for excluded in [
+            P05_SAFETY_ASSERTION_MIGRATION_VERSION,
+            P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+            P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
+            P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+            P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+        ] {
+            assert!(
+                !versions.contains(&excluded),
+                "the qualification work claims historical migrator must not carry P05 assertion migration {excluded}",
+            );
+        }
+        // Every migration in [1, 217] except the seven excluded P05 assertions.
+        let expected = MIGRATOR
+            .iter()
+            .filter(|m| {
+                m.version <= QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION
+                    && ![
+                        P05_SAFETY_ASSERTION_MIGRATION_VERSION,
+                        P05_ARCHIVE_ASSERTION_MIGRATION_VERSION,
+                        P05_BASE_CAPTURE_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_CUTOVER_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION,
+                        P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION,
+                        P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION,
+                    ]
+                    .contains(&m.version)
+            })
+            .count();
+        assert_eq!(
+            versions.len(),
+            expected,
+            "the qualification work claims historical migrator dropped or added a migration"
         );
     }
 

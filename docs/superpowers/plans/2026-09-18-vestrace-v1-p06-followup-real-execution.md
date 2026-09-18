@@ -464,7 +464,19 @@ async fn poll_qualification_work(
                 }
             };
             let result = service.run_next_probe(context, claim.job_id, ordinal, &runner).await;
-            let work_outcome = match &result {
+            // `work_outcome` starts optimistic and is downgraded below if
+            // `finalize_success` fails. It must NOT be finalized to
+            // `Completed` before that call is known to have succeeded:
+            // `finalize_success` is the only path that moves
+            // `qualification_jobs.state` to `'succeeded'` (see
+            // `migrations/0185_qualification_job_lifecycle.sql`'s
+            // `vestrace_finalize_qualification_job`). If it errors and the
+            // claim is still released as `Completed`, the job is stranded
+            // forever at `state='running'`: `next_qualification_ordinal`
+            // finds no more ordinals to probe, so it never becomes
+            // reclaimable work again, and `finalize_success` never gets a
+            // retry.
+            let mut work_outcome = match &result {
                 Ok(state) if state.is_terminal() => QualificationWorkOutcome::Completed,
                 Ok(_) => QualificationWorkOutcome::Completed, // one ordinal done; releases for the next tick
                 Err(_) => QualificationWorkOutcome::RetryableFailure,
@@ -473,8 +485,8 @@ async fn poll_qualification_work(
                 tracing::warn!(job_id = %claim.job_id.as_uuid(), ordinal, %error, "qualification probe failed");
                 outcome.failed = true;
             }
-            if let Ok(state) = result {
-                if state == vestrace_domain::QualificationJobState::Succeeded {
+            if let Ok(state) = &result {
+                if *state == vestrace_domain::QualificationJobState::Succeeded {
                     // The three ids below are freshly minted, not looked up —
                     // matching this codebase's universal convention that a
                     // caller publishing a new immutable revision mints its
@@ -498,6 +510,10 @@ async fn poll_qualification_work(
                     if let Err(error) = service.finalize_success(context, finalization).await {
                         tracing::warn!(job_id = %claim.job_id.as_uuid(), %error, "qualification finalize_success failed");
                         outcome.failed = true;
+                        // Downgrade: the probe succeeded but the job never
+                        // reached a terminal `state`. Releasing this as
+                        // `Completed` would strand it — force a retry.
+                        work_outcome = QualificationWorkOutcome::RetryableFailure;
                     }
                 }
             }

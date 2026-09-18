@@ -130,6 +130,7 @@ pub use model_revision_repository::PgModelRevisionRepository;
 pub use outbox_repository::{PgMemoryTextSource, PgOutboxRepository};
 pub use pool::{
     DRAIN_HISTORICAL_MIGRATOR, HISTORICAL_MIGRATOR, PgGovernedMutationRepository, PgStore,
+    QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR,
 };
 pub use provenance_repository::PgProvenanceRepository;
 pub use provider_dispatch_repository::PgProviderDispatchRepository;
