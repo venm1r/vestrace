@@ -6,6 +6,7 @@ export const changeScopePaths = [
   "Cargo.lock",
   "apps/console/src/routes/ConnectionsPage.tsx",
   "apps/console/src/routes/ModelsPage.tsx",
+  "apps/console/src/routes/SettingsPage.tsx",
   "apps/console/src/sdk/client.ts",
   "apps/console/src/sdk/useQualificationPolling.ts",
   "crates/vestrace-application/Cargo.toml",

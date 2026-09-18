@@ -17,10 +17,11 @@ import {
   useNotice,
 } from '../shell/PageState';
 
-type TabId = 'kernel' | 'telemetry' | 'environment';
+type TabId = 'kernel' | 'models' | 'telemetry' | 'environment';
 
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'kernel', label: 'Kernel Constraints', icon: 'memory' },
+  { id: 'models', label: 'Models', icon: 'model_training' },
   { id: 'telemetry', label: 'Telemetry', icon: 'monitoring' },
   { id: 'environment', label: 'Environment', icon: 'shield' },
 ];
@@ -141,6 +142,7 @@ export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('kernel');
   const { data, error, loading, reload } = useApiResource(vestraceClient.getSettings);
   const { data: health } = useApiResource(vestraceClient.getSystemHealth);
+  const { data: defaultModel } = useApiResource(() => vestraceClient.getWorkspaceModelDefault('chat'));
   const [persisted, setPersisted] = useState<WorkspaceSettings | null>(null);
   const [draft, setDraft] = useState<EditableSettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -301,6 +303,17 @@ export const SettingsPage: React.FC = () => {
                   }
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'models' && (
+            <div role="tabpanel" id="settings-panel-models" aria-labelledby="settings-tab-models" style={cardStyle}>
+              <h2 style={headingStyle}>Chat default</h2>
+              <ObservedRow
+                label="Default Model"
+                value={defaultModel?.model_id ?? 'none configured'}
+                hint="The Model every Run's agent step uses, unless it is created through a path that names one explicitly. Change it on the Models page."
+              />
             </div>
           )}
 
