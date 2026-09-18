@@ -338,7 +338,7 @@ function governedPost<T>(
 ): Promise<T> {
   return request<T>(endpoint, {
     method: 'POST',
-    headers: { 'x-request-id': options.requestId },
+    headers: { 'idempotency-key': options.requestId },
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
   });
 }
@@ -391,34 +391,128 @@ export interface CreateModelPayload {
   output_cost_per_mtoken: number;
 }
 
+/** Mirrors `vestrace_domain::connection::revision::ConnectionKind` (serde snake_case). */
+export type ConnectionKind = 'l_m_studio_local' | 'open_ai_chat_completions_v1';
+
+/** Mirrors `vestrace_domain::connection::revision::ConnectionAuthMode` (serde snake_case). */
+export type ConnectionAuthMode = 'none' | 'bearer' | 'api_key' | 'x_api_key';
+
+/** Mirrors `vestrace_domain::connection::revision::ConnectionTransportPolicy` (serde tagged, snake_case). */
+export type ConnectionTransportPolicy =
+  | { kind: 'loopback_only' }
+  | { kind: 'remote_https' };
+
+/** Mirrors `api::connections::ConnectionRevisionRequest`. Every id here is minted
+ * by the caller (the console), never by the server: the backend does not
+ * default, infer or look any of them up. */
 export interface CreateConnectionPayload {
+  connection_id: string;
+  connector_id: string;
   name: string;
-  connection_kind: string;
+  revision_id: string;
+  execution_guard_id: string;
+  kind: ConnectionKind;
+  logical_base_url: string;
   runtime_base_url: string;
+  adapter_profile_revision: string;
+  transport_policy: ConnectionTransportPolicy;
+  auth_mode: ConnectionAuthMode;
+  credential_slot_id: string | null;
+  expected_head_version: number;
 }
 
-export interface CreateConnectionRevisionPayload {
-  connection_kind: string;
-  runtime_base_url: string;
-  expected_version: number;
-}
+/** A later revision on an existing Connection carries every field
+ * `CreateConnectionPayload` does; only `expected_head_version` changes meaning
+ * (it must equal the Connection's current head, not zero). */
+export type CreateConnectionRevisionPayload = CreateConnectionPayload;
 
+/** Mirrors `api::connections::QualificationTargetRequest` (serde internally tagged on `branch`). */
+export type QualificationTargetPayload =
+  | {
+      branch: 'credential';
+      revision_id: string;
+      slot_id: string;
+      activation_guard_id: string;
+      expected_slot_version: number;
+    }
+  | { branch: 'no_auth'; binding_revision_id: string };
+
+/** Mirrors `api::connections::QualificationRequest`. Qualifies one exact
+ * Connection revision against one chat and one embedding Model revision. */
 export interface QualificationRequestPayload {
-  profile_revision: string;
-}
-
-export interface CreateConnectionCredentialPayload {
-  credential: string;
-}
-
-export interface CreateModelRevisionPayload {
-  model_name: string;
+  job_id: string;
+  target_binding_id: string;
+  connection_id: string;
   connection_revision_id: string;
+  target: QualificationTargetPayload;
+  chat_model_revision_id: string;
+  embedding_model_revision_id: string;
+}
+
+/** Mirrors `api::connections::CredentialActivationRequest` — the first
+ * publication of a credential into an empty slot. The actual secret bytes
+ * are not part of this request: `credential_intent_id` names material that
+ * must already exist (see Task 5's notes on this gap). */
+export interface CreateConnectionCredentialPayload {
+  connection_id: string;
+  credential_slot_id: string;
+  execution_guard_id: string;
+  activation_guard_id: string;
+  credential_revision_id: string;
+  credential_intent_id: string;
+  connection_qualification_revision_id: string;
+  expected_slot_version: number;
+}
+
+/** Mirrors `vestrace_domain::models::binding::ModelKind`. */
+export type ModelKind = 'chat' | 'embedding';
+
+/** Mirrors `api::models::ModelRevisionRequest`. Publishes the compatibility
+ * Model row and its immutable revision together, bound to one exact
+ * Connection revision. */
+export interface CreateModelRevisionPayload {
+  model_id: string;
+  provider_id: string;
+  model_name: string;
+  context_window: number;
+  input_cost_per_mtoken: number;
+  output_cost_per_mtoken: number;
+  revision_id: string;
+  connection_id: string;
+  connection_revision_id: string;
+  wire_model_id: string;
+  kind: ModelKind;
+  execution_guard_id: string;
+  expected_head_version: number;
+}
+
+/** Mirrors `api::models::SetWorkspaceModelDefaultRequest`. */
+export interface SetWorkspaceModelDefaultPayload {
+  default_id: string;
+  model_id: string;
+  purpose: string;
+  required_capabilities: string[];
   expected_version: number;
+}
+
+/** Mirrors `api::models::WorkspaceModelDefaultResponse`. */
+export interface WorkspaceModelDefaultItem {
+  model_id: string | null;
+  purpose: string;
+  version: number;
 }
 
 export interface GovernedMutationOptions {
   requestId: string;
+}
+
+/** Mirrors `api::connections::GovernedMutationResponse`, returned by every
+ * governed-mutation route on this backend (Connections, Models, credentials,
+ * qualifications) — never a projection of the mutated resource. */
+export interface GovernedMutationResponse {
+  audit_event_id: string;
+  idempotency_key: string | null;
+  outbox_message_ids: string[];
 }
 
 export interface CreateWorkflowPayload {
@@ -551,6 +645,18 @@ export const vestraceClient = {
       payload,
       options,
     ),
+  setWorkspaceModelDefault: (
+    modelId: string,
+    payload: SetWorkspaceModelDefaultPayload,
+    options: GovernedMutationOptions,
+  ): Promise<GovernedMutationResponse> =>
+    governedPost<GovernedMutationResponse>(
+      `/models/${encodeURIComponent(modelId)}/default`,
+      payload,
+      options,
+    ),
+  getWorkspaceModelDefault: (purpose = 'chat'): Promise<WorkspaceModelDefaultItem> =>
+    request<WorkspaceModelDefaultItem>(`/models/default?purpose=${encodeURIComponent(purpose)}`),
   requestModelQualification: (
     modelId: string,
     payload: QualificationRequestPayload,

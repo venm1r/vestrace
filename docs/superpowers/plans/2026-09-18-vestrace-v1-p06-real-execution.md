@@ -822,8 +822,13 @@ function governedPost<T>(
 Replace `CreateConnectionPayload` and `CreateConnectionRevisionPayload` (lines 394-404) with types matching `ConnectionRevisionRequest` (`crates/vestrace-http/src/api/connections.rs:73-91`):
 
 ```typescript
-/** Mirrors `vestrace_domain::connection::revision::ConnectionKind` (serde snake_case). */
-export type ConnectionKind = 'lm_studio_local' | 'open_ai_chat_completions_v1';
+/** Mirrors `vestrace_domain::connection::revision::ConnectionKind`. serde's
+ * snake_case rule inserts `_` before every uppercase letter, not just at word
+ * boundaries — `LMStudioLocal` becomes `l_m_studio_local`, not
+ * `lm_studio_local` (verified against a live `serde_json::to_string` of the
+ * real enum; this was wrong in an earlier draft of this plan and caught by
+ * Task 3's own review). */
+export type ConnectionKind = 'l_m_studio_local' | 'open_ai_chat_completions_v1';
 
 /** Mirrors `vestrace_domain::connection::revision::ConnectionAuthMode` (serde snake_case). */
 export type ConnectionAuthMode = 'none' | 'bearer' | 'api_key' | 'x_api_key';
@@ -968,6 +973,21 @@ Replace `createConnection` and `createConnectionRevision` (lines 473-487) — th
     ),
 ```
 
+Every governed-mutation handler on the backend — `create_connection`, `revise_connection`, `request_connection_qualification`, `activate_credential`, `rotate_credential`, `revoke_credential`, `create_model_revision`, and this task's own new `set_workspace_model_default` — returns the same `GovernedMutationResponse` shape (`crates/vestrace-http/src/api/connections.rs:95-100`: `{ audit_event_id, idempotency_key, outbox_message_ids }`), not a projection of the resource. Add this type once and use it as the return type for the new method (the pre-existing methods' `Promise<GovernedConnectionItem>`/`Promise<QualificationItem>`/`Promise<CredentialLifecycleItem>`/`Promise<GovernedModelItem>` return types are already wrong the same way, but fixing those is outside this task's scope — callers of those methods today don't read their return values, so leave them for a later pass rather than widen this task).
+
+Add, near the other response-shaped interfaces (e.g. right before `GovernedMutationOptions`):
+
+```typescript
+/** Mirrors `api::connections::GovernedMutationResponse`, returned by every
+ * governed-mutation route on this backend (Connections, Models, credentials,
+ * qualifications) — never a projection of the mutated resource. */
+export interface GovernedMutationResponse {
+  audit_event_id: string;
+  idempotency_key: string | null;
+  outbox_message_ids: string[];
+}
+```
+
 Then, after `createModelRevision` (around line 549-553), add:
 
 ```typescript
@@ -975,8 +995,8 @@ Then, after `createModelRevision` (around line 549-553), add:
     modelId: string,
     payload: SetWorkspaceModelDefaultPayload,
     options: GovernedMutationOptions,
-  ): Promise<GovernedModelItem> =>
-    governedPost<GovernedModelItem>(
+  ): Promise<GovernedMutationResponse> =>
+    governedPost<GovernedMutationResponse>(
       `/models/${encodeURIComponent(modelId)}/default`,
       payload,
       options,
@@ -1167,7 +1187,7 @@ export const ConnectionsPage: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      const kind: ConnectionKind = preset === 'lm_studio' ? 'lm_studio_local' : 'open_ai_chat_completions_v1';
+      const kind: ConnectionKind = preset === 'lm_studio' ? 'l_m_studio_local' : 'open_ai_chat_completions_v1';
       const authMode: ConnectionAuthMode = preset === 'lm_studio' ? 'none' : 'bearer';
       const transportPolicy: ConnectionTransportPolicy =
         preset === 'lm_studio' ? { kind: 'loopback_only' } : { kind: 'remote_https' };

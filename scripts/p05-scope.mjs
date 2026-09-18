@@ -4,6 +4,7 @@
 export const changeScopePaths = [
   ".dockerignore",
   "Cargo.lock",
+  "apps/console/src/sdk/client.ts",
   "crates/vestrace-application/Cargo.toml",
   "crates/vestrace-application/src/backup_archive.rs",
   "crates/vestrace-application/src/installation_drain.rs",
