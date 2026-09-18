@@ -36,6 +36,7 @@ export const ModelsPage: React.FC = () => {
   const [contextWindow, setContextWindow] = useState('128000');
   const [inputCost, setInputCost] = useState('0.15');
   const [outputCost, setOutputCost] = useState('0.60');
+  const [modelKind, setModelKind] = useState<'chat' | 'embedding'>('chat');
   const [submitting, setSubmitting] = useState(false);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
@@ -74,7 +75,7 @@ export const ModelsPage: React.FC = () => {
           connection_id: connection.id,
           connection_revision_id: connection.revision_id,
           wire_model_id: wireModelId.trim(),
-          kind: 'chat',
+          kind: modelKind,
           execution_guard_id: crypto.randomUUID(),
           expected_head_version: 0,
         },
@@ -86,6 +87,7 @@ export const ModelsPage: React.FC = () => {
       setIsModalOpen(false);
       setModelName('');
       setWireModelId('');
+      setModelKind('chat');
       notify('success', `Model "${modelName.trim()}" was published.`);
     } catch (err: unknown) {
       const described = describeError(err, 'model publication');
@@ -193,6 +195,22 @@ export const ModelsPage: React.FC = () => {
               className="field-control"
               style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
             />
+          </div>
+
+          <div>
+            <label htmlFor="model-kind" style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+              Kind *
+            </label>
+            <select
+              id="model-kind"
+              value={modelKind}
+              onChange={(e) => setModelKind(e.target.value as 'chat' | 'embedding')}
+              className="field-control"
+              style={{ width: '100%' }}
+            >
+              <option value="chat">Chat</option>
+              <option value="embedding">Embedding</option>
+            </select>
           </div>
 
           <div>
