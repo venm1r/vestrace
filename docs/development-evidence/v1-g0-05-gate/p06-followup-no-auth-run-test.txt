@@ -1,0 +1,1383 @@
+P06 FOLLOW-UP — REAL EXECUTION EVIDENCE (no-auth branch)
+========================================================
+
+Plan:  docs/superpowers/plans/2026-09-18-vestrace-v1-p06-followup-real-execution.md
+Spec:  docs/superpowers/specs/2026-09-18-vestrace-v1-p06-followup-real-execution-design.md
+Task:  Task 7 (evidence). This is a RE-RUN: the first attempt reported BLOCKED
+       because migration 0217 had no route into any deployed database. Task 8
+       fixed that (SECURITY DEFINER installer + a new Compose migration stage);
+       this run proceeds past it.
+
+Scope: prove gaps 1-3 from docs/development-evidence/v1-g0-06-real-execution.md
+       are closed live, through a real browser, against a real LM Studio.
+       Gap 4 (composing GovernedRunStepInputAuthority so POST /ag-ui/run can
+       accept confidential input) is deliberately OUT of this plan's scope
+       (spec §3.4) and is NOT attempted as a pass here; its refusal is recorded
+       as the honest, documented boundary of what this package closes.
+
+Standing evidence discipline for this program: a failure is never written up as
+a skip, and a partial result is never rounded up to a pass. Every command below
+is reproduced with its real output.
+
+VERDICT OF THIS RUN, up front, so nothing below can be read as more than it is:
+
+  Gap 1 (connector auto-materialization)  ....... CLOSED. Proven end to end
+                                                  through the console form on a
+                                                  workspace with zero connectors.
+  Gap 2 (provider auto-materialization)  ........ PARTIALLY CLOSED. The
+                                                  `providers` row IS created
+                                                  transactionally, proven live.
+                                                  But the console's Models form
+                                                  still cannot complete a
+                                                  registration, for a DIFFERENT,
+                                                  newly-found reason one layer
+                                                  deeper (section 3).
+  Gap 3 (qualification execution)  .............. PARTIALLY CLOSED. A production
+                                                  binary now genuinely claims,
+                                                  leases and executes a
+                                                  qualification job for the first
+                                                  time — and drives its first
+                                                  probe to `pass`. It cannot
+                                                  reach `qualified`, blocked by
+                                                  two worker-identity defects
+                                                  neither this plan nor P06 had
+                                                  found (section 5).
+  Task 4 (real no_auth_binding_revision_id) ..... PASS.
+  Task 5 (console uses that real id) ............ PASS.
+  Task 6 (embedding-kind selector) .............. PARTIAL: the selector exists
+                                                  and serializes `kind:"embedding"`
+                                                  correctly; the request it
+                                                  produces is refused by the same
+                                                  section-3 defect.
+  Gap 4 (AG-UI real execution) .................. UNCHANGED, as designed. Not
+                                                  attempted. Refusal recorded.
+  Restart cycle ................................. PASS.
+
+NO RUN REACHED A `qualified` STATE. Nothing in this file should be read as
+claiming one did.
+
+READ THIS BEFORE THE SCORECARD ABOVE. Sections 0-9 are the original run and
+are preserved unedited. SECTION 10 was appended later, after Task 9 shipped a
+fix for the defect section 3 found, and it REVISES three of the lines above:
+gap 2 is now FULLY closed, Task 6 is now a FULL pass, and the console's Models
+form now works for both kinds. Section 10.11 carries the corrected scorecard.
+Gap 3, gap 4 and the `qualified` statement above are NOT revised — they still
+stand exactly as written.
+
+
+================================================================================
+0. PRE-FLIGHT
+================================================================================
+
+--- 0.1 Deviation from the brief's Step 1, on the controller's instruction ---
+
+The brief's Step 1 offers `docker compose down -v`. That was deliberately NOT
+done. The Postgres volume already held migrations 001-217 applied for real by
+Task 8's verification, and a virgin database would hit a separate, known,
+out-of-scope P05-era defect (`migrate_through_version`'s compatibility
+pre-check queries `_sqlx_migrations` before `Migrator::run()` creates it). The
+existing volume was reused as-is.
+
+--- 0.2 State of the stack before this run ---
+
+  $ docker compose ps -a
+  NAME                                   SERVICE                     STATUS
+  vestrace-postgres-1                    postgres                    Up 28 minutes (healthy)
+  vestrace-vestrace-migrate-history-1    vestrace-migrate-history    Exited (0)
+  vestrace-vestrace-migrate-p05-1        vestrace-migrate-p05        Exited (0)
+  vestrace-vestrace-migrate-p05-210-1    vestrace-migrate-p05-210    Exited (0)
+  vestrace-vestrace-migrate-p05-211-1    vestrace-migrate-p05-211    Exited (0)
+  vestrace-vestrace-migrate-p05-212-1    vestrace-migrate-p05-212    Exited (0)
+  vestrace-vestrace-migrate-p05-213-1    vestrace-migrate-p05-213    Exited (0)
+  vestrace-vestrace-migrate-p05-214-1    vestrace-migrate-p05-214    Exited (0)
+  vestrace-vestrace-migrate-p05-215-1    vestrace-migrate-p05-215    Exited (0)
+  vestrace-vestrace-migrate-p05-216-1    vestrace-migrate-p05-216    Exited (0)
+  vestrace-vestrace-migrate-p05-217-1    vestrace-migrate-p05-217    Exited (0)
+  vestrace-vestrace-role-provision-1     vestrace-role-provision     Exited (0)
+  vestrace-vestrace-safety-bootstrap-1   vestrace-safety-bootstrap   Exited (0)
+
+  Only migration stages had ever run. vestrace-server, vestrace-worker and
+  console had never been started against this volume.
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select count(*) from _sqlx_migrations;" \
+      -c "select version,description,success from _sqlx_migrations order by version desc limit 5;"
+   count
+  -------
+     147
+   version |          description          | success
+  ---------+-------------------------------+---------
+       217 | qualification job work claims | t
+       216 | installation drain request    | t
+       215 | managed safety readiness      | t
+       214 | managed restore safety events | t
+       213 | managed restore refusal       | t
+
+  Migration 0217 (Task 1's claim/lease mechanism) is genuinely applied. The
+  deployment blocker the first attempt reported is confirmed resolved.
+
+--- 0.3 The workspace is genuinely fresh — this is what makes gaps 1-2 testable ---
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c \
+    "select (select count(*) from connectors) as connectors,
+            (select count(*) from connections) as connections,
+            (select count(*) from providers) as providers,
+            (select count(*) from models) as models,
+            (select count(*) from qualification_jobs) as qualification_jobs,
+            (select count(*) from qualification_job_work_claims) as work_claims,
+            (select count(*) from workspaces) as workspaces;"
+   connectors | connections | providers | models | qualification_jobs | work_claims | workspaces
+  ------------+-------------+-----------+--------+--------------------+-------------+------------
+            0 |           0 |         0 |      0 |                  0 |           0 |          1
+
+  Zero connectors and zero providers. This is exactly the fresh-workspace
+  condition P06's Blockers One and Two described.
+
+--- 0.4 LM Studio is reachable, from the host and from inside a container ---
+
+  $ curl -s -m 10 http://localhost:12345/v1/models
+  {
+    "data": [
+      {"id": "ternary-bonsai-27b", "object": "model", "owned_by": "organization_owner"},
+      {"id": "granite-embedding-278m-multilingual", "object": "model", "owned_by": "organization_owner"},
+      {"id": "prism-ml/bonsai-27b", "object": "model", "owned_by": "organization_owner"},
+      {"id": "text-embedding-nomic-embed-text-v1.5", "object": "model", "owned_by": "organization_owner"}
+    ],
+    "object": "list"
+  }
+
+  And from inside the worker container, over the host gateway the stack
+  actually uses (captured later in the run, post-restart):
+
+  $ docker compose exec -T vestrace-worker sh -c 'curl -s -m 10 http://host.docker.internal:12345/v1/models'
+  {
+    "data": [
+      {"id": "ternary-bonsai-27b", ...},
+      {"id": "granite-embedding-278m-multilingual", ...},
+      {"id": "prism-ml/bonsai-27b", ...},
+      {"id": "text-embedding-n...      (truncated at 400 bytes by the capture)
+
+  LM STUDIO IS NOT A BLOCKER IN THIS RUN. Every failure recorded below is
+  internal to Vestrace and happens strictly before any network call to the
+  model host is attempted.
+
+
+================================================================================
+1. STEP 1 — REBUILD AND BRING UP (lesson 1 of the brief)
+================================================================================
+
+  $ docker compose build vestrace-server vestrace-worker console
+  ...
+  #42 naming to docker.io/library/vestrace-vestrace-server:latest    done
+  #43 naming to docker.io/library/vestrace-vestrace-worker:latest    done
+   Image vestrace-vestrace-worker Built
+   Image vestrace-console Built
+   Image vestrace-vestrace-server Built
+
+  $ docker compose up -d vestrace-server vestrace-worker console
+   Container vestrace-dev-seed-1 Exited
+   Container vestrace-vestrace-worker-1 Started
+   Container vestrace-vestrace-server-1 Started
+   Container vestrace-vestrace-server-1 Healthy
+   Container vestrace-console-1 Started
+
+  $ docker compose ps
+  vestrace-console-1           running  Up 9 seconds
+  vestrace-postgres-1          running  Up 37 minutes (healthy)
+  vestrace-vestrace-server-1   running  Up 15 seconds (healthy)
+  vestrace-vestrace-worker-1   running  Up 15 seconds
+
+  $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/health/ready
+  200
+  $ curl -s http://127.0.0.1:8080/health/ready
+  {"status":"ok"}
+  $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
+  200
+
+  Server startup log (first lines):
+  INFO vestrace::commands::server: starting vestrace server bind=0.0.0.0:8080
+  INFO vestrace::commands::server: authorization consults durable capability grants; a principal holding none is denied every governed request policy_version=local-dev-console-v1
+  INFO vestrace::commands::recovery: startup recovery sweep complete workspace=10000000-0000-0000-0000-000000000001 candidates=0
+  INFO vestrace::commands::server: retrieval has a governed vector channel model=text-embedding-nomic-embed-text-v1.5 space=nomic-768
+  WARN vestrace::commands::server: seeded a bootstrap access token from configuration ... principal=10000000-0000-0000-0000-000000000002
+  WARN vestrace::commands::server: seeded bootstrap capability grants from configuration; they are scoped to /v1 and held by one principal ... principal=10000000-0000-0000-0000-000000000002 seeded=28
+  INFO vestrace::commands::server: HTTP server listening on 0.0.0.0:8080
+
+  (Note for later: BOTH the token and the 28 capability grants are seeded for
+  principal ...0002 only. This becomes the root of section 5's second blocker.)
+
+--- 1.1 The browser is NOT serving a stale bundle (lesson 1, verified, not assumed) ---
+
+  A prior evidence run in this program misdiagnosed working code as broken
+  because of a cached JS bundle. That was checked here explicitly, with a
+  cache-bypassing fetch against the actually-served asset, BEFORE any
+  conclusion was drawn about any console behaviour.
+
+  page.evaluate:
+    const html = await (await fetch('/', {cache:'no-store'})).text();
+    ... for each <script src>: await (await fetch(src, {cache:'no-store'})).text()
+
+  Result:
+  [
+    {
+      "src": "/assets/index-E50tngQU.js",
+      "bytes": 274588,
+      "has_no_auth_binding": true,      <- Task 4/5's field is in the served bundle
+      "has_embedding_option": true,     <- Task 6's selector is in the served bundle
+      "has_fake_target_binding_randomUUID": true
+    }
+  ]
+
+  page.evaluate:
+    () => ({ loadedScripts: [...document.querySelectorAll('script[src]')].map(s=>s.getAttribute('src')), url: location.href })
+  Result:
+  {
+    "loadedScripts": ["/assets/index-E50tngQU.js"],
+    "url": "http://127.0.0.1:3000/connections"
+  }
+
+  The hash of the bundle the browser actually executed is byte-identical to the
+  hash of the bundle the server freshly serves with `cache: 'no-store'`. There
+  is no stale-cache artifact in this run.
+
+
+================================================================================
+2. GAP 1 — CONNECTOR AUTO-MATERIALIZATION: CLOSED
+================================================================================
+
+P06's Blocker One: `POST /v1/connections` → HTTP 500,
+`connections_connector_id_fkey` violation, on any workspace with no connectors,
+because no route of any method creates a `connectors` row.
+
+Done here THROUGH THE CONSOLE FORM, in a real browser, on the zero-connector
+workspace proven fresh in section 0.3:
+
+  page.goto('http://127.0.0.1:3000/connections')
+  click "Add Connection"
+  #connection-name    = "LM Studio (local)"
+  #connection-preset  = "LM Studio (local, no credential)"
+  #connection-url     = "http://host.docker.internal:12345/v1"
+  click submit
+
+  Result rendered in the page (accessibility snapshot):
+    status: check_circle  'Connection "LM Studio (local)" was created.'
+    heading: 0e82699e-92df-4798-90dd-cbb16d7fe4a9
+    Revision: 417d4c14-1142-45e2-be84-1abc019a0d2a
+    state: blocked
+    Qualification: missing
+    Blockers: qualification_required
+
+  (`blocked` / `qualification_required` is the CORRECT state for a
+  just-created, never-qualified Connection. It is not an error.)
+
+  Screenshot: p06-followup-screenshots/01-connection-created.png
+
+Task 3's transactional auto-materialization, confirmed directly in the database:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select id, name, provider_type from connectors;" \
+      -c "select id, connector_id, name, status from connections;"
+                    id                  |       name        | provider_type
+    --------------------------------------+-------------------+---------------
+     77acd3f1-b5a8-4f7a-beb5-d972be2216f1 | LM Studio (local) | local
+
+                    id                  |             connector_id             |       name        | status
+    --------------------------------------+--------------------------------------+-------------------+--------
+     0e82699e-92df-4798-90dd-cbb16d7fe4a9 | 77acd3f1-b5a8-4f7a-beb5-d972be2216f1 | LM Studio (local) | active
+
+  The connector row did not exist before this request and was created by it,
+  in the same transaction as the connection, by
+  `insert_stable_connection` (crates/vestrace-infrastructure/src/postgres/
+  connection_revision_repository.rs:368).
+
+GAP 1 IS CLOSED. This is the first time in this program a Connection has been
+created on a fresh workspace through the operator-facing UI.
+
+
+================================================================================
+3. GAP 2 — PROVIDER AUTO-MATERIALIZATION: PARTIALLY CLOSED
+================================================================================
+
+--- 3.1 The console's Models form still cannot complete a registration ---
+
+  page.goto('http://127.0.0.1:3000/models')
+  click "Register Model"
+  #model-name       = "bonsai-27b (chat)"
+  #model-wire-id    = "prism-ml/bonsai-27b"
+  #model-kind       = "Chat"
+  #model-connection = "0e82699e-92df-4798-90dd-cbb16d7fe4a9 (missing)"
+  click "Register"
+
+  Rendered result:
+    status: error  'Loading model publication failed (HTTP 500): the requested
+                    data could not be stored or retrieved'
+
+  Screenshot: p06-followup-screenshots/02-model-register-console-form-blocked.png
+
+  Network capture of the exact request the form sent:
+    POST http://127.0.0.1:3000/api/v1/models/30db5af4-0ccb-49f5-9074-1323bd33ef4b/revisions => [500]
+    body:
+    {"model_id":"30db5af4-0ccb-49f5-9074-1323bd33ef4b",
+     "provider_id":"d9c62b3e-780c-4877-acc1-1ec1a627a3b2",
+     "model_name":"bonsai-27b (chat)","context_window":128000,
+     "input_cost_per_mtoken":0.15,"output_cost_per_mtoken":0.6,
+     "revision_id":"156ceff9-7515-4986-9326-88d4ca9b0dfd",
+     "connection_id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+     "connection_revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+     "wire_model_id":"prism-ml/bonsai-27b","kind":"chat",
+     "execution_guard_id":"d96e733d-89a6-45a0-8197-18bbd7b5c905",
+     "expected_head_version":0}
+
+  The real server-side cause (NOT the FK violation P06 found — that one is
+  genuinely fixed):
+
+  $ docker compose logs vestrace-server | grep ERROR
+  ERROR http_request{request_id=01a0b549-c7a8-7e52-a2d5-7aa1c24b8ef5 method=POST route="api"}:
+    vestrace_http::api::error: run storage request failed
+    error=error returned from database: model revision requires its exact referenced connection guard
+
+--- 3.2 Root cause: a THIRD gap of the same shape, one layer deeper ---
+
+  migrations/0178_model_revisions_and_binding_snapshots.sql:150-163 requires the
+  model revision's `execution_guard_id` to be EXACTLY the connection revision's
+  own guard:
+
+      IF NOT EXISTS (
+          SELECT 1
+            FROM connection_revisions AS revision
+            JOIN connection_execution_guards AS guard
+              ON guard.id = revision.execution_guard_id
+             AND guard.workspace_id = revision.workspace_id
+             AND guard.connection_id = revision.connection_id
+           WHERE revision.workspace_id = target_workspace_id
+             AND revision.connection_id = target_connection_id
+             AND revision.id = target_connection_revision_id
+             AND revision.execution_guard_id = target_execution_guard_id
+      ) THEN
+          RAISE EXCEPTION 'model revision requires its exact referenced connection guard'
+              USING ERRCODE = '23514';
+      END IF;
+
+  The required value, read directly from the database:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select id, connection_id, execution_guard_id from connection_revisions;"
+                      id                  |            connection_id             |          execution_guard_id
+    --------------------------------------+--------------------------------------+--------------------------------------
+     417d4c14-1142-45e2-be84-1abc019a0d2a | 0e82699e-92df-4798-90dd-cbb16d7fe4a9 | 72ba298d-04f1-427d-930d-394816684b5d
+
+  The console sent `d96e733d-89a6-45a0-8197-18bbd7b5c905`, a fresh
+  `crypto.randomUUID()` (apps/console/src/routes/ModelsPage.tsx:79). It can
+  never match, because:
+
+    * the connection's guard id was itself minted client-side at Connection
+      creation (ConnectionsPage.tsx:56) and is not retained anywhere in the
+      console, and
+    * no read route exposes it. `GET /v1/connections` returns exactly
+      {id, revision_id, state, qualification_state, blockers,
+       no_auth_binding_revision_id} — `execution_guard_id` appears in
+      crates/vestrace-http/src/api/*.rs only as a REQUEST field
+      (connections.rs:81,519,534,546; models.rs:173), never in a response
+      projection.
+
+  So there is no operator-facing path, through any sequence of console actions,
+  that can produce a valid `execution_guard_id` for a Model. This is the same
+  SHAPE of gap as P06's Blockers One and Two — a value the UI must supply that
+  nothing gives it — at a layer this plan did not reach. It is a NEW finding of
+  this evidence run, not a regression of Task 3: Task 3's own work (the
+  `providers` row) is proven correct in 3.4 below.
+
+--- 3.3 Task 6's embedding selector: real, correct, and blocked by the same defect ---
+
+  The same form was submitted again with Kind = Embedding, specifically to
+  separate Task 6's behaviour from the section-3.2 defect:
+
+  page.goto('http://127.0.0.1:3000/models'); click "Register Model"
+  #model-name       = "console-embedding-kind-probe"
+  #model-wire-id    = "text-embedding-nomic-embed-text-v1.5"
+  #model-kind       = "Embedding"
+  #model-connection = "0e82699e-92df-4798-90dd-cbb16d7fe4a9 (missing)"
+  click "Register"
+
+  Network capture of the exact request body:
+    POST /api/v1/models/601ce566-bf9e-499a-82bd-0352d8d2d8c9/revisions => [500]
+    {..., "wire_model_id":"text-embedding-nomic-embed-text-v1.5",
+          "kind":"embedding",
+          "execution_guard_id":"d2dd0dc1-960c-47ec-b3a6-e423e4f027d6", ...}
+
+  Server log for that request:
+  ERROR ... error=error returned from database: model revision requires its exact referenced connection guard
+
+  TASK 6 DOES WHAT IT WAS BUILT TO DO: the selector is present, and the form
+  serializes `"kind":"embedding"` correctly to the governed route. The refusal
+  is byte-for-byte the SAME guard error as the chat submission — it is not a
+  kind-related refusal. Task 6 is nonetheless not usable end to end through the
+  console, because of 3.2.
+
+--- 3.4 Task 3's provider auto-materialization IS real — proven via the API ---
+
+  DOCUMENTED WORKAROUND, NOT A PASS OF 3.1. To keep testing gaps 2 and 3, both
+  Models were then registered by calling the governed route directly with the
+  connection's real guard id (`72ba298d-...`) read out of the database. This is
+  the same class of documented out-of-band step P06's own Task 8 used when a
+  console path was blocked. It proves Task 3's SQL, and it does NOT prove the
+  console form works — 3.1 proves the opposite.
+
+  $ curl -X POST http://127.0.0.1:8080/v1/models/2f18449f-e800-4b85-88bc-2e8d1ca9d2a8/revisions \
+      -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" -H 'content-type: application/json' \
+      -H 'idempotency-key: 17f4aea4-ed34-4289-afe6-2533f4bcb446' \
+      -d '{... "wire_model_id":"prism-ml/bonsai-27b","kind":"chat",
+           "execution_guard_id":"72ba298d-04f1-427d-930d-394816684b5d",
+           "expected_head_version":0}'
+  {"audit_event_id":"01a0b54a-d611-70f3-9ec5-d81474cbf715",
+   "idempotency_key":"17f4aea4-ed34-4289-afe6-2533f4bcb446",
+   "outbox_message_ids":["01a0b54a-d611-70f3-9ec5-d80b569b31a0"]}
+  HTTP 201
+
+  $ curl -X POST http://127.0.0.1:8080/v1/models/5ce08009-5830-4460-afb8-76a119c30b38/revisions \
+      ... -d '{... "wire_model_id":"text-embedding-nomic-embed-text-v1.5","kind":"embedding",
+           "execution_guard_id":"72ba298d-04f1-427d-930d-394816684b5d", ...}'
+  {"audit_event_id":"01a0b54b-165a-73a0-9acb-01396e3cf71f",
+   "idempotency_key":"f2bb81f6-cb03-43b1-9406-cf1c83d4ff90",
+   "outbox_message_ids":["01a0b54b-165a-73a0-9acb-0122d5bcd611"]}
+  HTTP 201
+
+  The `providers` rows — the thing P06's Blocker Two said nothing could ever
+  create — now exist, auto-materialized by
+  `insert_or_verify_stable_model` (model_revision_repository.rs:528):
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c "select * from providers;"
+                    id                  |             workspace_id             |               name                | locality |          created_at
+    --------------------------------------+--------------------------------------+-----------------------------------+----------+-------------------------------
+     033918f2-2f9e-41e6-aafe-1f7754301503 | 10000000-0000-0000-0000-000000000001 | bonsai-27b (chat)                 | governed | 2026-09-18 16:12:55.697417+00
+     f59b9947-b9dc-412b-85c0-12e3fb5bb945 | 10000000-0000-0000-0000-000000000001 | nomic-embed-text-v1.5 (embedding) | governed | 2026-09-18 16:13:12.1545+00
+
+  $ ... -c "select * from models;"
+                    id                  |             provider_id              |            model_name             | context_window
+    --------------------------------------+--------------------------------------+-----------------------------------+----------------
+     2f18449f-e800-4b85-88bc-2e8d1ca9d2a8 | 033918f2-2f9e-41e6-aafe-1f7754301503 | bonsai-27b (chat)                 |         128000
+     5ce08009-5830-4460-afb8-76a119c30b38 | f59b9947-b9dc-412b-85c0-12e3fb5bb945 | nomic-embed-text-v1.5 (embedding) |           8192
+
+  $ ... -c "select id, model_id, wire_model_id, kind from model_revisions order by kind;"
+     probe of the two published revisions:
+     1dad39a6-4d96-4884-833d-4ee40012ed42 | 2f18449f-... | prism-ml/bonsai-27b                  | chat
+     f0603965-0456-44b3-abca-7a23a1f378c9 | 5ce08009-... | text-embedding-nomic-embed-text-v1.5 | embedding
+
+  The zero-provider FK violation P06 recorded is genuinely gone. Both a chat
+  and an embedding Model now exist on a workspace that had neither a provider
+  nor a model.
+
+  Rendered by the console's Models page (proving the governed read path sees
+  both, including the embedding-kind one):
+
+    Model 2f18449f-...  Revision 1dad39a6-...  blocked  missing  qualification_required
+    Model 5ce08009-...  Revision f0603965-...  blocked  missing  qualification_required
+
+  Screenshot: p06-followup-screenshots/03-both-models-registered.png
+
+
+================================================================================
+4. TASK 4 AND TASK 5 — THE REAL NO-AUTH BINDING ID: BOTH PASS
+================================================================================
+
+--- 4.1 Task 4: GET /v1/connections exposes the real id ---
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/connections
+  [{"id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+    "revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+    "state":"blocked",
+    "qualification_state":"missing",
+    "blockers":["qualification_required"],
+    "no_auth_binding_revision_id":"01a0b549-34af-7050-bcc0-b6f2ef555173"}]
+
+  Not null, and a real UUIDv7. Cross-checked against the durable row:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c "select id from no_auth_binding_revisions;"
+                      id
+    --------------------------------------
+     01a0b549-34af-7050-bcc0-b6f2ef555173
+
+  Identical. TASK 4 PASSES.
+
+--- 4.2 Task 5: the console's "Test Connection" uses that real id ---
+
+  page.goto('http://127.0.0.1:3000/connections')
+  input[placeholder='Chat Model revision id']      = 1dad39a6-4d96-4884-833d-4ee40012ed42
+  input[placeholder='Embedding Model revision id'] = f0603965-0456-44b3-abca-7a23a1f378c9
+  click "Test Connection"
+
+  Rendered result:
+    status: info  'Qualification requested for 0e82699e-92df-4798-90dd-cbb16d7fe4a9.'
+    Qualification: checking...
+
+  The binding the server actually pinned for that job:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -x -c \
+      "select id, branch, no_auth_binding_revision_id, chat_model_revision_id,
+              embedding_model_revision_id from qualification_target_bindings;"
+  -[ RECORD 1 ]---------------+-------------------------------------
+  id                          | ce3b07dc-9f2c-452a-b987-7c3156bbb9a2
+  branch                      | no_auth
+  no_auth_binding_revision_id | 01a0b549-34af-7050-bcc0-b6f2ef555173
+  chat_model_revision_id      | 1dad39a6-4d96-4884-833d-4ee40012ed42
+  embedding_model_revision_id | f0603965-0456-44b3-abca-7a23a1f378c9
+
+  `no_auth_binding_revision_id` is EXACTLY the real durable row from 4.1 — not
+  a `crypto.randomUUID()`. Both Model revision ids are the real published ones.
+  TASK 5 PASSES.
+
+
+================================================================================
+5. GAP 3 — QUALIFICATION EXECUTION: PARTIALLY CLOSED, NOT CLOSED
+================================================================================
+
+--- 5.1 What Tasks 1 and 2 genuinely achieved (this is real, and it is new) ---
+
+P06's Blocker Three: "a qualification job requested live sat in `requested` for
+60 seconds of polling with zero probe attempts recorded." That is no longer
+true. Measured from the browser click at 16:14:10.458452+00:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select id, state, requested_at, completed_at from qualification_jobs;" \
+      -c "select * from qualification_job_work_claims;"
+                    id                  |  state  |         requested_at          | completed_at
+    --------------------------------------+---------+-------------------------------+--------------
+     349bb3b0-813b-4ad8-9eb0-4867d94eb2ec | running | 2026-09-18 16:14:10.458452+00 |
+
+               workspace_id             |                job_id                |             claim_owner              |        claim_deadline         | last_outcome
+    --------------------------------------+--------------------------------------+--------------------------------------+-------------------------------+--------------
+     10000000-...-0001 | 349bb3b0-813b-4ad8-9eb0-4867d94eb2ec | 01a0b548-3911-7110-bb56-1b191ab3e3ca | 2026-09-18 16:15:23.946828+00 |
+
+  * The job left `requested` and reached `running`.
+  * `qualification_job_work_claims` — the table migration 0217 added (Task 1) —
+    holds a live lease, owned by the worker's own `WorkerId`
+    (01a0b548-3911-7110-bb56-1b191ab3e3ca), with a claim deadline 60 seconds out.
+  * The claim was created at 16:14:10.544044+00: 86 MILLISECONDS after the
+    browser click.
+
+  And the first q1 probe actually ran and passed:
+
+  $ ... -c "select probe_ordinal, result from qualification_probe_results order by probe_ordinal;"
+     probe_ordinal | result
+    ---------------+--------
+     00            | pass
+
+  THIS IS THE FIRST TIME ANY PRODUCTION BINARY IN THIS CODEBASE HAS EXECUTED A
+  QUALIFICATION JOB. Task 1's claim/lease SQL and Task 2's poll loop both work.
+
+--- 5.2 Blocker A: the worker's principal has no `principals` row ---
+
+  The job then stopped at ordinal "10" — the first NETWORK probe (ordinals '00'
+  and '15' are static; migrations/0185_qualification_job_lifecycle.sql:594
+  refuses effects/evidence for them). The very first attempt, 186ms after the
+  click:
+
+  $ docker compose logs vestrace-worker | grep -i qualification | head -3
+  16:14:10.644054Z WARN vestrace::commands::worker: qualification probe failed job_id=349bb3b0-813b-4ad8-9eb0-4867d94eb2ec ordinal="10" error=storage failure: error returned from database: insert or update on table "audit_events" violates foreign key constraint "audit_events_principal_id_fkey"
+  16:14:10.708131Z WARN ... (identical)
+  16:14:10.757519Z WARN ... (identical)
+
+  $ docker compose logs vestrace-worker | grep -c "qualification probe failed"
+  1592                    <- in roughly five minutes
+
+  ROOT CAUSE, read from the source:
+  crates/vestrace-cli/src/commands/worker.rs:212-221
+
+      let run_contexts: Vec<RequestContext> = config
+          .workspaces
+          .iter()
+          .map(|workspace| {
+              RequestContext::new(
+                  WorkspaceId::from_uuid(*workspace),
+                  PrincipalId::from_uuid(*workspace),     <-- principal := workspace id
+              )
+          })
+          .collect();
+
+  The worker's principal id is the WORKSPACE id, 10000000-0000-0000-0000-000000000001.
+  The only `principals` row that exists is the one dev-seed creates:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c "select id, workspace_id, identifier from principals;"
+                    id                  |             workspace_id             |  identifier
+    --------------------------------------+--------------------------------------+--------------
+     10000000-0000-0000-0000-000000000002 | 10000000-0000-0000-0000-000000000001 | dev-operator
+
+  Corroborated by which audit events exist at all — every one of them belongs
+  to the server's principal, none to the worker's:
+
+  $ ... -c "select principal_id, action, count(*) from audit_events group by 1,2 order by 3 desc limit 10;"
+                 principal_id             |           action            | count
+    --------------------------------------+-----------------------------+-------
+     10000000-0000-0000-0000-000000000002 | model.revision.created      |     2
+     10000000-0000-0000-0000-000000000002 | connection.revision.created |     1
+
+  Every network q1 probe writes an audit event under the worker's context. With
+  no `principals` row for that id, every one of them violates
+  `audit_events_principal_id_fkey`.
+
+--- 5.3 DIAGNOSTIC INTERVENTION (explicitly labelled; not part of any claim) ---
+
+  To learn whether 5.2 was the ONLY remaining blocker, a `principals` row for
+  the worker's context principal was inserted by hand. THIS IS NOT A PRODUCT
+  PATH AND IS NOT CLAIMED AS ONE. It is recorded here because it changed the
+  database and because its result is the most useful thing this run found.
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c \
+      "INSERT INTO principals (id, workspace_id, identifier)
+       VALUES ('10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','worker-context-principal-diagnostic')
+       ON CONFLICT (id) DO NOTHING;"
+  INSERT 0 1
+
+  The FK error stopped immediately — and a SECOND, independent blocker appeared
+  underneath it.
+
+--- 5.4 Blocker B: the worker's principal holds no capability grant, and the
+        grant a probe needs is not even in the worker's configured list ---
+
+  $ docker compose logs vestrace-worker --since 30s | grep -i qualification | tail -3
+  16:16:12.889605Z WARN vestrace::commands::worker: qualification probe failed job_id=349bb3b0-... ordinal="10" error=conflict: qualification q1 dispatch was not admitted for its original effect
+  16:16:12.940727Z WARN ... (identical)
+  16:16:12.994118Z WARN ... (identical)
+
+  That message is `PgQualificationProbeRunner::run_network_probe`'s
+  else-branch on `ProviderDispatchOutcome::Prepared`
+  (crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs:459-464).
+  The outcome was `Denied`, and the denial is persisted as evidence:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select result, reason, capability, operation, count(*) from external_effect_authorizations group by 1,2,3,4;"
+     result |    reason    | capability  |      operation      | count
+    --------+--------------+-------------+---------------------+-------
+     deny   | default_deny | export.read | qualification_probe |  7357
+
+  A single denial record in full:
+
+    id               | 01a0b54e-7ba3-7d90-8e98-2aeb4550403a
+    effect_id        | 01a0b54b-fa79-79b1-ab64-fdbbe9391ad8
+    policy_version   | local-dev-worker-v1
+    subject_id       | 10000000-0000-0000-0000-000000000001     <- the worker's context principal
+    capability       | export.read
+    operation        | qualification_probe
+    resource_scope   | http://host.docker.internal:12345/v1
+    result           | deny
+    reason           | default_deny
+    matched_grant_id | (null)
+    input_state      | {"operation": "qualification_probe", "capability": "export_read",
+                        "conditions": [], "subject_id": "10000000-0000-0000-0000-000000000001",
+                        "context_risk": "low", "workspace_id": "10000000-0000-0000-0000-000000000001",
+                        "effective_risk": "medium", "requested_risk": "medium",
+                        "resource_scope": "http://host.docker.internal:12345/v1",
+                        "requested_budget_units": 0}
+
+  Two independent facts make this structural, not a misconfiguration that a
+  single env var fixes:
+
+  1. NO GRANT EXISTS FOR THE WORKER'S SUBJECT AT ALL.
+
+     $ ... -c "select subject_id, count(*) from capability_grants group by 1;"
+                   subject_id              | count
+      --------------------------------------+-------
+       10000000-0000-0000-0000-000000000002 |    28
+
+     Only the server's principal. docker-compose.yml says this outright, in the
+     worker's own comment: "the worker seeds nothing itself, so that grant has
+     to exist." Nothing creates it.
+
+  2. EVEN IF THE WORKER SEEDED ITS OWN GRANTS, IT STILL WOULD NOT HOLD THIS ONE.
+     The worker's configured capability list is
+     `VESTRACE_POLICY__CAPABILITIES: execution.read,execution.write`.
+     A q1 qualification probe requires `export.read`, which is not in it.
+
+  A third diagnostic — inserting the missing `export.read` /
+  `qualification_probe` grant — was attempted and was refused by this
+  environment's permission policy. IT WAS THEREFORE NOT DONE, and this run
+  cannot say whether Blocker B is the last one. THAT REMAINS UNKNOWN AND IS NOT
+  GUESSED AT HERE.
+
+--- 5.5 Operational concern: the retry is a hot loop, not a backoff ---
+
+  `poll_qualification_work` releases a failed probe as
+  `QualificationWorkOutcome::RetryableFailure` (worker.rs:610-613), which makes
+  the job immediately reclaimable. With a deterministic failure, the worker
+  reclaims and refails about twenty times per second, forever, writing a durable
+  `external_effect_authorizations` row each time:
+
+  $ ... -c "select count(*) from external_effect_authorizations;"
+   total_denies
+  --------------
+           8731
+
+  8731 denial rows from one stuck job in roughly eight minutes. The loop also
+  survived the restart in section 7 and resumed at the same rate. A deployment
+  that hits this would accumulate rows at ~1.5M/day from a single stuck job.
+
+--- 5.6 Honest status of gap 3 ---
+
+  CLOSED:      the claim/lease mechanism (Task 1) and the worker poll loop
+               (Task 2). Both demonstrably work, on real data, in a real
+               deployment, for the first time.
+  NOT CLOSED:  a qualification job cannot reach `qualified`. `state` stayed
+               `running` for the whole run; `completed_at` stayed NULL; exactly
+               one of twelve q1 ordinals ever recorded a result.
+               `finalize_success` — the step the plan itself flagged as needing
+               implementation-time resolution — was never reached, so its
+               correctness is still UNPROVEN either way by this run.
+
+
+================================================================================
+6. GAP 4 — POST /ag-ui/run: REFUSED, EXACTLY AS THE SPEC SAYS IT WILL BE
+================================================================================
+
+This is NOT a failure of this task. Spec §3.4 deferred composing
+`GovernedRunStepInputAuthority` out of this plan during its own design phase,
+for reasons of undecided production design (sampling defaults, effect-intent
+derivation, a missing pinned-binding read port). The refusal below is the
+documented boundary of what this package closes, recorded for completeness.
+
+  page.goto('http://127.0.0.1:3000/runs'); click "Create run"
+    -> Run record 01a0b551-88cd-78d0-8f5b-06b5f63869a5 was persisted.
+  click tab "Agent"
+  #ag-ui-input = "Hello, reply with the single word PONG."
+  click send
+
+  Network capture:
+    POST http://127.0.0.1:3000/api/ag-ui/run => [503] Service Unavailable
+    response body:
+    {"code":"unavailable","message":"governed Run-step input authority is not configured"}
+
+  Byte-identical to what P06's own evidence recorded
+  (p06-no-auth-run-test.txt, Blocker Four). Nothing regressed and nothing
+  improved here, which is the expected and correct outcome.
+
+  Screenshot: p06-followup-screenshots/06-ag-ui-refusal-expected.png
+
+  NO `/ag-ui/events/stream` PAYLOAD AND NO MODEL COMPLETION TEXT IS RECORDED IN
+  THIS FILE, because none was produced. Nothing was fabricated to fill this
+  section.
+
+
+================================================================================
+7. STEP 3 — RESTART CYCLE (volume preserved, no `-v`): PASS
+================================================================================
+
+State configured before the restart:
+  * Connection 0e82699e-92df-4798-90dd-cbb16d7fe4a9, revision 417d4c14-...,
+    over auto-materialized connector 77acd3f1-...
+  * Two Model revisions (chat 1dad39a6-..., embedding f0603965-...) over two
+    auto-materialized providers.
+  * Workspace chat default = 2f18449f-e800-4b85-88bc-2e8d1ca9d2a8, set through
+    the console's Models page:
+      status: check_circle 'Model 2f18449f-... is now the workspace's chat default.'
+      Default column for that row now renders 'chat default'.
+      Screenshot: p06-followup-screenshots/04-chat-default-set.png
+    and reflected on the Settings page's Models tab:
+      tabpanel "Models" -> "Chat default" -> Default Model: 2f18449f-e800-4b85-88bc-2e8d1ca9d2a8
+      Screenshot: p06-followup-screenshots/05-settings-models-default-pre-restart.png
+  * Qualification job 349bb3b0-... at state `running`, one probe result, one
+    work-claim row.
+      Screenshot: p06-followup-screenshots/07-connection-qualification-stuck-pre-restart.png
+
+  Pre-restart snapshot (16:22:01Z):
+    qualification_jobs:       running, requested_at 2026-09-18 16:14:10.458452+00, completed_at NULL
+    qualification_probe_results:  00 | pass
+    qualification_job_work_claims: job 349bb3b0-... owner 01a0b548-3911-7110-bb56-1b191ab3e3ca
+                                   claim_deadline 16:22:02.072928+00 last_outcome retryable_failure
+    workspace_model_defaults: 2f18449f-... | chat
+
+  $ docker compose down             # 16:22:11Z, NO -v
+   Container vestrace-postgres-1 Removed
+   Network vestrace_default Removed
+
+  $ docker compose up -d vestrace-server vestrace-worker console     # 16:22:24Z
+   Container vestrace-vestrace-worker-1 Started
+   Container vestrace-vestrace-server-1 Healthy
+   Container vestrace-console-1 Started
+
+  $ docker compose ps -a
+  vestrace-vestrace-migrate-history-1              Exited (0) 18 seconds ago
+  vestrace-vestrace-role-provision-1               Exited (0) 19 seconds ago
+  vestrace-vestrace-safety-bootstrap-1             Exited (0) 17 seconds ago
+  vestrace-vestrace-migrate-p05-1                  Exited (0) 16 seconds ago
+  vestrace-vestrace-migrate-p05-210-1              Exited (0) 15 seconds ago
+  vestrace-vestrace-migrate-p05-211-1              Exited (0) 14 seconds ago
+  vestrace-vestrace-migrate-p05-212-1              Exited (0) 13 seconds ago
+  vestrace-vestrace-migrate-p05-213-1              Exited (0) 12 seconds ago
+  vestrace-vestrace-migrate-p05-214-1              Exited (0) 11 seconds ago
+  vestrace-vestrace-migrate-p05-215-1              Exited (0) 10 seconds ago
+  vestrace-vestrace-migrate-p05-216-1              Exited (0)  9 seconds ago
+  vestrace-vestrace-migrate-p05-217-1              Exited (0)  8 seconds ago
+  vestrace-dev-seed-1                              Exited (0)  7 seconds ago
+  vestrace-vestrace-server-1                       Up 7 seconds (healthy)
+  vestrace-vestrace-worker-1                       Up 7 seconds
+
+  EVERY migration stage, including the new 0217 stage Task 8 added, replayed to
+  exit 0 with no manual intervention. The server was healthy ~10 seconds after
+  `up`.
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c \
+      "select count(*) as applied, max(version) as max_version, bool_and(success) as all_success from _sqlx_migrations;"
+   applied | max_version | all_success
+  ---------+-------------+-------------
+       147 |         217 | t
+
+  Durable state after the restart:
+
+  connections:               0e82699e-... | connector 77acd3f1-... | LM Studio (local)     SURVIVED
+  model_revisions:           1dad39a6-... | prism-ml/bonsai-27b                  | chat    SURVIVED
+                             f0603965-... | text-embedding-nomic-embed-text-v1.5 | embedding SURVIVED
+  workspace_model_defaults:  2f18449f-... | chat                                            SURVIVED
+  qualification_jobs:        349bb3b0-... | running                                         SURVIVED
+  qualification_probe_results: 00 | pass                                                    SURVIVED
+  connectors:                1                                                              SURVIVED
+  providers:                 2                                                              SURVIVED
+
+  qualification_job_work_claims survived AND was re-claimed by a NEW worker:
+
+                  job_id                |             claim_owner              | last_outcome
+    --------------------------------------+--------------------------------------+--------------
+     349bb3b0-813b-4ad8-9eb0-4867d94eb2ec | 01a0b553-eb53-7cb0-a0d1-b975e8df90bc |
+
+  The owner changed from 01a0b548-3911-7110-bb56-1b191ab3e3ca (pre-restart) to
+  01a0b553-eb53-7cb0-a0d1-b975e8df90bc (post-restart). That is Task 1's lease
+  behaving exactly as designed across a process death: the old owner's lease
+  expired and the new worker legitimately reclaimed the job rather than the row
+  being stranded or duplicated.
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/connections
+  [{"id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+    "revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+    "state":"blocked","qualification_state":"missing",
+    "blockers":["qualification_required"],
+    "no_auth_binding_revision_id":"01a0b549-34af-7050-bcc0-b6f2ef555173"}]
+
+  Byte-identical to the pre-restart response in section 4.1, including Task 4's
+  field.
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" "http://127.0.0.1:8080/v1/models/default?purpose=chat"
+  {"model_id":"2f18449f-e800-4b85-88bc-2e8d1ca9d2a8","purpose":"chat","version":1}
+
+  And in the browser, post-restart:
+    tabpanel "Models" -> "Chat default" -> Default Model: 2f18449f-e800-4b85-88bc-2e8d1ca9d2a8
+    Screenshot: p06-followup-screenshots/08-settings-models-default-post-restart.png
+
+  RESTART CYCLE PASSES. No restart-fragility symptom of any kind appeared.
+
+  One thing the restart also confirmed, which is a finding rather than a pass:
+  the section-5.5 hot retry loop resumed immediately and at the same rate.
+
+  $ docker compose logs vestrace-worker | grep -i qualification | head -3
+  16:23:12.269570Z WARN ... ordinal="10" error=conflict: qualification q1 dispatch was not admitted for its original effect
+  16:23:12.334418Z WARN ... (identical)
+  16:23:12.395428Z WARN ... (identical)
+  $ docker compose logs vestrace-worker | grep -c "qualification probe failed"
+  901                     <- since the restart alone
+
+
+================================================================================
+8. WHAT WOULD STILL BE NEEDED FOR A REAL `qualified` STATE
+================================================================================
+
+Stated as open work, not as anything this run proved:
+
+  a. An operator-facing way to obtain a Connection revision's
+     `execution_guard_id` (or a change that stops requiring the client to know
+     it), so the console's Models form can complete. Section 3.2.
+  b. A `principals` row for whatever identity the worker runs as — or a change
+     to `worker.rs:212-221` so the worker runs as a real seeded principal
+     rather than as the workspace id. Section 5.2.
+  c. A capability grant of `export.read` / `qualification_probe` for that
+     identity, and `export.read` added to the worker's configured capability
+     set. Section 5.4.
+  d. Whatever, if anything, lies beyond (c) — UNKNOWN. Not reached in this run.
+  e. Separately, and independent of qualification: the gap-4 design work spec
+     §3.4 deferred to its own future package.
+
+Only after (a)-(d) could the twelve-ordinal q1 sequence run against LM Studio
+and `finalize_success` be exercised. Until then, the plan's central end-to-end
+claim — "make a Connection and its Models reach a real `qualified` state end to
+end on a fresh workspace" — IS NOT MET, and this file does not claim it is.
+
+
+================================================================================
+9. DATABASE MUTATIONS MADE BY THIS EVIDENCE RUN THAT ARE NOT PRODUCT PATHS
+================================================================================
+
+Recorded so no future reader mistakes them for normal deployment state:
+
+  1. Two Model revisions were created by direct `POST /v1/models/{id}/revisions`
+     calls carrying the connection's real `execution_guard_id`, because the
+     console form cannot (section 3.4). Everything else in this run went
+     through the console.
+  2. A `principals` row with id 10000000-0000-0000-0000-000000000001 and
+     identifier `worker-context-principal-diagnostic` was inserted by hand as
+     the section-5.3 diagnostic. dev-seed does not create it. It is still
+     present in the volume.
+  3. As a consequence of (2), the worker's probe failures changed character
+     mid-run (FK violation -> policy denial). Both are recorded above in the
+     order they actually occurred.
+  4. ~8700 `external_effect_authorizations` deny rows accumulated from the
+     section-5.5 hot loop. They are genuine governance evidence records, not
+     test fixtures.
+
+
+================================================================================
+10. TASK 9 VERIFICATION PASS — BLOCKER C (CONSOLE MODEL REGISTRATION): FIXED
+================================================================================
+
+Appended by a later verification pass, after Task 9 shipped the fix for the
+section-3.2 defect this transcript found. Task 9 exposed the real
+`execution_guard_id` through `GET /v1/connections` and changed
+`ModelsPage.tsx` to send it instead of a `crypto.randomUUID()`.
+
+SCOPE OF THIS PASS, stated up front so nothing below is read as more than it is:
+
+  Blocker C (console Model registration) ........ VERIFIED FIXED, live, in a
+                                                  real browser, for BOTH kinds.
+  Blockers A and B (worker identity/authz) ...... UNCHANGED, and deliberately
+                                                  NOT attempted. They are a
+                                                  pre-existing gap in the worker
+                                                  identity model, explicitly
+                                                  deferred to a separate future
+                                                  package. Section 10.6 records
+                                                  only what was observed in
+                                                  passing, and claims nothing.
+  A `qualified` state ........................... STILL NOT REACHED, and NOT
+                                                  attempted. Nothing changed.
+
+--- 10.1 Pre-flight: the same volume, not a fresh one ---
+
+  The Postgres volume from the section 0-9 run was reused as-is, per the same
+  reasoning as section 0.1 (a virgin database would hit the separate,
+  out-of-scope P05-era `migrate_through_version` pre-check defect). No
+  `docker compose down -v` was run at any point.
+
+  $ docker compose ps --format "table {{.Name}}\t{{.Service}}\t{{.State}}\t{{.Status}}"
+  NAME                         SERVICE           STATE     STATUS
+  vestrace-console-1           console           running   Up 27 minutes
+  vestrace-postgres-1          postgres          running   Up 28 minutes (healthy)
+  vestrace-vestrace-server-1   vestrace-server   running   Up 28 minutes (healthy)
+
+  $ docker compose ps -a   (worker row only)
+  vestrace-vestrace-worker-1   vestrace-worker   Exited (0) 20 minutes ago
+
+  The worker was still stopped from the section-5.5 hot-loop intervention, as
+  expected.
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -At \
+      -c "select count(*) from _sqlx_migrations;" \
+      -c "select version||'|'||description||'|'||success from _sqlx_migrations order by version desc limit 3;"
+  147
+  217|qualification job work claims|true
+  216|installation drain request|true
+  215|managed safety readiness|true
+
+  Carried-over state from the section 0-9 run, all still present:
+  $ ... -At -c "select 'connectors', count(*) from connectors union all
+                select 'connections', count(*) from connections union all
+                select 'providers', count(*) from providers union all
+                select 'models', count(*) from models union all
+                select 'model_revisions', count(*) from model_revisions union all
+                select 'qualification_jobs', count(*) from qualification_jobs union all
+                select 'principals', count(*) from principals;"
+  connectors|1
+  connections|1
+  providers|2
+  models|2
+  model_revisions|2
+  qualification_jobs|1
+  principals|2
+
+  (`principals|2` is dev-seed's `...0002` plus the section-5.3 hand-inserted
+  diagnostic `...0001`. It is still in the volume, as section 9 recorded.)
+
+  $ curl -s -m 5 http://localhost:12345/v1/models      (host, LM Studio)
+  HTTP 200 — ternary-bonsai-27b, granite-embedding-278m-multilingual,
+             prism-ml/bonsai-27b, text-embedding-nomic-embed-text-v1.5
+
+--- 10.2 THE "BEFORE" CAPTURE — taken against the still-running OLD binary ---
+
+  This is the load-bearing control for everything below. It was taken BEFORE
+  the rebuild, against the pre-Task-9 server still running in the container:
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/connections
+  [{"id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+    "revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+    "state":"blocked",
+    "qualification_state":"missing",
+    "blockers":["qualification_required"],
+    "no_auth_binding_revision_id":"01a0b549-34af-7050-bcc0-b6f2ef555173"}]
+
+  NO `execution_guard_id` KEY AT ALL — exactly the absence section 3.2
+  identified as the root cause. This is the defect, reproduced one more time,
+  immediately before the fix was deployed.
+
+--- 10.3 Rebuild and bring up ---
+
+  $ docker compose build vestrace-server vestrace-worker console
+  ...
+  #31 naming to docker.io/library/vestrace-console:latest             0.0s done
+  #35 naming to docker.io/library/vestrace-vestrace-server:latest     0.0s done
+  #36 naming to docker.io/library/vestrace-vestrace-worker:latest     0.0s done
+   Image vestrace-vestrace-server Built
+   Image vestrace-vestrace-worker Built
+   Image vestrace-console Built
+  exit code 0
+
+  (A full Rust workspace recompile — no cached crate layer survived Task 9's
+  changes to vestrace-application, vestrace-http and vestrace-infrastructure.)
+
+  $ docker compose up -d vestrace-server vestrace-worker console
+   Container vestrace-vestrace-server-1 Recreated
+   Container vestrace-vestrace-worker-1 Recreated
+   Container vestrace-console-1 Recreated
+   ... [role-provision, migrate-history, safety-bootstrap, migrate-p05,
+        migrate-p05-210 through migrate-p05-217, fingerprint-vault-init,
+        dev-seed — every stage Started then Exited]
+   Container vestrace-vestrace-worker-1 Started
+   Container vestrace-vestrace-server-1 Started
+   Container vestrace-vestrace-server-1 Healthy
+   Container vestrace-console-1 Started
+
+  The whole migration chain — INCLUDING Task 8's 0217 stage — replayed to exit
+  0 again with no manual intervention. That is the third clean replay of the
+  0217 stage recorded in this package (section 1, section 7, and here).
+
+  $ docker compose ps --format "table {{.Name}}\t{{.Status}}"
+  vestrace-console-1           Up 19 seconds
+  vestrace-postgres-1          Up 43 minutes (healthy)
+  vestrace-vestrace-server-1   Up 25 seconds (healthy)
+  vestrace-vestrace-worker-1   Up 25 seconds
+
+  $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/health/ready
+  200
+  $ curl -s http://127.0.0.1:8080/health/ready
+  {"status":"ok"}
+  $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
+  200
+
+--- 10.4 THE "AFTER" CAPTURE — Task 9's backend half, live ---
+
+  Same command, same connection, same workspace, new binary:
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/connections
+  [{"id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+    "revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+    "state":"blocked",
+    "qualification_state":"missing",
+    "blockers":["qualification_required"],
+    "no_auth_binding_revision_id":"01a0b549-34af-7050-bcc0-b6f2ef555173",
+    "execution_guard_id":"72ba298d-04f1-427d-930d-394816684b5d"}]
+
+  Cross-checked against the durable row, exactly as section 4.1 cross-checked
+  the no-auth binding id:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace \
+      -c "select id, connection_id, execution_guard_id from connection_revisions;"
+                    id                  |            connection_id             |          execution_guard_id
+    --------------------------------------+--------------------------------------+--------------------------------------
+     417d4c14-1142-45e2-be84-1abc019a0d2a | 0e82699e-92df-4798-90dd-cbb16d7fe4a9 | 72ba298d-04f1-427d-930d-394816684b5d
+
+  IDENTICAL. The value section 3.2 said "no read route exposes" is now exposed
+  by the same read route the console already calls.
+
+--- 10.5 The console's Models form completes, for both kinds ---
+
+  Stale-bundle check first (lesson 1, verified before any conclusion drawn):
+
+  page.evaluate: fetch('/', {cache:'no-store'}), then each <script src> with
+  cache:'no-store', compared against what the browser actually executed.
+  {
+    "loadedScripts": ["/assets/index-DZnxtKDo.js"],
+    "servedScripts":  ["/assets/index-DZnxtKDo.js"],
+    "details": [{"src":"/assets/index-DZnxtKDo.js","bytes":274696, ...}],
+    "url": "http://127.0.0.1:3000/models"
+  }
+
+  The bundle hash CHANGED from section 1.1's `index-E50tngQU.js` (274588 bytes)
+  to `index-DZnxtKDo.js` (274696 bytes). This is demonstrably the new build,
+  not a cached copy of the old one.
+
+  Every `execution_guard_id:` occurrence in the served bundle, in full context:
+
+  page.evaluate: /execution_guard_id\s*:/g over the fetched bundle text
+  [
+    "ction({connection_id:crypto.randomUUID(),connector_id:crypto.randomUUID(),
+      name:c.trim(),revision_id:crypto.randomUUID(),
+      execution_guard_id:crypto.randomUUID(),kind:F,logical_base_url:v,...",
+    "0,revision_id:crypto.randomUUID(),connection_id:O.id,
+      connection_revision_id:O.revision_id,wire_model_id:k.trim(),kind:L,
+      execution_guard_id:O.execution_guard_id,expected_head_version:0},..."
+  ]
+
+  Exactly two, and they are the correct two:
+    * the FIRST is ConnectionsPage's create path, which still mints a guard —
+      correct by design: creating a Connection is the act that NAMES its guard.
+    * the SECOND is ModelsPage, now reading `O.execution_guard_id` off the
+      selected Connection. This is Task 9's fix, in the bytes the browser ran.
+
+  10.5.1 CHAT KIND
+
+  page.goto('http://127.0.0.1:3000/models'); click "Register Model"
+  #model-name       = "console-chat-taskn9-verify"
+  #model-wire-id    = "prism-ml/bonsai-27b"
+  #model-kind       = "Chat"
+  #model-connection = "0e82699e-92df-4798-90dd-cbb16d7fe4a9 (missing)"
+  click "Register"
+
+  Rendered result in the page (accessibility snapshot):
+    status: check_circle  'Model "console-chat-taskn9-verify" was published.'
+
+  Screenshot: p06-followup-screenshots/09-console-chat-model-registered.png
+
+  Network capture of the exact request the form sent:
+    POST http://127.0.0.1:3000/api/v1/models/a687eb45-d3e5-4992-9957-b21818e34194/revisions
+      => [201] Created   (47ms, x-request-id 01a0b57c-b2dc-75e1-aa9c-2c961e292bff)
+    request body:
+    {"model_id":"a687eb45-d3e5-4992-9957-b21818e34194",
+     "provider_id":"c9bfb46e-baca-415d-ab1a-53515606a0d0",
+     "model_name":"console-chat-taskn9-verify","context_window":128000,
+     "input_cost_per_mtoken":0.15,"output_cost_per_mtoken":0.6,
+     "revision_id":"abc85747-0f94-4b1a-9ca1-d82a011c956f",
+     "connection_id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+     "connection_revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+     "wire_model_id":"prism-ml/bonsai-27b","kind":"chat",
+     "execution_guard_id":"72ba298d-04f1-427d-930d-394816684b5d",
+     "expected_head_version":0}
+    response body:
+    {"audit_event_id":"01a0b57c-b2e0-78e1-ab8e-62df3e5ee422",
+     "idempotency_key":"8cf18184-96ed-4df2-8e38-09e3b3e48b28",
+     "outbox_message_ids":["01a0b57c-b2e0-78e1-ab8e-62c784dbdc1f"]}
+
+  Compare the `execution_guard_id` field against the same field in section
+  3.1's capture. Section 3.1 sent `d96e733d-89a6-45a0-8197-18bbd7b5c905`, a
+  fresh random UUID, and got HTTP 500. This one sent
+  `72ba298d-04f1-427d-930d-394816684b5d` — byte-identical to the durable
+  `connection_revisions.execution_guard_id` in 10.4 — and got HTTP 201.
+
+  10.5.2 EMBEDDING KIND (Task 6's selector, now unblocked)
+
+  click "Register Model"
+  #model-name       = "console-embedding-taskn9-verify"
+  #model-wire-id    = "text-embedding-nomic-embed-text-v1.5"
+  #model-kind       = "Embedding"
+  #model-connection = "0e82699e-92df-4798-90dd-cbb16d7fe4a9 (missing)"
+  click "Register"
+
+  Rendered result:
+    status: check_circle  'Model "console-embedding-taskn9-verify" was published.'
+
+  Screenshot: p06-followup-screenshots/10-console-embedding-model-registered.png
+
+  Network capture:
+    POST http://127.0.0.1:3000/api/v1/models/356c940e-d238-44e3-9469-8be685c78bd1/revisions
+      => [201] Created
+    request body:
+    {"model_id":"356c940e-d238-44e3-9469-8be685c78bd1",
+     "provider_id":"48094c9b-a348-4617-a819-a0cb6e9cbf66",
+     "model_name":"console-embedding-taskn9-verify","context_window":128000,
+     "input_cost_per_mtoken":0.15,"output_cost_per_mtoken":0.6,
+     "revision_id":"d78ad45d-a3d3-4a8b-acb2-c280c10d1326",
+     "connection_id":"0e82699e-92df-4798-90dd-cbb16d7fe4a9",
+     "connection_revision_id":"417d4c14-1142-45e2-be84-1abc019a0d2a",
+     "wire_model_id":"text-embedding-nomic-embed-text-v1.5","kind":"embedding",
+     "execution_guard_id":"72ba298d-04f1-427d-930d-394816684b5d",
+     "expected_head_version":0}
+
+  Section 3.3 recorded Task 6's selector as "real, correct, and blocked by the
+  same defect." It is no longer blocked. `"kind":"embedding"` now reaches a
+  201. TASK 6 IS NOW A FULL PASS, not a partial.
+
+  10.5.3 Durable verification of both
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -c \
+    "select m.id as model_id, m.model_name, m.provider_id, r.id as revision_id,
+            r.kind, r.wire_model_id
+       from models m join model_revisions r on r.model_id = m.id
+      order by m.created_at;"
+                 model_id               |            model_name             |             provider_id              |             revision_id              |   kind    |            wire_model_id
+    --------------------------------------+-----------------------------------+--------------------------------------+--------------------------------------+-----------+--------------------------------------
+     2f18449f-e800-4b85-88bc-2e8d1ca9d2a8 | bonsai-27b (chat)                 | 033918f2-2f9e-41e6-aafe-1f7754301503 | 1dad39a6-4d96-4884-833d-4ee40012ed42 | chat      | prism-ml/bonsai-27b
+     5ce08009-5830-4460-afb8-76a119c30b38 | nomic-embed-text-v1.5 (embedding) | f59b9947-b9dc-412b-85c0-12e3fb5bb945 | f0603965-0456-44b3-abca-7a23a1f378c9 | embedding | text-embedding-nomic-embed-text-v1.5
+     a687eb45-d3e5-4992-9957-b21818e34194 | console-chat-taskn9-verify        | c9bfb46e-baca-415d-ab1a-53515606a0d0 | abc85747-0f94-4b1a-9ca1-d82a011c956f | chat      | prism-ml/bonsai-27b
+     356c940e-d238-44e3-9469-8be685c78bd1 | console-embedding-taskn9-verify   | 48094c9b-a348-4617-a819-a0cb6e9cbf66 | d78ad45d-a3d3-4a8b-acb2-c280c10d1326 | embedding | text-embedding-nomic-embed-text-v1.5
+
+  The first two rows are section 3.4's out-of-band API-call Models. The last
+  two are this pass's, created entirely through the console form.
+
+  A SECOND THING THIS PROVES, which section 3.4 could only prove out of band:
+  gap 2's provider auto-materialization now runs on the CONSOLE path.
+
+  $ ... -At -c "select count(*) from providers;" -c "select count(*) from connectors;"
+  4
+  1
+
+  `providers` went 2 -> 4: `c9bfb46e-...` and `48094c9b-...` were
+  auto-materialized transactionally by `insert_or_verify_stable_model` for the
+  two console registrations. `connectors` stayed 1, correctly — both Models
+  reused the existing Connection rather than creating one.
+
+  The governed read route agrees:
+
+  $ curl -s -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/models
+  [{"id":"2f18449f-...","revision_id":"1dad39a6-...","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"5ce08009-...","revision_id":"f0603965-...","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"a687eb45-d3e5-4992-9957-b21818e34194","revision_id":"abc85747-0f94-4b1a-9ca1-d82a011c956f","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"356c940e-d238-44e3-9469-8be685c78bd1","revision_id":"d78ad45d-a3d3-4a8b-acb2-c280c10d1326","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]}]
+
+  Screenshot after a full page reload, showing all four durable:
+  p06-followup-screenshots/11-models-list-after-reload.png
+
+  `blocked` / `qualification_required` is the CORRECT state for a
+  never-qualified Model — the same state section 2 recorded for the Connection.
+  IT IS NOT AN ERROR, AND IT IS NOT A `qualified` STATE. Nothing in this
+  section claims a Model reached one.
+
+  10.5.4 No server-side error of any kind
+
+  $ docker compose logs vestrace-server | grep -c ERROR
+  0
+  $ docker compose logs vestrace-server | grep -E "23514|exact referenced connection guard"
+  (no output)
+
+  Zero ERROR lines across the whole lifetime of the new server container. The
+  `model revision requires its exact referenced connection guard` message
+  section 3.1 captured does not occur once.
+
+  BLOCKER C IS FIXED. Verified live, in a real browser, through the console's
+  own form, for both Model kinds, with the durable rows and the governed read
+  route both agreeing, and with a "before" capture on the old binary in 10.2
+  showing the same command failing to expose the field at all.
+
+--- 10.6 Blockers A and B: observed in passing, NOT attempted, NOT changed ---
+
+  Fixing the worker's identity/authorization gap is explicitly OUT OF SCOPE of
+  this plan and is deferred to a separate future package. This pass did not
+  attempt it, and nothing below should be read as progress on it.
+
+  The worker came up with the rest of the stack, re-claimed the SAME stuck job
+  from the section 0-9 run, and resumed the identical section-5.4 failure:
+
+  $ docker compose logs vestrace-worker --tail 20
+  17:06:05.901217Z WARN vestrace::commands::worker: qualification probe failed job_id=349bb3b0-813b-4ad8-9eb0-4867d94eb2ec ordinal="10" error=conflict: qualification q1 dispatch was not admitted for its original effect
+  17:06:05.960602Z WARN ... (identical)
+  17:06:06.025743Z WARN ... (identical)
+  ... 20 of 20 lines identical
+
+  Byte-for-byte the same error as section 5.4. Blocker B is exactly where it
+  was. This pass changed nothing about it and tried nothing.
+
+  One incidental corroboration of Task 1's lease mechanism, which IS in scope
+  and was already a pass in section 7:
+
+  $ docker exec vestrace-postgres-1 psql -U vestrace_bootstrap -d vestrace -x \
+      -c "select * from qualification_job_work_claims;"
+  workspace_id   | 10000000-0000-0000-0000-000000000001
+  job_id         | 349bb3b0-813b-4ad8-9eb0-4867d94eb2ec
+  claim_owner    | 01a0b57b-2492-7360-8bf3-87286afe0fc1
+  claim_deadline | 2026-09-18 17:06:19.866467+00
+  last_outcome   | retryable_failure
+  created_at     | 2026-09-18 16:14:10.544044+00
+  updated_at     | 2026-09-18 17:06:19.866467+00
+
+  `created_at` is still 16:14:10.544044 — the original claim from section 5.1,
+  86ms after the very first browser click. `claim_owner` is now a THIRD
+  distinct `WorkerId` (`01a0b57b-...`; section 5.1 had `01a0b548-...`, section
+  7 a second one). One durable claim row, re-owned across three separate worker
+  process lifetimes, never stranded and never duplicated. That is Task 1's
+  lease behaving as designed across a second real restart.
+
+  The section-5.5 hot retry loop also resumed at the same rate, as section 7
+  already recorded it doing. The worker was stopped again to halt it:
+
+  $ docker compose stop vestrace-worker
+   Container vestrace-vestrace-worker-1 Stopping
+   Container vestrace-vestrace-worker-1 Stopped
+
+  $ ... -At -c "select count(*) from external_effect_authorizations;"
+  19595                   <- and static thereafter, confirming the loop stopped
+
+  (That total is cumulative across this volume's whole history — 8731 at
+  section 5.5, 18759 by the start of this pass, 19595 now. The growth during
+  this pass is from the ~90 seconds the worker ran here, not from anything this
+  pass did to provoke it.)
+
+  Final state of the job, unchanged from section 5.6:
+
+  $ ... -x -c "select id, state, completed_at from qualification_jobs;" \
+        -c "select probe_ordinal, result from qualification_probe_results order by probe_ordinal;"
+  id           | 349bb3b0-813b-4ad8-9eb0-4867d94eb2ec
+  state        | running
+  completed_at |
+
+  probe_ordinal | 00
+  result        | pass
+
+  Still `running`, `completed_at` still NULL, still exactly one of twelve q1
+  ordinals with a recorded result. NO CONNECTION OR MODEL REACHED `qualified`
+  IN THIS PASS EITHER, and this section does not claim one did.
+
+--- 10.7 Gap 4 (AG-UI): not re-exercised ---
+
+  Not attempted in this pass. Section 6's recorded refusal stands as the last
+  observation of it. Nothing in Task 9 touches the AG-UI path, and no claim
+  about it is made or revised here.
+
+--- 10.8 Final state of the stack at the end of this pass ---
+
+  $ docker compose ps --format "table {{.Name}}\t{{.Status}}"
+  NAME                         STATUS
+  vestrace-console-1           Up 3 minutes
+  vestrace-postgres-1          Up 46 minutes (healthy)
+  vestrace-vestrace-server-1   Up 3 minutes (healthy)
+
+  (vestrace-worker deliberately stopped, per 10.6.)
+
+--- 10.9 Screenshots added by this pass ---
+
+  09-console-chat-model-registered.png
+     sha256 eb4943c58820564f6dcc32aa55d90ead84e83b13ed4ba18c4d033dec87679dc7
+     112503 bytes
+  10-console-embedding-model-registered.png
+     sha256 a82322a0dfbd026406365738e32cedbe4a531a2ca3a67ff77129110b46640280
+     125958 bytes
+  11-models-list-after-reload.png
+     sha256 7cf47d03ba0c63edcd520e973f8339129f83be77bd16a0268824478db3aae7dc
+     119167 bytes
+
+--- 10.10 Database mutations made by this pass that are not product paths ---
+
+  NONE. Every row this pass created — two `models`, two `model_revisions`, two
+  auto-materialized `providers` — was created by the console's own form through
+  the governed HTTP route. No hand-written INSERT, UPDATE or DELETE was issued
+  against the database in this pass. The section-9 mutations from the earlier
+  run (the hand-inserted diagnostic `principals` row, and the accumulated
+  `external_effect_authorizations` deny rows) are still present and still
+  disclosed there; this pass added ~836 more deny rows purely as a side effect
+  of the worker running for about 90 seconds before being stopped again.
+
+--- 10.11 Honest scorecard after this pass ---
+
+  Gap 1 (connector auto-materialization) ........ CLOSED (section 2).
+  Gap 2 (provider auto-materialization) ......... NOW FULLY CLOSED. The SQL was
+                                                  proven in section 3.4; the
+                                                  console path is proven here
+                                                  in 10.5.3.
+  Blocker C (console Model registration) ........ FIXED and verified (10.5).
+  Task 4 ........................................ PASS (section 4.1).
+  Task 5 ........................................ PASS (section 4.2).
+  Task 6 (embedding selector) ................... NOW A FULL PASS (10.5.2),
+                                                  upgraded from PARTIAL.
+  Gap 3 (qualification execution) ............... UNCHANGED FROM SECTION 5.6.
+                                                  Infrastructure real and
+                                                  proven; a `qualified` state
+                                                  is still NOT reached, blocked
+                                                  by Blockers A and B, which
+                                                  are out of this plan's scope.
+  Gap 4 (AG-UI) ................................. UNCHANGED (section 6).
+
+  THE PLAN'S CENTRAL END-TO-END CLAIM — "make a Connection and its Models reach
+  a real `qualified` state end to end on a fresh workspace, surviving a
+  restart" — IS STILL NOT MET. This pass closes the last gap that was inside
+  this plan's scope. What remains is outside it.
+
+END OF TRANSCRIPT.
