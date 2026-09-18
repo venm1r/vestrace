@@ -54,10 +54,12 @@ test('the bounded migrator is named by its exported path', () => {
       readFileSync(join(repoRoot, file), 'utf8'),
       // P05-I added DRAIN_HISTORICAL_MIGRATOR, bounded at 216 excluding the
       // P05 assertion migrations, alongside the original HISTORICAL_MIGRATOR
-      // (bounded at 208) -- both are legitimately exported by
-      // vestrace_infrastructure. A file may use either, or (like
-      // intent_crash_boundaries.rs) both across different tests.
-      /migrator = "vestrace_infrastructure::(HISTORICAL_MIGRATOR|DRAIN_HISTORICAL_MIGRATOR)"/,
+      // (bounded at 208). The P06 follow-up's Task 1 added
+      // QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR, bounded at 217 for
+      // the same reason. All three are legitimately exported by
+      // vestrace_infrastructure. A file may use any one of them, or (like
+      // intent_crash_boundaries.rs) more than one across different tests.
+      /migrator = "vestrace_infrastructure::(HISTORICAL_MIGRATOR|DRAIN_HISTORICAL_MIGRATOR|QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR)"/,
       `${file} names a migrator this package does not export`,
     );
   }

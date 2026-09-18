@@ -52,6 +52,7 @@ pub mod purge_repository;
 pub mod qualification_baseline_repository;
 pub mod qualification_job_repository;
 pub mod qualification_repository;
+pub mod qualification_work_repository;
 pub mod recovery_qualification_evidence_repository;
 pub mod recovery_repository;
 pub mod relation_repository;
@@ -143,6 +144,7 @@ pub use qualification_job_repository::{
     QualificationQ1Adapter,
 };
 pub use qualification_repository::PgQualificationRepository;
+pub use qualification_work_repository::PgQualificationWorkRepository;
 pub use recovery_qualification_evidence_repository::PgRecoveryQualificationEvidenceRepository;
 pub use recovery_repository::PgRecoveryRepository;
 pub use relation_repository::PgRelationRepository;

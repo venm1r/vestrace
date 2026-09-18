@@ -281,6 +281,7 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
         outcome.merge(reconcile_effects(reconciliation.as_ref(), &run_contexts).await);
         outcome.merge(deliver_outcomes(&outcome_delivery, &run_contexts).await);
         outcome.merge(poll_embedding_work(embedding_runtime.as_deref(), &run_contexts).await);
+        outcome.merge(poll_qualification_work(&store, &governed, worker_id, &run_contexts).await);
         outcome
     });
     let once_outcome = match once_outcome {
@@ -308,12 +309,16 @@ pub async fn run(config: &AppConfig, once: bool) -> anyhow::Result<bool> {
                         let delivered = deliver_outcomes(&outcome_delivery, &run_contexts).await;
                         let embedded =
                             poll_embedding_work(embedding_runtime.as_deref(), &run_contexts).await;
+                        let qualified =
+                            poll_qualification_work(&store, &governed, worker_id, &run_contexts)
+                                .await;
                         Ok::<_, anyhow::Error>(
                             runs.did_work
                                 || messages.did_work
                                 || reconciled.did_work
                                 || delivered.did_work
-                                || embedded.did_work,
+                                || embedded.did_work
+                                || qualified.did_work,
                         )
                     } => outcome?,
                 };
@@ -404,6 +409,224 @@ async fn poll_embedding_work(
                     );
                     outcome.failed = true;
                 }
+            }
+        }
+    }
+    outcome
+}
+
+/// The exact, ordered q1 protocol ordinals `QualificationJobService` accepts.
+///
+/// Mirrors the `ARRAY['00','10','15','20','30','35','40','50','60','70','80',
+/// '90']` literal `vestrace_record_qualification_probe_result` enforces in
+/// `migrations/0185_qualification_job_lifecycle.sql`: this worker is a driver
+/// for that closed protocol, not a second definition of it.
+const Q1_ORDINALS: [&str; 12] = [
+    "00", "10", "15", "20", "30", "35", "40", "50", "60", "70", "80", "90",
+];
+
+/// The next q1 ordinal this job has not yet recorded a probe result for, or
+/// `None` once every ordinal has one.
+///
+/// Mirrors the `begin_scoped`/`fetch_all`/`scoped.commit()` pattern already
+/// used by `list_safe_models`/`list_safe_connections`
+/// (`crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs`,
+/// `connection_revision_repository.rs`).
+async fn next_qualification_ordinal(
+    store: &PgStore,
+    context: &RequestContext,
+    job_id: vestrace_domain::QualificationJobId,
+) -> Result<Option<&'static str>, vestrace_application::ApplicationError> {
+    let mut scoped = store
+        .begin_scoped(context)
+        .await
+        .map_err(|error| vestrace_application::ApplicationError::Storage(error.to_string()))?;
+    let completed: Vec<String> = sqlx::query_scalar(
+        "SELECT probe_ordinal FROM qualification_probe_results WHERE qualification_job_id = $1",
+    )
+    .bind(job_id.as_uuid())
+    .fetch_all(scoped.connection())
+    .await
+    .map_err(|error| vestrace_application::ApplicationError::Storage(error.to_string()))?;
+    scoped
+        .commit()
+        .await
+        .map_err(|error| vestrace_application::ApplicationError::Storage(error.to_string()))?;
+    Ok(Q1_ORDINALS
+        .iter()
+        .find(|ordinal| !completed.iter().any(|done| done == *ordinal))
+        .copied())
+}
+
+/// Drive claimed qualification jobs through their next q1 probe, one ordinal
+/// per claim per tick, finalizing a job once every ordinal has a result.
+///
+/// # Why `finalize_success` is called from the `next ordinal is None` branch
+///
+/// `vestrace_record_qualification_probe_result`
+/// (`migrations/0185_qualification_job_lifecycle.sql`) never sets
+/// `qualification_jobs.state` to `'succeeded'` itself -- after the last
+/// ordinal ("90") passes it still sets the job's state to `'running'`, exactly
+/// as it does after every non-terminal ordinal. Only
+/// `vestrace_finalize_qualification_job` (driven here through
+/// `QualificationJobService::finalize_success`) ever writes `'succeeded'`. So
+/// checking `run_next_probe`'s returned state for `Succeeded` -- as an earlier
+/// draft of this function did -- can never fire: that branch is dead code, and
+/// a job that finished all twelve ordinals would sit at `state='running'`
+/// forever, endlessly reclaimed with `next_qualification_ordinal` finding
+/// nothing left to probe.
+///
+/// The correct signal is `next_qualification_ordinal` returning `None` on a
+/// job this worker was able to reclaim: `vestrace_claim_qualification_work`
+/// only ever claims a job whose state is still `requested`/`running`
+/// (Task 1), so reaching "every ordinal already has a result" on a reclaimed
+/// job proves none of those recorded results was `failed_definite` or
+/// `inconclusive_unknown` -- either one would have already moved the job out
+/// of `running` and out of future claims. That is exactly, and only, the tick
+/// that must call `finalize_success`.
+///
+/// `finalize_success`'s failure must not be released as `Completed`: doing so
+/// would strand the job at `state='running'` forever, since
+/// `next_qualification_ordinal` would keep finding no ordinal left to probe
+/// and `finalize_success` would never be retried. Releasing it as
+/// `RetryableFailure` instead makes the job reclaimable so the next tick tries
+/// `finalize_success` again.
+async fn poll_qualification_work(
+    store: &PgStore,
+    governed: &vestrace_infrastructure::GovernedProviderRuntime,
+    worker_id: WorkerId,
+    contexts: &[RequestContext],
+) -> PollOutcome {
+    use vestrace_application::{QualificationWorkOutcome, QualificationWorkRepository};
+    use vestrace_infrastructure::postgres::PgQualificationWorkRepository;
+
+    let repository = PgQualificationWorkRepository::new(store.clone());
+    let runner = vestrace_infrastructure::postgres::PgQualificationProbeRunner::new(
+        store.clone(),
+        governed.dispatch(),
+        worker_id,
+    );
+    let service = vestrace_application::QualificationJobService::new(
+        vestrace_infrastructure::postgres::PgQualificationJobRepository::new(store.clone()),
+    );
+    // `WorkerId` has no `as_str`; it is a UUID newtype whose only textual form
+    // is `Display`. Computed once per poll rather than per claim.
+    let owner = worker_id.to_string();
+
+    let mut outcome = PollOutcome::default();
+    for context in contexts {
+        let claims = match repository.claim(context, &owner, 10).await {
+            Ok(claims) => claims,
+            Err(error) => {
+                tracing::warn!(
+                    workspace = %context.workspace_id,
+                    %error,
+                    "qualification work claim failed"
+                );
+                outcome.failed = true;
+                continue;
+            }
+        };
+        for claim in claims {
+            outcome.did_work = true;
+            let ordinal = match next_qualification_ordinal(store, context, claim.job_id).await {
+                Ok(Some(ordinal)) => ordinal,
+                Ok(None) => {
+                    // The three ids below are freshly minted, not looked up --
+                    // matching this codebase's universal convention that a
+                    // caller publishing a new immutable revision mints its own
+                    // id (the same pattern create_model_revision,
+                    // create_connection, etc. all use). Confirmed against
+                    // `migrations/0185_qualification_job_lifecycle.sql:769`
+                    // (`vestrace_finalize_qualification_job`), which validates
+                    // only that these three arguments are non-null and
+                    // workspace-consistent before using them to publish new
+                    // rows -- it does not require them to reference anything
+                    // pre-existing.
+                    let finalization = vestrace_application::QualificationFinalization {
+                        job_id: claim.job_id,
+                        connection_qualification_revision_id:
+                            vestrace_domain::ConnectionQualificationRevisionId::new(),
+                        chat_model_qualification_revision_id:
+                            vestrace_domain::ModelQualificationRevisionId::new(),
+                        embedding_model_qualification_revision_id:
+                            vestrace_domain::ModelQualificationRevisionId::new(),
+                    };
+                    let work_outcome = match service.finalize_success(context, finalization).await {
+                        Ok(()) => QualificationWorkOutcome::Completed,
+                        Err(error) => {
+                            tracing::warn!(
+                                job_id = %claim.job_id.as_uuid(),
+                                %error,
+                                "qualification finalize_success failed"
+                            );
+                            outcome.failed = true;
+                            // Downgrade: every ordinal passed but the job never
+                            // reached a terminal `state`. Releasing this as
+                            // `Completed` would strand it -- force a retry.
+                            QualificationWorkOutcome::RetryableFailure
+                        }
+                    };
+                    if let Err(error) = repository.finish(context, &claim, work_outcome).await {
+                        tracing::warn!(
+                            job_id = %claim.job_id.as_uuid(),
+                            %error,
+                            "qualification work finish failed"
+                        );
+                        outcome.failed = true;
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        job_id = %claim.job_id.as_uuid(),
+                        %error,
+                        "qualification ordinal lookup failed"
+                    );
+                    outcome.failed = true;
+                    if let Err(error) = repository
+                        .finish(context, &claim, QualificationWorkOutcome::RetryableFailure)
+                        .await
+                    {
+                        tracing::warn!(
+                            job_id = %claim.job_id.as_uuid(),
+                            %error,
+                            "qualification work finish failed"
+                        );
+                        outcome.failed = true;
+                    }
+                    continue;
+                }
+            };
+            let result = service
+                .run_next_probe(context, claim.job_id, ordinal, &runner)
+                .await;
+            // Both branches of `Ok` release the claim the same way: whether
+            // the probe passed (job stays `running`, claimable again for its
+            // next ordinal) or definitely/inconclusively failed (job left
+            // `running`/`requested` for good, so no future claim will ever
+            // select it again), there is nothing here to retry. Only a
+            // genuine error calling `run_next_probe` itself is retryable.
+            let work_outcome = match &result {
+                Ok(_) => QualificationWorkOutcome::Completed,
+                Err(_) => QualificationWorkOutcome::RetryableFailure,
+            };
+            if let Err(error) = &result {
+                tracing::warn!(
+                    job_id = %claim.job_id.as_uuid(),
+                    ordinal,
+                    %error,
+                    "qualification probe failed"
+                );
+                outcome.failed = true;
+            }
+            if let Err(error) = repository.finish(context, &claim, work_outcome).await {
+                tracing::warn!(
+                    job_id = %claim.job_id.as_uuid(),
+                    %error,
+                    "qualification work finish failed"
+                );
+                outcome.failed = true;
             }
         }
     }

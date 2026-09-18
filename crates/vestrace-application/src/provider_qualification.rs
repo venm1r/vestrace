@@ -218,6 +218,43 @@ pub const fn q1_profile_for_workspace(_workspace_id: WorkspaceId) -> &'static st
     OPENAI_Q1_PROFILE_REVISION
 }
 
+/// A bounded, durable claim over one qualification job's next worker cycle.
+///
+/// Mirrors `crate::embedding::EmbeddingWorkClaim`, minus a `kind` field:
+/// unlike embedding work, a qualification job has exactly one kind of work to
+/// claim (drive its next q1 probe, or finalize it), so nothing here
+/// distinguishes claims the way `EmbeddingWorkKind` does.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QualificationWorkClaim {
+    pub job_id: QualificationJobId,
+    pub owner: String,
+    pub claim_deadline: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QualificationWorkOutcome {
+    Completed,
+    RetryableFailure,
+    DefiniteFailure,
+}
+
+#[async_trait]
+pub trait QualificationWorkRepository: Send + Sync {
+    async fn claim(
+        &self,
+        context: &RequestContext,
+        owner: &str,
+        limit: u32,
+    ) -> Result<Vec<QualificationWorkClaim>, ApplicationError>;
+
+    async fn finish(
+        &self,
+        context: &RequestContext,
+        claim: &QualificationWorkClaim,
+        outcome: QualificationWorkOutcome,
+    ) -> Result<(), ApplicationError>;
+}
+
 fn qualification_state(value: &str) -> Result<QualificationJobState, ApplicationError> {
     match value {
         "requested" => Ok(QualificationJobState::Requested),

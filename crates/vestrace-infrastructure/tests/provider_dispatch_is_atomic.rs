@@ -32,8 +32,8 @@ use vestrace_application::{
     ProviderResultIdentities, ProviderResultRepository, ProviderUsage, Q1ChatMessage,
     Q1ModelsListProbeResult, Q1ProbeFailure, Q1ProbeRequest, Q1ProbeResponse,
     QualificationJobRepository, QualificationJobRequest, QualificationJobService,
-    QualificationProbeCompletion, RequestContext, RunStepAttemptRecovery,
-    SharedProviderDispatchRepository, UnitOfWork,
+    QualificationProbeCompletion, QualificationWorkOutcome, QualificationWorkRepository,
+    RequestContext, RunStepAttemptRecovery, SharedProviderDispatchRepository, UnitOfWork,
 };
 use vestrace_domain::trust::DataPolicy;
 use vestrace_domain::{
@@ -55,7 +55,8 @@ use vestrace_infrastructure::postgres::{
     PgGovernedMutationRepository, PgInstallationMutationPermit,
     PgModelDataPolicyDecisionRepository, PgModelRequestEvidenceRepository,
     PgProviderDispatchRepository, PgProviderResultRepository, PgQualificationJobRepository,
-    PgQualificationProbeRunner, PgStore, PostgresRunStore, QualificationQ1Adapter,
+    PgQualificationProbeRunner, PgQualificationWorkRepository, PgStore, PostgresRunStore,
+    QualificationQ1Adapter,
 };
 
 struct ObservingAllocator;
@@ -1377,6 +1378,39 @@ impl QualificationQ1Adapter for CountingQ1Adapter {
     ) -> Result<Q1ProbeResponse, Q1ProbeFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert!(matches!(request, Q1ProbeRequest::ModelsList));
+        Ok(Q1ProbeResponse::ModelsList(
+            Q1ModelsListProbeResult::new(1).unwrap(),
+        ))
+    }
+}
+
+/// `CountingQ1Adapter`'s pattern, generalized to every q1 network ordinal.
+///
+/// `CountingQ1Adapter` asserts its request is exactly `Q1ProbeRequest::
+/// ModelsList`, because the test it serves only ever drives ordinal "10". A
+/// full claim/probe/finalize cycle drives every network ordinal (10 through
+/// 90), each with its own request shape, so that assertion cannot be reused
+/// unmodified. Nothing else changes: `q1_outcome`
+/// (`crates/vestrace-infrastructure/src/postgres/qualification_job_repository.rs`)
+/// treats any `Ok(_)` adapter response as `QualificationProbeResult::Pass`
+/// regardless of which `Q1ProbeResponse` variant it holds, so returning the
+/// same `ModelsList` value `CountingQ1Adapter` does is sufficient to pass
+/// every ordinal.
+#[derive(Default)]
+struct AlwaysPassQ1Adapter {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl QualificationQ1Adapter for AlwaysPassQ1Adapter {
+    async fn execute(
+        &self,
+        _kind: ConnectionKind,
+        _runtime_base_url: &str,
+        _auth: ConnectionAuth,
+        _request: Q1ProbeRequest,
+    ) -> Result<Q1ProbeResponse, Q1ProbeFailure> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(Q1ProbeResponse::ModelsList(
             Q1ModelsListProbeResult::new(1).unwrap(),
         ))
@@ -6024,4 +6058,212 @@ async fn optional_definite_status_from_the_real_runner_is_acknowledged_and_final
             .await
             .unwrap();
     assert_eq!(final_state, "succeeded");
+}
+
+/// Task 2: proves `PgQualificationWorkRepository`'s claim/finish lease
+/// (migration 0217, added in Task 1) actually drives a `requested`
+/// qualification job to `succeeded` when repeatedly cycled the same way
+/// `crates/vestrace-cli/src/commands/worker.rs`'s `poll_qualification_work`
+/// does: claim -> find the job's next unrun q1 ordinal -> `run_next_probe` ->
+/// finish the claim, and once every ordinal has a result, `finalize_success`
+/// instead of a probe.
+///
+/// This inlines `poll_qualification_work`'s logic rather than calling it,
+/// because that function is private to the `vestrace-cli` binary crate and
+/// this repository has no existing pattern of testing a worker poll function
+/// directly (`poll_embedding_work` has none either -- `worker.rs`'s only
+/// existing unit test covers `build_effect_read_back_registry`). Per the
+/// task brief's own fallback, a repository-level test proving
+/// `run_next_probe` gets driven correctly through the new claim/finish lease
+/// is sufficient.
+///
+/// Uses `setup_branch` + `QualificationJobService::request` (the same
+/// fixture `qualification_runner_composes_the_original_q1_dispatch_once`
+/// uses for ordinal "10"), not `setup_qualification_branch`: the latter
+/// pre-seeds one ordinal's `qualification_q1_mre_sources` row by hand for a
+/// different testing style, and `vestrace_prepare_qualification_probe_dispatch`
+/// (`migrations/0185_qualification_job_lifecycle.sql:205`) already derives
+/// every ordinal's exact q1 request shape itself, so no ordinal needs
+/// pre-seeding here.
+#[sqlx::test(migrator = "vestrace_infrastructure::QUALIFICATION_WORK_CLAIMS_HISTORICAL_MIGRATOR")]
+async fn qualification_work_claims_drive_a_requested_job_to_succeeded(pool: PgPool) {
+    const Q1_ORDINALS: [&str; 12] = [
+        "00", "10", "15", "20", "30", "35", "40", "50", "60", "70", "80", "90",
+    ];
+    const OWNER: &str = "qualification-work-claims-test-worker";
+
+    let runtime = runtime_pool(&pool).await;
+    let fixture = setup_branch(&pool, &runtime, false).await;
+    let context = RequestContext::new(fixture.ids.workspace, fixture.ids.principal);
+    let store = PgStore::from_pool(runtime.clone());
+    let no_auth_binding_revision_id: Uuid = sqlx::query_scalar(
+        "SELECT no_auth_binding_revision_id FROM model_binding_snapshots \
+         WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(fixture.ids.workspace.as_uuid())
+    .bind(fixture.ids.snapshot)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let job_id = QualificationJobId::new();
+    let service = QualificationJobService::new(PgQualificationJobRepository::new(store.clone()));
+    service
+        .request(
+            &context,
+            QualificationJobRequest {
+                job_id,
+                target_binding_id: Uuid::now_v7(),
+                connection_id: fixture.ids.connection,
+                connection_revision_id: fixture.ids.revision,
+                target: vestrace_domain::QualificationTargetBinding::NoAuth {
+                    binding_revision_id: NoAuthBindingRevisionId::from_uuid(
+                        no_auth_binding_revision_id,
+                    ),
+                },
+                chat_model_revision_id: vestrace_domain::ModelRevisionId::from_uuid(
+                    fixture.chat_model_revision_id,
+                ),
+                embedding_model_revision_id: vestrace_domain::ModelRevisionId::from_uuid(
+                    fixture.embedding_model_revision_id,
+                ),
+            },
+        )
+        .await
+        .unwrap();
+
+    let work = PgQualificationWorkRepository::new(store.clone());
+    let adapter = Arc::new(AlwaysPassQ1Adapter::default());
+    let runner = PgQualificationProbeRunner::with_adapter(
+        store.clone(),
+        Arc::new(qualification_repository(&runtime, None)),
+        WorkerId::new(),
+        adapter.clone(),
+    );
+
+    // Drive every ordinal through exactly one claim/probe/finish cycle, the
+    // same sequence `poll_qualification_work` runs once per claimed job per
+    // tick.
+    for expected_ordinal in Q1_ORDINALS {
+        let claims = work.claim(&context, OWNER, 10).await.unwrap();
+        assert_eq!(
+            claims.len(),
+            1,
+            "the job must be claimable while ordinal {expected_ordinal} is unrun"
+        );
+        let claim = claims.into_iter().next().unwrap();
+        assert_eq!(claim.job_id, job_id);
+        assert_eq!(claim.owner, OWNER);
+
+        let claimed_again = work.claim(&context, "a-second-worker", 10).await.unwrap();
+        assert!(
+            claimed_again.is_empty(),
+            "a live claim must hide the job from a second claimant"
+        );
+
+        // Mirrors `next_qualification_ordinal` in
+        // `crates/vestrace-cli/src/commands/worker.rs` exactly.
+        let completed: Vec<String> = sqlx::query_scalar(
+            "SELECT probe_ordinal FROM qualification_probe_results \
+             WHERE qualification_job_id = $1",
+        )
+        .bind(job_id.as_uuid())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let next_ordinal = Q1_ORDINALS
+            .iter()
+            .find(|ordinal| !completed.iter().any(|done| done == *ordinal))
+            .copied();
+        assert_eq!(
+            next_ordinal,
+            Some(expected_ordinal),
+            "the claim/finish lease must not desynchronize from the job's own probe order"
+        );
+
+        service
+            .run_next_probe(&context, job_id, expected_ordinal, &runner)
+            .await
+            .unwrap_or_else(|error| panic!("ordinal {expected_ordinal} must pass: {error}"));
+
+        work.finish(&context, &claim, QualificationWorkOutcome::Completed)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        adapter.calls.load(Ordering::SeqCst),
+        10,
+        "every network ordinal (10,20,30,35,40,50,60,70,80,90) must have dispatched once"
+    );
+
+    // Every ordinal now has a result. The job's `state` is still 'running':
+    // `vestrace_record_qualification_probe_result` never sets 'succeeded'
+    // itself (see the comment on `poll_qualification_work` in worker.rs).
+    // This is exactly the tick that must call `finalize_success` instead of
+    // probing a (nonexistent) next ordinal.
+    let state_before_finalize: String =
+        sqlx::query_scalar("SELECT state FROM qualification_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(fixture.ids.workspace.as_uuid())
+            .bind(job_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(state_before_finalize, "running");
+
+    let claims = work.claim(&context, OWNER, 10).await.unwrap();
+    assert_eq!(claims.len(), 1);
+    let claim = claims.into_iter().next().unwrap();
+    let completed: Vec<String> = sqlx::query_scalar(
+        "SELECT probe_ordinal FROM qualification_probe_results WHERE qualification_job_id = $1",
+    )
+    .bind(job_id.as_uuid())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        Q1_ORDINALS
+            .iter()
+            .all(|ordinal| completed.iter().any(|done| done == ordinal)),
+        "every ordinal must already have a result before finalize_success is tried"
+    );
+
+    service
+        .finalize_success(
+            &context,
+            vestrace_application::QualificationFinalization {
+                job_id: claim.job_id,
+                connection_qualification_revision_id:
+                    vestrace_domain::ConnectionQualificationRevisionId::new(),
+                chat_model_qualification_revision_id:
+                    vestrace_domain::ModelQualificationRevisionId::new(),
+                embedding_model_qualification_revision_id:
+                    vestrace_domain::ModelQualificationRevisionId::new(),
+            },
+        )
+        .await
+        .unwrap();
+    work.finish(&context, &claim, QualificationWorkOutcome::Completed)
+        .await
+        .unwrap();
+
+    let final_state: String =
+        sqlx::query_scalar("SELECT state FROM qualification_jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(fixture.ids.workspace.as_uuid())
+            .bind(job_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(final_state, "succeeded");
+
+    // A succeeded job is no longer in state requested/running, so it must
+    // never be claimable again -- proving the claim lease and the job
+    // lifecycle agree once the worker has actually finalized the job, closing
+    // exactly the gap Task 2 exists to close.
+    let reclaimed = work.claim(&context, OWNER, 10).await.unwrap();
+    assert!(
+        reclaimed.is_empty(),
+        "a succeeded job must never be reclaimable as qualification work"
+    );
+
+    runtime.close().await;
 }
