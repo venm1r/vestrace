@@ -242,6 +242,21 @@ services:
     command: ["migrate", "--only-version", "216"]
     restart: "no"
 
+  vestrace-migrate-p05-217:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VESTRACE_SOURCE_REVISION: ${VESTRACE_SOURCE_REVISION:-local-working-tree}
+    depends_on:
+      vestrace-migrate-p05-216:
+        condition: service_completed_successfully
+    environment:
+      VESTRACE_DATABASE__URL: postgres://vestrace:runtime-local-development-only@postgres:5432/vestrace
+      VESTRACE_DATABASE__MAX_CONNECTIONS: 5
+    command: ["migrate", "--only-version", "217"]
+    restart: "no"
+
   # The installation fingerprint this vault holds is bound to the safety
   # authority's continuity record, which 0209 creates. Without an explicit
   # prerequisite Compose is free to create the vault root before that authority
@@ -250,7 +265,7 @@ services:
   vestrace-fingerprint-vault-init:
     image: busybox:1.36.1
     depends_on:
-      vestrace-migrate-p05-216:
+      vestrace-migrate-p05-217:
         condition: service_completed_successfully
     entrypoint:
       - sh
@@ -556,7 +571,7 @@ services:
   dev-seed:
     image: pgvector/pgvector:pg17-bookworm
     depends_on:
-      vestrace-migrate-p05-216:
+      vestrace-migrate-p05-217:
         condition: service_completed_successfully
     environment:
       PGPASSWORD: bootstrap-local-development-only

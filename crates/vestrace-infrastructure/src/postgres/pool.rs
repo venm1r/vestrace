@@ -30,14 +30,23 @@ const P05_RESTORE_REFUSAL_ASSERTION_MIGRATION_VERSION: i64 = 213;
 const P05_RESTORE_SAFETY_EVENT_ASSERTION_MIGRATION_VERSION: i64 = 214;
 const P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION: i64 = 215;
 const P05_DRAIN_PREFIX_VERSION: i64 = 216;
-/// Migration 0217 (`qualification_job_work_claims`) is an ordinary migration,
-/// not a P05 bootstrap-custody assertion: it calls no `vestrace_install_p0N_*`
-/// provisioning function and needs no fixed three-phase route, so it carries
-/// no entry in `P05_ASSERTION_MIGRATION_VERSIONS` or `p05_assertion_migration`
-/// below. It still needs its own bounded test migrator for the same reason
-/// 216 did: `#[sqlx::test]` cannot have run the P05 safety-bootstrap
-/// provisioning that migrations 209-215 assert, so any migrator that reaches
-/// past 208 must keep excluding them explicitly.
+/// Migration 0217 (`qualification_job_work_claims`) now calls
+/// `vestrace_install_p05_qualification_work_claims()`, the same
+/// `SECURITY DEFINER` installer shape migration 0216 uses, because the
+/// restricted runtime role has held no `CREATE` on schema `public` since
+/// migration 0209's own safety-bootstrap: a bare `CREATE TABLE` issued as
+/// `vestrace` would fail with `permission denied for schema public`. It is
+/// therefore given its own `(217, 216)` arm in `p05_assertion_migration`
+/// below (see `matches!`), routed through the same fixed, ledger-checked
+/// path as every other P05 (0209+) assertion migration, even though it
+/// carries no entry in `P05_ASSERTION_MIGRATION_VERSIONS` -- that list is
+/// only for the seven safety-bootstrap assertions `HISTORICAL_MIGRATOR`
+/// and `DRAIN_HISTORICAL_MIGRATOR` must exclude, and 0217 is not one of
+/// them (it does not assert bootstrap custody; it install-guards ordinary
+/// application schema). It still needs its own bounded test migrator for
+/// the same reason 216 did: `#[sqlx::test]` cannot have run the P05
+/// safety-bootstrap provisioning that migrations 209-215 assert, so any
+/// migrator that reaches past 208 must keep excluding them explicitly.
 const QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION: i64 = 217;
 const P05_ASSERTION_MIGRATION_VERSIONS: [i64; 7] = [
     P05_SAFETY_ASSERTION_MIGRATION_VERSION,
@@ -397,6 +406,9 @@ fn p05_assertion_migration(
         ) | (
             P05_DRAIN_PREFIX_VERSION,
             P05_SAFETY_READINESS_ASSERTION_MIGRATION_VERSION
+        ) | (
+            QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION,
+            P05_DRAIN_PREFIX_VERSION
         )
     );
     if !permitted {
@@ -672,6 +684,27 @@ mod tests {
         // install a read surface over a catalog that never gained its guard.
         assert!(p05_assertion_migration(215, 213).is_err());
         assert!(p05_assertion_migration(215, 208).is_err());
+
+        let drain = p05_assertion_migration(P05_DRAIN_PREFIX_VERSION, 215)
+            .expect("0216 after 0215 must be embedded");
+        assert_eq!(drain.version, 216);
+        assert!(p05_assertion_migration(216, 214).is_err());
+        assert!(p05_assertion_migration(216, 208).is_err());
+
+        // 0217 has no bootstrap-custody assertion of its own -- it is an
+        // ordinary migration routed through the same fixed-prefix path so its
+        // SECURITY DEFINER installer function is reachable. Missing this arm
+        // is exactly the defect this test guards against: a migration file
+        // with no route into any real deployment, invisible to every test
+        // that only ever exercises the #[sqlx::test] fallback.
+        let qualification_work_claims = p05_assertion_migration(
+            QUALIFICATION_WORK_CLAIMS_PREFIX_VERSION,
+            P05_DRAIN_PREFIX_VERSION,
+        )
+        .expect("0217 after 0216 must be embedded");
+        assert_eq!(qualification_work_claims.version, 217);
+        assert!(p05_assertion_migration(217, 215).is_err());
+        assert!(p05_assertion_migration(217, 208).is_err());
     }
 
     #[test]
