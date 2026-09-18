@@ -84,6 +84,10 @@ export const ConnectionsPage: React.FC = () => {
       notify('warning', 'This connection has no published revision yet.');
       return;
     }
+    if (!connection.no_auth_binding_revision_id) {
+      notify('warning', 'This connection has no no-auth binding yet — only the no-auth branch is supported here.');
+      return;
+    }
     if (!chatRevisionInput.trim() || !embeddingRevisionInput.trim()) {
       notify('warning', 'Paste a chat and an embedding Model revision id to qualify against.');
       return;
@@ -96,7 +100,7 @@ export const ConnectionsPage: React.FC = () => {
           target_binding_id: crypto.randomUUID(),
           connection_id: connectionId,
           connection_revision_id: connection.revision_id,
-          target: { branch: 'no_auth', binding_revision_id: crypto.randomUUID() },
+          target: { branch: 'no_auth', binding_revision_id: connection.no_auth_binding_revision_id },
           chat_model_revision_id: chatRevisionInput.trim(),
           embedding_model_revision_id: embeddingRevisionInput.trim(),
         },

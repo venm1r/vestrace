@@ -148,6 +148,7 @@ export interface GovernedConnectionItem {
   state: string;
   qualification_state: string | null;
   blockers: string[];
+  no_auth_binding_revision_id: string | null;
 }
 
 export interface GovernedModelItem {
