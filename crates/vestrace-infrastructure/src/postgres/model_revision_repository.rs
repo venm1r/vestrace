@@ -530,6 +530,19 @@ async fn insert_or_verify_stable_model(
     command: &CreateModelRevision,
 ) -> Result<(), ApplicationError> {
     sqlx::query(
+        "INSERT INTO providers (id, workspace_id, name, locality) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(command.model.provider_id.as_uuid())
+    .bind(command.model.workspace_id.as_uuid())
+    .bind(&command.model.model_name)
+    .bind("governed")
+    .execute(transaction.connection())
+    .await
+    .map_err(storage_error)?;
+
+    sqlx::query(
         "INSERT INTO models \
          (id, provider_id, workspace_id, model_name, context_window, \
           input_cost_per_mtoken, output_cost_per_mtoken, created_at) \

@@ -59,6 +59,7 @@ export const changeScopePaths = [
   "crates/vestrace-infrastructure/src/backup_archive/mod.rs",
   "crates/vestrace-infrastructure/src/lib.rs",
   "crates/vestrace-infrastructure/src/postgres/backup_archive_repository.rs",
+  "crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs",
   "crates/vestrace-infrastructure/src/postgres/installation_drain.rs",
   "crates/vestrace-infrastructure/src/postgres/mod.rs",
   "crates/vestrace-infrastructure/src/postgres/model_revision_repository.rs",

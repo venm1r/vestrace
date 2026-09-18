@@ -484,3 +484,39 @@ async fn raw_catalog_row_is_not_executable_without_a_guarded_head(pool: PgPool) 
     transaction.rollback().await.unwrap();
     runtime.close().await;
 }
+
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
+async fn creating_a_connection_on_a_fresh_workspace_materializes_its_connector(pool: PgPool) {
+    let context = context();
+    let cmd = command(&context);
+    // Seed workspace and principal only, NOT the connector.
+    sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
+        .bind(context.workspace_id.as_uuid())
+        .bind(format!("connection-{}", context.workspace_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO principals (id, workspace_id, identifier) VALUES ($1, $2, $3)")
+        .bind(context.principal_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(format!("principal-{}", context.principal_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create the connection; this should auto-materialize the connector.
+    let repository = PgConnectionRevisionRepository::new(PgStore::from_pool(pool.clone()));
+    repository
+        .create_governed(context.clone(), cmd.clone())
+        .await
+        .unwrap();
+
+    // Verify the connector row was created with the correct provider_type.
+    let provider_type: String =
+        sqlx::query_scalar("SELECT provider_type FROM connectors WHERE id = $1")
+            .bind(cmd.connection.connector_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(provider_type, "local");
+}

@@ -1578,3 +1578,108 @@ async fn executable_run_without_chat_default_is_refused_without_binding_or_work_
         "a refused acceptance must leave no work item",
     );
 }
+
+#[sqlx::test(migrator = "vestrace_infrastructure::HISTORICAL_MIGRATOR")]
+async fn creating_a_model_on_a_fresh_workspace_materializes_its_provider(pool: PgPool) {
+    let context = context();
+    let connection_cmd = connection_command(&context);
+    sqlx::query("INSERT INTO workspaces (id, slug) VALUES ($1, $2)")
+        .bind(context.workspace_id.as_uuid())
+        .bind(format!("model-{}", context.workspace_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO principals (id, workspace_id, identifier) VALUES ($1, $2, $3)")
+        .bind(context.principal_id.as_uuid())
+        .bind(context.workspace_id.as_uuid())
+        .bind(format!("principal-{}", context.principal_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO connectors (id, workspace_id, name, provider_type) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(connection_cmd.connection.connector_id.as_uuid())
+    .bind(context.workspace_id.as_uuid())
+    .bind(format!(
+        "connector-{}",
+        connection_cmd.connection.connector_id
+    ))
+    .bind("local")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    PgConnectionRevisionRepository::new(PgStore::from_pool(pool.clone()))
+        .create_governed(context.clone(), connection_cmd.clone())
+        .await
+        .unwrap();
+
+    let model_id = ModelId::new();
+    let provider_id = ProviderId::new();
+    let created_at = now();
+    let model_cmd = CreateModelRevision {
+        model: ModelRecord {
+            id: model_id,
+            provider_id,
+            workspace_id: context.workspace_id,
+            model_name: "test-model".to_owned(),
+            context_window: 4096,
+            input_cost_per_mtoken: 0.0,
+            output_cost_per_mtoken: 0.0,
+            created_at,
+        },
+        revision: ModelRevision::from_persisted(
+            ModelRevisionId::new(),
+            context.workspace_id,
+            connection_cmd.revision_id,
+            "test-model",
+            ModelKind::Chat,
+            ModelObservation::unknown(),
+            ModelObservation::unknown(),
+        )
+        .unwrap(),
+        connection_id: connection_cmd.connection.id,
+        execution_guard_id: connection_cmd.execution_guard_id,
+        expected_head_version: 0,
+        idempotency: Some(IdempotencyRecord {
+            idempotency_key: format!("model-revision-{}", Uuid::now_v7()),
+            workspace_id: context.workspace_id,
+            request_hash: format!("hash-{}", Uuid::now_v7()),
+            response_payload: None,
+            status: "completed".to_owned(),
+            created_at,
+            expires_at: created_at + Duration::hours(1),
+        }),
+        outbox: vec![OutboxMessage::new(
+            context.workspace_id,
+            "model.revision.created",
+            serde_json::json!({"model_id": model_id}),
+            created_at,
+        )],
+        audit: AuditEvent::new(
+            AuditEventId::new(),
+            context.workspace_id,
+            context.principal_id,
+            "model.revision.created",
+            "model",
+            model_id.as_uuid(),
+            serde_json::json!({"model_id": model_id}),
+            created_at,
+        )
+        .unwrap(),
+    };
+
+    let repository = PgModelRevisionRepository::new(PgStore::from_pool(pool.clone()));
+    repository
+        .create_governed(context.clone(), model_cmd.clone())
+        .await
+        .unwrap();
+
+    let locality: String = sqlx::query_scalar("SELECT locality FROM providers WHERE id = $1")
+        .bind(provider_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(locality, "governed");
+}

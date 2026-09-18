@@ -361,6 +361,19 @@ async fn insert_stable_connection(
     command: &CreateConnectionRevision,
 ) -> Result<(), ApplicationError> {
     sqlx::query(
+        "INSERT INTO connectors (id, workspace_id, name, provider_type) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(command.connection.connector_id.as_uuid())
+    .bind(command.connection.workspace_id.as_uuid())
+    .bind(&command.connection.name)
+    .bind(connector_provider_type(command.kind))
+    .execute(transaction.connection())
+    .await
+    .map_err(storage_error)?;
+
+    sqlx::query(
         "INSERT INTO connections \
          (id, connector_id, workspace_id, principal_id, name, status, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -376,6 +389,13 @@ async fn insert_stable_connection(
     .await
     .map_err(storage_error)?;
     Ok(())
+}
+
+fn connector_provider_type(kind: ConnectionKind) -> &'static str {
+    match kind {
+        ConnectionKind::LMStudioLocal => "local",
+        ConnectionKind::OpenAiChatCompletionsV1 => "remote",
+    }
 }
 
 fn validate_command(
