@@ -1,4 +1,4 @@
-# P06 Follow-Up: Closing the Four Architectural Gaps — Design
+# P06 Follow-Up: Closing the Connector/Provider and Qualification Gaps — Design
 
 **Status:** proposed
 **Predecessor:** P06 (G1), closed BLOCKED per
@@ -6,10 +6,15 @@
 itself a fixed step in `docs/superpowers/plans/2026-08-26-vestrace-v1-gate-program.md`'s
 roadmap table — it is a follow-up the P06 evidence run's own findings called
 for, scoped and named on its own.
-**Goal:** close the four backend gaps P06's Task 8 found live, so that a
-real chat message sent through the console's AG-UI widget produces a real
-model completion end to end, for the no-auth (LM Studio) branch, surviving
-a restart.
+**Goal:** close three of the four backend gaps P06's Task 8 found live —
+Connector/Provider creation and the qualification-job executor — so a
+Connection and its Models can reach a real `qualified` state end to end on a
+fresh workspace, surviving a restart. **The fourth gap (composing
+`GovernedRunStepInputAuthority` so AG-UI can execute) is scoped out during
+this plan's own writing** (§3.4) and deferred to a further package — see
+the note there for why. This package does not, by itself, make a real chat
+message produce a model completion; it removes three of the four things
+that were stopping it.
 
 ## 1. Context (what P06's evidence proved, verbatim from its own findings)
 
@@ -44,10 +49,8 @@ no new HTTP route, no new request field, no migration. For gap 3, a new
 worker poll loop, built to the same shape as the existing embedding-work
 poller, driving the already-complete `QualificationJobService`/
 `PgQualificationProbeRunner` machinery (which needs nothing beyond
-collaborators the worker and server already construct). For gap 4, give
-`RunCoordinator` a builder-set, optional authority field and delegate to it
-for exactly the step shape AG-UI produces, leaving every other call site
-and every existing test that doesn't opt in unaffected.
+collaborators the worker and server already construct). Gap 4 is deferred
+to a further package — see §3.4.
 
 **Rejected: full Connector/Provider CRUD** (a real `POST /v1/connectors`
 and a governed replacement for `POST /v1/providers`, with console
@@ -160,42 +163,78 @@ This is the one section of the design with a real implementation choice
 deferred to plan time: the exact claim/lease SQL. Everything else here is a
 direct, already-proven composition.
 
-### 3.4 RunCoordinator: accepting governed confidential input
+### 3.4 RunCoordinator: accepting governed confidential input — DEFERRED
 
-`RunCoordinator<S, C, Q, L>` gains a field
-`input_authority: Option<Arc<dyn GovernedRunStepInputAuthority>>` and a
-builder method `.with_input_authority(...)`, following the same idiom
-`AppState`'s existing `.with_*` builders already use. `RunCoordinator::new`'s
-signature is unchanged, so every existing call site (including every test
-that doesn't opt in) keeps building a coordinator with `input_authority:
-None` and keeps today's refusal behavior exactly as is — this is additive,
-not a breaking change to `RunCoordinator`'s public shape.
+**This section was scoped out while writing this plan's implementation
+tasks, after deeper reading than the design phase's own research reached.**
+The original plan (below, kept for the record) assumed constructing
+`PrepareGovernedRunStepInput` — the command `GovernedRunStepInputAuthority`
+accepts — was a matter of composing existing collaborators, the same way
+§3.1-§3.3 are. It is not. `PrepareGovernedRunStepInput` has 15 fields, and
+tracing every one against the current codebase (not just the one existing
+test that builds it) found:
 
-In `add_steps`: when the batch is exactly one step whose `assigned_actor` is
-`RunActorRef::AgentSnapshot` and whose `input` is
-`NewRunStepInput::Confidential`, and `input_authority` is `Some(authority)`,
-the coordinator calls
-`authority.accept(context, PrepareGovernedRunStepInput { run_id, expected_run_version: expected_version, step_id, assigned_actor, plan_step_reference, input, .. })`
-and returns `outcome.run` directly — bypassing `RunCoordinator`'s own
-`RunStorePort`-based step creation for this one step, since the authority's
-`accept` already durably creates the step, the attempt, and the pinned
-model-binding snapshot atomically. Mixed batches (a governed step alongside
-ordinary ones in the same call) are out of scope and remain refused —
-neither AG-UI nor the console ever constructs one.
+- **`connection_revision_id`/`connection_qualification_revision_id`/
+  `model_revision_id`/`model_qualification_revision_id`** need to come from
+  the `ModelBindingSnapshot` already pinned for the run at creation time —
+  but no repository method reads an already-pinned snapshot back by
+  `run_id`. `ModelBindingResolver::resolve_for_run_in` only *creates* a new
+  pin (called once, at Run creation, from `run_command_committer.rs:165`);
+  calling it again would mint a second one. The one existing test
+  (`run_acceptance_binding_race.rs`) gets these values via raw SQL against
+  `run_model_binding_snapshots`/`model_binding_snapshots`, not through any
+  application port. A new read method is real but mechanical work.
+- **`sampling: EffectiveSampling`** (temperature/top_p) has *zero*
+  production call sites anywhere in this codebase — only test code
+  constructs one, with an arbitrary test value (`0.2, 0.9`). There is no
+  established default to reuse; choosing one is a policy decision, not
+  plumbing.
+- **`intent: ExternalEffectIntent`** — its constructor and validation are
+  used in production (`POST /v1/effects`), but there, the caller's own HTTP
+  request body supplies `adapter`/`operation`/`target`/
+  `normalized_arguments_digest`/`expected_effect`/`preconditions` directly.
+  `RunCoordinator::add_steps` has no analogous source for any of these six
+  values for an AG-UI-originated chat message. The one existing test
+  invents literal strings (a fake provider adapter name, a fake target
+  URL, a fake digest) that exist only to satisfy the constructor's
+  validation, not to mean anything real.
 
-In `server.rs`: `GovernedRunStepInputReservation` is constructed from
-collaborators the function already has in scope (`store`,
-`governed.dispatch()`, the material vault, `PostgresRunStore`, and the
-handful of `Pg*Repository` types already visible there — the exact
-9-argument call is a direct, already-proven pattern; the sole existing test
-that constructs it, `run_acceptance_binding_race.rs`, is a worked example
-using the equivalent Pg types), and passed into `RunCoordinator` via
-`.with_input_authority(...)` where `RunCoordinator::new(...)` is built.
-`let _governed_dispatch = governed.dispatch();`'s discarded handle becomes a
-real, used input.
+In short: `GovernedRunStepInputAuthority`/`GovernedRunStepInputReservation`
+is real, tested library code, but it was built as a *separate* execution
+model from the one that actually runs today's real (non-confidential) Run
+steps (`crates/vestrace-application/src/run/model_step.rs`'s
+`GovernedProviderStepExecutor`, already wired into the worker). Composing
+it requires deciding, for the first time, what an AG-UI chat message's
+sampling parameters and effect-intent identity should be — a design
+question, not a wiring task. This belongs in its own brainstorming session
+and its own package, once this one's evidence (§5) shows the rest of the
+system is ready to receive it.
+
+The original (superseded) design is kept below for that future package's
+reference:
+
+> `RunCoordinator<S, C, Q, L>` would gain a field
+> `input_authority: Option<Arc<dyn GovernedRunStepInputAuthority>>` and a
+> builder method `.with_input_authority(...)`, following the same idiom
+> `AppState`'s existing `.with_*` builders already use — additive, not a
+> breaking change to `RunCoordinator`'s public shape. In `add_steps`, a
+> single-step batch with `AgentSnapshot` + `Confidential` input and a
+> configured authority would delegate to `authority.accept(...)` and return
+> its `outcome.run` directly, bypassing `RunCoordinator`'s own
+> `RunStorePort`-based step creation for that one step. In `server.rs`,
+> `GovernedRunStepInputReservation` would be constructed from `store`,
+> `governed.dispatch()`, the material vault, and the handful of
+> `Pg*Repository` types already visible in that function (the sole existing
+> test that constructs it, `run_acceptance_binding_race.rs`, is a worked
+> example) and passed in via `.with_input_authority(...)`.
 
 ## 4. Non-goals
 
+- **Composing `GovernedRunStepInputAuthority` into the server (gap 4).**
+  Deferred per §3.4 — this needs real design work (sampling defaults,
+  effect-intent derivation for a chat message, a new pinned-snapshot read
+  port), discovered while writing this plan's implementation tasks, not a
+  composition this package can respond to.
 - **Real credential material for the credentialed branch.** Operator
   decision: stays out of scope. The credentialed branch remains documented
   as blocked (on top of this package's four fixes) until a separate,
@@ -226,22 +265,19 @@ real, used input.
   poll cycles (one ordinal per cycle) using a fake `QualificationQ1Adapter`,
   and reaches a terminal state; two concurrent worker instances do not
   double-process the same job (lease exclusivity).
-- §3.4: `RunCoordinator` without an authority configured still refuses
-  `AgentSnapshot` + `Confidential` exactly as today (regression guard);
-  with a real `GovernedRunStepInputReservation` configured (mirroring
-  `run_acceptance_binding_race.rs`'s existing setup), the same step
-  succeeds and returns a real `RunSnapshot`.
 
-**Live evidence (mirrors P06's Task 8, this time expected to succeed for
-the no-auth branch):** a full Playwright walkthrough — create a Connection
-through the console form, publish both a chat and an embedding Model
-revision through the console form, request qualification with the real
-`no_auth_binding_revision_id`, observe the job reach `qualified` through the
-new worker (this involves real wall-clock time for real network probes —
-the evidence run should record how long), set the workspace default, send
-an AG-UI message, and capture the real completion over
-`/ag-ui/events/stream`. Then a full restart cycle (`docker compose down`,
-volume preserved, `up`) confirming the qualified state, the workspace
+**Live evidence (mirrors P06's Task 8, this time reaching further, but
+still honestly short of a full pass):** a full Playwright walkthrough —
+create a Connection through the console form on a fresh workspace, publish
+both a chat and an embedding Model revision through the console form,
+request qualification with the real `no_auth_binding_revision_id`, and
+observe the job reach `qualified` through the new worker (this involves
+real wall-clock time for real network probes — the evidence run should
+record how long). Set the workspace default. Then attempt an AG-UI message
+and record the *current, expected* outcome: it still refuses (gap 4 is
+deferred), and the evidence doc should say so plainly rather than silently
+stopping short of that check. A full restart cycle (`docker compose down`,
+volume preserved, `up`) confirms the qualified state, the workspace
 default, and any in-flight or completed qualification job data all survive.
-The credentialed branch is not re-attempted; its evidence file is expected
-to still read blocked, now solely on credential material (§4).
+The credentialed branch is not attempted; it remains blocked on credential
+material (§4) on top of everything else.
