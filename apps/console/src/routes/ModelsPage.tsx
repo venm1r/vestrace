@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GovernedModelItem, GovernedProviderItem, vestraceClient } from '../sdk/client';
+import { GovernedModelItem, vestraceClient } from '../sdk/client';
 import { useApiResource } from '../sdk/useApiResource';
 import { Modal } from '../design-system/primitives/Modal';
 import { Button } from '../design-system/primitives/Button';
@@ -22,66 +22,100 @@ import {
 // the viewer's locale renders USD as "15,00 $", which reads as a different currency.
 export const ModelsPage: React.FC = () => {
   const { data: initialModels, error, loading, reload } = useApiResource(vestraceClient.listModels);
-  const { data: initialProviders } = useApiResource(vestraceClient.listProviders);
+  const { data: connections } = useApiResource(vestraceClient.listConnections);
+  const { data: defaultModel, reload: reloadDefault } = useApiResource(() =>
+    vestraceClient.getWorkspaceModelDefault('chat'),
+  );
   const [models, setModels] = useState<GovernedModelItem[] | null>(null);
-  const [providers] = useState<GovernedProviderItem[] | null>(null);
   const { notice, notify, dismiss } = useNotice();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modelName, setModelName] = useState('');
-  const [selectedProviderId, setSelectedProviderId] = useState('');
-  const [newProviderName, setNewProviderName] = useState('');
-  const [newProviderLocality, setNewProviderLocality] = useState<'remote' | 'local'>('remote');
+  const [wireModelId, setWireModelId] = useState('');
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
   const [contextWindow, setContextWindow] = useState('128000');
   const [inputCost, setInputCost] = useState('0.15');
   const [outputCost, setOutputCost] = useState('0.60');
   const [submitting, setSubmitting] = useState(false);
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
-  const providerList = providers ?? initialProviders ?? [];
+  const connectionList = connections ?? [];
   const items = models ?? initialModels ?? [];
 
   const handleCreateModel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modelName.trim()) {
-      notify('warning', 'Model name is required.');
+    if (!modelName.trim() || !wireModelId.trim()) {
+      notify('warning', 'Model name and wire model id are required.');
+      return;
+    }
+    if (!selectedConnectionId) {
+      notify('warning', 'Select a Connection this Model runs against.');
+      return;
+    }
+    const connection = connectionList.find((c) => c.id === selectedConnectionId);
+    if (!connection || !connection.revision_id) {
+      notify('warning', 'The selected Connection has no published revision yet.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const providerId = selectedProviderId;
-      if (!providerId || providerId === '__new__') {
-        // `POST /providers` is retired: it answers
-        // `legacy_provider_registry_retired` by design, because a registry row
-        // carries no immutable qualified connection revision. A model must name
-        // a provider that already exists.
-        notify('warning', 'Select an existing provider; the legacy provider registry is retired.');
-        setSubmitting(false);
-        return;
-      }
+      const modelId = crypto.randomUUID();
+      await vestraceClient.createModelRevision(
+        modelId,
+        {
+          model_id: modelId,
+          provider_id: crypto.randomUUID(),
+          model_name: modelName.trim(),
+          context_window: parseInt(contextWindow, 10) || 128000,
+          input_cost_per_mtoken: parseFloat(inputCost) || 0,
+          output_cost_per_mtoken: parseFloat(outputCost) || 0,
+          revision_id: crypto.randomUUID(),
+          connection_id: connection.id,
+          connection_revision_id: connection.revision_id,
+          wire_model_id: wireModelId.trim(),
+          kind: 'chat',
+          execution_guard_id: crypto.randomUUID(),
+          expected_head_version: 0,
+        },
+        { requestId: crypto.randomUUID() },
+      );
 
-      const newModel = await vestraceClient.createModel({
-        provider_id: providerId,
-        model_name: modelName.trim(),
-        context_window: parseInt(contextWindow, 10) || 128000,
-        input_cost_per_mtoken: parseFloat(inputCost) || 0,
-        output_cost_per_mtoken: parseFloat(outputCost) || 0,
-      });
-
-      // `createModel` answers with the legacy registration shape, which is not
-      // what `GET /models` serves. Re-read rather than splice a different
-      // projection into the governed list.
       setModels(null);
       reload();
       setIsModalOpen(false);
       setModelName('');
-      setNewProviderName('');
-      notify('success', `Model "${newModel.model_name}" was registered.`);
+      setWireModelId('');
+      notify('success', `Model "${modelName.trim()}" was published.`);
     } catch (err: unknown) {
-      const described = describeError(err, 'model registration');
+      const described = describeError(err, 'model publication');
       notify('error', `${described.title}: ${described.detail}`);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSetDefault = async (modelId: string) => {
+    setSettingDefaultId(modelId);
+    try {
+      await vestraceClient.setWorkspaceModelDefault(
+        modelId,
+        {
+          default_id: crypto.randomUUID(),
+          model_id: modelId,
+          purpose: 'chat',
+          required_capabilities: ['chat.completions'],
+          expected_version: defaultModel?.version ?? 0,
+        },
+        { requestId: crypto.randomUUID() },
+      );
+      reloadDefault();
+      notify('success', `Model ${modelId} is now the workspace's chat default.`);
+    } catch (err: unknown) {
+      const described = describeError(err, 'setting the workspace default');
+      notify('error', `${described.title}: ${described.detail}`);
+    } finally {
+      setSettingDefaultId(null);
     }
   };
 
@@ -93,17 +127,21 @@ export const ModelsPage: React.FC = () => {
         actions={
           <ActionButton
             icon="model_training"
-            onClick={() => {
-              if (providerList.length > 0 && !selectedProviderId) {
-                setSelectedProviderId(providerList[0].id);
-              }
-              setIsModalOpen(true);
-            }}
+            onClick={() => setIsModalOpen(true)}
           >
             Register Model
           </ActionButton>
         }
       />
+
+      <Panel>
+        <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+          Current chat default:{' '}
+          <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+            {defaultModel?.model_id ?? 'none configured'}
+          </strong>
+        </div>
+      </Panel>
 
       <NoticeBanner notice={notice} onDismiss={dismiss} />
 
@@ -142,102 +180,40 @@ export const ModelsPage: React.FC = () => {
           </div>
 
           <div>
-            <label
-              htmlFor="model-provider"
-              style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}
-            >
-              Provider *
+            <label htmlFor="model-wire-id" style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+              Wire Model Id *
+            </label>
+            <input
+              id="model-wire-id"
+              type="text"
+              required
+              value={wireModelId}
+              onChange={(e) => setWireModelId(e.target.value)}
+              placeholder="e.g. ternary-bonsai-27b"
+              className="field-control"
+              style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="model-connection" style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+              Connection *
             </label>
             <select
-              id="model-provider"
-              value={selectedProviderId}
-              onChange={(e) => setSelectedProviderId(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--color-surface-container)',
-                border: '1px solid var(--color-outline-variant)',
-                color: 'var(--brand-white)',
-                fontSize: '14px',
-                fontFamily: 'inherit',
-                boxSizing: 'border-box',
-              }}
+              id="model-connection"
+              value={selectedConnectionId}
+              onChange={(e) => setSelectedConnectionId(e.target.value)}
+              className="field-control"
+              style={{ width: '100%' }}
             >
-              {providerList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.id} ({p.state})
+              <option value="">Select a Connection...</option>
+              {connectionList.map((c) => (
+                <option key={c.id} value={c.id} disabled={!c.revision_id}>
+                  {c.id} ({c.qualification_state ?? 'unqualified'})
                 </option>
               ))}
             </select>
           </div>
-
-          {(selectedProviderId === '__new__' || providerList.length === 0) && (
-            <div
-              style={{
-                padding: '12px',
-                borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--color-surface-container-lowest)',
-                border: '1px dashed var(--color-outline-variant)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-              }}
-            >
-              <div>
-                <label
-                  htmlFor="new-provider-name"
-                  style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}
-                >
-                  New Provider Name *
-                </label>
-                <input
-                  id="new-provider-name"
-                  type="text"
-                  value={newProviderName}
-                  onChange={(e) => setNewProviderName(e.target.value)}
-                  placeholder="e.g. OpenAI or Anthropic"
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--color-surface-container)',
-                    border: '1px solid var(--color-outline-variant)',
-                    color: 'var(--brand-white)',
-                    fontSize: '13px',
-                    boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="new-provider-locality"
-                  style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}
-                >
-                  Locality
-                </label>
-                <select
-                  id="new-provider-locality"
-                  value={newProviderLocality}
-                  onChange={(e) => setNewProviderLocality(e.target.value as 'remote' | 'local')}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--color-surface-container)',
-                    border: '1px solid var(--color-outline-variant)',
-                    color: 'var(--brand-white)',
-                    fontSize: '13px',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <option value="remote">Remote (Cloud API)</option>
-                  <option value="local">Local (Self-hosted / On-prem)</option>
-                </select>
-              </div>
-            </div>
-          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
             <div>
@@ -360,6 +336,7 @@ export const ModelsPage: React.FC = () => {
                   <Th style={{ padding: '12px 16px' }}>State</Th>
                   <Th style={{ padding: '12px 16px' }}>Qualification</Th>
                   <Th style={{ padding: '12px 16px' }}>Blockers</Th>
+                  <Th style={{ padding: '12px 16px' }}>Default</Th>
                 </tr>
               </thead>
               <tbody>
@@ -399,6 +376,20 @@ export const ModelsPage: React.FC = () => {
                         <span style={{ color: 'var(--text-secondary)' }}>none</span>
                       ) : (
                         model.blockers.join(', ')
+                      )}
+                    </td>
+                    <td style={{ padding: '16px' }}>
+                      {defaultModel?.model_id === model.id ? (
+                        <span style={{ color: 'var(--color-success)' }}>chat default</span>
+                      ) : (
+                        <ActionButton
+                          variant="quiet"
+                          style={{ padding: '4px 10px', fontSize: '12px' }}
+                          disabled={settingDefaultId === model.id}
+                          onClick={() => handleSetDefault(model.id)}
+                        >
+                          {settingDefaultId === model.id ? 'Setting...' : 'Set as default'}
+                        </ActionButton>
                       )}
                     </td>
                   </tr>
