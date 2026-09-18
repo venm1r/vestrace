@@ -1,0 +1,629 @@
+P06 Task 8 — no-auth branch (LM Studio) browser walkthrough + restart cycle
+Captured: 2026-09-18, against the local `docker compose` stack in this repo.
+Images rebuilt immediately before capture (source was newer than the running images):
+  $ docker compose build vestrace-server vestrace-worker console
+  vestrace-vestrace-server  2026-09-18 05:49:03 +0500
+  vestrace-vestrace-worker  2026-09-18 05:49:03 +0500
+  vestrace-console          2026-09-18 05:42:16 +0500
+  $ docker compose up -d      # all services Healthy
+
+RESULT: THE NO-AUTH BRANCH DOES NOT REACH A MODEL COMPLETION.
+No real completion was produced through the AG-UI chat flow, and none is
+recorded here. Four independent, live-verified blockers sit between the console
+and a model call. Each is reproduced below with its exact observed output.
+
+
+================================================================================
+0. PRE-FLIGHT: the three open questions the brief raised
+================================================================================
+
+--- Q1: is LM Studio reachable from inside the Docker stack? YES. ---
+
+  $ docker compose exec vestrace-server curl -s http://host.docker.internal:12345/v1/models
+  {
+    "data": [
+      { "id": "ternary-bonsai-27b",                    "object": "model", "owned_by": "organization_owner" },
+      { "id": "granite-embedding-278m-multilingual",   "object": "model", "owned_by": "organization_owner" },
+      { "id": "prism-ml/bonsai-27b",                   "object": "model", "owned_by": "organization_owner" },
+      { "id": "text-embedding-nomic-embed-text-v1.5",  "object": "model", "owned_by": "organization_owner" }
+    ],
+    "object": "list"
+  }
+
+  $ docker compose exec vestrace-worker curl -s -o /dev/null -w '%{http_code}' http://host.docker.internal:12345/v1/models
+  200
+
+  NO compose change was needed. `docker-compose.yml` already declares
+  `extra_hosts: ["host.docker.internal:host-gateway"]` on BOTH vestrace-server
+  and vestrace-worker. The brief's contingency (adding an extra_hosts entry) was
+  not required.
+
+  A real chat completion IS obtainable from inside the server container, proving
+  the transport and the model host are both genuinely working:
+
+  $ docker compose exec vestrace-server curl -s http://host.docker.internal:12345/v1/chat/completions \
+      -H 'content-type: application/json' \
+      -d '{"model":"prism-ml/bonsai-27b","messages":[{"role":"user","content":"Reply with the single word PONG."}],"max_tokens":16}'
+  {
+    "id": "chatcmpl-15gh4twx16lrn9c4me6scg",
+    "object": "chat.completion",
+    "created": 1789693295,
+    "model": "prism-ml/bonsai-27b",
+    "choices": [ { "index": 0,
+                   "message": { "role": "assistant", "content": "",
+                                "reasoning_content": "Here's a thinking process:\n\n1.  **Analyze User Input",
+                                "tool_calls": [] },
+                   "logprobs": null, "finish_reason": "length" } ],
+    "usage": { "prompt_tokens": 18, "completion_tokens": 16, "total_tokens": 34,
+               "completion_tokens_details": { "reasoning_tokens": 15 } }
+  }
+
+  IMPORTANT DEVIATION FROM THE BRIEF: the model id the brief names,
+  `ternary-bonsai-27b`, is LISTED by LM Studio but FAILS TO LOAD:
+
+  $ docker compose exec vestrace-server curl -s http://host.docker.internal:12345/v1/chat/completions \
+      -H 'content-type: application/json' \
+      -d '{"model":"ternary-bonsai-27b","messages":[{"role":"user","content":"Reply with the single word PONG."}],"max_tokens":16}'
+  { "error": { "message": "Failed to load model \"ternary-bonsai-27b\". Error: Failed to load model.",
+               "type": "invalid_request_error", "param": "model", "code": null } }
+
+  `prism-ml/bonsai-27b` is the loadable chat model on this host.
+  `text-embedding-nomic-embed-text-v1.5` embeds correctly (verified, returns a
+  real 768-dim vector).
+
+--- Q2: does ConnectionTransportPolicy reject `host.docker.internal`? NO ---
+--- ...and the reason it does not is itself a defect. ---
+
+  The brief anticipated that the domain would DERIVE the transport policy from
+  the runtime URL and refuse a non-loopback host under a loopback policy. It
+  does derive it — but only in the domain constructor, which the HTTP create
+  path never calls.
+
+  `crates/vestrace-domain/src/connection/revision.rs:101-124`
+    impl ConnectionTransportPolicy {
+        fn for_runtime_url(url: &NormalizedBaseUrl) -> Result<Self, DomainError> {
+            if url.as_str().strip_prefix("http://").and_then(runtime_authority_host)
+                .is_some_and(|host| {
+                    host.eq_ignore_ascii_case("localhost")
+                        || host.eq_ignore_ascii_case("localhost.")
+                        || host.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_loopback())
+                })
+            { Ok(Self::LoopbackOnly) }
+            else if url.as_str().starts_with("https://") { Ok(Self::RemoteHttps) }
+            else { Err(DomainError::InvalidArgument("non-loopback runtime URL requires HTTPS".into())) }
+        }
+    }
+
+  That function is called only from `ConnectionRevision::new` / `from_persisted`.
+  The HTTP create path does NOT construct a `ConnectionRevision`; it passes the
+  caller's stated policy straight into SQL:
+
+  `crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs:322-337`
+    let revision = sqlx::query_scalar(
+        "SELECT vestrace_create_connection_revision_and_advance_head(...)")
+        ...
+        .bind(transport_policy(&self.command.transport_policy))   // <-- caller-stated, NOT derived
+        ...
+
+  Observed consequence — a non-loopback destination is accepted under a
+  `loopback_only` policy:
+
+  $ curl -X POST http://127.0.0.1:8080/v1/connections ... \
+      -d '{... "runtime_base_url":"http://host.docker.internal:12345/v1",
+              "transport_policy":{"kind":"loopback_only"}, "auth_mode":"none" ...}'
+  HTTP 201
+  {"audit_event_id":"01a0b1f9-a33c-7a62-aadc-0396da9b4e58", ...}
+
+  So no workaround was needed for this task. But the domain's own guard test
+  `deceptive_loopback_prefixes_are_not_local_runtime_urls`
+  (revision.rs:452-472), which exists precisely to stop a deceptive hostname
+  being called loopback, is bypassed at the HTTP boundary. A caller can label
+  any reachable non-loopback destination `loopback_only`.
+
+  Separately, the brief's suggested fallback — "add a `127.0.0.1 lmstudio.local`
+  style loopback alias" — would NOT have worked against this code even if the
+  derivation had been enforced: the check requires the host to be literally
+  "localhost"/"localhost." or to parse as a loopback IP address. A hostname
+  alias such as `lmstudio.local` satisfies neither.
+
+--- Q3: how is credential material seeded? ---
+  (Answered in full in p06-credentialed-run-test.txt; the short answer is a
+  chain of `vestrace_*` SQL functions, and the fixture's "material" is the
+  literal placeholder byte string `b"credential-fixture-ciphertext"`, not a
+  usable bearer token.)
+
+
+================================================================================
+1. BLOCKER ONE — the console cannot create a Connection at all
+   (browser-captured; screenshot p06-screenshots/p06-connections-create-failure.png)
+================================================================================
+
+Playwright walkthrough, http://127.0.0.1:3000/connections:
+  - clicked "Add Connection"
+  - Task 5's real form rendered:
+        Name *              (empty)
+        Provider *          [LM Studio (local, no credential)]  <- selected
+                            [Remote OpenAI-compatible (bearer credential)]
+        Runtime base URL *  http://host.docker.internal:12345/v1   <- prefilled default
+  - typed Name = "LM Studio (local)"
+  - clicked "Create"
+
+Observed in the browser:
+  status banner: "Loading connection creation failed (HTTP 500): the requested
+                  data could not be stored or retrieved"
+
+Network capture (browser_network_requests):
+  22. [POST] http://127.0.0.1:3000/api/v1/connections => [500] Internal Server Error
+
+Server log, same request id:
+  2026-09-18T00:52:01.249129Z ERROR http_request{request_id=01a0b1ff-b850-71b0-91ab-3f867be6cf86
+    correlation_id=01a0b1ff-b850-71b0-91ab-3f98515ca926 method=POST route="api"}:
+    vestrace_http::api::error: run storage request failed
+    error=error returned from database: insert or update on table "connections"
+          violates foreign key constraint "connections_connector_id_fkey"
+
+ROOT CAUSE (read from source, confirmed against the live database):
+
+  `connections.connector_id` is a FOREIGN KEY to `connectors(id)`:
+
+    $ docker compose exec postgres psql -U vestrace_bootstrap -d vestrace -c '\d connectors'
+    Referenced by:
+      TABLE "connections" CONSTRAINT "connections_connector_id_fkey"
+        FOREIGN KEY (connector_id) REFERENCES connectors(id) ON DELETE CASCADE
+
+  On a fresh install the table is empty:
+    $ ... -c "SET vestrace.workspace_id='...0001'; select count(*) from connectors;"
+    0
+
+  `insert_stable_connection`
+  (crates/vestrace-infrastructure/src/postgres/connection_revision_repository.rs:359)
+  does a plain INSERT referencing that id and never creates the connector:
+
+    sqlx::query("INSERT INTO connections \
+       (id, connector_id, workspace_id, principal_id, name, status, created_at) \
+       VALUES ($1, $2, $3, $4, $5, $6, $7)")
+      .bind(command.connection.id.as_uuid())
+      .bind(command.connection.connector_id.as_uuid())   // <- must already exist
+      ...
+
+  And THERE IS NO HTTP ROUTE THAT CREATES A CONNECTOR. The full route inventory
+  (crates/vestrace-http/src/route_inventory.rs) contains no `/v1/connectors`
+  path of any method:
+
+    $ grep -n "connector" crates/vestrace-http/src/route_inventory.rs
+    (no matches)
+
+  Every existing suite seeds the row with direct SQL, e.g.
+  crates/vestrace-infrastructure/tests/common/mod.rs:326
+    "INSERT INTO connectors(id,workspace_id,name,provider_type) VALUES($1,$2,$3,'local')"
+
+  Compounding console defect: `apps/console/src/routes/ConnectionsPage.tsx:52`
+  invents the id client-side —
+      connector_id: crypto.randomUUID(),
+  so even with connectors present, the form would reference a row that does not
+  exist. The form has no connector selector.
+
+WORKAROUND USED TO CONTINUE (recorded, not hidden): one connector row was
+seeded by direct SQL — the same mechanism every existing test uses:
+
+  $ docker compose exec postgres psql -U vestrace_bootstrap -d vestrace -c "
+      SET vestrace.workspace_id='10000000-0000-0000-0000-000000000001';
+      INSERT INTO connectors (id, workspace_id, name, provider_type)
+      VALUES ('20000000-0000-0000-0000-000000000001',
+              '10000000-0000-0000-0000-000000000001',
+              'p06-evidence-connector','local');"
+
+Because the browser form cannot be pointed at a pre-seeded connector, the
+Connection itself was then created over the API rather than through the form.
+This is a LESSER FORM OF EVIDENCE for step 1.1 and is labelled as such:
+
+  $ curl -X POST http://127.0.0.1:8080/v1/connections \
+      -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" -H 'content-type: application/json' \
+      -H "Idempotency-Key: <uuid>" \
+      -d '{"connection_id":"326c0028-2cd4-48d5-a4c2-68d284576c8e",
+           "connector_id":"20000000-0000-0000-0000-000000000001",
+           "name":"LM Studio (local)",
+           "revision_id":"2d0d54e5-d5f7-4599-8949-2a54d149c900",
+           "execution_guard_id":"bec131d1-1ea6-43c8-a19b-c7f63290fe83",
+           "kind":"l_m_studio_local",
+           "logical_base_url":"http://host.docker.internal:12345/v1",
+           "runtime_base_url":"http://host.docker.internal:12345/v1",
+           "adapter_profile_revision":"openai-chat-completions/v1",
+           "transport_policy":{"kind":"loopback_only"},
+           "auth_mode":"none","credential_slot_id":null,"expected_head_version":0}'
+  HTTP 201
+  {"audit_event_id":"01a0b200-6240-7343-9abb-b1a7228d08a5", ...}
+
+The connection then rendered correctly in the browser on /connections, proving
+the Connections page's READ path is real:
+  326c0028-2cd4-48d5-a4c2-68d284576c8e
+  Revision: 2d0d54e5-d5f7-4599-8949-2a54d149c900
+  blocked — Qualification: missing — Blockers: qualification_required
+
+
+================================================================================
+2. BLOCKER TWO — the console cannot register a Model
+   (browser-captured; screenshot p06-screenshots/p06-models-register-blocked.png)
+================================================================================
+
+CORRECTION (made by the controller, after this evidence file was first
+written): the screenshot and the walkthrough text below captured a STALE
+browser-cached bundle, not the current ModelsPage.tsx. The console container's
+served JS was independently confirmed fresh (a cache-busting fetch of the
+exact same asset URL, and a hard-reload of a separate Playwright session,
+both show the real Task 6 form: "Model Name *, Wire Model Id *, Connection *,
+Context Window, In ($/Mtok), Out ($/Mtok)" plus the "Current chat default"
+panel). The form itself is real, live, and matches the plan exactly. What
+follows below (the original walkthrough against the stale bundle) is kept for
+the record but its form description is WRONG; skip to the "RE-VERIFIED"
+paragraph after it for what the correct form actually does.
+
+Original (stale-bundle) walkthrough, http://127.0.0.1:3000/models:
+  - page reported "No models are registered in this workspace."
+  - clicked "Register Model"; the form rendered with fields
+        Model Name *, Provider * (combobox), New Provider Name *,
+        Locality, Context Window, In ($/Mtok), Out ($/Mtok)
+  - filled Model Name = "ternary-bonsai-27b", New Provider Name = "LM Studio",
+    Locality = "Local (Self-hosted / On-prem)", Context Window = 32768
+  - clicked "Register"
+
+Observed in the browser (against the stale bundle):
+  status banner: "Select an existing provider; the legacy provider registry is
+                  retired."
+
+RE-VERIFIED against the real, current form (controller, same running stack,
+a fresh Playwright context with the HTTP cache bypassed):
+  - "Model Name *, Wire Model Id *, Connection *" all present as designed;
+    the Connection select lists the real connections created earlier in this
+    file, each correctly labelled "(missing)" per their qualification_state.
+  - Filled Model Name = "ternary-bonsai-27b", Wire Model Id =
+    "ternary-bonsai-27b", Connection = the LM Studio connection from Blocker
+    One, clicked "Register".
+  - Result: HTTP 500, "Loading model publication failed (HTTP 500): the
+    requested data could not be stored or retrieved" — THE SAME underlying
+    defect as Blocker One, one table over. `models.provider_id` carries the
+    identical shape of foreign key:
+
+    migrations/0014_provider_and_model_registry.sql:20
+      provider_id UUID NOT NULL REFERENCES providers(id) ON DELETE CASCADE
+
+    `apps/console/src/routes/ModelsPage.tsx:68` mints
+      provider_id: crypto.randomUUID(),
+    exactly as `connector_id` was minted in Blocker One, and nothing creates
+    a real `providers` row for it to reference on a fresh workspace.
+
+The Provider combobox seen in the stale walkthrough was empty because the
+workspace has no providers (this part of the underlying fact was correct even
+though the form shown was not):
+  $ curl -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/providers
+  []
+
+and the only route that would create one is permanently refused:
+  crates/vestrace-http/src/api/models.rs:99-107
+    pub async fn create_provider() -> Result<axum::http::StatusCode, ApiError> {
+        // Provider registry rows do not carry an immutable, qualified connection
+        // revision.  Leaving this compatibility route executable would therefore
+        // create an object which the governed dispatcher must never use.
+        Err(ApiError::refused(
+            "legacy_provider_registry_retired",
+            "Legacy provider registry retired",
+        ))
+    }
+
+  There is no replacement route. `route_inventory.rs` lists exactly two provider
+  routes, GET and the retired POST:
+    governed!(GET,  "/v1/providers", ProviderRead,  Low),
+    governed!(POST, "/v1/providers", ProviderWrite, Medium),
+
+WORKAROUND USED (recorded): one provider row seeded by direct SQL.
+
+  $ docker compose exec postgres psql -U vestrace_bootstrap -d vestrace -c "
+      SET vestrace.workspace_id='10000000-0000-0000-0000-000000000001';
+      INSERT INTO providers (id, workspace_id, name, locality)
+      VALUES ('30000000-0000-0000-0000-000000000001',
+              '10000000-0000-0000-0000-000000000001','LM Studio','local');"
+
+The governed model-revision route (`POST /v1/models/{id}/revisions`) — which,
+unlike the console form, DOES take connection_id, connection_revision_id and
+wire_model_id — then worked. Both revisions created over the API:
+
+  chat model     622f598c-cac3-4793-a04b-3b0e2c23a42a
+  chat revision  fb0f4477-5436-4e78-a1e4-6b4d1763e9dd   wire_model_id ternary-bonsai-27b, kind chat
+  HTTP 201 {"audit_event_id":"01a0b201-b5a4-7d53-a7c1-a5d2e60a628e", ...}
+
+  embed model    63712d48-f300-41b8-ae24-5186969ed074
+  embed revision cdd448ab-6c4f-431b-9a4b-56bbfa60211f   wire_model_id text-embedding-nomic-embed-text-v1.5, kind embedding
+  HTTP 201 {"audit_event_id":"01a0b201-e2e7-7e31-beaa-2c0e276b7248", ...}
+
+Both then rendered on the console /models page and on /connections.
+
+
+================================================================================
+3. BLOCKER THREE — "Test Connection" can never reach `qualified`
+================================================================================
+
+3a. The console sends a fabricated binding id (browser-captured).
+
+Playwright walkthrough, http://127.0.0.1:3000/connections:
+  - pasted the two revision ids into the "Chat Model revision id" and
+    "Embedding Model revision id" boxes on the LM Studio connection card
+  - clicked "Test Connection"
+
+Observed in the browser:
+  status banner: "Loading connection qualification failed (HTTP 500): the
+                  requested data could not be stored or retrieved"
+
+Server log:
+  2026-09-18T00:54:39.591719Z ERROR http_request{request_id=01a0b202-22d3-7710-beaf-8fd68daccea0
+    correlation_id=01a0b202-22d3-7710-beaf-8fec207ccb10 method=POST route="api"}:
+    vestrace_http::api::error: run storage request failed
+    error=error returned from database: qualification request must pin its exact
+          no-auth binding
+
+  Cause: apps/console/src/routes/ConnectionsPage.tsx:97 sends
+      target: { branch: 'no_auth', binding_revision_id: crypto.randomUUID() },
+  a fresh random UUID, instead of the connection's real no-auth binding
+  revision. The real one exists and is readable:
+
+  $ ... -c "select id from no_auth_binding_revisions where connection_id='326c0028-...';"
+   01a0b200-6258-70a3-8b07-91ac324443f6
+
+  (A third console defect observed in the same snapshot: the two revision-id
+  textboxes are backed by a single component-level useState, so typing into one
+  connection card fills the same value into every other card's boxes.)
+
+3b. Even with the correct binding id, the job is never executed.
+
+  $ curl -X POST http://127.0.0.1:8080/v1/connections/326c0028-.../qualifications \
+      -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" -H 'content-type: application/json' \
+      -H "Idempotency-Key: <uuid>" \
+      -d '{"job_id":"10dadce9-71b1-4831-9ea1-1d36f61463a1",
+           "target_binding_id":"01a0b200-6258-70a3-8b07-91ac324443f6",
+           "connection_id":"326c0028-2cd4-48d5-a4c2-68d284576c8e",
+           "connection_revision_id":"2d0d54e5-d5f7-4599-8949-2a54d149c900",
+           "target":{"branch":"no_auth","binding_revision_id":"01a0b200-6258-70a3-8b07-91ac324443f6"},
+           "chat_model_revision_id":"fb0f4477-5436-4e78-a1e4-6b4d1763e9dd",
+           "embedding_model_revision_id":"cdd448ab-6c4f-431b-9a4b-56bbfa60211f"}'
+  HTTP 201
+  {"id":"10dadce9-71b1-4831-9ea1-1d36f61463a1",
+   "target_binding_id":"01a0b200-6258-70a3-8b07-91ac324443f6","state":"requested"}
+
+  Polled for 60 s (20 polls at 3 s). The job never left `requested`, and no
+  probe was ever attempted:
+
+  $ ... -c "select id,state,requested_at,completed_at from qualification_jobs;"
+                    id                  |   state   |         requested_at          | completed_at
+   10dadce9-71b1-4831-9ea1-1d36f61463a1 | requested | 2026-09-18 00:55:11.432872+00 |
+
+  $ ... -c "select * from qualification_probe_results;"
+   (0 rows)
+
+  ROOT CAUSE: nothing in any production binary drives a qualification job.
+  `QualificationJobService::run_next_probe`
+  (crates/vestrace-application/src/provider_qualification.rs:147) is the only
+  code path that executes a probe, and its only callers are integration tests:
+
+    $ grep -rn "run_next_probe\|QualificationJobService" --include=*.rs crates/ \
+        | grep -v provider_qualification.rs
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:34
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5799
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5834
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5854
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5855
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5894
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5919
+    crates/vestrace-infrastructure/tests/provider_dispatch_is_atomic.rs:5958
+
+  The server wires only `PgQualificationJobRepository` (the request/record
+  surface, server.rs:257). `PgQualificationProbeRunner` is exported from
+  `postgres/mod.rs:141` but is never constructed in a binary. The worker's only
+  qualification code is a startup one-shot gated on `config.qualification.enabled`
+  (crates/vestrace-cli/src/commands/worker.rs:75-82) that runs a conformance
+  manifest — it is not a poller over `qualification_jobs`, and it is not enabled
+  in docker-compose.yml.
+
+  CONSEQUENCE: every Connection and every Model in this deployment is
+  permanently `blocked` with `qualification_required`, so the governed
+  dispatcher can never admit a call.
+
+
+================================================================================
+4. BLOCKER FOUR — POST /ag-ui/run cannot execute a step (HTTP 503)
+================================================================================
+
+  $ curl -X POST http://127.0.0.1:8080/ag-ui/run \
+      -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" -H 'content-type: application/json' \
+      -d '{"message":"Hello, reply with the single word PONG."}'
+  HTTP 503
+  {"code":"unavailable","message":"governed Run-step input authority is not configured"}
+
+  ROOT CAUSE. Task 2's handler always assigns an AgentSnapshot actor with
+  Confidential input (crates/vestrace-http/src/api/ag_ui.rs:184-191):
+
+      assigned_actor: RunActorRef::AgentSnapshot(AgentRuntimeSnapshotId::new()),
+      input: NewRunStepInput::Confidential(confidential_input),
+
+  The only production implementation of `RunOrchestrator` is `RunCoordinator`,
+  and its `add_steps` refuses exactly that combination
+  (crates/vestrace-application/src/run/coordinator.rs:249-256):
+
+      let legacy_coordinator_input = !matches!(
+          dto.assigned_actor,
+          vestrace_domain::run::RunActorRef::AgentSnapshot(_)
+      ) && matches!(dto.input, NewRunStepInput::None);
+      if !legacy_coordinator_input {
+          return Err(ApplicationError::Unavailable(
+              "governed Run-step input authority is not configured".into(),
+          ));
+      }
+
+  `crates/vestrace-cli/src/commands/server.rs:280` wires that plain coordinator:
+
+      .with_run_orchestrator(Arc::new(vestrace_application::run::RunCoordinator::new(
+          PostgresRunStore::new(&store_for_runs),
+          vestrace_application::run::SystemClock::new(),
+          PgWorkQueuePort::new(&store_for_runs),
+          PgRunLeasePort::new(&store_for_runs),
+      )));
+
+  The governed authority that WOULD accept confidential input,
+  `GovernedRunStepInputReservation` (the sole impl of
+  `GovernedRunStepInputAuthority`, crates/vestrace-application/src/provider_dispatch.rs:539),
+  is never constructed in any binary — only in one integration test:
+
+    $ grep -rn "GovernedRunStepInputReservation" --include=*.rs crates/ \
+        | grep -v provider_dispatch.rs
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:17
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:141
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:170
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:204
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:227
+    crates/vestrace-infrastructure/tests/run_acceptance_binding_race.rs:251
+
+  server.rs:65 even discards the governed dispatch handle it builds:
+      let _governed_dispatch = governed.dispatch();
+
+  Task 2's own unit tests pass because they install a test double
+  (`RecordingOrchestrator`, ag_ui.rs:347) in place of the real coordinator, so
+  the refusal above is never exercised by them.
+
+  NO `/ag-ui/events/stream` PAYLOAD IS RECORDED HERE, because no run step was
+  ever created and therefore no run event was ever emitted. Nothing was
+  fabricated to fill this section.
+
+
+================================================================================
+5. STEP 3 — RESTART CYCLE (this part PASSED)
+================================================================================
+
+What was configured before the restart, all of it durable state created during
+this session:
+  connector        20000000-0000-0000-0000-000000000001  (seeded SQL)
+  provider         30000000-0000-0000-0000-000000000001  (seeded SQL)
+  connection       326c0028-2cd4-48d5-a4c2-68d284576c8e
+  conn revision    2d0d54e5-d5f7-4599-8949-2a54d149c900
+  chat model       622f598c-cac3-4793-a04b-3b0e2c23a42a  rev fb0f4477-5436-4e78-a1e4-6b4d1763e9dd
+  embed model      63712d48-f300-41b8-ae24-5186969ed074  rev cdd448ab-6c4f-431b-9a4b-56bbfa60211f
+  workspace chat default set via POST /v1/models/{id}/default  -> HTTP 201
+
+Pre-restart read-back:
+  $ curl -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" \
+      "http://127.0.0.1:8080/v1/models/default?purpose=chat"
+  {"model_id":"622f598c-cac3-4793-a04b-3b0e2c23a42a","purpose":"chat","version":1}
+  HTTP 200
+
+  Confirmed in the browser at /settings -> Models tab
+  (screenshot p06-screenshots/p06-settings-default-model-pre-restart.png):
+    Default Model
+    "The Model every Run's agent step uses, unless it is created through a path
+     that names one explicitly. Change it on the Models page."
+    622f598c-cac3-4793-a04b-3b0e2c23a42a
+    Saved revision 1
+
+  $ ... -tAc "SET vestrace.workspace_id='...0001';
+      SELECT 'connectors='||(SELECT count(*) FROM connectors)
+          ||' providers='||(SELECT count(*) FROM providers)
+          ||' connections='||(SELECT count(*) FROM connections)
+          ||' conn_revs='||(SELECT count(*) FROM connection_revisions)
+          ||' model_revs='||(SELECT count(*) FROM model_revisions)
+          ||' qual_jobs='||(SELECT count(*) FROM qualification_jobs);"
+  connectors=1 providers=1 connections=3 conn_revs=3 model_revs=2 qual_jobs=1
+  (connections=3 includes two throwaway `probe-NNNN` connections created by this
+   session's own diagnosis of blocker one; they are pinned by
+   connection_execution_guards FKs and were left in place.)
+
+RESTART (volume deliberately preserved — no `-v`):
+  $ docker compose down
+    ... Container vestrace-postgres-1 Removed
+    ... Network vestrace_default Removed
+  $ docker volume ls | grep postgres-data
+    local     vestrace_postgres-data           <- preserved
+  $ docker compose up -d
+    ... Container vestrace-vestrace-server-1 Healthy
+    ... Container vestrace-console-1 Started
+  $ docker compose ps
+    vestrace-console-1          Up Less than a second
+    vestrace-postgres-1         Up 24 seconds (healthy)
+    vestrace-vestrace-server-1  Up 6 seconds (healthy)
+    vestrace-vestrace-worker-1  Up 6 seconds
+
+  The full migration chain (history -> safety bootstrap -> 209..216) replayed
+  cleanly with no manual intervention. No restart-fragility symptom appeared.
+
+POST-RESTART verification, with NO reconfiguration of any kind:
+  $ curl -s http://127.0.0.1:8080/health/ready
+  {"status":"ok"}   HTTP 200
+
+  $ curl -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" \
+      "http://127.0.0.1:8080/v1/models/default?purpose=chat"
+  {"model_id":"622f598c-cac3-4793-a04b-3b0e2c23a42a","purpose":"chat","version":1}
+  HTTP 200                                          <- byte-identical to pre-restart
+
+  $ curl -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/connections
+  [{"id":"e18ba5ff-3cb8-418b-92d5-6413c75cc49d","revision_id":"2dfae274-f834-410b-b40f-839bbd142a45","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"11cd10dd-6349-4d30-ac78-a3029ce851bb","revision_id":"d3c4bd27-7210-4b20-8821-eaedc72cda1b","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"326c0028-2cd4-48d5-a4c2-68d284576c8e","revision_id":"2d0d54e5-d5f7-4599-8949-2a54d149c900","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]}]
+
+  $ curl -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" http://127.0.0.1:8080/v1/models
+  [{"id":"622f598c-cac3-4793-a04b-3b0e2c23a42a","revision_id":"fb0f4477-5436-4e78-a1e4-6b4d1763e9dd","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]},
+   {"id":"63712d48-f300-41b8-ae24-5186969ed074","revision_id":"cdd448ab-6c4f-431b-9a4b-56bbfa60211f","state":"blocked","qualification_state":"missing","blockers":["qualification_required"]}]
+
+  Browser re-verified at /settings -> Models tab
+  (screenshot p06-screenshots/p06-settings-default-model-post-restart.png):
+    Default Model  622f598c-cac3-4793-a04b-3b0e2c23a42a  /  Saved revision 1
+
+  LM Studio still reachable from inside the restarted containers:
+    vestrace-server: full /v1/models list returned
+    vestrace-worker: HTTP 200
+
+  The AG-UI message was repeated against the already-configured default model
+  with no reconfiguration, exactly as Step 3 requires:
+  $ curl -X POST http://127.0.0.1:8080/ag-ui/run \
+      -H "Authorization: Bearer $VESTRACE_ADMIN_TOKEN" -H 'content-type: application/json' \
+      -d '{"message":"Hello, reply with the single word PONG."}'
+  HTTP 503
+  {"code":"unavailable","message":"governed Run-step input authority is not configured"}
+
+  So the restart cycle is GREEN for durability (every Connection, Connection
+  revision, Model, Model revision and the workspace chat default survived
+  byte-identically, and the stack came back healthy on its own), and the
+  post-restart completion is UNPROVEN for the same reason it was unproven before
+  the restart: blocker four.
+
+
+================================================================================
+6. WHAT WOULD ACTUALLY PROVE THIS, IF THE MISSING PIECES EXISTED
+================================================================================
+
+For the no-auth branch to be provable end-to-end through the browser, four
+things must exist that do not exist today:
+
+  (a) A way to create a Connector. Either an HTTP route (`POST /v1/connectors`)
+      plus a selector in ConnectionsPage's form, or `insert_stable_connection`
+      creating the connector row in the same transaction. Without one of these
+      the Connections page's Create button can never succeed.
+
+  (b) A way to register a Provider, or a governed model-creation route the
+      console actually calls. `POST /v1/providers` is permanently retired and
+      ModelsPage still posts to the legacy shape. ModelsPage also needs
+      Connection and wire_model_id fields to express what
+      `POST /v1/models/{id}/revisions` already accepts.
+
+  (c) A qualification executor in the worker: a poller that leases
+      `qualification_jobs` rows in `requested`, drives
+      `QualificationJobService::run_next_probe` across the q1 ordinals using
+      `PgQualificationProbeRunner`, and finalizes the job. Plus the console
+      sending the connection's real no-auth binding revision id rather than a
+      random UUID.
+
+  (d) `GovernedRunStepInputReservation` composed into the server binary and
+      handed to the AG-UI handler (or a `RunOrchestrator` impl that delegates
+      confidential input to it), so `POST /ag-ui/run` creates a real run step
+      with a model binding snapshot that the worker's already-wired
+      `GovernedProviderStepExecutor` (worker.rs:157) can dispatch.
+
+With those four in place, the proving evidence would be: a Playwright
+transcript showing the connection reaching `qualified`, the model reaching a
+non-blocked state, the default set, and an `/ag-ui/events/stream` capture
+containing the model's actual completion text — none of which could be captured
+here, and none of which is asserted.
